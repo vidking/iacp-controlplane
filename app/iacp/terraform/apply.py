@@ -83,7 +83,10 @@ def dispatch(session, execution, identifier, key, principal, publish):
         raise Conflict("APPROVAL_EXPIRED_OR_CONSUMED")
     if row.approved_by == principal.subject:
         raise Conflict("INDEPENDENT_APPROVAL_REQUIRED")
-    check_binding(row, execution)
+    try:
+        check_binding(row, execution)
+    except PlanError as error:
+        raise Conflict(error.code) from None
     row.dispatch_key, row.requested_by, row.status = key, principal.subject, "queued"
     job = Job(id=str(uuid4()), operation="instance.apply", tenant_id=principal.tenant_id, status="queued")
     session.add(job)

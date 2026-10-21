@@ -315,3 +315,15 @@ def test_cancel_before_mutation_keeps_operation_consistent(client, auth, prepare
     assert cancelled.json()["status"] == "cancelled"
     operation = client.get('/v1/operations/' + prepared[0]["operation_id"], headers=auth).json()
     assert operation["status"] == "failed" and operation["error_code"] == "CANCELLED"
+
+
+def test_changed_plan_before_dispatch_returns_state_conflict(client, auth, prepared, sessions, monkeypatch):
+    monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    row = approval(client, prepared).json()
+    with sessions() as session:
+        session.get(TerraformExecution, prepared[0]["instance_id"]).plan_sha256 = "b" * 64
+        session.commit()
+    response = dispatch(client, prepared, auth, row)
+    assert response.status_code == 409 and response.json()["detail"] == "PLAN_CHANGED"
+    with sessions() as session:
+        assert session.get(TerraformApply, row["approval_id"]).job_id is None
