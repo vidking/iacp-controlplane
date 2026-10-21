@@ -20,6 +20,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+bash scripts/test-image-permissions.sh
 bash scripts/test-integration.sh
 dev config --quiet
 dev build dev-api
