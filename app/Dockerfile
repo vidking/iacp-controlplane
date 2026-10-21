@@ -4,6 +4,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && groupadd -g 10001 iacp && useradd -u 10001 -g iacp -M iacp
 COPY iacp ./iacp
+COPY alembic.ini .
+COPY alembic ./alembic
 USER iacp
 EXPOSE 8000
 CMD ["uvicorn", "iacp.main:app", "--host", "0.0.0.0", "--port", "8000"]

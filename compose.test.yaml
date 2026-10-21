@@ -1,0 +1,42 @@
+# Standalone test stack. Never combine with compose.yaml.
+services:
+  test-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: iacp
+      POSTGRES_DB: iacp_test_suite
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "iacp", "-d", "iacp_test_suite"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    networks: [test]
+
+  test-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    networks: [test]
+
+  tests:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    environment:
+      IACP_INTEGRATION_DATABASE_URL: postgresql+psycopg://iacp@test-db/iacp_test_suite
+      IACP_INTEGRATION_REDIS_URL: redis://test-redis:6379/15
+    depends_on:
+      test-db: {condition: service_healthy}
+      test-redis: {condition: service_healthy}
+    networks: [test]
+
+networks:
+  test:
+    internal: true

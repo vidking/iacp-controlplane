@@ -1,0 +1,22 @@
+# Uso opcional y aprobado sobre compose.yaml. No modifica el bootstrap existente.
+services:
+  api:
+    image: iacp/controlplane-api:${IACP_RELEASE:?Define el commit aprobado}
+  worker:
+    image: iacp/controlplane-api:${IACP_RELEASE:?Define el commit aprobado}
+  migrate:
+    image: iacp/controlplane-api:${IACP_RELEASE:?Define el commit aprobado}
+
+volumes:
+  postgres_data:
+    external: true
+    name: ${IACP_POSTGRES_VOLUME:?Identifica el volumen PostgreSQL existente}
+  redis_data:
+    external: true
+    name: ${IACP_REDIS_VOLUME:?Identifica el volumen Redis existente}
+
+secrets:
+  db_password:
+    file: ${IACP_SERVER_DB_PASSWORD_FILE:?Identifica el archivo de secreto existente}
+  api_token:
+    file: ${IACP_SERVER_API_TOKEN_FILE:?Identifica el archivo de secreto existente}

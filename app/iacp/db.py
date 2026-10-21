@@ -1,23 +1,31 @@
-import os
-from pathlib import Path
-from urllib.parse import quote_plus
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from collections.abc import Iterator
+from functools import lru_cache
+
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from .config import database_url
 
 
-def secret(name: str) -> str:
-    p = os.environ[name]
-    return Path(p).read_text(encoding="utf8").strip()
+class Base(DeclarativeBase):
+    pass
 
 
-def database_url() -> str:
-    u = quote_plus(os.environ.get("POSTGRES_USER", "iacp"))
-    pw = quote_plus(secret("DATABASE_PASSWORD_FILE"))
-    db = quote_plus(os.environ.get("POSTGRES_DB", "iacp"))
-    host = os.environ.get("DATABASE_HOST", "db")
-    return f"postgresql+psycopg://{u}:{pw}@{host}:5432/{db}"
+@lru_cache
+def get_engine() -> Engine:
+    return create_engine(
+        database_url(),
+        pool_pre_ping=True,
+        pool_timeout=5,
+        connect_args={"connect_timeout": 3, "options": "-c statement_timeout=3000"},
+    )
 
 
-engine = create_engine(database_url(), pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-Base = declarative_base()
+@lru_cache
+def get_session_factory() -> sessionmaker[Session]:
+    return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
+
+
+def get_session() -> Iterator[Session]:
+    with get_session_factory()() as session:
+        yield session

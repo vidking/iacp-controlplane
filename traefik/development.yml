@@ -1,0 +1,11 @@
+http:
+  routers:
+    api:
+      rule: PathPrefix(`/`)
+      entryPoints: [web]
+      service: iacp-api
+  services:
+    iacp-api:
+      loadBalancer:
+        servers:
+          - url: http://dev-api:8000

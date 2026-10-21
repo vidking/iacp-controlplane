@@ -4,10 +4,13 @@ secrets/*
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # Variables y secretos
 .env.*
 !.env.example
+!.env.dev.example
+!.env.server.example
 *.pem
 *.key
 

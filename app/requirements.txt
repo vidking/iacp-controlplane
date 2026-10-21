@@ -4,3 +4,4 @@ sqlalchemy==2.0.40
 psycopg[binary]==3.2.6
 celery[redis]==5.5.2
 pydantic==2.11.3
+alembic==1.15.2
