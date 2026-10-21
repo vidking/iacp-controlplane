@@ -1,6 +1,6 @@
-# IACP — Primer runtime del Control Plane | VM 104 (MNG)
+# IACP — Control Plane | Fase 1, incremento 1
 
-Versión de **integración laboratorio**. La VM `iacp-controlplane-01` ya existe en
+Base de ingeniería sobre el bootstrap de **integración laboratorio**. La VM `iacp-controlplane-01` ya existe en
 Proxmox (VMID 104, `mng01`, 192.168.1.50/20) y está **administrada manualmente**,
 **fuera del Terraform State** de IACP. Este paquete **NO** contiene Terraform y
 **NO** crea ni modifica VMs de clientes.
@@ -15,8 +15,35 @@ Proxmox (VMID 104, `mng01`, 192.168.1.50/20) y está **administrada manualmente*
 - `POST /v1/instances` devuelve **503** explícitamente. Ningún código hace
   `terraform plan/apply/destroy` ni llama a Proxmox.
 - `POST /v1/jobs/smoke` y `GET /v1/jobs/{id}` exigen un Bearer token de laboratorio.
-- La tabla `jobs` se crea con SQLAlchemy al iniciar API; **migraciones Alembic
-  aún no implementadas**. No es un stack productivo.
+- API modular con contratos Pydantic y [OpenAPI versionado](docs/openapi.json).
+- La tabla `jobs` se administra con Alembic. El servicio `migrate` precede a API
+  y worker y adopta el esquema bootstrap compatible sin modificar sus filas.
+  El arranque de la API no ejecuta DDL. No es un stack productivo.
+
+## Ingeniería y pruebas
+
+La [auditoría completa y los incrementos](docs/AUDIT_PHASE1.md) documentan los
+riesgos y el trabajo pendiente. La [guía de desarrollo](docs/DEVELOPMENT.md)
+describe arquitectura, contratos y pruebas. Consultar el
+[procedimiento de migración](docs/MIGRATIONS.md) antes de cualquier despliegue.
+
+Pruebas rápidas con Python 3.12:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r app/requirements-dev.txt
+.venv/bin/python -m pytest -m 'not integration'
+```
+
+Suite completa en un stack temporal separado, sin volúmenes persistentes:
+
+```bash
+bash scripts/test-integration.sh
+```
+
+Los modelos de instancias/tenants, RBAC, idempotencia, outbox, auditoría y
+`IaCExecutor` se implementarán en los siguientes incrementos. El endpoint de
+instancias sigue bloqueado; este incremento no habilita Terraform.
 
 ## Prerrequisitos ya verificados en VM 104
 
@@ -28,7 +55,11 @@ activo, SSH con llave, `192.168.1.50/20`, ~142 GB libres.
 restauración antes de considerar el plano de control protegido. Mantener acceso
 Proxmox independiente.
 
-## Despliegue (ejecutar en VM 104; NO en mng01)
+## Despliegue histórico del bootstrap
+
+Los siguientes pasos describen la instalación inicial. **No son una autorización
+para desplegar.** Para actualizar al incremento 1, seguir
+[MIGRATIONS.md](docs/MIGRATIONS.md), con backup verificado y aprobación explícita.
 
 1. Transferir ZIP desde la laptop a `/tmp/IACP_ControlPlane_Runtime_VM104_v3.zip`.
 2. `sudo unzip -q /tmp/IACP_ControlPlane_Runtime_VM104_v3.zip -d /opt/iacp/stacks/`
@@ -78,8 +109,12 @@ Si el puerto local 8080 está ocupado, usar `-L 18080:127.0.0.1:8080`.
 - Para entrar en producción requerimos autenticación corporativa, TLS,
   políticas de red, alertas, versiones de imágenes validadas, migraciones y HA.
 
-## Validación disponible
+## Validación del incremento 1
 
-El paquete se valida estáticamente (sintaxis Python/YAML/Bash); no hay Docker
-Engine conectado a este entorno de preparación. La prueba de integración real
-`docker compose up` / `scripts/smoke.sh` debe ejecutarse en VM 104.
+La [evidencia de ejecución](docs/VALIDATION_INCREMENT1.md) registra 48 pruebas
+aprobadas, incluidas seis de integración con servicios temporales reales.
+
+La suite verifica rutas, autenticación, contratos, migración inicial, adopción
+del esquema legado, rechazo de drift y flujo con PostgreSQL 17, Redis 7 y un
+proceso Celery real. Se ejecuta en un entorno aislado; no requiere VM 104.
+La validación de imágenes y del arranque Compose completo requiere Docker local.

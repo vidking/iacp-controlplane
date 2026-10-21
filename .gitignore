@@ -4,6 +4,7 @@ secrets/*
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # Variables y secretos
 .env.*

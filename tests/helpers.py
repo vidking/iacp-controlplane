@@ -1,0 +1,27 @@
+from alembic import command
+
+from iacp.migrations import alembic_config
+
+
+def upgrade(engine):
+    with engine.begin() as connection:
+        config = alembic_config()
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+
+
+def create_legacy_jobs(engine):
+    # Independent copy of the DDL produced by bootstrap a964850, not the ORM.
+    timestamp = "TIMESTAMP WITH TIME ZONE" if engine.dialect.name == "postgresql" else "DATETIME"
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"""
+            CREATE TABLE jobs (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                operation VARCHAR(30) NOT NULL,
+                status VARCHAR(30) NOT NULL,
+                message TEXT NOT NULL,
+                created_at {timestamp} NOT NULL,
+                updated_at {timestamp} NOT NULL
+            )
+        """)
+        connection.exec_driver_sql("CREATE INDEX ix_jobs_status ON jobs (status)")
