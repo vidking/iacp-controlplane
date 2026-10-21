@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-21",
+  "environment": "local-disposable-docker",
+  "real_apply_executed": false,
+  "real_destroy_executed": false,
+  "vm104_accessed": false,
+  "merged": false,
+  "deployed": false,
+  "suites": [
+    {
+      "name": "executor",
+      "source_revision": "25e571e145583ecdc79694ae618bba483bacd7bb",
+      "status": "passed",
+      "tests": 159,
+      "seconds": 33.0
+    },
+    {
+      "name": "tls",
+      "source_revision": "8355f4bc260dee8959cec052727cb3cb4a6d1e73",
+      "status": "passed",
+      "tests": 108,
+      "seconds": 14.01
+    },
+    {
+      "name": "combined",
+      "source_revision": "25e571e145583ecdc79694ae618bba483bacd7bb+8355f4bc260dee8959cec052727cb3cb4a6d1e73",
+      "status": "passed",
+      "tests": 171,
+      "seconds": 33.44
+    },
+    {
+      "name": "combined-final",
+      "source_revision": "939bb418e3d1da6dddbfb917e951d13d3ea67bec+8355f4bc260dee8959cec052727cb3cb4a6d1e73",
+      "status": "passed",
+      "tests": 172,
+      "seconds": 27.47
+    }
+  ],
+  "checks": {
+    "runtime_recreation": true,
+    "bootstrap_job_preserved": true,
+    "redis_marker_preserved": true,
+    "secrets_preserved": true,
+    "simulated_inventory_preserved": true,
+    "volume_identity_preserved": true,
+    "terraform_worker_image_permissions": true,
+    "https_ca_origin_ip_and_diagnostics": true
+  },
+  "remaining": [
+    "authorized-lab-configuration",
+    "validated-server-backup-and-restore",
+    "real-proxmox-wasabi-validation",
+    "api-deletion"
+  ],
+  "main_observed": "2ed41041a6fda227260a78e196da87181417a70d",
+  "external_integration_observed": true
+}

@@ -101,3 +101,5 @@ aprobaciones explícitas. No usar `down -v`, regenerar secretos existentes ni
 administrar el mismo stack con dos reconciliadores.
 
 Aplicación controlada de planes, permisos y recuperación: [guía del ejecutor autorizado](docs/AUTHORIZED_APPLY.md).
+
+Manual para Desarrollo, Infraestructura y Seguridad: [arquitectura, integración, operación y demostración](docs/handbook/README.md).
