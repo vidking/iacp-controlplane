@@ -2,6 +2,7 @@ from celery import Celery
 from .config import broker_url
 from .db import get_session_factory
 from .models import Job
+from .services.execution import execute_instance
 
 celery_app = Celery("iacp", broker=broker_url())
 celery_app.conf.update(
@@ -17,10 +18,15 @@ def smoke(job_id: str) -> None:
     # Única operación permitida en el bootstrap: no ejecuta Terraform ni Proxmox.
     with get_session_factory()() as db:
         job = db.get(Job, job_id)
-        if job is None or job.status == "completed":
+        if job is None or job.operation != "smoke" or job.status not in {"queued", "running"}:
             return
         job.status = "running"
         db.commit()
         job.status = "completed"
         job.message = "La cola, el worker y PostgreSQL funcionan; Terraform NO fue ejecutado."
         db.commit()
+
+
+@celery_app.task(name="iacp.instance.create", autoretry_for=(), acks_late=True)
+def provision_instance(job_id: str) -> None:
+    execute_instance(job_id, get_session_factory())

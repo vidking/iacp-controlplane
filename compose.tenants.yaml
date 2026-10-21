@@ -1,0 +1,10 @@
+# Override optativo para el runtime; no combinar con compose.dev.yaml.
+services:
+  api:
+    environment:
+      IACP_TENANT_CREDENTIALS_FILE: /run/secrets/tenant_credentials
+    secrets: [tenant_credentials]
+
+secrets:
+  tenant_credentials:
+    file: ${IACP_TENANT_CREDENTIALS_PATH:?Indicar el registro de credenciales fuera de Git}

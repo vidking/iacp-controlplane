@@ -54,19 +54,22 @@ el token sin depender de rutas o identidades del host.
 | `compose.dev.yaml` | Runtime local completo | Volúmenes y secretos propios por proyecto de desarrollo |
 | `compose.yaml` | Configuración compatible con el bootstrap | Volúmenes y archivos de secretos existentes |
 | `compose.server.yaml` | Transición aprobada del bootstrap a Git | Exige nombres de volúmenes externos y rutas explícitas de secretos existentes |
+| `compose.tenants.yaml` | Override optativo de identidades para la API | Registro de credenciales externo a Git |
 
 Los archivos de desarrollo y pruebas son independientes; no combinarlos con
 `compose.yaml`. El archivo del servidor solo se combina con `compose.yaml` tras
 inventariar el entorno. El cambio de directorio del código no debe cambiar el
 proyecto Compose ni crear otra base de datos por accidente.
 
-## Alcance del incremento 1
+## Alcance del entregable 2A
 
 Se conserva API → Redis → Celery → PostgreSQL. La API está organizada en módulos,
 usa contratos Pydantic y [OpenAPI versionado](docs/openapi.json), y el esquema se
-administra con Alembic. `POST /v1/instances` devuelve 503: no hay Terraform ni
-operaciones Proxmox. La autenticación sigue usando un token de laboratorio; el
-sistema aún no está preparado para clientes ni producción.
+administra con Alembic. `POST /v1/instances` acepta peticiones idempotentes por
+tenant y devuelve 202; Celery ejecuta únicamente simulación. El inventario y las
+operaciones con eventos quedan persistidos. No se ejecuta Terraform ni Proxmox.
+La [guía de 2A](docs/DELIVERY_2A.md) describe contratos, identidad por tenant,
+roles mínimos, migración `0002`, fallos y límites de recuperación.
 
 La [auditoría y los siguientes incrementos](docs/AUDIT_PHASE1.md) cubren tenants,
 RBAC, instancias, idempotencia, outbox, recuperación, auditoría e `IaCExecutor`.
@@ -79,8 +82,9 @@ PostgreSQL, Redis, los secretos y sus volúmenes. El
 [procedimiento Alembic](docs/MIGRATIONS.md) describe la adopción del esquema.
 
 El [cierre técnico e inventario de VM 104](docs/RELEASE_READINESS.md) documenta
-la inspección de solo lectura y el bloqueo vigente por ausencia de backup.
+la inspección histórica de solo lectura y el bloqueo por ausencia de backup
+constatado en esa revisión; no sustituye la verificación previa a cada cambio.
 
-No se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
+El entregable 2A no se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
 aprobaciones explícitas. No usar `down -v`, regenerar secretos existentes ni
 administrar el mismo stack con dos reconciliadores.

@@ -7,13 +7,13 @@ from sqlalchemy import inspect, select, text
 
 from iacp.migrations import alembic_config, schema_is_current
 from iacp.models import Job
-from tests.helpers import create_legacy_jobs, upgrade
+from tests.helpers import create_legacy_jobs, legacy_snapshot, upgrade
 
 
 def test_fresh_schema_matches_models_and_repeated_upgrade_preserves_it(empty_engine):
     upgrade(empty_engine)
     upgrade(empty_engine)
-    assert set(inspect(empty_engine).get_table_names()) == {"jobs", "alembic_version"}
+    assert set(inspect(empty_engine).get_table_names()) == {"jobs", "alembic_version", "tenants", "instances", "operations", "operation_events"}
     with empty_engine.begin() as connection:
         assert schema_is_current(connection)
         config = alembic_config()
@@ -29,10 +29,11 @@ def test_adopts_bootstrap_without_altering_rows(empty_engine):
             "id": str(uuid4()), "operation": "smoke", "status": "completed",
             "message": "legacy job", "created_at": now, "updated_at": now,
         })
-        before = connection.execute(select(Job.__table__)).all()
+        before = legacy_snapshot(connection)
     upgrade(empty_engine)
     with empty_engine.connect() as connection:
-        assert connection.execute(select(Job.__table__)).all() == before
+        assert legacy_snapshot(connection) == before
+        assert connection.execute(text("SELECT tenant_id, operation_id FROM jobs")).one() == (None, None)
         assert schema_is_current(connection)
 
 
@@ -70,5 +71,5 @@ def test_downgrade_cannot_drop_persistent_jobs(engine):
         config.attributes["connection"] = connection
         with pytest.raises(RuntimeError, match="preserve persistent jobs"):
             command.downgrade(config, "base")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0001_bootstrap_jobs"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002_instances_operations"
     assert "jobs" in inspect(engine).get_table_names()

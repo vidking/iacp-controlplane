@@ -5,6 +5,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from ..models import Job
+from ..security import Principal
 
 Publisher = Callable[[str], object]
 
@@ -13,8 +14,8 @@ class QueueUnavailable(Exception):
     pass
 
 
-def create_smoke_job(session: Session, publish: Publisher) -> Job:
-    job = Job(id=str(uuid4()), operation="smoke", status="queued")
+def create_smoke_job(session: Session, publish: Publisher, principal: Principal) -> Job:
+    job = Job(id=str(uuid4()), operation="smoke", status="queued", tenant_id=principal.tenant_id)
     session.add(job)
     session.commit()
     try:

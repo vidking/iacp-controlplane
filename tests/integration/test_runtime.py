@@ -15,7 +15,7 @@ from sqlalchemy import inspect, select
 from iacp.main import create_app
 from iacp.migrations import alembic_config, schema_is_current
 from iacp.models import Job
-from tests.helpers import create_legacy_jobs, upgrade
+from tests.helpers import create_legacy_jobs, legacy_snapshot, upgrade
 
 pytestmark = pytest.mark.integration
 
@@ -38,11 +38,11 @@ def test_postgres_adopts_legacy_jobs_without_changes(pg_engine):
             "message": "bootstrap preserved", "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         })
-        before = connection.execute(select(Job.__table__)).all()
+        before = legacy_snapshot(connection)
     upgrade(pg_engine)
     upgrade(pg_engine)
     with pg_engine.connect() as connection:
-        assert connection.execute(select(Job.__table__)).all() == before
+        assert legacy_snapshot(connection) == before
         assert schema_is_current(connection)
 
 
@@ -88,6 +88,31 @@ def test_api_redis_real_celery_postgres_and_repeated_delivery(pg_engine, runtime
                     pytest.fail("Real worker did not complete the smoke job")
                 assert "Terraform NO fue ejecutado" in response.json()["message"]
                 finished = response.json()
+                headers = {**runtime, "Idempotency-Key": "integration-instance"}
+                spec = {"name": "integration-kvm", "image": "simulation-test"}
+                instance_accepted = client.post("/v1/instances", json=spec, headers=headers)
+                assert instance_accepted.status_code == 202
+                instance_job = instance_accepted.json()
+                assert client.post("/v1/instances", json=spec, headers=headers).json() == instance_job
+                deadline = time.monotonic() + 25
+                while time.monotonic() < deadline:
+                    instance = client.get(f'/v1/instances/{instance_job["instance_id"]}', headers=runtime)
+                    assert instance.status_code == 200
+                    if instance.json()["status"] == "ready":
+                        break
+                    assert worker.poll() is None
+                    time.sleep(0.1)
+                else:
+                    pytest.fail("Real Celery worker did not complete the simulated instance")
+                assert instance.json()["vmid"] is instance.json()["node"] is None
+                assert instance.json()["result"]["simulated"] is True
+                operation_path = f'/v1/operations/{instance_job["operation_id"]}'
+                operation = client.get(operation_path, headers=runtime).json()
+                assert operation["status"] == "completed"
+                assert [item["code"] for item in operation["events"]] == ["accepted", "started", "completed"]
+                from iacp.worker import provision_instance
+                provision_instance.run(instance_job["job_id"])
+                assert client.get(operation_path, headers=runtime).json() == operation
                 # The task handler is also exercised against an actual terminal
                 # row. Concurrent delivery/recovery is explicitly a later gate.
                 from iacp.worker import smoke
@@ -95,6 +120,9 @@ def test_api_redis_real_celery_postgres_and_repeated_delivery(pg_engine, runtime
                 assert client.get(f"/v1/jobs/{job_id}", headers=runtime).json() == finished
             with TestClient(create_app()) as restarted:
                 assert restarted.get(f"/v1/jobs/{job_id}", headers=runtime).json() == finished
+                assert restarted.get(f'/v1/instances/{instance_job["instance_id"]}', headers=runtime).json() == instance.json()
+                assert restarted.get(operation_path, headers=runtime).json() == operation
+                assert len(restarted.get("/v1/instances", headers=runtime).json()) == 1
         finally:
             worker.terminate()
             try:

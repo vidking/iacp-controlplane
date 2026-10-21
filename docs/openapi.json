@@ -14,6 +14,46 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "EventResponse": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "code",
+          "actor",
+          "created_at"
+        ],
+        "title": "EventResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -42,6 +82,207 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "InstanceAccepted": {
+        "properties": {
+          "executor": {
+            "const": "simulated",
+            "default": "simulated",
+            "title": "Executor",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "instance_id",
+          "operation_id"
+        ],
+        "title": "InstanceAccepted",
+        "type": "object"
+      },
+      "InstanceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "disk_gb": {
+            "default": 20,
+            "maximum": 4096.0,
+            "minimum": 8.0,
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "image": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "title": "Image",
+            "type": "string"
+          },
+          "memory_mb": {
+            "default": 2048,
+            "maximum": 262144.0,
+            "minimum": 512.0,
+            "multipleOf": 256.0,
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "title": "Name",
+            "type": "string"
+          },
+          "vcpus": {
+            "default": 2,
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Vcpus",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "image"
+        ],
+        "title": "InstanceCreate",
+        "type": "object"
+      },
+      "InstanceResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "disk_gb": {
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "executor": {
+            "const": "simulated",
+            "title": "Executor",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "provisioning",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "tenant_id",
+          "name",
+          "image",
+          "vcpus",
+          "memory_mb",
+          "disk_gb",
+          "status",
+          "executor",
+          "vmid",
+          "node",
+          "result",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "InstanceResponse",
         "type": "object"
       },
       "JobAccepted": {
@@ -109,21 +350,75 @@
         "title": "JobResponse",
         "type": "object"
       },
-      "ProvisioningUnavailable": {
+      "OperationResponse": {
         "properties": {
-          "code": {
-            "const": "IAC_EXECUTOR_NOT_CONFIGURED",
-            "default": "IAC_EXECUTOR_NOT_CONFIGURED",
-            "title": "Code",
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
             "type": "string"
           },
-          "detail": {
-            "default": "Aprovisionamiento deshabilitado hasta integrar y validar el IaC Worker",
-            "title": "Detail",
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
             "type": "string"
           }
         },
-        "title": "ProvisioningUnavailable",
+        "required": [
+          "operation_id",
+          "instance_id",
+          "kind",
+          "status",
+          "requested_by",
+          "error_code",
+          "created_at",
+          "updated_at",
+          "events"
+        ],
+        "title": "OperationResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -162,16 +457,16 @@
     },
     "securitySchemes": {
       "HTTPBearer": {
-        "description": "Token compartido de laboratorio; sin aislamiento por tenant.",
+        "description": "Token ligado en el servidor a un tenant y un rol.",
         "scheme": "bearer",
         "type": "http"
       }
     }
   },
   "info": {
-    "description": "Control Plane en fase de ingeniería. Token de laboratorio compartido; aislamiento por tenant y aprovisionamiento pendientes.",
+    "description": "Inventario por tenant y operaciones asíncronas con ejecutor simulado. Terraform y el aprovisionamiento real permanecen deshabilitados.",
     "title": "IACP Control Plane",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -228,10 +523,48 @@
       }
     },
     "/v1/instances": {
-      "post": {
-        "description": "Reservado. Aprovisionamiento deshabilitado hasta validar autorización y ejecución.",
-        "operationId": "createInstance",
+      "get": {
+        "operationId": "listInstances",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InstanceResponse"
+                  },
+                  "title": "Response Listinstances",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -242,23 +575,35 @@
             },
             "description": "Unauthorized"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ProvisioningUnavailable"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ErrorResponse"
-                    }
-                  ],
-                  "title": "Response Createinstance"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Service Unavailable"
           }
         },
         "security": [
@@ -266,7 +611,193 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Instance",
+        "summary": "List Instances",
+        "tags": [
+          "instances"
+        ]
+      },
+      "post": {
+        "description": "Crea instancia, operación y job de forma atómica. Solo ejecuta simulación. Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló.",
+        "operationId": "createInstance",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Instance",
+        "tags": [
+          "instances"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}": {
+      "get": {
+        "operationId": "getInstance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Instance",
         "tags": [
           "instances"
         ]
@@ -296,6 +827,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "503": {
             "content": {
@@ -354,6 +895,16 @@
             },
             "description": "Unauthorized"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -393,6 +944,93 @@
         "summary": "Get Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/v1/operations/{operation_id}": {
+      "get": {
+        "operationId": "getOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Operation",
+        "tags": [
+          "operations"
         ]
       }
     }

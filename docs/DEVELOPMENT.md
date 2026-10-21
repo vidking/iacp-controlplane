@@ -67,7 +67,9 @@ el worker, como explica la [documentación de Celery](https://docs.celeryq.dev/e
 | `GET /health/ready` | 200 ready o 503 por DB, esquema o Redis | Pública |
 | `POST /v1/jobs/smoke` | 202 job aceptado o 503 por publicación/auth | Bearer |
 | `GET /v1/jobs/{job_id}` | 200 job persistente, 404 ausente | Bearer |
-| `POST /v1/instances` | 503 `IAC_EXECUTOR_NOT_CONFIGURED` | Bearer |
+| `POST /v1/instances` | 202 con IDs de instancia, operación y job simulado; 409 por conflicto | Bearer operator + Idempotency-Key |
+| `GET /v1/instances`, `GET /v1/instances/{id}` | 200 inventario del tenant, 404 ausente/ajeno | Bearer |
+| `GET /v1/operations/{id}` | 200 estado y eventos, 404 ausente/ajeno | Bearer |
 
 Todas las rutas protegidas devuelven 401 con `WWW-Authenticate: Bearer` para
 credenciales ausentes/incorrectas. Un secreto ausente, ilegible o menor de 32
@@ -94,8 +96,8 @@ docker compose -p iacp-tests -f compose.test.yaml run --rm -T --no-deps tests py
 ```
 
 La prueba de snapshot exige revisar y regenerar cambios de contrato. Los
-operation IDs son estables. No hay contrato de entrada para instancias hasta
-definir tenants, permisos y operaciones autorizadas.
+operation IDs son estables. El [contrato de instancias de 2A](DELIVERY_2A.md)
+incluye los límites, permisos mínimos e idempotencia; el ejecutor es simulado.
 
 ## Pruebas
 

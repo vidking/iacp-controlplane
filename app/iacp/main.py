@@ -1,19 +1,27 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs
+from .api import health, instances, jobs, operations
 
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Control Plane", version="0.2.0",
+        title="IACP Control Plane", version="0.3.0",
         description=(
-            "Control Plane en fase de ingeniería. Token de laboratorio compartido; "
-            "aislamiento por tenant y aprovisionamiento pendientes."
+            "Inventario por tenant y operaciones asíncronas con ejecutor simulado. "
+            "Terraform y el aprovisionamiento real permanecen deshabilitados."
         ),
     )
     application.include_router(health.router)
     application.include_router(jobs.router)
     application.include_router(instances.router)
+    application.include_router(operations.router)
+
+    @application.exception_handler(SQLAlchemyError)
+    def persistence_unavailable(request, error):
+        return JSONResponse(status_code=503, content={"detail": "Persistence unavailable"})
+
     return application
 
 

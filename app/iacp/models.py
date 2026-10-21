@@ -1,11 +1,74 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+BOOTSTRAP_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Instance(Base):
+    __tablename__ = "instances"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_instances_tenant_name"),
+        CheckConstraint("status IN ('pending', 'provisioning', 'ready', 'failed')", name="ck_instances_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
+    image: Mapped[str] = mapped_column(String(63), nullable=False)
+    vcpus: Mapped[int] = mapped_column(Integer, nullable=False)
+    memory_mb: Mapped[int] = mapped_column(Integer, nullable=False)
+    disk_gb: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    executor: Mapped[str] = mapped_column(String(30), default="simulated", nullable=False)
+    vmid: Mapped[int | None] = mapped_column(Integer)
+    node: Mapped[str | None] = mapped_column(String(128))
+    result: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    creation: Mapped["Operation"] = relationship(uselist=False)
+
+    @property
+    def operation_id(self) -> str:
+        return self.creation.id
+
+    @property
+    def job_id(self) -> str:
+        return self.creation.job.id
+
+
+class Operation(Base):
+    __tablename__ = "operations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_operations_tenant_key"),
+        CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name="ck_operations_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    job: Mapped["Job"] = relationship(uselist=False)
 
 
 class Job(Base):
@@ -16,3 +79,16 @@ class Job(Base):
     message: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # NULL conserva los jobs históricos; solo el tenant bootstrap puede leerlos.
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), index=True)
+    operation_id: Mapped[str | None] = mapped_column(ForeignKey("operations.id"), unique=True)
+
+
+class OperationEvent(Base):
+    __tablename__ = "operation_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

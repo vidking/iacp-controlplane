@@ -1,13 +1,18 @@
 from alembic import command
+from sqlalchemy import text
 
 from iacp.migrations import alembic_config
 
 
-def upgrade(engine):
+def upgrade(engine, revision="head"):
     with engine.begin() as connection:
         config = alembic_config()
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, revision)
+
+
+def legacy_snapshot(connection):
+    return connection.execute(text("SELECT id, operation, status, message, created_at, updated_at FROM jobs ORDER BY id")).all()
 
 
 def create_legacy_jobs(engine):

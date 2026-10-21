@@ -56,3 +56,11 @@ def test_server_transition_requires_explicit_existing_resources():
     assert set(server["services"]) == {"api", "worker", "migrate"}
     for service in server["services"].values():
         assert "${IACP_RELEASE:?" in service["image"]
+
+
+def test_optional_tenant_credentials_are_external_and_only_mounted_in_api():
+    config = yaml.safe_load((ROOT / "compose.tenants.yaml").read_text())
+    assert set(config["services"]) == {"api"}
+    assert config["services"]["api"]["environment"] == {"IACP_TENANT_CREDENTIALS_FILE": "/run/secrets/tenant_credentials"}
+    assert ":?" in config["secrets"]["tenant_credentials"]["file"]
+    assert not config.get("volumes")

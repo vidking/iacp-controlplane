@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from iacp.api.dependencies import get_smoke_publisher
+from iacp.api.dependencies import get_instance_publisher, get_smoke_publisher
 from iacp.db import get_session
 from iacp.main import create_app
 from tests.helpers import upgrade
@@ -51,6 +51,7 @@ def application(sessions):
 
     application.dependency_overrides[get_session] = session_override
     application.dependency_overrides[get_smoke_publisher] = lambda: lambda job_id: None
+    application.dependency_overrides[get_instance_publisher] = lambda: lambda job_id: None
     return application
 
 
