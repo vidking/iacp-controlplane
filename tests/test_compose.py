@@ -64,3 +64,17 @@ def test_optional_tenant_credentials_are_external_and_only_mounted_in_api():
     assert config["services"]["api"]["environment"] == {"IACP_TENANT_CREDENTIALS_FILE": "/run/secrets/tenant_credentials"}
     assert ":?" in config["secrets"]["tenant_credentials"]["file"]
     assert not config.get("volumes")
+
+
+def test_terraform_worker_is_opt_in_nonprivileged_and_real_plan_is_disabled():
+    baseline = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    assert "terraform-worker" not in baseline["services"]
+    override = yaml.safe_load((ROOT / "compose.terraform.yaml").read_text())
+    worker = override["services"]["terraform-worker"]
+    assert worker["build"]["target"] == "terraform-worker"
+    assert worker["environment"]["IACP_TERRAFORM_PLAN_ENABLED"] == "${IACP_TERRAFORM_PLAN_ENABLED:-0}"
+    assert worker["read_only"] is True
+    assert worker["cap_drop"] == ["ALL"]
+    assert all(mount.get("read_only") for mount in worker["volumes"] if isinstance(mount, dict))
+    assert "api_token" not in worker["secrets"]
+    assert override["volumes"]["terraform_plans"]["external"] is True

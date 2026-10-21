@@ -42,7 +42,7 @@ class InstanceCreate(BaseModel):
 class InstanceAccepted(JobAccepted):
     instance_id: str
     operation_id: str
-    executor: Literal["simulated"] = "simulated"
+    executor: Literal["simulated", "terraform"] = "simulated"
 
 
 class InstanceResponse(BaseModel):
@@ -57,7 +57,7 @@ class InstanceResponse(BaseModel):
     memory_mb: int
     disk_gb: int
     status: Literal["pending", "provisioning", "ready", "failed"]
-    executor: Literal["simulated"]
+    executor: Literal["simulated", "terraform"]
     vmid: int | None
     node: str | None
     result: dict | None

@@ -1,0 +1,53 @@
+# Optativo, después de compose.yaml y compose.server.yaml cuando corresponda.
+# No utilizar con compose.dev.yaml. Plan real deshabilitado por defecto.
+services:
+  api:
+    environment:
+      IACP_INSTANCE_EXECUTOR: terraform
+
+  terraform-worker:
+    build:
+      context: ./app
+      target: terraform-worker
+    image: ${IACP_TF_WORKER_IMAGE:?Indicar una imagen de release distinta del bootstrap}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      CELERY_BROKER_URL: redis://redis:6379/0
+      IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:-0}
+      IACP_TERRAFORM_SOURCE_DIR: /iac-source
+      IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
+      IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials
+      IACP_TERRAFORM_ALLOCATIONS_FILE: /run/config/allocations.json
+    secrets: [db_password, terraform_credentials]
+    volumes:
+      - type: bind
+        source: ${IACP_TF_SOURCE_PATH:?Indicar un clon autorizado de iac-proxmox fuera del contenedor}
+        target: /iac-source
+        read_only: true
+      - type: bind
+        source: ${IACP_TF_ALLOCATIONS_PATH:?Indicar asignaciones autorizadas fuera de Git}
+        target: /run/config/allocations.json
+        read_only: true
+      - terraform_plans:/var/lib/iacp/terraform
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    networks: [backend, egress]
+
+volumes:
+  terraform_plans:
+    external: true
+    name: ${IACP_TF_PLANS_VOLUME:?Indicar un volumen de planes creado para este entorno}
+
+secrets:
+  terraform_credentials:
+    file: ${IACP_TF_CREDENTIALS_PATH:?Indicar credenciales autorizadas fuera de Git}

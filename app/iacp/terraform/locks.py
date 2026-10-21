@@ -1,0 +1,37 @@
+from contextlib import contextmanager
+import hashlib
+from threading import Lock
+from weakref import WeakKeyDictionary
+
+from sqlalchemy import text
+
+_guard = Lock()
+_local = WeakKeyDictionary()
+
+
+class ExecutionBusy(Exception):
+    pass
+
+
+@contextmanager
+def instance_lock(engine, instance_id):
+    if engine.dialect.name == "postgresql":
+        key = int.from_bytes(hashlib.sha256(instance_id.encode()).digest()[:8], "big", signed=True)
+        with engine.connect() as connection:
+            if not connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}):
+                raise ExecutionBusy()
+            try:
+                yield
+            finally:
+                # Los locks de sesión deben liberarse antes de devolver la conexión al pool.
+                connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    else:
+        # Solo las pruebas unitarias usan SQLite; el runtime configura PostgreSQL.
+        with _guard:
+            lock = _local.setdefault(engine, {}).setdefault(instance_id, Lock())
+        if not lock.acquire(blocking=False):
+            raise ExecutionBusy()
+        try:
+            yield
+        finally:
+            lock.release()

@@ -21,7 +21,7 @@ router = APIRouter(
 @router.post(
     "", status_code=202, response_model=InstanceAccepted, operation_id="createInstance",
     responses={409: {"model": ErrorResponse}},
-    description=("Crea instancia, operación y job de forma atómica. Solo ejecuta simulación. "
+    description=("Crea instancia, operación y job de forma atómica. El servidor selecciona simulación o planificación Terraform; apply permanece deshabilitado. "
                  "Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. "
                  "Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló."),
 )
