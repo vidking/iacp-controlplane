@@ -1,0 +1,45 @@
+# Prueba aislada. Sin puertos de host, sin secretos reales y sin volúmenes del servidor.
+services:
+  tls-init:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    command: ["python", "tests/tls_fixture.py", "init"]
+    volumes: [tls_fixture:/test-tls]
+    network_mode: none
+  api:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    command: ["python", "tests/tls_fixture.py", "api"]
+    networks: [test]
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --entrypoints.web.address=:8080
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.forwardedheaders.insecure=false
+      - --providers.file.filename=/run/tls/iacp.yml
+      - --providers.file.watch=true
+      - --log.level=WARN
+    volumes: [tls_fixture:/run/tls:ro]
+    depends_on:
+      tls-init: {condition: service_completed_successfully}
+      api: {condition: service_started}
+    networks:
+      test:
+        aliases: [iac.cyberfuel.com]
+  tls-client:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    command: ["python", "tests/tls_fixture.py", "client"]
+    volumes: [tls_fixture:/test-tls]
+    depends_on:
+      traefik: {condition: service_started}
+    networks: [test]
+volumes:
+  tls_fixture:
+networks:
+  test:
+    internal: true
