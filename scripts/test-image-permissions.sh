@@ -70,12 +70,13 @@ for directory, subdirectories, filenames in os.walk(root, onerror=fail_walk):
 from fastapi import FastAPI
 from iacp.main import app
 from iacp.worker import celery_app, smoke
-from iacp.terraform.worker import plan_instance
+from iacp.terraform.worker import plan_instance, apply_instance
 
 assert isinstance(app, FastAPI)
 assert smoke.name == "iacp.smoke"
 assert callable(celery_app.tasks[smoke.name].run)
 assert callable(celery_app.tasks[plan_instance.name].run)
+assert callable(celery_app.tasks[apply_instance.name].run)
 print("UID/GID 10001; fuentes root:root legibles sin escritura; FastAPI y worker importados.")
 PY
 if [[ "$target" == terraform-worker ]]; then

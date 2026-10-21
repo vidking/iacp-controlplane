@@ -9,6 +9,8 @@ from .locks import ExecutionBusy, instance_lock
 
 def cancel(session, execution, actor):
     execution = session.get(TerraformExecution, execution.instance_id, with_for_update=True, populate_existing=True)
+    from .apply import block_replan
+    block_replan(session, execution.instance_id)
     if execution.status in {"cancelled", "failed"} or execution.cancel_requested:
         return
     execution.cancel_requested = True
@@ -44,6 +46,8 @@ def retry(session, execution, expected, key, actor, publish):
     try:
         with instance_lock(session.get_bind(), execution.instance_id):
             execution = session.get(TerraformExecution, execution.instance_id, with_for_update=True, populate_existing=True)
+            from .apply import block_replan
+            block_replan(session, execution.instance_id)
             # Releer después del lock: otra petición pudo registrar esta misma clave.
             previous = session.scalar(select(TerraformAttempt).where(TerraformAttempt.instance_id == execution.instance_id,
                                                                     TerraformAttempt.retry_key == key))

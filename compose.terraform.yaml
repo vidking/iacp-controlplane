@@ -4,6 +4,7 @@ services:
   api:
     environment:
       IACP_INSTANCE_EXECUTOR: terraform
+      IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:-0}
 
   terraform-worker:
     build:
@@ -17,6 +18,7 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
       CELERY_BROKER_URL: redis://redis:6379/0
       IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:-0}
+      IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:-0}
       IACP_TERRAFORM_SOURCE_DIR: /iac-source
       IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
       IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials

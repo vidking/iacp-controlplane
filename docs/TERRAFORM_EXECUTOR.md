@@ -1,5 +1,8 @@
 # Incremento 2B: planificación Terraform
 
+> Alcance histórico de 2B: planificación. La capacidad posterior de aplicación
+> autorizada y sus controles están descritos en [AUTHORIZED_APPLY.md](AUTHORIZED_APPLY.md).
+
 Esta entrega prepara planes verificables desde un worker dedicado. La API y el
 worker de 2A conservan la simulación por defecto. La planificación real también
 está deshabilitada por defecto; `apply` está bloqueado en el código y no existe
