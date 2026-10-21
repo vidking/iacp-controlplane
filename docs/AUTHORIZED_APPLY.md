@@ -36,8 +36,11 @@ del inicio de la mutación produce `uncertain`. Antes de cambiar esos límites s
 debe medir una clonación autorizada de laboratorio; no se ha ejecutado ninguna.
 
 La migración `0004_authorized_apply` agrega una tabla; no modifica 0001–0003.
-El rollback revierte la imagen con la cola detenida y conserva la base ampliada,
-los planes y los volúmenes. No ejecutar downgrade ni borrar state/locks a ciegas.
+La reversión inmediata deshabilita apply y conserva una imagen compatible con
+0004, la base ampliada, planes y volúmenes. Las imágenes anteriores que esperan
+0002/0003 rechazan 0004 en readiness; no constituyen un rollback binario probado.
+Una restauración de datos o una imagen de compatibilidad requieren validación y
+autorización separadas. No ejecutar downgrade ni borrar state/locks a ciegas.
 
 Validación de asignación sin red (archivos autorizados externos):
 
