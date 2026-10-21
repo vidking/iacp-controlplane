@@ -32,7 +32,7 @@ class Credential(BaseModel):
     token_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     tenant_id: UUID
     subject: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:@-]+$")
-    role: Literal["operator", "reader"]
+    role: Literal["operator", "reader", "approver"]
 
 
 def authorize(
@@ -79,4 +79,10 @@ def authorize(
 def authorize_write(principal: Annotated[Principal, Depends(authorize)]) -> Principal:
     if principal.role != "operator":
         raise HTTPException(status_code=403, detail="Write permission required")
+    return principal
+
+
+def authorize_approval(principal: Annotated[Principal, Depends(authorize)]) -> Principal:
+    if principal.role != "approver":
+        raise HTTPException(status_code=403, detail="Approval permission required")
     return principal

@@ -1,0 +1,59 @@
+# Aplicación autorizada de un plan
+
+Este cambio amplía 2B. `IACP_TERRAFORM_APPLY_ENABLED=0` sigue siendo el valor
+predeterminado en API y worker. Terraform y Proxmox no se ejecutan en las pruebas:
+el adaptador se simula con PostgreSQL 17, Redis 7 y Celery reales en Docker local.
+
+1. El operador crea la instancia; el worker prepara un plan con la asignación
+   externa autorizada y el módulo fijado de `iac-proxmox`.
+2. Una identidad `approver` del mismo tenant, distinta del solicitante, revisa
+   el plan y llama a `POST /v1/instances/{id}/terraform/approvals` con
+   `attempt`, `plan_sha256` y `valid_for_seconds` (60–3600; predeterminado 900).
+3. El operador solicita `POST .../terraform/apply` con `approval_id` e
+   `Idempotency-Key`. La API y el worker exigen la habilitación del entorno.
+4. El worker verifica intento, hash, source, backend, variables y caducidad;
+   adquiere el lock PostgreSQL por instancia y aplica **solamente** `saved.tfplan`.
+   Terraform conserva `use_lockfile=true` en Wasabi y espera hasta 30 s el lock.
+5. Una consulta `plan -refresh-only` al provider verifica VMID, nodo, nombre y
+   recursos; PostgreSQL registra la observación. `ready` significa KVM observada,
+   no disponibilidad del sistema operativo o de la aplicación invitada.
+
+Las autorizaciones son de un solo uso. Caducan antes de iniciar la mutación y no
+permiten cambiar el plan. El código conserva los jobs anteriores y agrega un job
+`instance.apply`; los eventos permanecen ligados a la operación original.
+`infrastructure_kind` distingue `simulated`, `unprovisioned` y `kvm`.
+
+`GET .../terraform/applies` muestra la evidencia. `POST .../applies/{approval_id}/cancel`
+cancela antes de mutar o exige conciliación si la mutación ya empezó.
+`POST .../applies/{approval_id}/recover` republica el mismo run `queued`; para
+`running`/`uncertain` consulta al provider sin ejecutar apply. Un recurso ausente,
+parcial, distinto o inaccesible conserva el bloqueo y exige intervención.
+Nunca se vuelve a aplicar automáticamente un resultado incierto.
+
+Cada subproceso tiene 300 s, 16 MiB de salida y terminación del grupo de procesos;
+el flujo tiene 900 s y el task límites soft/hard 910/930 s. Un timeout después
+del inicio de la mutación produce `uncertain`. Antes de cambiar esos límites se
+debe medir una clonación autorizada de laboratorio; no se ha ejecutado ninguna.
+
+La migración `0004_authorized_apply` agrega una tabla; no modifica 0001–0003.
+La reversión inmediata deshabilita apply y conserva una imagen compatible con
+0004, la base ampliada, planes y volúmenes. Las imágenes anteriores que esperan
+0002/0003 rechazan 0004 en readiness; no constituyen un rollback binario probado.
+Una restauración de datos o una imagen de compatibilidad requieren validación y
+autorización separadas. No ejecutar downgrade ni borrar state/locks a ciegas.
+
+Validación de asignación sin red (archivos autorizados externos):
+
+```sh
+python -m iacp.terraform.lab --allocation /run/config/lab-allocation.json --request /run/config/lab-request.json
+```
+
+La API todavía no implementa eliminación de KVM. La demostración debe tratar la
+eliminación como un cambio separado de Infraestructura: plan de destrucción con
+el mismo módulo/state, revisión y autorización explícita, y comprobación del
+recurso eliminado. El ejecutor rechaza planes delete/replace y `terraform destroy`.
+El inventario no se elimina para conservar evidencia.
+
+Referencias de comportamiento de Terraform:
+[plan guardado](https://developer.hashicorp.com/terraform/cli/commands/apply),
+[locking S3](https://developer.hashicorp.com/terraform/language/backend/s3).

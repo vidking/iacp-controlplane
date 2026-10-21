@@ -8,5 +8,6 @@ COPY tests ./tests
 COPY docs ./docs
 COPY scripts ./scripts
 COPY pytest.ini compose*.yaml ./
+RUN find /workspace -type d -exec chmod 0755 {} + && find /workspace -type f -exec chmod 0644 {} +
 USER iacp
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider"]

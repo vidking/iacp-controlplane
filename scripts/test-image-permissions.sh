@@ -30,7 +30,9 @@ git ls-files -z -- app/Dockerfile app/.dockerignore app/requirements.txt \
 # Simular un checkout con umask restrictiva sin modificar el árbol de trabajo.
 find "$context" -type d -exec chmod 0700 {} +
 find "$context" -type f -exec chmod 0600 {} +
-docker build --progress plain --tag "$image_tag" "$context"
+target="${IACP_IMAGE_TARGET:-api}"
+case "$target" in api|terraform-worker) ;; *) echo 'Target de imagen inválido.' >&2; exit 1 ;; esac
+docker build --progress plain --target "$target" --tag "$image_tag" "$context"
 
 # Ambos comandos usan el USER predeterminado, sin secretos, montajes ni red.
 docker run --rm --network none "$image_tag" alembic -c /app/alembic.ini heads
@@ -68,10 +70,17 @@ for directory, subdirectories, filenames in os.walk(root, onerror=fail_walk):
 from fastapi import FastAPI
 from iacp.main import app
 from iacp.worker import celery_app, smoke
+from iacp.terraform.worker import plan_instance, apply_instance
 
 assert isinstance(app, FastAPI)
 assert smoke.name == "iacp.smoke"
 assert callable(celery_app.tasks[smoke.name].run)
+assert callable(celery_app.tasks[plan_instance.name].run)
+assert callable(celery_app.tasks[apply_instance.name].run)
 print("UID/GID 10001; fuentes root:root legibles sin escritura; FastAPI y worker importados.")
 PY
+if [[ "$target" == terraform-worker ]]; then
+  docker run --rm --network none "$image_tag" terraform version
+  docker run --rm --network none "$image_tag" git --version
+fi
 echo 'Regresión de permisos de imagen aprobada con archivos 600 y directorios 700 en el contexto.'

@@ -43,6 +43,12 @@ class Instance(Base):
     creation: Mapped["Operation"] = relationship(uselist=False)
 
     @property
+    def infrastructure_kind(self) -> str:
+        if self.executor == "simulated":
+            return "simulated"
+        return "kvm" if self.vmid is not None and self.node is not None else "unprovisioned"
+
+    @property
     def operation_id(self) -> str:
         return self.creation.id
 
@@ -92,3 +98,69 @@ class OperationEvent(Base):
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TerraformExecution(Base):
+    __tablename__ = "terraform_executions"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','planned','failed','cancelled')", name="ck_tf_execution_status"),
+        CheckConstraint("vmid IS NULL OR vmid <> 104", name="ck_tf_excludes_controlplane"),
+    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), unique=True, nullable=False)
+    operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    state_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
+    vmid: Mapped[int | None] = mapped_column(Integer, unique=True)
+    allocation: Mapped[dict | None] = mapped_column(JSON)
+    source_revision: Mapped[str | None] = mapped_column(String(40))
+    plan_sha256: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TerraformAttempt(Base):
+    __tablename__ = "terraform_attempts"
+    __table_args__ = (
+        UniqueConstraint("instance_id", "number", name="uq_tf_attempt_number"),
+        UniqueConstraint("instance_id", "retry_key", name="uq_tf_attempt_retry_key"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("terraform_executions.instance_id"), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    retry_key: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    plan_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TerraformApply(Base):
+    __tablename__ = "terraform_applies"
+    __table_args__ = (
+        UniqueConstraint("instance_id", "attempt", name="uq_tf_apply_plan"),
+        UniqueConstraint("instance_id", "approval_key", name="uq_tf_apply_approval_key"),
+        CheckConstraint("status IN ('approved','queued','running','completed','failed','uncertain','cancelled')", name="ck_tf_apply_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("terraform_executions.instance_id"), nullable=False, index=True)
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id"), unique=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    dispatch_key: Mapped[str | None] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approved_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    result: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -13,7 +13,7 @@ from tests.helpers import create_legacy_jobs, legacy_snapshot, upgrade
 def test_fresh_schema_matches_models_and_repeated_upgrade_preserves_it(empty_engine):
     upgrade(empty_engine)
     upgrade(empty_engine)
-    assert set(inspect(empty_engine).get_table_names()) == {"jobs", "alembic_version", "tenants", "instances", "operations", "operation_events"}
+    assert set(inspect(empty_engine).get_table_names()) == {"jobs", "alembic_version", "tenants", "instances", "operations", "operation_events", "terraform_executions", "terraform_attempts", "terraform_applies"}
     with empty_engine.begin() as connection:
         assert schema_is_current(connection)
         config = alembic_config()
@@ -69,7 +69,7 @@ def test_downgrade_cannot_drop_persistent_jobs(engine):
     with engine.begin() as connection:
         config = alembic_config()
         config.attributes["connection"] = connection
-        with pytest.raises(RuntimeError, match="preserve persistent jobs"):
+        with pytest.raises(RuntimeError, match="conservar autorizaciones"):
             command.downgrade(config, "base")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002_instances_operations"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0004_authorized_apply"
     assert "jobs" in inspect(engine).get_table_names()

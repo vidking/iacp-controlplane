@@ -55,6 +55,7 @@ el token sin depender de rutas o identidades del host.
 | `compose.yaml` | Configuración compatible con el bootstrap | Volúmenes y archivos de secretos existentes |
 | `compose.server.yaml` | Transición aprobada del bootstrap a Git | Exige nombres de volúmenes externos y rutas explícitas de secretos existentes |
 | `compose.tenants.yaml` | Override optativo de identidades para la API | Registro de credenciales externo a Git |
+| `compose.terraform.yaml` | Worker optativo de planificación Terraform | Clon readonly, credenciales externas y volumen privado de planes |
 
 Los archivos de desarrollo y pruebas son independientes; no combinarlos con
 `compose.yaml`. El archivo del servidor solo se combina con `compose.yaml` tras
@@ -66,7 +67,7 @@ proyecto Compose ni crear otra base de datos por accidente.
 Se conserva API → Redis → Celery → PostgreSQL. La API está organizada en módulos,
 usa contratos Pydantic y [OpenAPI versionado](docs/openapi.json), y el esquema se
 administra con Alembic. `POST /v1/instances` acepta peticiones idempotentes por
-tenant y devuelve 202; Celery ejecuta únicamente simulación. El inventario y las
+tenant y devuelve 202; Celery ejecuta simulación por defecto. El inventario y las
 operaciones con eventos quedan persistidos. No se ejecuta Terraform ni Proxmox.
 La [guía de 2A](docs/DELIVERY_2A.md) describe contratos, identidad por tenant,
 roles mínimos, migración `0002`, fallos y límites de recuperación.
@@ -74,6 +75,16 @@ roles mínimos, migración `0002`, fallos y límites de recuperación.
 La [auditoría y los siguientes incrementos](docs/AUDIT_PHASE1.md) cubren tenants,
 RBAC, instancias, idempotencia, outbox, recuperación, auditoría e `IaCExecutor`.
 Los [gates operativos](docs/NEXT_GATES.md) incluyen respaldo y restauración probada.
+
+## Preparación del incremento 2B
+
+El [ejecutor Terraform](docs/TERRAFORM_EXECUTOR.md) usa el stack KVM original de
+`CyberFuel/iac-proxmox` en un commit fijo, con disco configurable y state Wasabi
+estable por instancia. Se integra con las entidades de 2A y una cola dedicada.
+Incluye cancelación, historial de intentos, recuperación y preparación verificable
+del plan. La simulación sigue siendo el comportamiento predeterminado; el plan
+real requiere configuración autorizada y `apply` permanece bloqueado en código.
+Los [resultados Docker](docs/VALIDATION_2B.md) no usan credenciales reales.
 
 ## Transición al servidor
 
@@ -85,6 +96,8 @@ El [cierre técnico e inventario de VM 104](docs/RELEASE_READINESS.md) documenta
 la inspección histórica de solo lectura y el bloqueo por ausencia de backup
 constatado en esa revisión; no sustituye la verificación previa a cada cambio.
 
-El entregable 2A no se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
+El incremento 2B no se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
 aprobaciones explícitas. No usar `down -v`, regenerar secretos existentes ni
 administrar el mismo stack con dos reconciliadores.
+
+Aplicación controlada de planes, permisos y recuperación: [guía del ejecutor autorizado](docs/AUTHORIZED_APPLY.md).

@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Instance, Job, Operation, OperationEvent
+from ..models import Instance, Job, Operation, OperationEvent, TerraformExecution
 from ..schemas import InstanceAccepted, InstanceCreate
 from ..security import Principal
 from .jobs import Publisher, QueueUnavailable
@@ -24,7 +24,8 @@ def accepted(session: Session, operation: Operation, digest: str) -> InstanceAcc
     if operation.request_hash != digest:
         raise Conflict("Idempotency key already used for another request")
     job = session.scalars(select(Job).where(Job.operation_id == operation.id)).one()
-    return InstanceAccepted(instance_id=operation.instance_id, operation_id=operation.id, job_id=job.id)
+    instance = session.get(Instance, operation.instance_id)
+    return InstanceAccepted(instance_id=operation.instance_id, operation_id=operation.id, job_id=job.id, executor=instance.executor)
 
 
 def create_instance(session: Session, principal: Principal, spec: InstanceCreate,
@@ -34,12 +35,14 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
     previous = session.scalar(query)
     if previous is not None:
         return accepted(session, previous, digest)
-    instance = Instance(id=str(uuid4()), tenant_id=principal.tenant_id, status="pending", **spec.model_dump())
+    from ..terraform.config import instance_executor
+    mode = instance_executor()
+    instance = Instance(id=str(uuid4()), tenant_id=principal.tenant_id, status="pending", executor=mode, **spec.model_dump())
     operation = Operation(
         id=str(uuid4()), tenant_id=principal.tenant_id, instance_id=instance.id, kind="instance.create",
         status="queued", idempotency_key=key, request_hash=digest, requested_by=principal.subject,
     )
-    job = Job(id=str(uuid4()), operation="instance.create", status="queued",
+    job = Job(id=str(uuid4()), operation="instance.plan" if mode == "terraform" else "instance.create", status="queued",
               tenant_id=principal.tenant_id, operation_id=operation.id)
     try:
         session.add(instance)
@@ -47,6 +50,10 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
         session.add(operation)
         session.flush()
         session.add(job)
+        if mode == "terraform":
+            from ..terraform.lifecycle import initial_execution
+            session.flush()
+            initial_execution(session, instance, operation, job)
         event(session, operation, "accepted", principal.subject)
         session.commit()
     except IntegrityError:
@@ -58,11 +65,15 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
         if session.scalar(select(Instance.id).where(Instance.tenant_id == principal.tenant_id, Instance.name == spec.name)):
             raise Conflict("Instance name already exists") from None
         raise
-    result = InstanceAccepted(instance_id=instance.id, operation_id=operation.id, job_id=job.id)
+    result = InstanceAccepted(instance_id=instance.id, operation_id=operation.id, job_id=job.id, executor=mode)
     try:
         publish(job.id)
     except Exception:
         # Un timeout puede ser ambiguo. No sobrescribir un worker que ya reclamó el job.
+        execution = None
+        if mode == "terraform":
+            # Igual que el worker: bloquear ejecución antes de job para evitar deadlocks.
+            execution = session.get(TerraformExecution, instance.id, with_for_update=True, populate_existing=True)
         changed = session.execute(update(Job).where(Job.id == job.id, Job.status == "queued").values(
             status="failed", message="No se confirmó la publicación del trabajo",
         )).rowcount
@@ -70,6 +81,9 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
             operation.status = "failed"
             operation.error_code = "DISPATCH_FAILED"
             instance.status = "failed"
+            if mode == "terraform":
+                from ..terraform.lifecycle import fail_dispatch
+                fail_dispatch(session, execution)
             event(session, operation, "dispatch_failed", principal.subject)
         session.commit()
         raise QueueUnavailable from None
