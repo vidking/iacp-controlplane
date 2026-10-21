@@ -106,10 +106,9 @@ def test_missing_job_remains_404(client, auth):
     assert client.get("/v1/jobs/not-a-uuid", headers=auth).status_code == 404
 
 
-def test_provisioning_stays_disabled(client, auth):
+def test_instance_creation_requires_a_body_and_idempotency_key(client, auth):
     response = client.post("/v1/instances", headers=auth)
-    assert response.status_code == 503
-    assert response.json()["code"] == "IAC_EXECUTOR_NOT_CONFIGURED"
+    assert response.status_code == 422
 
 
 def test_readiness_checks_versioned_schema_and_redis(client, engine, monkeypatch):

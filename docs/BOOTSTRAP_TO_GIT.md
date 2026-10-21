@@ -164,7 +164,9 @@ durante la transición. No detener ni recrear DB/Redis para cambiar la fuente de
 - Los archivos de secretos originales mantienen contenido y permisos.
 - Readiness y revisión Alembic correctos; recuento y jobs históricos conservados.
 - Smoke autenticado a través de Traefik completa en PostgreSQL; el acceso sin
-  token falla y `POST /v1/instances` conserva 503.
+  token falla. Desde 2A, `POST /v1/instances` requiere cuerpo e `Idempotency-Key`
+  y devuelve 202 para simulación; sin cuerpo debe devolver 422. Ver
+  [DELIVERY_2A.md](DELIVERY_2A.md) antes de habilitar identidades adicionales.
 - Estado y persistencia Redis correctos; no se perdieron mensajes.
 - Contenedores API/worker utilizan la imagen etiquetada por SHA y Traefik monta
   los archivos del checkout aprobado. La exposición sigue en loopback.
