@@ -21,3 +21,8 @@ def get_plan_publisher():
     from ..terraform.worker import plan_instance
 
     return lambda job_id, attempt: plan_instance.apply_async(args=[job_id, attempt], queue="terraform")
+
+
+def get_apply_publisher():
+    from ..terraform.worker import apply_instance
+    return lambda identifier, mode: apply_instance.apply_async(args=[identifier, mode], queue="terraform")

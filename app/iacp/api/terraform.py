@@ -44,7 +44,7 @@ class ExecutionResponse(BaseModel):
     error_code: str | None
     cancel_requested: bool
     approval_required: Literal[True] = True
-    apply_enabled: Literal[False] = False
+    apply_enabled: bool = False
     attempts: list[AttemptResponse]
 
 
@@ -72,7 +72,8 @@ def owned_execution(instance_id, principal, session):
 def response(execution, session):
     attempts = session.scalars(select(TerraformAttempt).where(TerraformAttempt.instance_id == execution.instance_id)
                               .order_by(TerraformAttempt.number))
-    return ExecutionResponse(**{key: getattr(execution, key) for key in (
+    from ..terraform.apply import enabled
+    return ExecutionResponse(apply_enabled=enabled(), **{key: getattr(execution, key) for key in (
         "instance_id", "job_id", "operation_id", "status", "attempt", "state_key", "source_revision",
         "plan_sha256", "error_code", "cancel_requested")}, attempts=[AttemptResponse.model_validate(row) for row in attempts])
 
@@ -87,7 +88,10 @@ def get_execution(instance_id: str, principal: Annotated[Principal, Depends(auth
 def cancel_execution(instance_id: str, principal: Annotated[Principal, Depends(authorize_write)],
                      session: Annotated[Session, Depends(get_session)]):
     execution = owned_execution(instance_id, principal, session)
-    cancel(session, execution, principal.subject)
+    try:
+        cancel(session, execution, principal.subject)
+    except Conflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
     return response(execution, session)
 
 

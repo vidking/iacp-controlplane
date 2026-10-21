@@ -58,6 +58,7 @@ class InstanceResponse(BaseModel):
     disk_gb: int
     status: Literal["pending", "provisioning", "ready", "failed"]
     executor: Literal["simulated", "terraform"]
+    infrastructure_kind: Literal["simulated", "unprovisioned", "kvm"]
     vmid: int | None
     node: str | None
     result: dict | None

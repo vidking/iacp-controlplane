@@ -20,8 +20,12 @@ def instance_lock(engine, instance_id):
         with engine.connect() as connection:
             if not connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}):
                 raise ExecutionBusy()
+            pid = connection.scalar(text("SELECT pg_backend_pid()"))
+            def heartbeat():
+                if connection.invalidated or connection.scalar(text("SELECT pg_backend_pid()")) != pid:
+                    raise RuntimeError("Instance lock connection lost")
             try:
-                yield
+                yield heartbeat
             finally:
                 # Los locks de sesión deben liberarse antes de devolver la conexión al pool.
                 connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
@@ -32,6 +36,6 @@ def instance_lock(engine, instance_id):
         if not lock.acquire(blocking=False):
             raise ExecutionBusy()
         try:
-            yield
+            yield lambda: None
         finally:
             lock.release()

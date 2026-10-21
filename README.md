@@ -99,3 +99,5 @@ constatado en esa revisión; no sustituye la verificación previa a cada cambio.
 El incremento 2B no se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
 aprobaciones explícitas. No usar `down -v`, regenerar secretos existentes ni
 administrar el mismo stack con dos reconciliadores.
+
+Aplicación controlada de planes, permisos y recuperación: [guía del ejecutor autorizado](docs/AUTHORIZED_APPLY.md).

@@ -14,11 +14,21 @@ class CommandRunner:
         self.binary = tuple(binary)
         self.timeout = timeout
 
+    def apply_saved(self, cwd: Path, env: dict, cancelled) -> bytes:
+        # Ruta interna de argumentos fijos; run() sigue rechazando apply del llamador.
+        if os.environ.get("IACP_TERRAFORM_APPLY_ENABLED") != "1":
+            raise PlanError("APPLY_DISABLED")
+        return self._execute(["apply", "-input=false", "-no-color", "-lock-timeout=30s", "saved.tfplan"],
+                             cwd, env, cancelled, (0,))
+
     def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,)) -> bytes:
         if not args or args[0] not in {"version", "init", "validate", "plan", "show"}:
             raise PlanError("COMMAND_FORBIDDEN")
         if any(value.startswith(("-destroy", "-lock=false", "-target", "-replace", "-migrate-state", "-force")) for value in args):
             raise PlanError("COMMAND_FORBIDDEN")
+        return self._execute(args, cwd, env, cancelled, allowed)
+
+    def _execute(self, args, cwd, env, cancelled, allowed):
         if cancelled():
             raise Cancelled()
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
