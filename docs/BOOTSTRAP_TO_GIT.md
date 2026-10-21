@@ -12,6 +12,12 @@ el servidor y requiere aprobación de despliegue, además de aprobación de merg
 El ensayo automatizado usa datos sintéticos en Docker local. No sustituye el
 inventario, el backup ni la restauración aislada del entorno real.
 
+El [cierre técnico y la inspección de VM 104](RELEASE_READINESS.md) registran un
+bloqueo vigente: no hay backup PostgreSQL, confirmado por el propietario.
+Se detuvo toda preparación con escrituras en el servidor, incluido el clon y
+la creación de credenciales. Resolver y acreditar el respaldo antes de continuar.
+El merge, la migración activa y el despliegue necesitan autorizaciones separadas.
+
 ## Separación entre código y estado
 
 | Elemento | Tratamiento |

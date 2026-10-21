@@ -97,6 +97,8 @@ entonces estaba pendiente. Se validó un host Docker local; no se afirma una
 matriz de arquitecturas o sistemas operativos ensayada.
 
 No se accedió a VM 104 ni a Proxmox, no se ejecutó Terraform y no se fusionó el PR.
+Esa afirmación corresponde a esta validación Docker. La inspección posterior de
+solo lectura y sus bloqueos están en [RELEASE_READINESS.md](RELEASE_READINESS.md).
 Los datos del ensayo son sintéticos. El inventario y la restauración de backups
 reales del servidor siguen pendientes de la ventana aprobada de
 [transición a Git](BOOTSTRAP_TO_GIT.md). Tenants/RBAC, outbox, concurrencia y

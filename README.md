@@ -78,6 +78,9 @@ El [plan de transición desde el bootstrap a Git](docs/BOOTSTRAP_TO_GIT.md) cons
 PostgreSQL, Redis, los secretos y sus volúmenes. El
 [procedimiento Alembic](docs/MIGRATIONS.md) describe la adopción del esquema.
 
+El [cierre técnico e inventario de VM 104](docs/RELEASE_READINESS.md) documenta
+la inspección de solo lectura y el bloqueo vigente por ausencia de backup.
+
 No se ha desplegado en VM 104. Fusionar el PR y ejecutar la transición requieren
 aprobaciones explícitas. No usar `down -v`, regenerar secretos existentes ni
 administrar el mismo stack con dos reconciliadores.

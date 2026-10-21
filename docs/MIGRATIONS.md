@@ -17,47 +17,50 @@ La inspección estructural no valida todos los objetos externos (por ejemplo,
 triggers o privilegios) ni la semántica de cada fila. Un entorno personalizado
 requiere revisión antes de adoptarlo.
 
-## Actualización futura del laboratorio
+## Gate previo y procedimiento único de servidor
 
-**No se ejecutó este procedimiento en VM 104. Requiere aprobación de despliegue.**
+**No se ejecutó Alembic en VM 104. Requiere autorización de migración.**
+La [revisión del primer despliegue](RELEASE_READINESS.md) constató ausencia de
+respaldo, confirmada por el propietario. No continuar con escrituras, clon,
+migración ni despliegue hasta acreditar backup y restauración aislada.
 
-Para pasar del bootstrap a un checkout de Forgejo, seguir primero
-[BOOTSTRAP_TO_GIT.md](BOOTSTRAP_TO_GIT.md): exige el proyecto real, volúmenes
-externos y archivos de secretos existentes mediante `compose.server.yaml`. Los
-comandos siguientes describen la operación desde un stack ya identificado; no
-deben ejecutarse desde un directorio nuevo con valores implícitos.
+[BOOTSTRAP_TO_GIT.md](BOOTSTRAP_TO_GIT.md) es el procedimiento principal. No usar
+un resumen abreviado que omita `compose.server.yaml`, el proyecto real o los
+volúmenes externos. En particular, construir sin el archivo del servidor puede
+sobrescribir la etiqueta `:bootstrap` necesaria para rollback.
 
-Antes de actualizar: backup lógico consistente y restore comprobado; revisión
-del diff, secreto disponible para UID/GID 10001 y ventana sin escritores. No
-cambiar el nombre del proyecto Compose ni los volúmenes `postgres_data` y
-`redis_data`. No usar `down -v`.
-
-Una vez aprobado, desde el checkout del stack correcto:
+Después de resolver los gates y obtener las autorizaciones, el resumen coherente
+con ese procedimiento es:
 
 ```bash
-docker compose config --quiet
-docker compose stop api worker
-docker compose build api worker migrate
-docker compose run --rm migrate
+server() {
+  docker compose --env-file "${IACP_SERVER_ENV:?}" -p "${IACP_SERVER_PROJECT:?}" \
+    -f "${IACP_RELEASE_DIR:?}/compose.yaml" -f "$IACP_RELEASE_DIR/compose.server.yaml" "$@"
+}
+server config --quiet
+server build api
+# Aplicar la ventana aprobada: detener entrada/API, drenar, detener worker y verificar backups de cierre.
+server run --rm --no-deps migrate
+server up -d --no-deps --pull never api worker traefik
 ```
+
+`IACP_SERVER_ENV` identifica el archivo fuera de Git; `IACP_SERVER_PROJECT` debe
+ser el proyecto observado y `IACP_RELEASE_DIR` el clon fijado al SHA aprobado.
+El env debe exigir volúmenes existentes, secretos originales y la etiqueta de
+release que coincida con ese SHA. No iniciar ni recrear DB/Redis en este corte.
 
 Si la migración falla, detener la actualización y revisar la discrepancia con
 el backup disponible. No borrar tablas ni forzar stamp. El esquema y las filas
 previas se conservan dentro de la transacción PostgreSQL.
 
-Después de una migración exitosa:
+Repetir `upgrade head` es seguro si la revisión ya está aplicada, pero no evita
+la necesidad de aprobación. Tras el arranque autorizado, comprobar readiness,
+contrato, worker y smoke según el acta del procedimiento principal.
 
-```bash
-docker compose up -d
-curl -fsS http://127.0.0.1:8080/health/ready
-bash scripts/smoke.sh
-```
-
-El servicio `migrate` también corre durante `up`; repetir `upgrade head` es
-seguro si la revisión ya está aplicada. API y worker esperan su salida exitosa.
 Para este baseline aditivo, volver a la imagen anterior es compatible con la
-tabla `jobs` preservada; no ejecutar downgrade de DB. Las revisiones futuras
-deben definir su propio procedimiento de recuperación.
+tabla `jobs` preservada; no ejecutar downgrade de DB. Conservar el directorio
+bootstrap y su imagen; una recuperación de datos requiere autorización propia.
+Las revisiones futuras deben definir su procedimiento de recuperación.
 
 Separar credenciales DDL de las credenciales API/worker será un gate de seguridad
 posterior. Este incremento conserva los archivos de secretos y roles del Compose
