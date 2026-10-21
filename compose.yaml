@@ -1,0 +1,94 @@
+name: iacp-controlplane
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iacp} -d ${POSTGRES_DB:-iacp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    networks: [backend]
+
+  api:
+    build: ./app
+    image: iacp/controlplane-api:bootstrap
+    environment: &app_env
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_API_TOKEN_FILE: /run/secrets/api_token
+      CELERY_BROKER_URL: redis://redis:6379/0
+    secrets: [db_password, api_token]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend, frontend]
+
+  worker:
+    build: ./app
+    image: iacp/controlplane-api:bootstrap
+    command: ["celery", "-A", "iacp.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
+    environment: *app_env
+    secrets: [db_password, api_token]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [backend, egress]
+
+  traefik:
+    image: traefik:v3.1
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [frontend]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  backend:
+    internal: true
+  frontend:
+  egress: # Ruta de salida del worker; aplicar egress filtering hacia Proxmox/Wasabi al activar IaC
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  api_token:
+    file: ./secrets/api_token
