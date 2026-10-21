@@ -113,6 +113,23 @@ de los volúmenes. Los proyectos tienen nombres nuevos; al terminar se retiran
 sus contenedores y redes y se conservan los volúmenes de desarrollo, cuyos nombres
 se informan al final. No necesita sudo si el equipo ya tiene acceso a Docker.
 
+Para comprobar únicamente los permisos de la imagen, sin iniciar PostgreSQL ni
+Redis:
+
+```bash
+bash scripts/test-image-permissions.sh
+```
+
+Esta regresión construye el Dockerfile de aplicación con los archivos versionados
+del árbol de trabajo en un contexto temporal: archivos `600` y directorios `700`.
+Ejecuta `alembic -c /app/alembic.ini heads` e importa FastAPI y el worker como el
+usuario predeterminado de la imagen (UID/GID 10001), sin red, secretos ni montajes.
+Comprueba que `/app` y su contenido pertenecen a `root:root`, con directorios `755`
+y archivos `644`, legibles sin permitir escritura a `iacp`. Al terminar retira
+solo la imagen de prueba y el contexto temporal; no crea ni elimina volúmenes.
+Requiere Git, Bash y acceso al Docker local. La validación completa también
+incluye esta regresión.
+
 Para ejecutar solo la suite, usar `bash scripts/test-integration.sh` o los
 comandos Compose del README. Ambas rutas construyen el test runner en Docker.
 La alternativa de pruebas rápidas con un Python 3.12 propio sigue disponible:
