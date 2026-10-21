@@ -35,3 +35,9 @@ IACP_IMAGE_TARGET=terraform-worker bash scripts/test-image-permissions.sh
 
 No ejecutar los scripts sobre un daemon remoto ni combinarlos con los Compose del
 servidor. `apply` y `destroy` reales no forman parte de ninguna prueba.
+
+Validación conjunta posterior a la integración externa de ejecutor y TLS:
+172 pruebas aprobadas en Docker (27.47 s), incluida la regresión HTTP 409 cuando
+el plan cambia antes de encolar apply. La prueba HTTPS también pasó sobre la
+combinación anterior de 171 pruebas; el ajuste posterior solo afecta ese conflicto
+HTTP. La validación conjunta no realizó un merge ni ejecutó Terraform real.
