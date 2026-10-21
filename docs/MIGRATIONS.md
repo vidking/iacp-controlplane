@@ -21,6 +21,12 @@ requiere revisión antes de adoptarlo.
 
 **No se ejecutó este procedimiento en VM 104. Requiere aprobación de despliegue.**
 
+Para pasar del bootstrap a un checkout de Forgejo, seguir primero
+[BOOTSTRAP_TO_GIT.md](BOOTSTRAP_TO_GIT.md): exige el proyecto real, volúmenes
+externos y archivos de secretos existentes mediante `compose.server.yaml`. Los
+comandos siguientes describen la operación desde un stack ya identificado; no
+deben ejecutarse desde un directorio nuevo con valores implícitos.
+
 Antes de actualizar: backup lógico consistente y restore comprobado; revisión
 del diff, secreto disponible para UID/GID 10001 y ventana sin escritores. No
 cambiar el nombre del proyecto Compose ni los volúmenes `postgres_data` y

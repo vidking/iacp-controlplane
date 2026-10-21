@@ -1,0 +1,116 @@
+# Entorno independiente. No combinar con compose.yaml ni compose.server.yaml.
+name: iacp-development
+
+x-app: &app
+  build: ./app
+  image: ${COMPOSE_PROJECT_NAME:-iacp-development}-api:development
+  environment: &app_env
+    POSTGRES_DB: ${IACP_DEV_DB:-iacp_dev}
+    POSTGRES_USER: ${IACP_DEV_USER:-iacp_dev}
+    DATABASE_HOST: dev-db
+    DATABASE_PASSWORD_FILE: /run/dev-secrets/db_password
+    IACP_API_TOKEN_FILE: /run/dev-secrets/api_token
+    CELERY_BROKER_URL: redis://dev-redis:6379/0
+  volumes:
+    - dev_secrets:/run/dev-secrets:ro
+  networks: [dev-backend]
+
+services:
+  dev-init-secrets:
+    image: python:3.12-slim
+    command: ["python", "/setup/init_dev_secrets.py", "/run/dev-secrets"]
+    volumes:
+      - dev_secrets:/run/dev-secrets
+      - ./scripts/init_dev_secrets.py:/setup/init_dev_secrets.py:ro
+    network_mode: none
+    restart: "no"
+
+  dev-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${IACP_DEV_DB:-iacp_dev}
+      POSTGRES_USER: ${IACP_DEV_USER:-iacp_dev}
+      POSTGRES_PASSWORD_FILE: /run/dev-secrets/db_password
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+      - dev_secrets:/run/dev-secrets:ro
+    depends_on:
+      dev-init-secrets: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [dev-backend]
+
+  dev-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - dev_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [dev-backend]
+
+  dev-migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      dev-db: {condition: service_healthy}
+    restart: "no"
+
+  dev-api:
+    <<: *app
+    depends_on:
+      dev-migrate: {condition: service_completed_successfully}
+      dev-redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=10)"]
+      interval: 2s
+      timeout: 12s
+      retries: 30
+    networks: [dev-backend, dev-frontend]
+
+  dev-worker:
+    <<: *app
+    command: ["celery", "-A", "iacp.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
+    depends_on:
+      dev-migrate: {condition: service_completed_successfully}
+      dev-redis: {condition: service_healthy}
+
+  dev-traefik:
+    image: traefik:v3.1
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/development.yml:/etc/traefik/dynamic.yml:ro
+    ports:
+      - "127.0.0.1:${IACP_DEV_HTTP_PORT:-18080}:8080"
+    depends_on:
+      dev-api: {condition: service_healthy}
+    networks: [dev-frontend]
+
+  dev-check:
+    <<: *app
+    profiles: [tools]
+    environment:
+      <<: *app_env
+      PYTHONPATH: /app
+    command: ["python", "/checks/check_runtime.py", "--base-url", "http://dev-traefik:8080"]
+    volumes:
+      - dev_secrets:/run/dev-secrets:ro
+      - ./scripts/check_runtime.py:/checks/check_runtime.py:ro
+      - ./scripts/rehearse_transition.py:/checks/rehearse_transition.py:ro
+    networks: [dev-backend, dev-frontend]
+
+volumes:
+  dev_postgres_data:
+  dev_redis_data:
+  dev_secrets:
+
+networks:
+  dev-backend:
+    internal: true
+  dev-frontend:

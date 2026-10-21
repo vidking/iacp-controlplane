@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r app/requirements-dev.txt && groupadd -g 10001 
 COPY app ./app
 COPY tests ./tests
 COPY docs ./docs
-COPY pytest.ini compose.yaml compose.test.yaml ./
+COPY scripts ./scripts
+COPY pytest.ini compose*.yaml ./
 USER iacp
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider"]
