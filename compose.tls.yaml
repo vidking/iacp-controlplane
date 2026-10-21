@@ -1,0 +1,22 @@
+# Optativo: aplicar después de compose.yaml y compose.server.yaml, sin alterar sus volúmenes.
+services:
+  traefik:
+    command: ["--configFile=/etc/traefik/tls.yml"]
+    volumes:
+      - ./traefik/tls.yml:/etc/traefik/tls.yml:ro
+      - type: bind
+        source: ${IACP_TLS_DYNAMIC_DIR:?Indicar directorio externo de configuración TLS validada}
+        target: /etc/traefik/tls-dynamic
+        read_only: true
+      - type: bind
+        source: ${IACP_TLS_CERTS_DIR:?Indicar directorio externo de certificados corporativos}
+        target: /run/tls
+        read_only: true
+    ports:
+      - "${IACP_TLS_BIND_IP:?Indicar la IP LAN autorizada}:443:443"
+    networks: [frontend, proxy_network]
+
+networks:
+  proxy_network:
+    external: true
+    name: ${IACP_PROXY_NETWORK:?Indicar la red proxy_network existente y autorizada}

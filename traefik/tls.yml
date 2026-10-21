@@ -1,0 +1,21 @@
+# Configuración independiente; el listener de diagnóstico conserva su puerto.
+entryPoints:
+  web:
+    address: ':8080'
+  websecure:
+    address: ':443'
+    forwardedHeaders:
+      insecure: false
+providers:
+  file:
+    directory: /etc/traefik/tls-dynamic
+    watch: true
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        X-Request-ID: keep
+log:
+  level: WARN
