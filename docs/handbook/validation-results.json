@@ -27,6 +27,13 @@
       "status": "passed",
       "tests": 171,
       "seconds": 33.44
+    },
+    {
+      "name": "combined-final",
+      "source_revision": "939bb418e3d1da6dddbfb917e951d13d3ea67bec+8355f4bc260dee8959cec052727cb3cb4a6d1e73",
+      "status": "passed",
+      "tests": 172,
+      "seconds": 27.47
     }
   ],
   "checks": {
@@ -44,5 +51,7 @@
     "validated-server-backup-and-restore",
     "real-proxmox-wasabi-validation",
     "api-deletion"
-  ]
+  ],
+  "main_observed": "2ed41041a6fda227260a78e196da87181417a70d",
+  "external_integration_observed": true
 }

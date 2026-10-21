@@ -40,7 +40,7 @@ No existe reintento automático de apply ni transición de uncertain a un apply 
 
 | Operación | Alcance / vínculo | Repetición idéntica | Conflicto |
 |---|---|---|---|
-| Crear instancia | Tenant + Idempotency-Key + hash del cuerpo normalizado | Mismos IDs; no república, incluso si falló | Otro cuerpo: 409 |
+| Crear instancia | Tenant + Idempotency-Key + hash del cuerpo normalizado | Mismos IDs; no republica, incluso si falló | Otro cuerpo: 409 |
 | Reintentar plan | Instancia + clave retry + expected_attempt | Mismo número de intento | Otro intento o worker activo: 409 |
 | Aprobar plan | Instancia + clave aprobación + cuerpo + aprobador | Misma autorización y vigencia original | Otro cuerpo/sujeto o plan ya autorizado: 409 |
 | Solicitar apply | Autorización + clave dispatch + solicitante | Mismo run/job y estado actual; no republica | Otra clave/sujeto: 409 |

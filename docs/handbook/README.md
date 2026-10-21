@@ -12,10 +12,12 @@ La URL de integración es **https://iac.cyberfuel.com**.
 | Seguridad | [Permisos y aislamiento](SECURITY.md), [arquitectura](ARCHITECTURE.md) | Revisión de identidades, aprobación independiente, secretos, TLS y egress |
 | Todos | [Capacidades y FAQ](CAPABILITIES_FAQ.md), [evidencia](VALIDATION.md) | Distinguir implementado, simulado, pendiente y validado |
 
-El incremento 2B y el ejecutor autorizado requieren integración antes de usar los
-endpoints nuevos. El override TLS es independiente y requiere configuración
-externa autorizada. Revisar las dependencias de los PRs en Forgejo y fijar los
-commits finales integrados; no desplegar nombres de ramas móviles.
+La base verificada `main` 2ed4104 ya incorpora 2B, el ejecutor autorizado
+(integrado externamente mediante PR #9) y TLS (PR #8). La corrección posterior del
+conflicto HTTP del plan se revisa por separado. El override TLS requiere
+configuración externa autorizada; su integración no lo habilita en el servidor.
+Este manual no incorpora código de esas entregas. Fijar el commit final aprobado
+y los digests antes de cualquier ventana; no desplegar nombres de ramas móviles.
 
 La demostración no está autorizada por este manual. No se ejecutó apply, destroy,
 merge, despliegue ni acceso a VM 104 durante la preparación de estos cambios.

@@ -60,7 +60,7 @@ No anunciar una KVM creada al CRM hasta observar `infrastructure_kind=kvm`,
 | `executor=simulated`, `infrastructure_kind=simulated` | Flujo de prueba; no existe KVM creada por esta operación |
 | `executor=terraform`, `infrastructure_kind=unprovisioned` | Solicitud/plan pendientes; VMID y nodo reales aún no confirmados |
 | `infrastructure_kind=kvm` | Identidad de KVM observada; revisar status y fecha de result, no asumir salud actual indefinida |
-| `result.power_state` | running/stopped devuelto por la observación del provider |
+| `result.power_state` | running/stopped derivado del booleano started observado del provider |
 | `result.observed_at` | Fecha de la observación; no es monitoreo continuo |
 
 Flujo Terraform, solo después de revisión y autorización operativa:

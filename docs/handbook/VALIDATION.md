@@ -5,12 +5,13 @@ código revisado localmente, no a ejecución nueva en VM 104 ni a una KVM real.
 
 | Entrega | Base/revisión | Resultado |
 |---|---|---|
-| Ejecutor autorizado, PR #7 | 2B `0c7219d`; código `2017d23`, aclaración operativa `25e571e` | 159 pruebas Docker aprobadas (33.00 s) y validación completa de recreación |
+| Ejecutor autorizado, integrado externamente por PR #9 | 2B `0c7219d`; código `2017d23`, aclaración operativa `25e571e` | 159 pruebas Docker aprobadas (33.00 s) y validación completa de recreación |
 | Imagen terraform-worker | Mismo código de ejecución | UID/GID 10001, root:root, Alembic 0004, importaciones; Terraform 1.16.6 y Git 2.47.3 |
 | TLS, PR #8 | main `4e764f4`; `8355f4b` | 108 pruebas aprobadas (14.01 s), Compose efectivo y Traefik real con certificado efímero |
 | Módulo de disco iac-proxmox | Código fijado `40dc5d10387cfb50384ecd3ddddfd75289fe7bc4` | 13 pruebas Terraform nativas de plan documentadas en su PR #6 |
-| Ejecutor + TLS combinados | `25e571e` + `8355f4b`, aplicación local del diff sin integrar main | 171 pruebas aprobadas (33.44 s) y prueba HTTPS repetida con éxito |
-| Manuales | Rama de documentación sobre PR #7 | 10 manuales, ejemplos shell/Python y 9 operaciones autenticadas del contrato verificados sin red |
+| Ejecutor + TLS combinados | `25e571e` + `8355f4b`, antes de la integración externa en main | 171 pruebas aprobadas (33.44 s) y prueba HTTPS repetida con éxito |
+| Corrección posterior del conflicto HTTP | `939bb41` + `8355f4b` | 172 pruebas aprobadas (27.47 s); no se modificaron transporte ni guards de ejecución |
+| Manuales | Rama de documentación sobre main `2ed4104` | 10 manuales, ejemplos shell/Python y 9 operaciones autenticadas del contrato verificados sin red |
 
 Resumen generado a partir de las salidas automatizadas: [validation-results.json](validation-results.json).
 
