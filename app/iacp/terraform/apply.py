@@ -1,5 +1,5 @@
 """Autorizaciones y aplicación de planes: persistencia independiente de HTTP."""
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -79,7 +79,7 @@ def dispatch(session, execution, identifier, key, principal, publish):
         return row
     if not enabled():
         raise PlanError("APPLY_DISABLED")
-    if row.status != "approved" or not not_expired(row.expires_at):
+    if row.status != "approved" or row.started_at or not not_expired(row.expires_at):
         raise Conflict("APPROVAL_EXPIRED_OR_CONSUMED")
     if row.approved_by == principal.subject:
         raise Conflict("INDEPENDENT_APPROVAL_REQUIRED")
@@ -115,7 +115,7 @@ def cancel_apply(session, execution, identifier, principal):
     row = owned_apply(session, execution, identifier, lock=True)
     if row.status == "completed":
         raise Conflict("APPLY_ALREADY_COMPLETED")
-    if row.status == "cancelled":
+    if row.status == "cancelled" or row.error_code == "RESOURCE_ABSENCE_CONFIRMED":
         return row
     # Si ya cruzó el límite de mutación, la cancelación requiere conciliación.
     row.status = "uncertain" if row.started_at else "cancelled"
@@ -127,6 +127,76 @@ def cancel_apply(session, execution, identifier, principal):
     event(session, operation, "terraform_apply_cancel_requested", principal.subject)
     session.commit()
     return row
+
+
+def recover_apply(session, execution, identifier, principal, publish):
+    """Cercar entregas apply pendientes antes de publicar exclusivamente observación."""
+    try:
+        with instance_lock(session.get_bind(), execution.instance_id):
+            session.get(TerraformExecution, execution.instance_id, with_for_update=True, populate_existing=True)
+            row = owned_apply(session, execution, identifier, lock=True)
+            if row.status not in {"queued", "running", "uncertain"}:
+                raise Conflict("RECOVERY_NOT_REQUIRED")
+            if row.status == "queued":
+                row.status, row.error_code = "uncertain", "RECONCILIATION_REQUIRED"
+            event(session, session.get(Operation, execution.operation_id), "terraform_recovery_requested", principal.subject)
+            session.commit()
+    except ExecutionBusy:
+        raise Conflict("An active worker holds the instance lock") from None
+    try:
+        publish(row.id, "reconcile")
+    except Exception:
+        raise QueueUnavailable from None
+    return row
+
+
+def resolve_absence(session, execution, identifier, body, key, principal):
+    """Registrar una atestación independiente; no consulta ni modifica infraestructura."""
+    try:
+        with instance_lock(session.get_bind(), execution.instance_id):
+            execution = session.get(TerraformExecution, execution.instance_id, with_for_update=True, populate_existing=True)
+            row = owned_apply(session, execution, identifier, lock=True)
+            previous = (row.result or {}).get("resolution")
+            digest = fingerprint(body)
+            if previous:
+                if (previous["key"] != key or previous["request_sha256"] != digest
+                        or previous["actor"] != principal.subject):
+                    raise Conflict("IDEMPOTENCY_CONFLICT")
+                return row
+            operation = session.get(Operation, execution.operation_id)
+            if principal.subject in {operation.requested_by, row.requested_by}:
+                raise Conflict("INDEPENDENT_APPROVAL_REQUIRED")
+            if (row.status != "uncertain" or row.error_code != "RESOURCE_ABSENT"
+                    or (row.result or {}).get("reconciliation", {}).get("plan_sha256") != row.plan_sha256):
+                raise Conflict("ABSENCE_NOT_CONFIRMED")
+            check_binding(row, execution)
+            allocation = Allocation.model_validate(execution.allocation)
+            if (body["attempt"] != row.attempt or body["plan_sha256"] != row.plan_sha256
+                    or body["state"]["bucket"] != allocation.backend.bucket
+                    or body["state"]["key"] != execution.state_key
+                    or body["proxmox"]["vmid"] != allocation.vm_id
+                    or body["proxmox"]["node"] != allocation.node_name):
+                raise Conflict("PLAN_CHANGED")
+            for evidence in (body["state"], body["proxmox"]):
+                observed = datetime.fromisoformat(evidence["observed_at"])
+                if observed < (row.started_at or row.created_at).replace(tzinfo=timezone.utc) or observed > utcnow():
+                    raise Conflict("INVALID_ABSENCE_EVIDENCE")
+            resolution = {"kind": "confirmed_absence", "key": key, "request_sha256": digest,
+                          "actor": principal.subject, "recorded_at": utcnow().isoformat(), "evidence": body}
+            row.status, row.error_code, row.finished_at = "failed", "RESOURCE_ABSENCE_CONFIRMED", utcnow()
+            row.result = {**row.result, "resolution": resolution}
+            job = session.get(Job, row.job_id)
+            job.status, job.message = "failed", "Ausencia confirmada mediante evidencia revisada; aprovisionamiento fallido"
+            operation.status, operation.error_code = "failed", row.error_code
+            instance = session.get(Instance, row.instance_id)
+            instance.status, instance.vmid, instance.node = "failed", None, None
+            instance.result = {"simulated": False, "phase": "resolved_absent", "error_code": row.error_code,
+                               "apply_id": row.id, "resolution": resolution}
+            event(session, operation, "terraform_absence_resolved", principal.subject)
+            session.commit()
+            return row
+    except ExecutionBusy:
+        raise Conflict("An active worker holds the instance lock") from None
 
 
 def execute_apply(identifier, sessions, executor=None, reconcile=False):
@@ -145,7 +215,7 @@ def execute_apply(identifier, sessions, executor=None, reconcile=False):
 def _execute(identifier, sessions, executor, reconcile, heartbeat):
     with sessions() as session:
         row = session.get(TerraformApply, identifier, with_for_update=True)
-        if (not reconcile and row.status != "queued") or (reconcile and row.status not in {"running", "uncertain"}):
+        if (not reconcile and (row.status != "queued" or row.started_at)) or (reconcile and row.status not in {"running", "uncertain"}):
             return
         execution = session.get(TerraformExecution, row.instance_id)
         instance = session.get(Instance, row.instance_id)
@@ -182,7 +252,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             event(session, session.get(Operation, execution.operation_id), "terraform_mutation_started", "worker:terraform")
             session.commit()
 
-    result, error, diagnostic = None, None, None
+    result, error, diagnostic, reconciliation = None, None, None, None
     try:
         if cancelled():
             raise PlanError("CANCELLED")
@@ -196,10 +266,11 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             check_binding(current, session.get(TerraformExecution, current.instance_id))
             if not reconcile and not not_expired(current.expires_at):
                 raise PlanError("APPROVAL_EXPIRED_OR_CONSUMED")
-        executor.prepare_apply(instance.id, number, sha, state_key, allocation_data, variables)
         if reconcile:
+            reconciliation = executor.prepare_reconcile(instance.id, number, sha, state_key, allocation_data, variables)
             result = executor.observe(instance.id, number, allocation_data, variables, cancelled)
         else:
+            executor.prepare_apply(instance.id, number, sha, state_key, allocation_data, variables)
             result = executor.apply(instance.id, number, sha, state_key, allocation_data, variables, cancelled, before_mutation)
         # Defensa del contrato incluso ante otra implementación del ejecutor.
         if (result.get("simulated") is not False or result.get("vmid") != allocation.vm_id
@@ -218,6 +289,8 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         row.status = ("uncertain" if error and (row.started_at or reconcile) else
                       "cancelled" if error and row.status == "cancelled" else "failed" if error else "completed")
         row.error_code, row.result, row.finished_at = error, result if not error else ({"diagnostic": diagnostic} if diagnostic else None), utcnow()
+        if reconciliation is not None:
+            row.result = {**(row.result or {}), "reconciliation": {**reconciliation, "observed_at": utcnow().isoformat()}}
         job.status = "failed" if error else "completed"
         job.message = "Consulte la autorización y los eventos Terraform" if error else "KVM observada mediante el provider"
         operation.status, operation.error_code = ("failed" if error else "completed"), error

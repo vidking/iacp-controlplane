@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import tarfile
@@ -161,22 +162,40 @@ class TerraformExecutor:
             payload["SSL_CERT_FILE_SHA256"] = digest_file(Path(env["SSL_CERT_FILE"]))
         return hashlib.sha256((salt + json.dumps(payload, sort_keys=True, separators=(",", ":"))).encode()).hexdigest()
 
-    def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
+    def verify_artifacts(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
+        """Verificar el vínculo persistido sin exigir credenciales de una mutación nueva."""
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
-            env = self.environment(workspace)
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
                     or manifest["source_revision"] != SOURCE_REVISION
                     or manifest["variables"] != variables
                     or manifest["backend"] != Allocation.model_validate(allocation).backend.arguments(state_key)
                     or json.loads((saved.parent / "backend.tfbackend.json").read_text()) != manifest["backend"]
-                    or json.loads((saved.parent / "iacp.auto.tfvars.json").read_text()) != variables
-                    or self.context_digest(env, manifest["execution_context_salt"]) != manifest["execution_context_sha256"]):
+                    or json.loads((saved.parent / "iacp.auto.tfvars.json").read_text()) != variables):
                 raise ValueError("Plan changed")
-        except (OSError, ValueError, KeyError):
+            context_keys = {"execution_context_salt", "execution_context_sha256"}
+            present = context_keys.intersection(manifest)
+            if present and (present != context_keys or any(
+                    not isinstance(manifest[key], str) or not re.fullmatch(r"[a-f0-9]{64}", manifest[key])
+                    for key in context_keys)):
+                raise ValueError("Invalid execution context")
+        except (OSError, ValueError, KeyError, TypeError):
             raise PlanError("PLAN_INTEGRITY_FAILED") from None
+        return manifest
+
+    def prepare_reconcile(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
+        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
+        return {"plan_sha256": sha256, "legacy_manifest": "execution_context_salt" not in manifest,
+                "state_key": state_key, "source_revision": SOURCE_REVISION, "execution_enabled": False}
+
+    def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
+        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
+        env = self.environment(self.workspace(instance_id, attempt))
+        if ("execution_context_salt" not in manifest
+                or self.context_digest(env, manifest["execution_context_salt"]) != manifest["execution_context_sha256"]):
+            raise PlanError("PLAN_INTEGRITY_FAILED")
         return {"plan_sha256": sha256, "state_key": state_key, "source_revision": SOURCE_REVISION,
                 "approval_required": True, "execution_enabled": False}
 

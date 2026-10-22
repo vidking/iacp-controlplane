@@ -24,11 +24,13 @@ stateDiagram-v2
     approved --> cancelled: revocación
     queued --> running: claim único bajo lock
     queued --> cancelled: cancelación antes de mutar
+    queued --> uncertain: recover cerca apply y publica solo observación
     running --> failed: error antes de started_at
     running --> completed: apply y observación correctos
     running --> uncertain: error/cancelación después de started_at
     uncertain --> running: recuperar solo observación
     running --> uncertain: recurso ausente, parcial o inaccesible
+    uncertain --> failed: ausencia atestada por approver independiente
 ```
 
 La caducidad se valida al encolar y antes de mutar; una aprobación no inicia un
@@ -44,7 +46,8 @@ No existe reintento automático de apply ni transición de uncertain a un apply 
 | Reintentar plan | Instancia + clave retry + expected_attempt | Mismo número de intento | Otro intento o worker activo: 409 |
 | Aprobar plan | Instancia + clave aprobación + cuerpo + aprobador | Misma autorización y vigencia original | Otro cuerpo/sujeto o plan ya autorizado: 409 |
 | Solicitar apply | Autorización + clave dispatch + solicitante | Mismo run/job y estado actual; no republica | Otra clave/sujeto: 409 |
-| Recuperar apply | Mismo run persistido | No vuelve a mutar un run iniciado | Estado sin recuperación pendiente: 409 |
+| Recuperar apply | Mismo run persistido | Solo observación; cerca apply incluso en queued | Estado terminal o worker activo: 409 |
+| Resolver ausencia | Autorización + clave + cuerpo + aprobador independiente | Mismo cierre failed; un solo evento | Evidencia, clave o sujeto distintos: 409; cuerpo inválido: 422 |
 
 Las claves tienen 1–128 caracteres `[A-Za-z0-9._:-]`. Deben ser estables por intención
 del CRM y conservarse tras timeout. La respuesta idempotente refleja el estado
@@ -86,6 +89,8 @@ puede haber sido 202 y el job terminar failed/uncertain.
 | TERRAFORM_COMMAND_FAILED / TERRAFORM_EXECUTION_FAILED | Fallo sin exponer diagnóstico sensible | Inspección privada; no reaplicar a ciegas |
 | INVALID_PLAN_OUTPUT / INVALID_TERRAFORM_OUTPUT / OBSERVED_RESOURCE_MISMATCH | Resultado inválido o distinto de la asignación | Mantener incertidumbre y revisar provider/state |
 | RESOURCE_ABSENT | Observación sin recurso administrado | No crear automáticamente; verificar state y Proxmox |
+| RESOURCE_ABSENCE_CONFIRMED | Cierre auditado failed por ausencia en ambas fuentes | No reaplicar autorización consumida; futura decisión exige intento y aprobación nuevos |
+| ABSENCE_NOT_CONFIRMED / INVALID_ABSENCE_EVIDENCE | Falta conciliación verificada o evidencia temporal válida | Conservar uncertain; completar revisión independiente |
 | CANCELLED / TENANT_INACTIVE | Cancelación o suspensión del tenant | Antes de mutar: revisar; después: conciliar |
 | DISPATCH_FAILED / DISPATCH_UNCONFIRMED | Publicación fallida/ambigua | Consultar IDs; recuperar mismo run sin duplicar intención |
 | APPLY_REQUIRES_RECONCILIATION / RECONCILIATION_REQUIRED | Replan bloqueado por autorización/ejecución | Cancelar antes de mutación o conciliar después |

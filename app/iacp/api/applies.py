@@ -13,7 +13,7 @@ from ..schemas import ErrorResponse
 from ..security import Principal, authorize, authorize_approval, authorize_write
 from ..services.instances import Conflict
 from ..services.jobs import QueueUnavailable
-from ..terraform.apply import approve, cancel_apply, dispatch, owned_apply
+from ..terraform.apply import approve, cancel_apply, dispatch, recover_apply, resolve_absence
 from .dependencies import get_apply_publisher
 from .terraform import owned_execution
 
@@ -34,6 +34,45 @@ class ApprovalRequest(BaseModel):
 class ApplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     approval_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+
+
+class AbsenceEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    observed_at: datetime = Field(strict=False)
+    evidence_ref: str = Field(min_length=1, max_length=512)
+
+    @field_validator("observed_at")
+    @classmethod
+    def timezone_required(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("La evidencia requiere fecha con zona horaria")
+        return value
+
+
+class EmptyStateEvidence(AbsenceEvidence):
+    bucket: str = Field(min_length=1, max_length=63)
+    key: str = Field(min_length=1, max_length=512)
+    version_id: str = Field(min_length=1, max_length=1024)
+    lineage: str = Field(min_length=1, max_length=128)
+    serial: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    resource_count: Literal[0]
+
+
+class ProxmoxAbsenceEvidence(AbsenceEvidence):
+    vmid: int = Field(ge=100)
+    node: str = Field(min_length=1, max_length=128)
+    scope: Literal["cluster"]
+    absent: Literal[True]
+
+
+class AbsenceResolutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    attempt: int = Field(ge=1)
+    plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    state: EmptyStateEvidence
+    proxmox: ProxmoxAbsenceEvidence
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class ApplyResponse(BaseModel):
@@ -100,15 +139,16 @@ def cancel(instance_id: str, approval_id: str, principal: Annotated[Principal, D
 
 
 @router.post("/applies/{approval_id}/recover", response_model=ApplyResponse, status_code=202, operation_id="recoverTerraformApply",
-             description="Republica un run queued; para running/uncertain consulta el provider sin ejecutar apply. Nunca concede otra autorización.")
+             description="Concilia queued/running/uncertain exclusivamente por observación. Cerca entregas apply pendientes y nunca ejecuta Terraform Apply.")
 def recover(instance_id: str, approval_id: str, principal: Annotated[Principal, Depends(authorize_write)],
             session: Annotated[Session, Depends(get_session)], publish=Depends(get_apply_publisher)):
     execution = owned_execution(instance_id, principal, session)
-    row = conflicting(lambda: owned_apply(session, execution, approval_id))
-    if row.status not in {"queued", "running", "uncertain"}:
-        raise HTTPException(status_code=409, detail="RECOVERY_NOT_REQUIRED")
-    try:
-        publish(row.id, "apply" if row.status == "queued" else "reconcile")
-    except Exception:
-        raise HTTPException(status_code=503, detail="DISPATCH_UNCONFIRMED") from None
-    return row
+    return conflicting(lambda: recover_apply(session, execution, approval_id, principal, publish))
+
+
+@router.post("/applies/{approval_id}/resolve-absence", response_model=ApplyResponse, operation_id="resolveTerraformAbsence",
+             description="Atestación de un approver independiente con evidencia de state vacío y ausencia en el clúster Proxmox. Cierra en failed; no consulta ni modifica infraestructura.")
+def resolve(instance_id: str, approval_id: str, body: AbsenceResolutionRequest, key: Key,
+            principal: Annotated[Principal, Depends(authorize_approval)], session: Annotated[Session, Depends(get_session)]):
+    execution = owned_execution(instance_id, principal, session)
+    return conflicting(lambda: resolve_absence(session, execution, approval_id, body.model_dump(mode="json"), key, principal))
