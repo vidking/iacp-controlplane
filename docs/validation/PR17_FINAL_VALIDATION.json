@@ -1,0 +1,165 @@
+{
+  "production_commit": "c0e7bdcb0a250f9a9a3e98874557a51bed1ead4a",
+  "timestamp_utc": "2026-10-22T05:55:03.713603+00:00",
+  "environment": {
+    "docker": "29.9.1",
+    "python": "3.12.15",
+    "pytest": "8.3.5",
+    "postgresql": "17.11",
+    "redis": "7.4.11",
+    "celery": "5.5.2",
+    "terraform": "1.16.6",
+    "s3": "loopback fixture; no production access"
+  },
+  "full_suite": {
+    "executed": 342,
+    "passed": 342,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "integration_cases": 20,
+    "unit_cases": 322,
+    "duration_seconds": 42.37,
+    "warnings": 7
+  },
+  "integration_runs": [
+    {
+      "selected": 17,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "deselected": 322,
+      "duration_seconds": 15.78
+    },
+    {
+      "selected": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "deselected": 322,
+      "duration_seconds": 18.84
+    }
+  ],
+  "images": {
+    "tests": "sha256:2c59de9fb9f65f0ec2a8835130e88ae5ee9cc9d7e772652e80f162fbfc459517",
+    "postgresql": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "redis": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+  },
+  "validation_input_sha256": {
+    "tests/Dockerfile": "b822bc7e2f309cab9673b006d2931cc299660f8945df438dd82f3d39852477b0",
+    "tests/s3_fixture.py": "e1172fbadf99ab85285d6790ccfc9f463aaffe826c92751ff15f7a61568fdf90",
+    "tests/integration/test_readonly_state.py": "5b996186294cc53bb202b20e1f769431486a9c784632715d3bbea1a9238870a5"
+  },
+  "junit_sha256": "65f3b60d61db1855e030e6e039d0a7444442ad8f6d0283f5c7579e482c569c78",
+  "readonly_evidence": [
+    {
+      "test": "tests.integration.test_readonly_state::test_recovery_preserves_s3_version_or_blocks_an_external_write[False]",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "before": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "change": "unchanged"
+        },
+        "recovery_status": "completed",
+        "s3_requests": [
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/d0325c2e-4edd-4c79-88d6-a818cd72d343/terraform.tfstate"
+          ],
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/d0325c2e-4edd-4c79-88d6-a818cd72d343/terraform.tfstate"
+          ]
+        ],
+        "apply_enabled_during_recovery": "1"
+      }
+    },
+    {
+      "test": "tests.integration.test_readonly_state::test_recovery_preserves_s3_version_or_blocks_an_external_write[True]",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "e1e0bc67a5d3d4a1d4e59cb9dcb2df06c8484d484c6c5df9d07124f3525d80d1",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 4,
+            "sha256": "f1201d2e3dd816ce6ac258585e900d218f03b00af4962b7639ddf2c3c7a3466b",
+            "version_id": "fixture-version-2"
+          },
+          "before": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "change": "serial_advanced"
+        },
+        "recovery_status": "uncertain",
+        "s3_requests": [
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/7ad9d24c-36c1-4b42-a0e8-2f2e7656941c/terraform.tfstate"
+          ],
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/7ad9d24c-36c1-4b42-a0e8-2f2e7656941c/terraform.tfstate"
+          ]
+        ],
+        "apply_enabled_during_recovery": "1"
+      }
+    },
+    {
+      "test": "tests.integration.test_readonly_state::test_real_refresh_only_cli_preserves_remote_object_and_uses_native_lock",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a",
+            "version_id": "fixture-version-1"
+          },
+          "before": {
+            "content_sha256": "90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a",
+            "version_id": "fixture-version-1"
+          },
+          "change": "unchanged"
+        },
+        "s3_writes": [
+          [
+            "PUT",
+            "/fixture-state/terraform.tfstate.tflock"
+          ],
+          [
+            "DELETE",
+            "/fixture-state/terraform.tfstate.tflock"
+          ]
+        ],
+        "terraform_version": "1.16.6"
+      }
+    }
+  ],
+  "original_incident_snapshots": {
+    "available": false,
+    "confirmed_not_retained": true,
+    "production_cause_proven": false
+  },
+  "production_changes": false,
+  "production_apply_configuration_changed": false,
+  "test_projects_removed": true
+}

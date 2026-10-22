@@ -8,9 +8,11 @@ no modifica VMID 106 y no cambia `IACP_TERRAFORM_APPLY_ENABLED=1`.
 
 Se demostró un defecto de comparación que produce exactamente
 `STATE_CHANGED_DURING_OBSERVATION` / `observe.state_verify` sin ninguna escritura
-del objeto de state. No se capturaron las dos respuestas del backend del incidente;
-por tanto, esta reproducción no descarta que también hubiera un escritor externo
-en aquel intervalo. La recuperación real y su evidencia siguen pendientes.
+del objeto de state. Se confirmó que no se conservaron los dos snapshots
+originales del incidente; esta reproducción no permite atribuirle una causa
+productiva definitiva ni descartar un escritor externo. La recuperación real y
+su evidencia siguen pendientes. La [validación final del PR #17](VALIDATION_PR17.md)
+completó las pruebas antes omitidas sin modificar el código de producción.
 
 ## Causa raíz reproducida
 
@@ -273,6 +275,7 @@ Rutas (autenticación conforme al cliente operativo, sin imprimir tokens):
 ```text
 GET  /v1/instances/a1b2d063-6240-4969-bc04-e7e0e6be9e73/terraform
 GET  /v1/instances/a1b2d063-6240-4969-bc04-e7e0e6be9e73/terraform/applies
+GET  /v1/instances/a1b2d063-6240-4969-bc04-e7e0e6be9e73
 POST /v1/instances/a1b2d063-6240-4969-bc04-e7e0e6be9e73/terraform/applies/1750ee70-a6ca-4036-a764-c4b077a0b588/recover
 ```
 
@@ -329,17 +332,20 @@ integración usan exclusivamente PostgreSQL/Redis desechables. Cubre la matriz,
 representación, versiones/serial/lineage/hashes, errores en ambas lecturas,
 postcondiciones completas, replay, dos workers, pérdida de lock, cancelación,
 contexto cambiado y Apply global habilitado sin volver a provisionar.
-Resultados de ejecución sobre esta corrección:
+Resultados finales: [informe del PR #17](VALIDATION_PR17.md), con JUnit y
+snapshots sintéticos exportados. Sustituyen la ejecución inicial de 322 aprobadas
+y 17 omitidas por falta de acceso al socket local.
 
-- `python -m pytest -q`: **322 passed, 17 skipped**, Python 3.12.15. Los 17
-  casos de integración requieren PostgreSQL 17 y Redis 7 desechables; no se
-  presentan como aprobados. Incluye todas las regresiones unitarias del PR #16,
-  65 casos nuevos unitarios y un caso nuevo de exclusión PostgreSQL pendiente.
-- `bash scripts/test-integration.sh`: intentado, bloqueado por permisos del
-  socket Docker local. **La validación de integración completa sigue pendiente**;
-  ejecutar el mismo script antes de aprobar el merge. No sustituirla por acceso
-  a servicios productivos.
-- Una advertencia preexistente de obsolescencia Starlette/AnyIO.
+- Integración originalmente pendiente: **17 aprobadas, 0 fallidas, 0 omitidas**.
+- Integración ampliada con S3: **20 aprobadas, 0 fallidas, 0 omitidas**.
+- Suite completa: **342 aprobadas, 0 fallidas, 0 errores, 0 omitidas** en Python
+  3.12.15, PostgreSQL 17.11, Redis 7.4.11 y Celery 5.5.2 desechables.
+- Docker se utilizó con la pertenencia de grupo ya autorizada mediante newgrp,
+  sin modificar permisos. Se retiraron exclusivamente los proyectos de prueba.
+- Verificación S3: recovery con GET reales y Terraform 1.16.6 con backend S3
+  controlado; Version ID, lineage, serial y contenido invariantes. Solo se crean
+  y retiran locks nativos `.tflock`, nunca el objeto de state.
+- Siete advertencias de obsolescencia de Starlette/AnyIO y botocore; sin fallos.
 - Reproducción con CLI real: 32 lecturas, 6 representaciones, 1 contenido,
   lineage/serial constantes y bytes intactos tras refresh-only.
 - `python scripts/validate-handbook.py`: diez documentos y nueve contratos
