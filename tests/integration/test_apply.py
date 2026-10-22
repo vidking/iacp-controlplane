@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import time
+from threading import Event, Thread
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -11,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from iacp.api.dependencies import get_instance_publisher
+from iacp.api.dependencies import get_apply_publisher, get_instance_publisher
 from iacp.db import get_session_factory
 from iacp.main import create_app
 from iacp.models import Instance, Job, OperationEvent, TerraformApply
@@ -90,3 +92,64 @@ def test_0004_adds_only_apply_table_and_preserves_all_2b_rows(pg_engine):
     with pg_engine.connect() as connection:
         assert {table: connection.execute(text(f'SELECT * FROM "{table}"')).all() for table in before} == before
         assert set(inspect(pg_engine).get_table_names()) - set(before_tables) == {"terraform_applies"}
+
+
+def test_two_recovery_workers_use_the_existing_postgres_lock(pg_engine, runtime, monkeypatch, tmp_path):
+    upgrade(pg_engine)
+    sessions = get_session_factory()
+    monkeypatch.setenv("IACP_INSTANCE_EXECUTOR", "terraform")
+    monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    app = create_app()
+    app.dependency_overrides[get_instance_publisher] = lambda: lambda identifier: None
+    app.dependency_overrides[get_apply_publisher] = lambda: lambda *args: None
+    with TestClient(app) as client:
+        accepted = create(client, runtime).json()
+        run_plan(accepted, sessions)
+        with sessions() as session:
+            tenant_id = session.get(Instance, accepted["instance_id"]).tenant_id
+        token = "integration-recovery-" + uuid4().hex
+        registry = tmp_path / "approval.json"
+        registry.write_text(json.dumps([{"token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+                                        "tenant_id": tenant_id, "subject": "infra-test", "role": "approver"}]))
+        monkeypatch.setenv("IACP_TENANT_CREDENTIALS_FILE", str(registry))
+        path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+        approved = client.post(path + "/approvals", headers={"Authorization": "Bearer " + token, "Idempotency-Key": "approve"},
+                               json={"attempt": 1, "plan_sha256": "a" * 64})
+        assert approved.status_code == 201
+        identifier = approved.json()["approval_id"]
+        assert client.post(path + "/apply", headers={**runtime, "Idempotency-Key": "apply"},
+                           json={"approval_id": identifier}).status_code == 202
+        execute_apply(identifier, sessions, ApplyingExecutor("TERRAFORM_COMMAND_FAILED"))
+        entered, release = Event(), Event()
+        class BlockingObserver(ApplyingExecutor):
+            def observe(self, *args):
+                entered.set()
+                assert release.wait(10)
+                return super().observe(*args)
+        observer = BlockingObserver()
+        errors = []
+        def first_worker():
+            try:
+                execute_apply(identifier, sessions, observer, reconcile=True)
+            except BaseException as error:
+                errors.append(error)
+        worker = Thread(target=first_worker)
+        worker.start()
+        try:
+            assert entered.wait(10)
+            second = Mock()
+            execute_apply(identifier, sessions, second, reconcile=True)
+            second.observe.assert_not_called()
+            assert client.post(path + "/applies/" + identifier + "/recover", headers=runtime).status_code == 409
+        finally:
+            release.set()
+            worker.join(10)
+        assert not worker.is_alive() and not errors
+        execute_apply(identifier, sessions, second, reconcile=True)
+        second.observe.assert_not_called()
+        assert observer.calls == []
+        assert client.get(path + "/applies", headers=runtime).json()[0]["status"] == "completed"
+        with sessions() as session:
+            completed = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == accepted["operation_id"],
+                                                                    OperationEvent.code == "terraform_apply_completed")).all()
+            assert len(completed) == 1

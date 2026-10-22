@@ -104,7 +104,7 @@ def dispatch(session, execution, identifier, key, principal, publish):
 
 
 def check_binding(row, execution):
-    if (row.attempt != execution.attempt or row.plan_sha256 != execution.plan_sha256
+    if (row.instance_id != execution.instance_id or row.attempt != execution.attempt or row.plan_sha256 != execution.plan_sha256
             or execution.status != "planned" or execution.cancel_requested
             or execution.source_revision != SOURCE_REVISION):
         raise PlanError("PLAN_CHANGED")
@@ -124,6 +124,11 @@ def cancel_apply(session, execution, identifier, principal):
         session.get(Job, row.job_id).status = "failed"
     operation = session.get(Operation, execution.operation_id)
     operation.status, operation.error_code = "failed", row.error_code
+    if row.started_at:
+        instance = session.get(Instance, row.instance_id)
+        instance.status = "failed"
+        instance.result = {"simulated": False, "phase": "uncertain", "error_code": row.error_code,
+                           "apply_id": row.id}
     event(session, operation, "terraform_apply_cancel_requested", principal.subject)
     session.commit()
     return row
@@ -278,13 +283,28 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         if (result.get("simulated") is not False or result.get("vmid") != allocation.vm_id
                 or result.get("node") != allocation.node_name):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH")
+        if reconcile:
+            # Revalidar el vínculo aprobado tras la observación, antes del commit.
+            executor.prepare_reconcile(instance.id, number, sha, state_key, allocation_data, variables)
+        if cancelled():
+            raise PlanError("CANCELLED")
     except PlanError as failure:
         error = failure.code
         diagnostic = failure.diagnostic()
     except Exception:
         error = "TERRAFORM_EXECUTION_FAILED"
+    # Si se perdió la conexión que mantiene el advisory lock, no publicar un
+    # resultado desde un worker que ya no posee la instancia. /recover reevaluará.
+    heartbeat()
     with sessions() as session:
+        current_execution = session.get(TerraformExecution, instance.id, with_for_update=True)
         row = session.get(TerraformApply, identifier, with_for_update=True)
+        if row.status != "running":
+            return
+        try:
+            check_binding(row, current_execution)
+        except PlanError as failure:
+            error, diagnostic = failure.code, failure.diagnostic()
         job = session.get(Job, row.job_id)
         operation = session.get(Operation, execution.operation_id)
         instance = session.get(Instance, row.instance_id)
@@ -292,7 +312,9 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
                       "cancelled" if error and row.status == "cancelled" else "failed" if error else "completed")
         row.error_code, row.result, row.finished_at = error, result if not error else ({"diagnostic": diagnostic} if diagnostic else None), utcnow()
         if reconciliation is not None:
-            row.result = {**(row.result or {}), "reconciliation": {**reconciliation, "observed_at": utcnow().isoformat()}}
+            row.result = {**(row.result or {}), "reconciliation": {**reconciliation,
+                          "approval_id": row.id, "instance_id": row.instance_id, "attempt": row.attempt,
+                          "operation_id": operation.id, "observed_at": utcnow().isoformat()}}
         job.status = "failed" if error else "completed"
         job.message = "Consulte la autorización y los eventos Terraform" if error else "KVM observada mediante el provider"
         operation.status, operation.error_code = ("failed" if error else "completed"), error
@@ -304,4 +326,5 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             instance.result = {"simulated": False, "phase": row.status, "error_code": error,
                                "apply_id": row.id, **({"diagnostic": diagnostic} if diagnostic else {})}
         event(session, operation, "terraform_apply_" + row.status, "worker:terraform")
+        heartbeat()
         session.commit()

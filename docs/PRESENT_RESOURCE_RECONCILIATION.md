@@ -1,5 +1,10 @@
 # Incidente: KVM presente clasificada RESOURCE_ABSENT
 
+Este documento conserva la investigación y validación del PR #16. La comparación
+de state y el procedimiento vigente se sustituyen por
+[Read-Only Reconciliation](READ_ONLY_RECONCILIATION.md), que mantiene Apply global
+habilitado y verifica snapshots S3 identificados.
+
 ## Alcance y evidencia
 
 Base revisada: release `8d75c7c223fb2e80dda8db938c902432553ca65e` de

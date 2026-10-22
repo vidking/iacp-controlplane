@@ -102,4 +102,9 @@ administrar el mismo stack con dos reconciliadores.
 
 Aplicación controlada de planes, permisos y recuperación: [guía del ejecutor autorizado](docs/AUTHORIZED_APPLY.md).
 
+Consistencia del state, recuperación sin mutaciones y procedimiento del intento 4:
+[reconciliación de solo lectura](docs/READ_ONLY_RECONCILIATION.md).
+La [validación final del PR #17](docs/VALIDATION_PR17.md) registra la suite completa,
+la evidencia S3 controlada y los límites de atribución del incidente productivo.
+
 Manual para Desarrollo, Infraestructura y Seguridad: [arquitectura, integración, operación y demostración](docs/handbook/README.md).

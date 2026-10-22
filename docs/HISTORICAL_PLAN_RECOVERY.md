@@ -1,5 +1,11 @@
 # Compatibilidad y conciliación de planes históricos
 
+La recuperación histórica conserva sus garantías de artefactos y autorización.
+Para la consistencia del state y el intento 4 presente, seguir el procedimiento
+vigente de [reconciliación de solo lectura](READ_ONLY_RECONCILIATION.md), manteniendo
+Apply global habilitado. Las indicaciones históricas de deshabilitarlo no aplican
+a esa recuperación.
+
 ## Incidente y causa raíz
 
 | Dato comunicado | Valor |
