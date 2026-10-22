@@ -305,11 +305,13 @@ class TerraformExecutor:
                         raise PlanError("PROVIDER_OBSERVATION_INCONSISTENT", phase="observe.inspect") from None
                     raise
                 refreshed = managed_resources(values)[0]["values"]
-                verify_postconditions(approved, resource)
-                verify_postconditions(approved, refreshed)
+                verify_postconditions(approved, resource, source="persisted_state")
+                verify_postconditions(approved, refreshed, source="refreshed_state", persisted=resource)
                 expected_power = "running" if variables["instance"]["started"] else "stopped"
-                if result["power_state"] != expected_power or proxmox["power_state"] != expected_power:
-                    raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+                if result["power_state"] != expected_power:
+                    postcondition_mismatch("refreshed_state", ("started",), "power_state_mismatch")
+                if proxmox["power_state"] != expected_power:
+                    postcondition_mismatch("proxmox", ("power_state",), "power_state_mismatch")
                 verify_checks(observed)
             # Dos GET actuales, nunca una consulta fijada a una versión antigua.
             # La comparación identifica también rewrites idénticos y ABA versionado.
@@ -391,37 +393,127 @@ def managed_resources(values):
     return resources
 
 
-def verify_postconditions(approved, actual):
-    """Comparar TODOS los valores conocidos del plan, no solo CPU/RAM/VMID.
+def postcondition_mismatch(source, path, category):
+    # Solo nombres estáticos del contrato; una clave de mapa desconocida puede
+    # contener información privada. Nunca incluir valores, máscaras ni checksums
+    # de atributos (tampoco cuando after_sensitive falta o es incorrecto).
+    attributes = {
+        "cpu", "cores", "sockets", "type", "flags", "affinity", "architecture", "numa", "units", "limit",
+        "memory", "dedicated", "floating", "shared", "hugepages", "keep_hugepages",
+        "disk", "interface", "size", "datastore_id", "file_format", "file_id", "import_from", "serial",
+        "aio", "cache", "discard", "backup", "replicate", "iothread", "ssd", "path_in_datastore",
+        "initialization", "user_account", "username", "password", "keys", "ip_config", "ipv4", "ipv6",
+        "address", "gateway", "network_device", "bridge", "vlan_id", "model", "disconnected", "trunks",
+        "mac_address", "mtu", "queues", "firewall", "enabled", "agent", "pool_id", "started", "on_boot",
+        "vm_id", "id", "node_name", "name", "clone", "description", "tags", "power_state",
+        "checks", "instances", "status",
+    }
+    safe_path = ""
+    for part in path:
+        safe_path += (f"[{part}]" if type(part) is int else
+                      ("." if safe_path else "") + (part if part in attributes else "<attribute>"))
+    failure = PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+    failure.postcondition = {"source": source, "path": safe_path or "<resource>", "category": category}
+    raise failure
 
-    after_unknown marca valores calculados que el plan aún no podía conocer.
-    No equiparar null con ausencia, ni ordenar listas de atributos arbitrarias.
+
+def bpg_empty_default(path, found):
+    """Equivalencias direccionales null -> valor vacío de bpg 0.116.1.
+
+    No se omite ningún atributo. Valores no vacíos y otras rutas siguen sujetos
+    a igualdad estricta. Fundamento por atributo: docs/SEMANTIC_POSTCONDITIONS.md.
     """
-    change = approved["resource_changes"][0]["change"]
+    shape = tuple("*" if type(part) is int else part for part in path)
+    match shape:
+        case (("cpu", "*", "affinity" | "architecture")
+              | ("disk", "*", "file_id" | "import_from" | "serial")
+              | ("memory", "*", "hugepages") | ("network_device", "*", "trunks") | ("pool_id",)
+              | ("initialization", "*", "user_account", "*", "password")):
+            return type(found) is str and found == ""
+        case ("network_device", "*", "disconnected"):
+            return found is False
+        case ("cpu", "*", "flags"):
+            return isinstance(found, list) and not found
+    return False
 
-    def matches(expected, found, unknown=False):
-        if unknown is True:
+
+def verify_postconditions(approved, actual, *, source="persisted_state", persisted=None):
+    """Verificar valores conocidos, incluidos sensibles, con semántica acotada.
+
+    after_unknown solo exime su subárbol. after_sensitive nunca exime una
+    comparación. Ausencia de claves y listas reordenadas no son equivalentes.
+    """
+    resource = approved["resource_changes"][0]
+    change = resource["change"]
+    provider = approved.get("configuration", {}).get("provider_config", {}).get("proxmox", {})
+    bpg_contract = (resource.get("provider_name") == "registry.terraform.io/bpg/proxmox"
+                    and provider.get("full_name") == "registry.terraform.io/bpg/proxmox"
+                    and provider.get("version_constraint") in {"0.116.1", "= 0.116.1"})
+
+    def mask_child(mask, key):
+        if mask is True:
             return True
-        if isinstance(expected, dict):
-            return isinstance(found, dict) and all(
-                (isinstance(unknown, dict) and unknown.get(key) is True)
-                or (key in found and matches(value, found[key], unknown.get(key, False) if isinstance(unknown, dict) else False))
-                for key, value in expected.items())
-        if isinstance(expected, list):
-            return isinstance(found, list) and len(expected) == len(found) and all(
-                matches(value, found[index], unknown[index] if isinstance(unknown, list) and index < len(unknown) else False)
-                for index, value in enumerate(expected))
-        return expected == found and (type(expected) is bool) == (type(found) is bool)
+        if isinstance(mask, dict):
+            return mask.get(key, False)
+        if isinstance(mask, list) and type(key) is int and key < len(mask):
+            return mask[key]
+        return False
 
-    if not matches(change["after"], actual, change.get("after_unknown", False)):
-        raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+    def compare(expected, found, unknown=False, sensitive=False, path=()):
+        if unknown is True:
+            return
+        def fail(category):
+            postcondition_mismatch(source, path, "sensitive_value_mismatch" if sensitive is True else category)
+
+        if (len(path) == 3 and path[0] == "initialization" and path[2] == "interface"
+                and (expected is None or expected == "")):
+            # Vacío significa selección automática, no ausencia de unidad.
+            if not bpg_contract:
+                fail("provider_contract_unverified")
+            if not isinstance(found, str) or not re.fullmatch(r"ide[0-3]|sata[0-5]|scsi(?:30|[12][0-9]|[0-9])", found):
+                fail("auto_interface_invalid")
+            if persisted is not None:
+                baseline = persisted
+                for part in path:
+                    baseline = baseline[part]
+                if baseline != found:
+                    fail("auto_interface_changed")
+            return
+        if expected is None and bpg_empty_default(path, found):
+            if not bpg_contract:
+                fail("provider_contract_unverified")
+            return
+        if isinstance(expected, dict):
+            if not isinstance(found, dict):
+                fail("type_mismatch")
+            for key, value in expected.items():
+                child_unknown = mask_child(unknown, key)
+                if child_unknown is True:
+                    continue
+                if key not in found:
+                    postcondition_mismatch(source, path + (key,), "missing_attribute")
+                compare(value, found[key], child_unknown, mask_child(sensitive, key), path + (key,))
+        elif isinstance(expected, list):
+            if not isinstance(found, list):
+                fail("type_mismatch")
+            if len(expected) != len(found):
+                fail("collection_length_mismatch")
+            for index, value in enumerate(expected):
+                compare(value, found[index], mask_child(unknown, index), mask_child(sensitive, index), path + (index,))
+        elif expected != found or (type(expected) is bool) != (type(found) is bool):
+            fail("value_mismatch")
+
+    compare(change["after"], actual, change.get("after_unknown", False), change.get("after_sensitive", False))
 
 
 def verify_checks(observed):
     # Un refresh completo puede contener checks fallidos sin cambios de recursos.
-    for check in observed.get("checks", []):
-        if check.get("status") != "pass" or any(row.get("status") != "pass" for row in check.get("instances", [])):
-            raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+    for index, check in enumerate(observed.get("checks", [])):
+        if check.get("status") != "pass":
+            postcondition_mismatch("checks", ("checks", index, "status"), "check_not_passed")
+        for item, row in enumerate(check.get("instances", [])):
+            if row.get("status") != "pass":
+                postcondition_mismatch("checks", ("checks", index, "instances", item, "status"), "check_not_passed")
 
 
 def observed_resource(values: dict, variables: dict) -> dict:

@@ -17,6 +17,7 @@ from tests.s3_fixture import versioned_s3
 from tests.test_apply import prepared
 from tests.test_historical_recovery import historical_run
 from tests.test_terraform import terraform_mode
+from tests.test_semantic_postconditions import install_incident
 
 pytestmark = pytest.mark.integration
 ENV = {"AWS_ACCESS_KEY_ID": "synthetic-key", "AWS_SECRET_ACCESS_KEY": "synthetic-secret"}
@@ -122,3 +123,42 @@ def test_real_refresh_only_cli_preserves_remote_object_and_uses_native_lock(tmp_
             record_property("terraform_version", "1.16.6")
         finally:
             reader.close()
+
+
+@pytest.mark.parametrize("mismatch", [None, "pool", "password", "network", "interface"])
+def test_semantic_postconditions_recover_or_preserve_uncertain_without_state_writes(
+        client, auth, prepared, historical_run, sessions, monkeypatch, mismatch):
+    row, executor, runner, _, _, args = historical_run
+    monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    _, persisted, refreshed = install_incident(runner, monkeypatch)
+    if mismatch == "pool":
+        refreshed["pool_id"] = "other-pool"
+    elif mismatch == "password":
+        refreshed["initialization"][0]["user_account"][0]["password"] = "synthetic-private-password"
+    elif mismatch == "network":
+        refreshed["network_device"][0]["disconnected"] = True
+    elif mismatch == "interface":
+        refreshed["initialization"][0]["interface"] = "sata0"
+    before = json.dumps(runner.state()).encode()
+    with versioned_s3(before, args[4]["backend"]["bucket"], args[3]) as store:
+        monkeypatch.setattr("iacp.terraform.executor.S3StateReader", lambda backend, env: S3StateReader(
+            backend | {"endpoints": {"s3": store.endpoint}}, ENV))
+        path = prepared[2] + "/applies/" + row["approval_id"]
+        assert client.post(path + "/recover", headers=auth).status_code == 202
+        execute_apply(row["approval_id"], sessions, executor, reconcile=True)
+        # A duplicate delivery cannot create a contradictory terminal result.
+        execute_apply(row["approval_id"], sessions, executor, reconcile=True)
+        with sessions() as session:
+            current = session.get(TerraformApply, row["approval_id"])
+            completed = session.scalars(select(OperationEvent).where(OperationEvent.code == "terraform_apply_completed")).all()
+            assert current.status == ("uncertain" if mismatch else "completed")
+            assert len(completed) == (0 if mismatch else 1)
+            assert "synthetic-private-password" not in json.dumps(current.result)
+            if mismatch:
+                assert current.error_code == "APPROVED_POSTCONDITION_MISMATCH"
+                assert current.result["diagnostic"]["postcondition"]["source"] == "refreshed_state"
+            else:
+                assert current.result["observation"]["state_consistency"]["before"] == current.result["observation"]["state_consistency"]["after"]
+        assert store.data == before and store.version == 1
+        assert all(method == "GET" for method, _ in store.requests)
+    runner.apply_saved.assert_not_called()

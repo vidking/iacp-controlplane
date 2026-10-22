@@ -1,0 +1,205 @@
+{
+  "apply_enabled": true,
+  "attempt": 4,
+  "auto_interface_matches_refreshed": true,
+  "auto_interface_valid": true,
+  "bpg_0_116_1_constraint_matches": true,
+  "bpg_provider_matches": true,
+  "captured_observation_mtime_ns": 1792686336639097300,
+  "checks_pass": true,
+  "candidate_read_only_comparison": {
+    "persisted_state": "pass",
+    "stored_refreshed_state": "pass",
+    "checks": "pass",
+    "scope": "pure comparator in memory; no installation, new observation or recovery"
+  },
+  "comparisons": {
+    "persisted_state": {
+      "differences": [
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "cpu[0].affinity",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "cpu[0].architecture",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].file_id",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].import_from",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].serial",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "nonempty_string",
+          "path": "initialization[0].interface",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": true,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "initialization[0].user_account[0].password",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "memory[0].hugepages",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "false",
+          "path": "network_device[0].disconnected",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "network_device[0].trunks",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "pool_id",
+          "planned_representation": "null"
+        }
+      ],
+      "outcome": "APPROVED_POSTCONDITION_MISMATCH"
+    },
+    "refreshed_state": {
+      "differences": [
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "cpu[0].affinity",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "cpu[0].architecture",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_list",
+          "path": "cpu[0].flags",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].file_id",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].import_from",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "disk[0].serial",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "nonempty_string",
+          "path": "initialization[0].interface",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": true,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "initialization[0].user_account[0].password",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "memory[0].hugepages",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "false",
+          "path": "network_device[0].disconnected",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "network_device[0].trunks",
+          "planned_representation": "null"
+        },
+        {
+          "after_sensitive": false,
+          "after_unknown": false,
+          "observed_representation": "empty_string",
+          "path": "pool_id",
+          "planned_representation": "null"
+        }
+      ],
+      "outcome": "APPROVED_POSTCONDITION_MISMATCH"
+    }
+  },
+  "first_executed_failure": {
+    "function": "verify_postconditions",
+    "path": "cpu[0].affinity",
+    "source": "persisted_state"
+  },
+  "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+  "refreshed_power_matches_approval": true,
+  "serial": 3,
+  "state_version_available": true,
+  "vmid": 106,
+  "evidence": {
+    "kind": "read_only_inspection_of_approved_plan_current_s3_and_existing_observation",
+    "release": "c47f0bf7b0b59ea0f6a451327b9786c8ac16c391",
+    "provider": "bpg/proxmox 0.116.1",
+    "note": "Only representations, masks and boolean results. Observation was already stored; no fresh refresh/recover was run."
+  }
+}

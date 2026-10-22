@@ -122,6 +122,10 @@ plan aprobado**, tanto en el state persistido como en los valores refrescados.
 Respeta únicamente las máscaras explícitas de `after_unknown` para datos
 calculados. Incluye red, VLAN, cloud-init, claves públicas, agente, pool, opciones
 del disco y valores nulos cuando estén en el plan, además de identidad/CPU/RAM.
+La interpretación de nulos opcionales y de la interfaz automática está acotada
+al contrato bpg 0.116.1 y documentada por atributo en
+[SEMANTIC_POSTCONDITIONS.md](SEMANTIC_POSTCONDITIONS.md); los valores sensibles
+conocidos siguen sujetos a comparación. No se omiten campos para aceptar éxito.
 No registra esos valores en diagnósticos. Las listas de atributos mantienen su
 orden. `verify_checks` rechaza checks fallidos, desconocidos o con error.
 El estado de encendido de Proxmox y del provider debe coincidir con el solicitado;
@@ -305,10 +309,11 @@ fallida no revoca Apply globalmente y tampoco lo consume de nuevo.
 - Una versión diferente incluso con bytes iguales bloquea la confirmación. Esto
   exige otro recover y ofrece protección frente a ABA; no es un motivo para
   ignorar la verificación. No hay bucle de reintentos de provisioning.
-- Comparar todos los valores conocidos puede conservar uncertain por defaults,
-  listas ordenadas de forma distinta o propiedades que el provider no pueda
-  demostrar. Requiere investigar el atributo con evidencia privada, no relajar
-  la política. El provider y la API son las fuentes de observación; no prueban
+- Comparar todos los valores conocidos puede conservar uncertain por defaults
+  sin equivalencia demostrada, listas ordenadas de forma distinta o propiedades
+  que el provider no pueda demostrar. Requiere investigar el atributo con
+  evidencia privada y justificar su semántica. El provider y la API son las
+  fuentes de observación; no prueban
   historial de clonación, salud del sistema invitado ni efectos fuera del plan.
 - Se añade boto3 fijado a las imágenes. No se amplían permisos ni cambia el
   esquema PostgreSQL. Los diagnósticos no contienen state, planes, credenciales
