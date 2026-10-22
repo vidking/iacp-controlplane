@@ -20,8 +20,6 @@ def power(sessions, application, monkeypatch):
     native, publish = FakePower(), Mock()
     application.dependency_overrides[get_power_client] = lambda: lambda: native
     application.dependency_overrides[get_power_publisher] = lambda: publish
-    monkeypatch.setattr(ownership.config, "SOURCE_REVISION", "e" * 40)
-    monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", "e" * 40)
     monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "1")
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     return identifier, native, publish
@@ -204,8 +202,8 @@ def test_lost_lock_cannot_commit_completion(client, auth, sessions, power, monke
 
 def test_legacy_source_cannot_claim_lifecycle_ownership(client, auth, power, monkeypatch):
     identifier, native, publisher = power
-    monkeypatch.setattr(ownership.config, "SOURCE_REVISION", SOURCE_REVISION)
-    monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", SOURCE_REVISION)
+    monkeypatch.setattr(ownership.config, "SOURCE_REVISION", ownership.LEGACY_TERRAFORM_POWER_SOURCE)
+    monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", ownership.LEGACY_TERRAFORM_POWER_SOURCE)
     assert request(client, auth, identifier).json()["detail"] == "POWER_OWNERSHIP_UNAVAILABLE"
     assert not native.calls
     publisher.assert_not_called()

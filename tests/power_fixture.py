@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 
 @contextmanager
-def power_server(folder, power="stopped"):
+def power_server(folder, power="stopped", *, vmid=21001, name="fixture-kvm"):
     cert, key = folder / "power-cert.pem", folder / "power-key.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                     "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
@@ -35,25 +35,27 @@ def power_server(folder, power="stopped"):
             if self.headers.get('Authorization') != 'PVEAPIToken=synthetic-token':
                 self.send_error(403)
                 return
-            if path == "/access/permissions":
-                value = {"/vms/21001": {"VM.Audit": 1, "VM.PowerMgmt": int(store.permission)}}
-            elif path == "/nodes/mng01/qemu/21001/config":
-                value = {"name": "fixture-kvm", "agent": "0", "acpi": 1}
-            elif path == "/nodes/mng01/qemu/21001/status/current":
-                value = {"vmid": 21001, "status": store.power, "ha": {"managed": 0}}
-            elif path == "/nodes/mng01/qemu/21001/pending":
+            if path == "/version":
+                value = {"version": "fixture-pve"}
+            elif path == "/access/permissions":
+                value = {f"/vms/{vmid}": {"VM.Audit": 1, "VM.PowerMgmt": int(store.permission)}}
+            elif path == f"/nodes/mng01/qemu/{vmid}/config":
+                value = {"name": name, "agent": "0", "acpi": 1}
+            elif path == f"/nodes/mng01/qemu/{vmid}/status/current":
+                value = {"vmid": vmid, "status": store.power, "ha": {"managed": 0}}
+            elif path == f"/nodes/mng01/qemu/{vmid}/pending":
                 value = store.pending
             elif path.startswith("/nodes/mng01/tasks/"):
                 store.task_seen.set()
                 value = {"status": "running"} if store.task_running else {"status": "stopped", "exitstatus": store.exitstatus}
             elif self.command == "POST" and path.rsplit('/', 1)[-1] in {"start", "shutdown", "reboot"}:
                 action = path.rsplit('/', 1)[-1]
-                assert path == "/nodes/mng01/qemu/21001/status/" + action
+                assert path == f"/nodes/mng01/qemu/{vmid}/status/" + action
                 assert parameters == ({} if action == "start" else {"timeout": ["60"], **({"forceStop": ["0"]} if action == "shutdown" else {})})
                 store.posts += 1
                 store.power = "stopped" if action == "shutdown" else "running"
                 typ = {"start": "qmstart", "shutdown": "qmshutdown", "reboot": "qmreboot"}[action]
-                value = f"UPID:mng01:00000001:00000002:00000003:{typ}:21001:synthetic@pve:"
+                value = f"UPID:mng01:00000001:00000002:00000003:{typ}:{vmid}:synthetic@pve:"
             else:
                 self.send_error(404)
                 return

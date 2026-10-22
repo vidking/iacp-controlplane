@@ -2,6 +2,8 @@
 
 > Alcance histórico de 2B: planificación. La capacidad posterior de aplicación
 > autorizada y sus controles están descritos en [AUTHORIZED_APPLY.md](AUTHORIZED_APPLY.md).
+> La fuente vigente se promueve a `9aeb8ec846342d279a5d16be7c8e20157e9bf5ae`;
+> el pin de 2B citado abajo es histórico. Ver [certificación de propiedad de energía](KVM_POWER_PROMOTION.md).
 
 Esta entrega prepara planes verificables desde un worker dedicado. La API y el
 worker de 2A conservan la simulación por defecto. La planificación real también

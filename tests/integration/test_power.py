@@ -34,8 +34,6 @@ def sessions(pg_engine):
 @pytest.fixture
 def power_runtime(sessions, application, monkeypatch, tmp_path):
     identifier = managed_instance(sessions, BOOTSTRAP_TENANT_ID)
-    monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", "e" * 40)
-    monkeypatch.setattr(ownership.config, "SOURCE_REVISION", "e" * 40)
     monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "1")
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     application.dependency_overrides[get_power_publisher] = lambda: Mock()
@@ -107,8 +105,8 @@ def test_0005_preserves_existing_instances_and_history(pg_engine):
     tables = [name for name in inspect(pg_engine).get_table_names() if name != "alembic_version"]
     with pg_engine.connect() as connection:
         before = {name: connection.execute(text(f'SELECT * FROM "{name}"')).all() for name in tables}
-    upgrade(pg_engine)
-    upgrade(pg_engine)
+    upgrade(pg_engine, "0005_kvm_lifecycle")
+    upgrade(pg_engine, "0005_kvm_lifecycle")
     with pg_engine.connect() as connection:
         assert {name: connection.execute(text(f'SELECT * FROM "{name}"')).all() for name in tables} == before
     assert set(inspect(pg_engine).get_table_names()) - set(tables) == {"power_executions", "alembic_version"}

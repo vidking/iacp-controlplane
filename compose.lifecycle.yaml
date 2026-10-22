@@ -32,6 +32,21 @@ services:
     restart: unless-stopped
     networks: [backend, egress]
 
+  # Explicit one-shot operator command; never started by ordinary `up`.
+  ownership-certifier:
+    extends:
+      file: compose.terraform.yaml
+      service: terraform-worker
+    profiles: [certification]
+    command: [python, -m, iacp.lifecycle.certify, --help]
+    restart: "no"
+    environment:
+      IACP_KVM_LIFECYCLE_ENABLED: "0"
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+    secrets: [db_password, terraform_credentials, kvm_credentials]
+    volumes:
+      - terraform_plans:/var/lib/iacp/terraform:ro
+
 secrets:
   kvm_credentials:
     file: ${IACP_KVM_CREDENTIALS_PATH:?Credencial dedicada VM.Audit y VM.PowerMgmt; no credencial Terraform}

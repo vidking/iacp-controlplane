@@ -8,8 +8,10 @@ La URL de integración es **https://iac.cyberfuel.com**.
 El incremento [KVM Lifecycle API](../KVM_LIFECYCLE_API.md) parte de main con
 PR #18 y del hito confirmado de VMID 106, intento 4 completed. Agrega consulta de
 energía y operaciones asíncronas; las mutaciones permanecen bloqueadas hasta la
-promoción independiente del contrato IaC de started. Su documento describe
-activación, migración 0005, recuperación y rollback compatibles.
+certificación operativa explícita. El contrato del PR #7 de iac-proxmox ya está
+promovido en código. [La promoción y certificación histórica](../KVM_POWER_PROMOTION.md)
+describe despliegue con migraciones 0005/0006, certificación de VM 106, activación
+y rollback compatible, conservando Apply=1.
 
 | Equipo | Lectura principal | Responsabilidad |
 |---|---|---|

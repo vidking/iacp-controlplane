@@ -85,8 +85,11 @@ restauración aislada antes de ofrecer una reversión de esquema.
 
 **¿Puedo volver al binario anterior tras migrar 0005?** No como rollback directo:
 su modelo presupone una operación por instancia. Pausar Lifecycle con su flag y
-usar un release compatible con 0005, conservando historial y propiedad de started.
-No devolver energía a Terraform ni editar SQL como parte de la reversión.
+usar un release compatible con el esquema head, conservando historial y propiedad
+de started. La promoción agrega 0006 y PR #19 tampoco es rollback binario
+compatible. Mantener el release promovido o un correctivo compatible con 0006,
+Lifecycle=0 y Apply=1. No devolver energía a Terraform ni editar SQL como parte
+de la reversión. Ver [el procedimiento](../KVM_POWER_PROMOTION.md).
 
 **¿TLS queda activo al fusionar el PR?** No. El override exige certificados,
 política y parámetros externos. La configuración activa del servidor no cambia.

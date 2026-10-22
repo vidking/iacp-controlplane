@@ -183,12 +183,17 @@ class TerraformExecutor:
 
     def verify_artifacts(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         """Verificar el vínculo persistido sin exigir credenciales de una mutación nueva."""
+        return self._verify_artifacts_revision(instance_id, attempt, sha256, state_key, allocation, variables, SOURCE_REVISION)
+
+    def _verify_artifacts_revision(self, instance_id, attempt, sha256, state_key, allocation, variables, revision):
+        # Historical inspection is used only by the offline ownership certifier.
+        # apply/reconcile retain the strict current SOURCE_REVISION check above.
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
-                    or manifest["source_revision"] != SOURCE_REVISION
+                    or manifest["source_revision"] != revision
                     or manifest["variables"] != variables
                     or manifest["backend"] != Allocation.model_validate(allocation).backend.arguments(state_key)
                     or json.loads((saved.parent / "backend.tfbackend.json").read_text()) != manifest["backend"]

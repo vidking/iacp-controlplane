@@ -170,6 +170,23 @@ class TerraformApply(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class PowerOwnershipCertificate(Base):
+    __tablename__ = "power_ownership_certificates"
+    __table_args__ = (
+        UniqueConstraint("approval_id", "ownership_revision", name="uq_power_certificate_approval_revision"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False, index=True)
+    approval_id: Mapped[str] = mapped_column(ForeignKey("terraform_applies.id"), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    ownership_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    binding_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
+    certified_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    change_reference: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PowerExecution(Base):
     __tablename__ = "power_executions"
     __table_args__ = (
@@ -190,6 +207,7 @@ class PowerExecution(Base):
     name: Mapped[str] = mapped_column(String(63), nullable=False)
     approval_id: Mapped[str] = mapped_column(ForeignKey("terraform_applies.id"), nullable=False)
     ownership_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    ownership_certificate_id: Mapped[str | None] = mapped_column(ForeignKey("power_ownership_certificates.id"))
     task_id: Mapped[str | None] = mapped_column(String(512))
     result: Mapped[dict | None] = mapped_column(JSON)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
