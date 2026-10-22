@@ -37,12 +37,12 @@ class ApplyingExecutor:
         if cancelled():
             raise PlanError("CANCELLED")
         if self.failure:
-            raise PlanError(self.failure)
+            raise self.failure if isinstance(self.failure, PlanError) else PlanError(self.failure)
         return self.observe(identifier, attempt, allocation, variables, cancelled)
 
     def observe(self, identifier, attempt, allocation, variables, cancelled):
         if self.failure:
-            raise PlanError(self.failure)
+            raise self.failure if isinstance(self.failure, PlanError) else PlanError(self.failure)
         values = plan_json(variables)["resource_changes"][0]["change"]["after"]
         values["started"] = False
         return observed_resource({"root_module": {"child_modules": [{"resources": [
@@ -215,7 +215,7 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
     actual = planned["resource_changes"][0]["change"]["after"]
     actual["started"] = True
     class Runner:
-        def run(self, args, cwd, env, cancelled, allowed=(0,)):
+        def run(self, args, cwd, env, cancelled, allowed=(0,), phase=None):
             commands.append(args)
             if args[0] == "version":
                 from iacp.terraform.config import TERRAFORM_VERSION
@@ -315,3 +315,35 @@ def test_cancel_before_mutation_keeps_operation_consistent(client, auth, prepare
     assert cancelled.json()["status"] == "cancelled"
     operation = client.get('/v1/operations/' + prepared[0]["operation_id"], headers=auth).json()
     assert operation["status"] == "failed" and operation["error_code"] == "CANCELLED"
+
+
+def test_failed_command_exposes_only_safe_structured_diagnostic(tmp_path):
+    import sys
+    runner = CommandRunner((sys.executable, "-c", "import sys; sys.stderr.write('secret'); sys.exit(7)"))
+    with pytest.raises(PlanError) as raised:
+        runner.run(["init"], tmp_path, {"PATH": os.environ["PATH"]}, lambda: False, phase="apply.init")
+    assert raised.value.code == "TERRAFORM_COMMAND_FAILED"
+    assert raised.value.diagnostic() == {"phase": "apply.init", "command": "init", "exit_code": 7}
+    assert "secret" not in str(raised.value.diagnostic())
+
+
+def test_apply_persists_failure_phase_without_stderr(client, auth, prepared, monkeypatch, sessions):
+    monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    row = approval(client, prepared).json()
+    dispatch(client, prepared, auth, row)
+    failure = PlanError("TERRAFORM_COMMAND_FAILED", phase="apply", command="apply", exit_code=1)
+    execute_apply(row["approval_id"], sessions, ApplyingExecutor(failure=failure))
+    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    assert current["status"] == "uncertain"
+    assert current["result"] == {"diagnostic": {"phase": "apply", "command": "apply", "exit_code": 1}}
+
+
+def test_preflight_failure_is_failed_not_uncertain(client, auth, prepared, monkeypatch, sessions):
+    monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    row = approval(client, prepared).json()
+    dispatch(client, prepared, auth, row)
+    failure = PlanError("TERRAFORM_COMMAND_FAILED", phase="apply.init", command="init", exit_code=1)
+    execute_apply(row["approval_id"], sessions, ApplyingExecutor(failure=failure, before_failure=True))
+    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    assert current["status"] == "failed" and current["started_at"] is None
+    assert current["result"]["diagnostic"]["phase"] == "apply.init"

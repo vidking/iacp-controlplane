@@ -19,16 +19,16 @@ class CommandRunner:
         if os.environ.get("IACP_TERRAFORM_APPLY_ENABLED") != "1":
             raise PlanError("APPLY_DISABLED")
         return self._execute(["apply", "-input=false", "-no-color", "-lock-timeout=30s", "saved.tfplan"],
-                             cwd, env, cancelled, (0,))
+                             cwd, env, cancelled, (0,), "apply")
 
-    def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,)) -> bytes:
+    def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,), phase=None) -> bytes:
         if not args or args[0] not in {"version", "init", "validate", "plan", "show"}:
             raise PlanError("COMMAND_FORBIDDEN")
         if any(value.startswith(("-destroy", "-lock=false", "-target", "-replace", "-migrate-state", "-force")) for value in args):
             raise PlanError("COMMAND_FORBIDDEN")
-        return self._execute(args, cwd, env, cancelled, allowed)
+        return self._execute(args, cwd, env, cancelled, allowed, phase)
 
-    def _execute(self, args, cwd, env, cancelled, allowed):
+    def _execute(self, args, cwd, env, cancelled, allowed, phase=None):
         if cancelled():
             raise Cancelled()
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
@@ -36,27 +36,28 @@ class CommandRunner:
                 process = subprocess.Popen([*self.binary, *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                            stdout=output, stderr=diagnostics, start_new_session=True)
             except OSError:
-                raise PlanError("TERRAFORM_UNAVAILABLE") from None
+                raise PlanError("TERRAFORM_UNAVAILABLE", phase=phase, command=args[0]) from None
             try:
                 deadline = time.monotonic() + self.timeout
                 while process.poll() is None:
                     if cancelled():
                         raise Cancelled()
                     if time.monotonic() >= deadline:
-                        raise PlanError("TERRAFORM_TIMEOUT")
+                        raise PlanError("TERRAFORM_TIMEOUT", phase=phase, command=args[0])
                     if os.fstat(output.fileno()).st_size + os.fstat(diagnostics.fileno()).st_size > 16 * 1024 * 1024:
-                        raise PlanError("OUTPUT_LIMIT_EXCEEDED")
+                        raise PlanError("OUTPUT_LIMIT_EXCEEDED", phase=phase, command=args[0])
                     time.sleep(0.1)
                 if cancelled():
                     raise Cancelled()
                 if process.returncode not in allowed:
-                    raise PlanError("TERRAFORM_COMMAND_FAILED")
+                    raise PlanError("TERRAFORM_COMMAND_FAILED", phase=phase,
+                                    command=args[0], exit_code=process.returncode)
                 if os.fstat(output.fileno()).st_size + os.fstat(diagnostics.fileno()).st_size > 16 * 1024 * 1024:
-                    raise PlanError("OUTPUT_LIMIT_EXCEEDED")
+                    raise PlanError("OUTPUT_LIMIT_EXCEEDED", phase=phase, command=args[0])
                 output.seek(0)
                 data = output.read(16 * 1024 * 1024 + 1)
                 if len(data) > 16 * 1024 * 1024:
-                    raise PlanError("OUTPUT_LIMIT_EXCEEDED")
+                    raise PlanError("OUTPUT_LIMIT_EXCEEDED", phase=phase, command=args[0])
                 return data
             finally:
                 # Un worker interrumpido no debe dejar un proceso hijo planificando.

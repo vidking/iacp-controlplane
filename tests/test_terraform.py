@@ -244,7 +244,7 @@ def test_real_adapter_builds_plan_from_pinned_archive_and_preserves_integrity(tm
 
     class Runner:
         def __init__(self): self.commands = []
-        def run(self, args, cwd, env, cancelled, allowed=(0,)):
+        def run(self, args, cwd, env, cancelled, allowed=(0,), phase=None):
             self.commands.append(args)
             assert "TF_CLI_ARGS" not in env
             if args[0] == "version": return json.dumps({"terraform_version": TERRAFORM_VERSION}).encode()
@@ -269,6 +269,41 @@ def test_real_adapter_builds_plan_from_pinned_archive_and_preserves_integrity(tm
         executor.prepare_apply(identifier, 1, result.sha256, "iacp/lab/fixture/terraform.tfstate", allocation.model_dump(), variables)
     with pytest.raises(PlanError, match="APPLY_DISABLED"):
         executor.apply()
+
+
+def test_apply_rejects_changed_execution_credentials_without_persisting_them(tmp_path, monkeypatch):
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        item = tarfile.TarInfo("stacks/kvm-instance/versions.tf")
+        item.size = 0
+        tar.addfile(item, io.BytesIO(b""))
+    monkeypatch.setattr(subprocess, "run", Mock(return_value=SimpleNamespace(stdout=archive.getvalue())))
+    monkeypatch.setenv("IACP_TERRAFORM_PLAN_ENABLED", "1")
+    credentials = tmp_path / "credentials"
+    original = {"AWS_ACCESS_KEY_ID": "fixture", "AWS_SECRET_ACCESS_KEY": "first-secret",
+                "PROXMOX_VE_API_TOKEN": "first-token", "PROXMOX_VE_ENDPOINT": "https://fixture.invalid:8006/"}
+    credentials.write_text(json.dumps(original))
+    monkeypatch.setenv("IACP_TERRAFORM_CREDENTIALS_FILE", str(credentials))
+    allocation = Allocation.model_validate(allocation_data())
+    variables = allocation.variables(SimpleNamespace(**SPEC))
+
+    class Runner:
+        def run(self, args, cwd, env, cancelled, allowed=(0,), phase=None):
+            if args[0] == "version": return json.dumps({"terraform_version": TERRAFORM_VERSION}).encode()
+            if args[0] == "plan": (cwd / "saved.tfplan").write_bytes(b"fixture-plan")
+            if args[0] == "show": return json.dumps(plan_json(variables)).encode()
+            return b""
+
+    executor = TerraformExecutor(tmp_path / "checkout", tmp_path / "plans", Runner())
+    from uuid import uuid4
+    identifier = str(uuid4())
+    result = executor.plan(identifier, 1, "iacp/lab/fixture/terraform.tfstate", allocation, variables, lambda: False)
+    manifest = (executor.workspace(identifier, 1) / "manifest.json").read_text()
+    assert "first-secret" not in manifest and "first-token" not in manifest
+    credentials.write_text(json.dumps({**original, "PROXMOX_VE_API_TOKEN": "second-token"}))
+    with pytest.raises(PlanError, match="PLAN_INTEGRITY_FAILED"):
+        executor.prepare_apply(identifier, 1, result.sha256, "iacp/lab/fixture/terraform.tfstate",
+                               allocation.model_dump(), variables)
 
 
 @pytest.mark.parametrize("command", [["apply"], ["destroy"], ["state", "push"], ["plan", "-lock=false"], ["plan", "-destroy"]])

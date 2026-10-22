@@ -182,7 +182,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             event(session, session.get(Operation, execution.operation_id), "terraform_mutation_started", "worker:terraform")
             session.commit()
 
-    result, error = None, None
+    result, error, diagnostic = None, None, None
     try:
         if cancelled():
             raise PlanError("CANCELLED")
@@ -207,6 +207,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH")
     except PlanError as failure:
         error = failure.code
+        diagnostic = failure.diagnostic()
     except Exception:
         error = "TERRAFORM_EXECUTION_FAILED"
     with sessions() as session:
@@ -216,7 +217,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         instance = session.get(Instance, row.instance_id)
         row.status = ("uncertain" if error and (row.started_at or reconcile) else
                       "cancelled" if error and row.status == "cancelled" else "failed" if error else "completed")
-        row.error_code, row.result, row.finished_at = error, result if not error else None, utcnow()
+        row.error_code, row.result, row.finished_at = error, result if not error else ({"diagnostic": diagnostic} if diagnostic else None), utcnow()
         job.status = "failed" if error else "completed"
         job.message = "Consulte la autorización y los eventos Terraform" if error else "KVM observada mediante el provider"
         operation.status, operation.error_code = ("failed" if error else "completed"), error
@@ -225,6 +226,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             instance.result = {**result, "phase": "observed", "observed_at": utcnow().isoformat(), "apply_id": row.id}
         else:
             instance.status = "failed"
-            instance.result = {"simulated": False, "phase": row.status, "error_code": error, "apply_id": row.id}
+            instance.result = {"simulated": False, "phase": row.status, "error_code": error,
+                               "apply_id": row.id, **({"diagnostic": diagnostic} if diagnostic else {})}
         event(session, operation, "terraform_apply_" + row.status, "worker:terraform")
         session.commit()

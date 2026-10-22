@@ -11,9 +11,19 @@ TERRAFORM_VERSION = "1.16.6"
 
 
 class PlanError(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, phase: str | None = None,
+                 command: str | None = None, exit_code: int | None = None):
         self.code = code
+        self.phase = phase
+        self.command = command
+        self.exit_code = exit_code
         super().__init__(code)
+
+    def diagnostic(self) -> dict:
+        """Metadatos operativos permitidos; nunca incluye stdout, stderr ni argumentos."""
+        return {key: value for key, value in {
+            "phase": self.phase, "command": self.command, "exit_code": self.exit_code,
+        }.items() if value is not None}
 
 
 class Cancelled(PlanError):

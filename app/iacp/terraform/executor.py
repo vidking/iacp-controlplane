@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import secrets
 import subprocess
 import tarfile
 
@@ -105,22 +106,25 @@ class TerraformExecutor:
         write_private(root / "backend.tfbackend.json", backend)
         env = self.environment(workspace)
         try:
-            version = json.loads(self.runner.run(["version", "-json"], root, env, cancelled))
+            version = json.loads(self.runner.run(["version", "-json"], root, env, cancelled, phase="plan.preflight"))
             if version.get("terraform_version") != TERRAFORM_VERSION:
                 raise PlanError("TERRAFORM_VERSION_MISMATCH")
-            self.runner.run(["init", "-input=false", "-no-color", "-lockfile=readonly", "-backend-config=backend.tfbackend.json"], root, env, cancelled)
-            self.runner.run(["validate", "-no-color"], root, env, cancelled)
+            self.runner.run(["init", "-input=false", "-no-color", "-lockfile=readonly", "-backend-config=backend.tfbackend.json"], root, env, cancelled, phase="plan.init")
+            self.runner.run(["validate", "-no-color"], root, env, cancelled, phase="plan.validate")
             self.runner.run(["plan", "-input=false", "-no-color", "-lock-timeout=30s", "-detailed-exitcode", "-out=saved.tfplan"],
-                            root, env, cancelled, allowed=(0, 2))
-            plan = json.loads(self.runner.run(["show", "-json", "saved.tfplan"], root, env, cancelled))
+                            root, env, cancelled, allowed=(0, 2), phase="plan.create")
+            plan = json.loads(self.runner.run(["show", "-json", "saved.tfplan"], root, env, cancelled, phase="plan.inspect"))
             summary = verify_plan(plan, variables)
         except (ValueError, TypeError):
             raise PlanError("INVALID_PLAN_OUTPUT") from None
         saved = root / "saved.tfplan"
         saved.chmod(0o600)
         sha256 = digest_file(saved)
+        salt = secrets.token_hex(32)
         write_private(workspace / "manifest.json", {"sha256": sha256, "source_revision": SOURCE_REVISION,
-                      "state_key": state_key, "variables": variables, "backend": backend, "summary": summary})
+                      "state_key": state_key, "variables": variables, "backend": backend, "summary": summary,
+                      "execution_context_salt": salt,
+                      "execution_context_sha256": self.context_digest(env, salt)})
         return PlanResult(sha256, SOURCE_REVISION, summary)
 
     def environment(self, workspace: Path) -> dict:
@@ -148,17 +152,28 @@ class TerraformExecutor:
             env["SSL_CERT_FILE"] = ca_file
         return env
 
+    @staticmethod
+    def context_digest(env: dict, salt: str) -> str:
+        keys = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                "PROXMOX_VE_API_TOKEN", "PROXMOX_VE_ENDPOINT", "SSL_CERT_FILE")
+        payload = {key: env.get(key) for key in keys}
+        if env.get("SSL_CERT_FILE"):
+            payload["SSL_CERT_FILE_SHA256"] = digest_file(Path(env["SSL_CERT_FILE"]))
+        return hashlib.sha256((salt + json.dumps(payload, sort_keys=True, separators=(",", ":"))).encode()).hexdigest()
+
     def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
+            env = self.environment(workspace)
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
                     or manifest["source_revision"] != SOURCE_REVISION
                     or manifest["variables"] != variables
                     or manifest["backend"] != Allocation.model_validate(allocation).backend.arguments(state_key)
                     or json.loads((saved.parent / "backend.tfbackend.json").read_text()) != manifest["backend"]
-                    or json.loads((saved.parent / "iacp.auto.tfvars.json").read_text()) != variables):
+                    or json.loads((saved.parent / "iacp.auto.tfvars.json").read_text()) != variables
+                    or self.context_digest(env, manifest["execution_context_salt"]) != manifest["execution_context_sha256"]):
                 raise ValueError("Plan changed")
         except (OSError, ValueError, KeyError):
             raise PlanError("PLAN_INTEGRITY_FAILED") from None
@@ -175,8 +190,8 @@ class TerraformExecutor:
         workspace = self.workspace(instance_id, attempt)
         root = workspace / "source" / "stacks" / "kvm-instance"
         env = self.environment(workspace)
-        self.initialize(root, env, cancelled)
-        plan = self.read_json(["show", "-json", "saved.tfplan"], root, env, cancelled)
+        self.initialize(root, env, cancelled, "apply")
+        plan = self.read_json(["show", "-json", "saved.tfplan"], root, env, cancelled, "apply.inspect")
         verify_plan(plan, variables)
         # Revalidar el binario inmediatamente antes de consumir la autorización.
         self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables)
@@ -186,27 +201,31 @@ class TerraformExecutor:
         self.runner.apply_saved(root, env, cancelled)
         return self.observe(instance_id, attempt, allocation, variables, cancelled)
 
-    def read_json(self, args, root, env, cancelled):
+    def read_json(self, args, root, env, cancelled, phase):
         try:
-            return json.loads(self.runner.run(args, root, env, cancelled))
+            return json.loads(self.runner.run(args, root, env, cancelled, phase=phase))
         except (ValueError, TypeError):
-            raise PlanError("INVALID_TERRAFORM_OUTPUT") from None
+            raise PlanError("INVALID_TERRAFORM_OUTPUT", phase=phase, command=args[0]) from None
 
-    def initialize(self, root, env, cancelled):
-        if self.read_json(["version", "-json"], root, env, cancelled).get("terraform_version") != TERRAFORM_VERSION:
+    def initialize(self, root, env, cancelled, phase):
+        if self.read_json(["version", "-json"], root, env, cancelled, f"{phase}.preflight").get("terraform_version") != TERRAFORM_VERSION:
             raise PlanError("TERRAFORM_VERSION_MISMATCH")
         self.runner.run(["init", "-input=false", "-no-color", "-lockfile=readonly", "-reconfigure",
-                         "-backend-config=backend.tfbackend.json"], root, env, cancelled)
+                         "-backend-config=backend.tfbackend.json"], root, env, cancelled, phase=f"{phase}.init")
 
     def observe(self, instance_id, attempt, allocation, variables, cancelled):
         workspace = self.workspace(instance_id, attempt)
         root = workspace / "source" / "stacks" / "kvm-instance"
         env = self.environment(workspace)
         # Consultar el provider; show del state por sí solo podría devolver datos antiguos.
-        self.initialize(root, env, cancelled)
+        self.initialize(root, env, cancelled, "observe")
         self.runner.run(["plan", "-refresh-only", "-input=false", "-no-color", "-lock-timeout=30s",
-                         "-out=observation.tfplan"], root, env, cancelled)
-        observed = self.read_json(["show", "-json", "observation.tfplan"], root, env, cancelled)
+                         "-out=observation.tfplan"], root, env, cancelled, phase="observe.refresh")
+        try:
+            observed = json.loads(self.runner.run(["show", "-json", "observation.tfplan"], root, env, cancelled,
+                                                  phase="observe.inspect"))
+        except (ValueError, TypeError):
+            raise PlanError("INVALID_TERRAFORM_OUTPUT", phase="observe.inspect", command="show") from None
         return observed_resource(observed.get("planned_values", {}), variables)
 
 
