@@ -12,6 +12,8 @@ el adaptador se simula con PostgreSQL 17, Redis 7 y Celery reales en Docker loca
 3. El operador solicita `POST .../terraform/apply` con `approval_id` e
    `Idempotency-Key`. La API y el worker exigen la habilitación del entorno.
 4. El worker verifica intento, hash, source, backend, variables y caducidad;
+   también exige la misma identidad de backend/provider, endpoint y CA que se
+   usaron al planificar mediante una huella salada que no revela credenciales;
    adquiere el lock PostgreSQL por instancia y aplica **solamente** `saved.tfplan`.
    Terraform conserva `use_lockfile=true` en Wasabi y espera hasta 30 s el lock.
 5. Una consulta `plan -refresh-only` al provider verifica VMID, nodo, nombre y
@@ -29,6 +31,33 @@ cancela antes de mutar o exige conciliación si la mutación ya empezó.
 `running`/`uncertain` consulta al provider sin ejecutar apply. Un recurso ausente,
 parcial, distinto o inaccesible conserva el bloqueo y exige intervención.
 Nunca se vuelve a aplicar automáticamente un resultado incierto.
+
+## Diagnóstico por fase y análisis del incidente MNG
+
+`TERRAFORM_COMMAND_FAILED` no identifica por sí solo un fallo del provider. Ese
+código puede originarse en `init`, `show`, `apply` o en el `plan -refresh-only`
+de observación. La autorización registra ahora, dentro de `result.diagnostic`,
+solo `phase`, nombre del subcomando y código de salida. Las fases posibles son
+`apply.preflight`, `apply.init`, `apply.inspect`, `apply`, `observe.preflight`,
+`observe.init`, `observe.refresh` y `observe.inspect`. No se conservan argumentos,
+stdout ni stderr, porque pueden contener rutas, topología o material sensible.
+
+Los fallos de integridad, versión, inicialización e inspección anteriores a
+`terraform apply saved.tfplan` terminan en `failed` sin `started_at`. Justo antes
+de invocar el único comando mutante se consume la autorización y se fija
+`started_at`; desde ese punto, cualquier error de apply u observación termina en
+`uncertain`. La conciliación de `uncertain` ejecuta exclusivamente inicialización,
+refresh-only y show; nunca vuelve a ejecutar `apply`.
+
+Para el incidente del release `a97c5ac`, la evidencia disponible no permite
+atribuir con certeza el código genérico al provider: tampoco distingue si falló
+el apply guardado o la observación posterior. La modificación del state remoto
+confirma actividad sobre el backend, pero no demuestra creación de la VM ni
+autoriza otro apply. La ausencia de VMID 106 mantiene el resultado incierto hasta
+correlacionar la versión del objeto, serial/lineage, eventos de Proxmox y el run.
+Sí se identificó una divergencia reproducible: el código anterior reconstruía
+credenciales y CA al aplicar, sin comprobar que fueran las usadas al planificar.
+Ahora cualquier rotación o cambio exige un plan y aprobación nuevos.
 
 Cada subproceso tiene 300 s, 16 MiB de salida y terminación del grupo de procesos;
 el flujo tiene 900 s y el task límites soft/hard 910/930 s. Un timeout después

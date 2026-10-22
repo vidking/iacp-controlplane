@@ -60,6 +60,15 @@ verificar que no siga mutando y obtener autorización antes de cualquier desbloq
 result. `POST .../applies/{approval_id}/recover` no concede permisos de apply.
 Durante conciliación se permite observar aunque apply esté deshabilitado; la
 planificación debe estar habilitada y las credenciales de lectura disponibles.
+La huella del contexto exige las mismas credenciales, endpoint y contenido de CA
+del plan original. Si fueron rotados, no se debe alterar el manifiesto: preservar
+el intento, investigar el state y realizar una recuperación operativa autorizada.
+
+El diagnóstico estructurado de una autorización puede señalar `apply.init`,
+`apply.inspect`, `apply`, `observe.init`, `observe.refresh` u `observe.inspect`.
+Un fallo anterior a `started_at` no inició la mutación. Un fallo en `apply` o en
+la observación posterior permanece incierto aunque Proxmox no muestre la VM,
+porque Terraform pudo modificar state o completar solo parte de la operación.
 
 ## Respaldo y restauración de state
 
