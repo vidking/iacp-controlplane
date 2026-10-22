@@ -87,8 +87,8 @@ def test_0004_adds_only_apply_table_and_preserves_all_2b_rows(pg_engine):
     with pg_engine.connect() as connection:
         before = {table: connection.execute(text(f'SELECT * FROM "{table}"')).all()
                   for table in before_tables if table != "alembic_version"}
-    upgrade(pg_engine)
-    upgrade(pg_engine)
+    upgrade(pg_engine, "0004_authorized_apply")
+    upgrade(pg_engine, "0004_authorized_apply")
     with pg_engine.connect() as connection:
         assert {table: connection.execute(text(f'SELECT * FROM "{table}"')).all() for table in before} == before
         assert set(inspect(pg_engine).get_table_names()) - set(before_tables) == {"terraform_applies"}

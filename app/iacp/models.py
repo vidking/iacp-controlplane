@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -40,7 +40,9 @@ class Instance(Base):
     result: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-    creation: Mapped["Operation"] = relationship(uselist=False)
+    creation: Mapped["Operation"] = relationship(
+        primaryjoin="and_(Instance.id == Operation.instance_id, Operation.kind == 'instance.create')",
+        uselist=False, viewonly=True)
 
     @property
     def infrastructure_kind(self) -> str:
@@ -61,11 +63,13 @@ class Operation(Base):
     __tablename__ = "operations"
     __table_args__ = (
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_operations_tenant_key"),
-        CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name="ck_operations_status"),
+        CheckConstraint("status IN ('queued', 'running', 'completed', 'failed', 'uncertain')", name="ck_operations_status"),
+        Index("uq_operations_creation", "instance_id", unique=True,
+              postgresql_where=text("kind = 'instance.create'"), sqlite_where=text("kind = 'instance.create'")),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
-    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False, unique=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False)
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -163,4 +167,31 @@ class TerraformApply(Base):
     result: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PowerExecution(Base):
+    __tablename__ = "power_executions"
+    __table_args__ = (
+        CheckConstraint("action IN ('start','shutdown','reboot')", name="ck_power_action"),
+        CheckConstraint("status IN ('queued','running','uncertain','completed','failed')", name="ck_power_status"),
+        CheckConstraint("vmid >= 100 AND vmid <> 104", name="ck_power_excludes_controlplane"),
+        Index("uq_power_active_instance", "instance_id", unique=True,
+              postgresql_where=text("status IN ('queued','running','uncertain')"),
+              sqlite_where=text("status IN ('queued','running','uncertain')")),
+    )
+    operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str] = mapped_column(String(30), nullable=False)
+    vmid: Mapped[int] = mapped_column(Integer, nullable=False)
+    node: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
+    approval_id: Mapped[str] = mapped_column(ForeignKey("terraform_applies.id"), nullable=False)
+    ownership_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(512))
+    result: Mapped[dict | None] = mapped_column(JSON)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

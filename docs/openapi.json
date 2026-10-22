@@ -385,7 +385,8 @@
               "queued",
               "running",
               "completed",
-              "failed"
+              "failed",
+              "uncertain"
             ],
             "title": "Status",
             "type": "string"
@@ -855,6 +856,16 @@
             "title": "Operation Id",
             "type": "string"
           },
+          "power": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PowerProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "requested_by": {
             "title": "Requested By",
             "type": "string"
@@ -864,7 +875,8 @@
               "queued",
               "running",
               "completed",
-              "failed"
+              "failed",
+              "uncertain"
             ],
             "title": "Status",
             "type": "string"
@@ -921,6 +933,219 @@
           "status"
         ],
         "title": "PlanQueued",
+        "type": "object"
+      },
+      "PowerAccepted": {
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "uncertain"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "status"
+        ],
+        "title": "PowerAccepted",
+        "type": "object"
+      },
+      "PowerProgress": {
+        "properties": {
+          "action": {
+            "enum": [
+              "start",
+              "shutdown",
+              "reboot"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "guest_ready": {
+            "title": "Guest Ready",
+            "type": "null"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "power_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "running",
+                  "stopped"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power State"
+          },
+          "recovery_required": {
+            "title": "Recovery Required",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "uncertain"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          }
+        },
+        "required": [
+          "action",
+          "status",
+          "phase",
+          "power_state",
+          "recovery_required",
+          "started_at",
+          "submitted_at",
+          "finished_at"
+        ],
+        "title": "PowerProgress",
+        "type": "object"
+      },
+      "PowerRequest": {
+        "additionalProperties": false,
+        "description": "No client-controlled provider identifiers or force flags.",
+        "properties": {},
+        "title": "PowerRequest",
+        "type": "object"
+      },
+      "PowerState": {
+        "properties": {
+          "accessible": {
+            "const": "unknown",
+            "default": "unknown",
+            "title": "Accessible",
+            "type": "string"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
+          "cloud_init": {
+            "const": "unknown",
+            "default": "unknown",
+            "title": "Cloud Init",
+            "type": "string"
+          },
+          "guest_agent": {
+            "const": "unknown",
+            "default": "unknown",
+            "title": "Guest Agent",
+            "type": "string"
+          },
+          "guest_ready": {
+            "title": "Guest Ready",
+            "type": "null"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "mutations_available": {
+            "title": "Mutations Available",
+            "type": "boolean"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "os_boot": {
+            "const": "unknown",
+            "default": "unknown",
+            "title": "Os Boot",
+            "type": "string"
+          },
+          "power_state": {
+            "enum": [
+              "running",
+              "stopped"
+            ],
+            "title": "Power State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "power_state",
+          "observed_at",
+          "mutations_available"
+        ],
+        "title": "PowerState",
         "type": "object"
       },
       "ProxmoxAbsenceEvidence": {
@@ -1364,6 +1589,485 @@
         "summary": "Get Instance",
         "tags": [
           "instances"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/power": {
+      "get": {
+        "description": "Consulta Proxmox para una KVM administrada del tenant. Running no demuestra arranque del SO, Guest Agent, Cloud-Init ni accesibilidad; guest_ready permanece null.",
+        "operationId": "getInstancePower",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Power",
+        "tags": [
+          "kvm-lifecycle"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/power/reboot": {
+      "post": {
+        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain. Requiere VM running y tarea de reboot confirmada; running por sí solo no demuestra reboot.",
+        "operationId": "rebootInstancePower",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reboot",
+        "tags": [
+          "kvm-lifecycle"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/power/shutdown": {
+      "post": {
+        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain. Apagado ordenado, timeout ACPI 60 s; forceStop=0 sin fallback forzado.",
+        "operationId": "shutdownInstancePower",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Shutdown",
+        "tags": [
+          "kvm-lifecycle"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/power/start": {
+      "post": {
+        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain.",
+        "operationId": "startInstancePower",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start",
+        "tags": [
+          "kvm-lifecycle"
         ]
       }
     },

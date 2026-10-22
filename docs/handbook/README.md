@@ -5,6 +5,12 @@ pruebas locales de la validación pendiente sobre una KVM de laboratorio.
 Forgejo es la fuente oficial; ningún procedimiento depende de un equipo personal.
 La URL de integración es **https://iac.cyberfuel.com**.
 
+El incremento [KVM Lifecycle API](../KVM_LIFECYCLE_API.md) parte de main con
+PR #18 y del hito confirmado de VMID 106, intento 4 completed. Agrega consulta de
+energía y operaciones asíncronas; las mutaciones permanecen bloqueadas hasta la
+promoción independiente del contrato IaC de started. Su documento describe
+activación, migración 0005, recuperación y rollback compatibles.
+
 | Equipo | Lectura principal | Responsabilidad |
 |---|---|---|
 | Desarrollo | [Integración API](API_INTEGRATION.md), [estados y errores](STATES_ERRORS.md) | Identidad de servicio CRM, claves idempotentes, consulta de resultados |

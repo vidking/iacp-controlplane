@@ -26,3 +26,13 @@ def get_plan_publisher():
 def get_apply_publisher():
     from ..terraform.worker import apply_instance
     return lambda identifier, mode: apply_instance.apply_async(args=[identifier, mode], queue="terraform")
+
+
+def get_power_publisher():
+    from ..lifecycle.worker import power_operation
+    return lambda identifier: power_operation.apply_async(args=[identifier], queue="lifecycle")
+
+
+def get_power_client():
+    from ..lifecycle.proxmox import ProxmoxPower
+    return ProxmoxPower.configured

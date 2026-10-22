@@ -34,6 +34,10 @@ def main():
         ("/v1/instances/{instance_id}/terraform/apply", "post"),
         ("/v1/instances/{instance_id}/terraform/applies", "get"),
         ("/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover", "post"),
+        ("/v1/instances/{instance_id}/power", "get"),
+        ("/v1/instances/{instance_id}/power/start", "post"),
+        ("/v1/instances/{instance_id}/power/shutdown", "post"),
+        ("/v1/instances/{instance_id}/power/reboot", "post"),
     ]
     for path, method in required:
         operation = api["paths"][path][method]
