@@ -8,10 +8,12 @@ import re
 import secrets
 import subprocess
 import tarfile
+import zipfile
 
 from .config import Allocation, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from .runner import CommandRunner
 from .observation import proxmox_resource
+from .state import S3StateReader
 
 ADDRESS = "module.kvm.proxmox_virtual_environment_vm.this"
 
@@ -25,6 +27,22 @@ def write_private(path: Path, value: dict) -> None:
     with open(path, "w", opener=lambda name, flags: os.open(name, flags, 0o600)) as stream:
         json.dump(value, stream, sort_keys=True)
     path.chmod(0o600)
+
+
+def approved_state_metadata(path):
+    """Cabecera del snapshot sellado en el plan 1.16.6; nunca extraer/escribir state."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if archive.namelist().count("tfstate") != 1 or archive.getinfo("tfstate").file_size > 16 * 1024 * 1024:
+                raise ValueError("Invalid embedded state")
+            header = json.loads(archive.read("tfstate"))
+        if (header["version"] != 4 or not isinstance(header["lineage"], str)
+                or type(header["serial"]) is not int or header["serial"] < 0
+                or (not header["lineage"] and header["serial"] != 0)):
+            raise ValueError("Invalid embedded metadata")
+        return {"lineage": header["lineage"], "serial": header["serial"]}
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, RuntimeError):
+        raise PlanError("PLAN_INTEGRITY_FAILED", phase="observe.approved_state") from None
 
 
 def verify_plan(plan: dict, variables: dict) -> dict:
@@ -188,9 +206,11 @@ class TerraformExecutor:
 
     def prepare_reconcile(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
+        saved = self.workspace(instance_id, attempt) / "source/stacks/kvm-instance/saved.tfplan"
         return {"plan_sha256": sha256, "legacy_manifest": "execution_context_salt" not in manifest,
                 "state_key": state_key, "workspace": "default", "backend_bucket": manifest["backend"]["bucket"],
-                "source_revision": SOURCE_REVISION, "execution_enabled": False}
+                "source_revision": SOURCE_REVISION, "execution_enabled": False,
+                "approved_state": approved_state_metadata(saved)}
 
     def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
@@ -245,15 +265,28 @@ class TerraformExecutor:
         except PlanError as failure:
             failure.phase = failure.phase or "observe.credentials"
             raise
-        self.initialize(root, env, cancelled, "observe")
         state_present, proxmox_present = None, None
+        reader = None
         try:
-            state = self.read_json(["state", "pull"], root, env, cancelled, "observe.state")
+            manifest = json.loads((workspace / "manifest.json").read_text())
+            self.verify_artifacts(instance_id, attempt, manifest["sha256"], manifest["state_key"], allocation, variables)
+            approved_state = approved_state_metadata(root / "saved.tfplan")
+            reader = S3StateReader(manifest["backend"], env)
+            snapshot = reader.read(cancelled)
+            state = snapshot.state
             resource = state_resource(state, variables)
             state_present = resource is not None
+            if (approved_state["lineage"] and state["lineage"] != approved_state["lineage"]
+                    or state["serial"] < approved_state["serial"]):
+                raise PlanError("APPROVED_STATE_MISMATCH", phase="observe.state")
             proxmox = proxmox_resource(env, variables["instance"], cancelled)
             proxmox_present = proxmox["present"]
             if state_present and proxmox_present:
+                # Solo inicializar Terraform después de constatar un objeto existente.
+                # Ni la ausencia ni un error de lectura deben crear un state vacío.
+                self.initialize(root, env, cancelled, "observe")
+                approved = self.read_json(["show", "-json", "saved.tfplan"], root, env, cancelled, "observe.approved_plan")
+                verify_plan(approved, variables)
                 # El plan refresh-only NO contiene cambios de recursos. Sus valores
                 # refrescados se serializan en prior_state, no en planned_values.
                 self.runner.run(["plan", "-refresh-only", "-input=false", "-no-color", "-lock-timeout=30s",
@@ -271,24 +304,39 @@ class TerraformExecutor:
                     if failure.code == "RESOURCE_ABSENT":
                         raise PlanError("PROVIDER_OBSERVATION_INCONSISTENT", phase="observe.inspect") from None
                     raise
-                result["power_state"] = proxmox["power_state"]
-            # Los pulls no adquieren lock. Detectar cambios del backend durante
-            # la observación; refresh-only mantiene el lock nativo de Terraform.
-            latest = self.read_json(["state", "pull"], root, env, cancelled, "observe.state_verify")
-            if latest != state:
-                raise PlanError("STATE_CHANGED_DURING_OBSERVATION", phase="observe.state_verify")
+                refreshed = managed_resources(values)[0]["values"]
+                verify_postconditions(approved, resource)
+                verify_postconditions(approved, refreshed)
+                expected_power = "running" if variables["instance"]["started"] else "stopped"
+                if result["power_state"] != expected_power or proxmox["power_state"] != expected_power:
+                    raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+                verify_checks(observed)
+            # Dos GET actuales, nunca una consulta fijada a una versión antigua.
+            # La comparación identifica también rewrites idénticos y ABA versionado.
+            latest = reader.read(cancelled, "observe.state_verify")
+            consistency = snapshot.verify(latest)
             if not state_present or not proxmox_present:
                 code = ("UNMANAGED_RESOURCE" if proxmox_present else
                         "STATE_RESOURCE_MISSING" if state_present else "RESOURCE_ABSENT")
-                raise PlanError(code, phase="observe.compare")
+                failure = PlanError(code, phase="observe.compare")
+                failure.state_consistency = consistency
+                raise failure
             return {**result, "observation": {"state_present": True, "proxmox_present": True,
-                    "state_serial": state["serial"], "values_source": "prior_state.values"}}
+                    "state_serial": state["serial"], "values_source": "prior_state.values",
+                    "state_consistency": consistency, "postconditions_verified": True,
+                    "backend": manifest["backend"], "workspace": "default",
+                    "instance_id": instance_id, "attempt": attempt, "plan_sha256": manifest["sha256"],
+                    "approved_state": approved_state,
+                    "resource_address": ADDRESS, "resource_id": str(resource["id"])}}
         except PlanError as failure:
             failure.phase = failure.phase or "observe.inspect"
             failure.state_present, failure.proxmox_present = state_present, proxmox_present
             raise
-        except (ValueError, TypeError, KeyError, AttributeError):
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
             raise PlanError("INVALID_TERRAFORM_OUTPUT", phase="observe.inspect") from None
+        finally:
+            if reader is not None:
+                reader.close()
 
 
 def state_resource(state, variables):
@@ -333,13 +381,51 @@ def verify_identity(actual, expected):
         raise PlanError("OBSERVED_RESOURCE_MISMATCH")
 
 
-def observed_resource(values: dict, variables: dict) -> dict:
+def managed_resources(values):
     resources = []
     def collect(module):
         resources.extend(row for row in module.get("resources", []) if row.get("mode", "managed") == "managed")
         for child in module.get("child_modules", []):
             collect(child)
     collect(values.get("root_module", {}))
+    return resources
+
+
+def verify_postconditions(approved, actual):
+    """Comparar TODOS los valores conocidos del plan, no solo CPU/RAM/VMID.
+
+    after_unknown marca valores calculados que el plan aún no podía conocer.
+    No equiparar null con ausencia, ni ordenar listas de atributos arbitrarias.
+    """
+    change = approved["resource_changes"][0]["change"]
+
+    def matches(expected, found, unknown=False):
+        if unknown is True:
+            return True
+        if isinstance(expected, dict):
+            return isinstance(found, dict) and all(
+                (isinstance(unknown, dict) and unknown.get(key) is True)
+                or (key in found and matches(value, found[key], unknown.get(key, False) if isinstance(unknown, dict) else False))
+                for key, value in expected.items())
+        if isinstance(expected, list):
+            return isinstance(found, list) and len(expected) == len(found) and all(
+                matches(value, found[index], unknown[index] if isinstance(unknown, list) and index < len(unknown) else False)
+                for index, value in enumerate(expected))
+        return expected == found and (type(expected) is bool) == (type(found) is bool)
+
+    if not matches(change["after"], actual, change.get("after_unknown", False)):
+        raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+
+
+def verify_checks(observed):
+    # Un refresh completo puede contener checks fallidos sin cambios de recursos.
+    for check in observed.get("checks", []):
+        if check.get("status") != "pass" or any(row.get("status") != "pass" for row in check.get("instances", [])):
+            raise PlanError("APPROVED_POSTCONDITION_MISMATCH", phase="observe.postconditions")
+
+
+def observed_resource(values: dict, variables: dict) -> dict:
+    resources = managed_resources(values)
     if not resources:
         raise PlanError("RESOURCE_ABSENT")
     if len(resources) != 1 or resources[0].get("address") != ADDRESS:

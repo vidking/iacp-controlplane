@@ -170,6 +170,8 @@ def test_cancel_during_apply_is_uncertain(client, auth, prepared, sessions, monk
     path = prepared[2] + "/applies/" + row["approval_id"] + "/cancel"
     execute_apply(row["approval_id"], sessions, ApplyingExecutor(callback=lambda: client.post(path, headers=auth)))
     assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["status"] == "uncertain"
+    instance = client.get("/v1/instances/" + prepared[0]["instance_id"], headers=auth).json()
+    assert instance["status"] == "failed" and instance["result"]["error_code"] == "RECONCILIATION_REQUIRED"
 
 
 def test_tenant_and_reader_cannot_access_or_approve(client, auth, prepared, identities):
@@ -210,8 +212,10 @@ def test_provider_observations_are_strictly_scoped(change):
 
 
 def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path, monkeypatch):
+    from tests.test_historical_recovery import artifacts
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     allocation = Allocation.model_validate(allocation_data())
+    allocation.started = True
     variables = allocation.variables(SimpleNamespace(**SPEC))
     commands = []
     planned = plan_json(variables)
@@ -236,12 +240,13 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
         def apply_saved(self, root, env, cancelled):
             assert commands[-1] == ["authorized"]
             commands.append(["apply", "saved.tfplan"])
-    executor = TerraformExecutor(tmp_path, tmp_path, Runner())
+    executor, _, _, _, context = artifacts(tmp_path, monkeypatch, allocation=allocation, variables=variables)
+    executor.runner = Runner()
     integrity = Mock()
     monkeypatch.setattr(executor, "prepare_apply", integrity)
     monkeypatch.setattr(executor, "environment", lambda workspace: {})
     monkeypatch.setattr("iacp.terraform.executor.proxmox_resource", lambda *args: {"present": True, "power_state": "running"})
-    result = executor.apply(str(uuid4()), 1, "a" * 64, "fixture-key", allocation.model_dump(), variables,
+    result = executor.apply(*context,
                             lambda: False, lambda: commands.append(["authorized"]))
     assert integrity.call_count == 2 and result["power_state"] == "running"
     assert [row for row in commands if row[0] == "apply"] == [["apply", "saved.tfplan"]]

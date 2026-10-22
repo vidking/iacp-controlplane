@@ -202,7 +202,14 @@ def plan_json(variables):
         "cpu": [{"cores": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
         "clone": [{"vm_id": row["template_vm_id"]}],
         "disk": [{"interface": row["boot_disk"]["interface"], "size": row["boot_disk"]["size_gb"],
-                  "datastore_id": row["boot_disk"]["datastore_id"]}],
+                  "datastore_id": row["boot_disk"]["datastore_id"],
+                  **{key: row["boot_disk"][key] for key in ("aio", "cache", "discard", "backup", "replicate", "iothread", "ssd", "file_format")}}],
+        "started": row["started"], "pool_id": row["pool_id"], "on_boot": False,
+        "network_device": [{"bridge": row["network_bridge"], "model": "virtio", "vlan_id": row["vlan_id"]}],
+        "agent": [{"enabled": row["guest_agent_enabled"]}],
+        "initialization": [{"datastore_id": row["cloudinit_datastore_id"],
+                            "ip_config": [{"ipv4": [{"address": row["ipv4_cidr"], "gateway": row["ipv4_gateway"]}]}],
+                            "user_account": [{"username": row["cloudinit_username"], "keys": row["ssh_public_keys"]}]}],
     }}}]}
 
 

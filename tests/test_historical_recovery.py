@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
+import zipfile
 
 import pytest
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from iacp.terraform.apply import execute_apply
 from iacp.terraform.config import Allocation, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from iacp.terraform.executor import ADDRESS, TerraformExecutor, write_private
 from iacp.terraform.locks import instance_lock
+from iacp.terraform.state import StateSnapshot
 from tests.test_apply import ApplyingExecutor, approval, dispatch, prepared
 from tests.test_instances import SPEC, identities
 from tests.test_terraform import allocation_data, plan_json, terraform_mode
@@ -28,10 +30,11 @@ class ObservationRunner:
         self.apply_saved = Mock(side_effect=AssertionError("La recuperación nunca aplica"))
         self.state_override = None
         self.proxmox_override = None
+        self.reads = []
 
     def values(self):
         values = plan_json(self.variables)["resource_changes"][0]["change"]["after"]
-        values.update(id=str(values["vm_id"]), started=False)
+        values.update(id=str(values["vm_id"]), started=self.variables["instance"]["started"])
         return values
 
     def state(self):
@@ -60,6 +63,8 @@ class ObservationRunner:
             if self.outcome == "provider-error":
                 raise PlanError("TERRAFORM_COMMAND_FAILED", phase=phase, command="plan", exit_code=1)
         if args[0] == "show":
+            if args[-1] == "saved.tfplan":
+                return json.dumps(plan_json(self.variables)).encode()
             assert args == ["show", "-json", "observation.tfplan"]
             if self.outcome == "invalid-json":
                 return b"not-json"
@@ -72,6 +77,17 @@ class ObservationRunner:
             return json.dumps(observed).encode()
         return b""
 
+    def read(self, cancelled, phase="observe.state"):
+        # GET Wasabi simulado. El executor de producción usa S3StateReader.
+        self.reads.append(phase)
+        assert not cancelled()
+        if self.outcome == "backend-error":
+            raise PlanError("STATE_BACKEND_READ_FAILED", phase=phase)
+        return StateSnapshot.parse(json.dumps(self.state()).encode(), "fixture-version-3")
+
+    def close(self):
+        pass
+
 
 def artifacts(tmp_path, monkeypatch, *, identifier=None, attempt=2, allocation=None, variables=None, state_key="iacp/lab/fixture/terraform.tfstate"):
     allocation = allocation or Allocation.model_validate(allocation_data())
@@ -81,11 +97,14 @@ def artifacts(tmp_path, monkeypatch, *, identifier=None, attempt=2, allocation=N
     executor = TerraformExecutor(tmp_path, tmp_path / "plans", runner)
     monkeypatch.setattr(executor, "environment", lambda workspace: {})
     monkeypatch.setattr("iacp.terraform.executor.proxmox_resource", runner.proxmox)
+    monkeypatch.setattr("iacp.terraform.executor.S3StateReader", lambda backend, env: runner)
     workspace = executor.workspace(identifier, attempt)
     root = workspace / "source/stacks/kvm-instance"
     root.mkdir(parents=True)
     saved = root / "saved.tfplan"
-    saved.write_bytes(b"plan-historico-sintetico")
+    with zipfile.ZipFile(saved, "w") as archive:
+        archive.writestr("tfstate", json.dumps({"version": 4, "lineage": runner.state()["lineage"], "serial": 1}))
+        archive.writestr("fixture", "plan-historico-sintetico")
     sha = hashlib.sha256(saved.read_bytes()).hexdigest()
     backend = allocation.backend.arguments(state_key)
     # Esquema exacto anterior a 06c0190: seis campos, sin huellas retrospectivas.
@@ -125,7 +144,7 @@ def test_historical_and_current_manifests_reconcile_without_rewriting(tmp_path, 
     assert result["vmid"] == 21001 and result["simulated"] is False
     runner.apply_saved.assert_not_called()
     assert before == {path: path.read_bytes() for path in before}
-    assert [command[0] for command in runner.commands] == ["version", "init", "state", "plan", "show", "state"]
+    assert [command[0] for command in runner.commands] == ["version", "init", "show", "plan", "show"]
 
 
 @pytest.mark.parametrize("change", ["plan", "approval-sha", "manifest-sha", "missing-plan", "state-key", "backend",

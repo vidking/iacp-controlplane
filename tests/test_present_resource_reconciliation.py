@@ -1,6 +1,7 @@
 """Regresiones sin red: state S3, HTTP Proxmox y procesos Terraform simulados."""
 from copy import deepcopy
 import io
+import hashlib
 import json
 from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
@@ -14,6 +15,7 @@ from iacp.terraform.executor import state_resource
 from iacp.terraform.lifecycle import build_executor
 from iacp.terraform.observation import NoRedirect, proxmox_resource
 from iacp.terraform.runner import CommandRunner
+from iacp.terraform.state import StateSnapshot
 from tests.test_apply import ApplyingExecutor, approval, dispatch, prepared
 from tests.test_historical_recovery import artifacts, historical_run, resolution_body
 from tests.test_terraform import terraform_mode
@@ -38,19 +40,21 @@ def test_two_source_matrix_is_persisted_and_never_reapplies(
     assert current["result"]["reconciliation"]["workspace"] == "default"
     assert current["result"]["reconciliation"]["state_key"] == args[3]
     if error:
-        assert current["result"]["diagnostic"] == {"phase": "observe.compare",
-            "state_present": state_present, "proxmox_present": proxmox_present}
+        diagnostic = current["result"]["diagnostic"]
+        assert diagnostic["phase"] == "observe.compare"
+        assert diagnostic["state_present"] == state_present and diagnostic["proxmox_present"] == proxmox_present
+        assert diagnostic["state_consistency"]["change"] == "unchanged"
         if error != "RESOURCE_ABSENT":
             assert client.post(path + "/resolve-absence", headers={**prepared[1], "Idempotency-Key": "reject-partial"},
                                json=resolution_body(args)).status_code == 409
     else:
         assert current["result"]["observation"]["values_source"] == "prior_state.values"
-    commands = len(runner.commands)
+    reads = len(runner.reads)
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    assert (len(runner.commands) == commands) is (not error)
+    assert (len(runner.reads) == reads) is (not error)
     execute_apply(row["approval_id"], sessions, executor)  # entrega apply atrasada
     runner.apply_saved.assert_not_called()
-    assert (root / "saved.tfplan").read_bytes() == b"plan-historico-sintetico"
+    assert hashlib.sha256((root / "saved.tfplan").read_bytes()).hexdigest() == args[2]
 
 
 def test_backend_unreachable_is_observation_error(client, auth, prepared, historical_run, sessions):
@@ -58,8 +62,8 @@ def test_backend_unreachable_is_observation_error(client, auth, prepared, histor
     runner.outcome = "backend-error"
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
     current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
-    assert current["status"] == "uncertain" and current["error_code"] == "TERRAFORM_COMMAND_FAILED"
-    assert current["result"]["diagnostic"] == {"phase": "observe.state", "command": "state", "exit_code": 1}
+    assert current["status"] == "uncertain" and current["error_code"] == "STATE_BACKEND_READ_FAILED"
+    assert current["result"]["diagnostic"] == {"phase": "observe.state"}
     assert not any(command[0] == "plan" for command in runner.commands)
 
 
@@ -98,7 +102,7 @@ def test_present_in_both_requires_complete_consistent_provider_refresh(tmp_path,
     run = runner.run
     def changed(command, *arguments, **kwargs):
         data = run(command, *arguments, **kwargs)
-        if command[0] == "show":
+        if command == ["show", "-json", "observation.tfplan"]:
             value = json.loads(data)
             if change == "empty": value["prior_state"]["values"] = {}
             elif change == "partial": value["complete"] = False
@@ -121,13 +125,13 @@ def test_present_in_both_requires_complete_consistent_provider_refresh(tmp_path,
 
 def test_backend_change_during_observation_keeps_uncertainty(tmp_path, monkeypatch):
     executor, runner, _, _, args = artifacts(tmp_path, monkeypatch)
-    original = runner.run
-    def changed(command, *arguments, **kwargs):
-        data = original(command, *arguments, **kwargs)
-        if kwargs.get("phase") == "observe.state_verify":
-            return json.dumps({**json.loads(data), "serial": 4}).encode()
-        return data
-    monkeypatch.setattr(runner, "run", changed)
+    original = runner.read
+    def changed(cancelled, phase="observe.state"):
+        snapshot = original(cancelled, phase)
+        if phase == "observe.state_verify":
+            return StateSnapshot.parse(json.dumps({**snapshot.state, "serial": 4}).encode(), "fixture-version-4")
+        return snapshot
+    monkeypatch.setattr(runner, "read", changed)
     with pytest.raises(PlanError, match="STATE_CHANGED_DURING_OBSERVATION"):
         executor.observe(args[0], args[1], args[4], args[5], lambda: False)
 

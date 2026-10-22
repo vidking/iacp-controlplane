@@ -21,6 +21,7 @@ class PlanError(Exception):
         self.http_status = http_status
         self.state_present = None
         self.proxmox_present = None
+        self.state_consistency = None
         super().__init__(code)
 
     def diagnostic(self) -> dict:
@@ -29,6 +30,7 @@ class PlanError(Exception):
             "phase": self.phase, "command": self.command, "exit_code": self.exit_code,
             "http_status": self.http_status, "state_present": self.state_present,
             "proxmox_present": self.proxmox_present,
+            "state_consistency": self.state_consistency,
         }.items() if value is not None}
 
 
