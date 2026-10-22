@@ -28,6 +28,9 @@ class ApplyingExecutor:
     def prepare_apply(self, *args):
         pass
 
+    def prepare_reconcile(self, identifier, attempt, sha, *args):
+        return {"plan_sha256": sha, "legacy_manifest": False, "execution_enabled": False}
+
     def apply(self, identifier, attempt, sha, key, allocation, variables, cancelled, before_mutation):
         self.calls.append(identifier)
         if not self.before_failure:
@@ -238,7 +241,7 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
     assert [row for row in commands if row[0] == "plan"][0][1] == "-refresh-only"
 
 
-def test_broker_uncertainty_recovers_same_run_without_duplicate_apply(client, auth, prepared, application, monkeypatch, sessions):
+def test_broker_uncertainty_recovery_fences_late_apply(client, auth, prepared, application, monkeypatch, sessions):
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     publisher = Mock(side_effect=TimeoutError("private broker endpoint"))
     application.dependency_overrides[get_apply_publisher] = lambda: publisher
@@ -248,11 +251,13 @@ def test_broker_uncertainty_recovers_same_run_without_duplicate_apply(client, au
     assert replay.status_code == 202 and replay.json()["status"] == "queued" and publisher.call_count == 1
     publisher.side_effect = None
     response = client.post(prepared[2] + "/applies/" + row["approval_id"] + "/recover", headers=auth)
-    assert response.status_code == 202 and publisher.call_args.args == (row["approval_id"], "apply")
+    assert response.status_code == 202 and publisher.call_args.args == (row["approval_id"], "reconcile")
+    assert response.json()["status"] == "uncertain"
     fake = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, fake)
+    execute_apply(row["approval_id"], sessions, fake, reconcile=True)
     execute_apply(row["approval_id"], sessions, fake)
-    assert len(fake.calls) == 1
+    assert not fake.calls
 
 
 def test_worker_rechecks_expiry_after_queue_wait(client, auth, prepared, sessions, monkeypatch):

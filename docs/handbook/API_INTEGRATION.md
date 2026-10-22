@@ -114,8 +114,11 @@ Nunca automatizar una aprobación nueva para resolver un resultado incierto.
 
 Cancelación y recuperación usan POST en
 `.../terraform/applies/{approval_id}/cancel` y `.../recover`. La recuperación de un
-run queued republica el mismo identificador; running/uncertain observa al provider
-sin aplicar. Lecturas de otro tenant devuelven 404. Un reader no puede escribir;
+run queued cerca entregas apply pendientes; todos los estados recuperables
+publican exclusivamente observación. El cierre `/resolve-absence` exige rol
+approver independiente, clave idempotente y evidencia de ambas fuentes; termina
+en failed. Véase el [procedimiento](../HISTORICAL_PLAN_RECOVERY.md).
+Lecturas de otro tenant devuelven 404. Un reader no puede escribir;
 un operator no puede aprobar; un approver no puede solicitar apply.
 
 Los ejemplos de eliminación están en [la demostración](LAB_DEMO.md): todavía no

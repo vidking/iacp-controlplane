@@ -27,10 +27,16 @@ permiten cambiar el plan. El código conserva los jobs anteriores y agrega un jo
 
 `GET .../terraform/applies` muestra la evidencia. `POST .../applies/{approval_id}/cancel`
 cancela antes de mutar o exige conciliación si la mutación ya empezó.
-`POST .../applies/{approval_id}/recover` republica el mismo run `queued`; para
-`running`/`uncertain` consulta al provider sin ejecutar apply. Un recurso ausente,
-parcial, distinto o inaccesible conserva el bloqueo y exige intervención.
+`POST .../applies/{approval_id}/recover` concilia `queued`, `running` y `uncertain`
+exclusivamente por observación; cerca entregas apply pendientes antes de publicar.
+Un recurso ausente, parcial, distinto o inaccesible exige intervención.
 Nunca se vuelve a aplicar automáticamente un resultado incierto.
+
+Los planes anteriores a PR #14 se concilian sin fabricar huellas de contexto,
+conservando la verificación del SHA-256 y del vínculo persistido. El cierre por
+ausencia requiere evidencia independiente de state y Proxmox revisada por un
+approver y termina en `failed`, sin afirmar aprovisionamiento exitoso. Consultar
+[compatibilidad y procedimiento auditado](HISTORICAL_PLAN_RECOVERY.md).
 
 ## Diagnóstico por fase y análisis del incidente MNG
 

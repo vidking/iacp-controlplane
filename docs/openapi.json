@@ -1,6 +1,42 @@
 {
   "components": {
     "schemas": {
+      "AbsenceResolutionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "plan_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Plan Sha256",
+            "type": "string"
+          },
+          "proxmox": {
+            "$ref": "#/components/schemas/ProxmoxAbsenceEvidence"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/EmptyStateEvidence"
+          }
+        },
+        "required": [
+          "attempt",
+          "plan_sha256",
+          "state",
+          "proxmox",
+          "reason"
+        ],
+        "title": "AbsenceResolutionRequest",
+        "type": "object"
+      },
       "ApplyRequest": {
         "additionalProperties": false,
         "properties": {
@@ -242,6 +278,74 @@
           "finished_at"
         ],
         "title": "AttemptResponse",
+        "type": "object"
+      },
+      "EmptyStateEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "bucket": {
+            "maxLength": 63,
+            "minLength": 1,
+            "title": "Bucket",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Evidence Ref",
+            "type": "string"
+          },
+          "key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "lineage": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Lineage",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "resource_count": {
+            "const": 0,
+            "title": "Resource Count",
+            "type": "integer"
+          },
+          "serial": {
+            "minimum": 0.0,
+            "title": "Serial",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "version_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observed_at",
+          "evidence_ref",
+          "bucket",
+          "key",
+          "version_id",
+          "lineage",
+          "serial",
+          "sha256",
+          "resource_count"
+        ],
+        "title": "EmptyStateEvidence",
         "type": "object"
       },
       "ErrorResponse": {
@@ -817,6 +921,53 @@
           "status"
         ],
         "title": "PlanQueued",
+        "type": "object"
+      },
+      "ProxmoxAbsenceEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "absent": {
+            "const": true,
+            "title": "Absent",
+            "type": "boolean"
+          },
+          "evidence_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Evidence Ref",
+            "type": "string"
+          },
+          "node": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Node",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "scope": {
+            "const": "cluster",
+            "title": "Scope",
+            "type": "string"
+          },
+          "vmid": {
+            "minimum": 100.0,
+            "title": "Vmid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observed_at",
+          "evidence_ref",
+          "vmid",
+          "node",
+          "scope",
+          "absent"
+        ],
+        "title": "ProxmoxAbsenceEvidence",
         "type": "object"
       },
       "RetryRequest": {
@@ -1522,7 +1673,7 @@
     },
     "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover": {
       "post": {
-        "description": "Republica un run queued; para running/uncertain consulta el provider sin ejecutar apply. Nunca concede otra autorización.",
+        "description": "Concilia queued/running/uncertain exclusivamente por observación. Cerca entregas apply pendientes y nunca ejecuta Terraform Apply.",
         "operationId": "recoverTerraformApply",
         "parameters": [
           {
@@ -1622,6 +1773,135 @@
           }
         ],
         "summary": "Recover",
+        "tags": [
+          "terraform-apply"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence": {
+      "post": {
+        "description": "Atestación de un approver independiente con evidencia de state vacío y ausencia en el clúster Proxmox. Cierra en failed; no consulta ni modifica infraestructura.",
+        "operationId": "resolveTerraformAbsence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbsenceResolutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve",
         "tags": [
           "terraform-apply"
         ]

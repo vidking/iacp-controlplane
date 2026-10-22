@@ -48,21 +48,24 @@ verificar que no siga mutando y obtener autorización antes de cualquier desbloq
 |---|---|
 | Plan fallido/cancelado sin autorización activa | Inspeccionar error; cancelar/reintentar plan con expected_attempt y nueva clave de retry |
 | Aprobación caducada antes de mutar | Cancelar autorización; cancelar plan y generar un intento nuevo; obtener aprobación nueva |
-| Publicación apply no confirmada, run queued | Consultar IDs, repetir la misma petición; `/recover` republica el mismo run |
+| Publicación apply no confirmada, run queued | Consultar IDs; `/recover` cerca cualquier apply pendiente y publica solo observación |
 | Worker cayó, run running | Confirmar que no haya proceso activo; `/recover` observa provider y mantiene exclusión |
 | Timeout/error/cancelación después de started_at | Estado uncertain; nunca reaplicar automáticamente |
 | Recurso exacto observado | Conciliación completed, inventario ready con fecha y proyección de recursos |
 | State vacío, recurso parcial/ajeno o provider inaccesible | Mantener uncertain; inspección manual de state, Proxmox y versiones; no crear otra instancia para reemplazarla |
+| Ausencia comprobada en state y clúster Proxmox | Approver independiente registra evidencia con resolve-absence; cierra failed, conserva autorización consumida |
 | Plan/volumen perdido | Restaurar artefactos privados desde respaldo; no sustituirlos por un plan distinto bajo la aprobación anterior |
 | PostgreSQL perdido | Restaurar respaldo validado; conciliar cambios ocurridos después del respaldo antes de reanudar colas |
 
 `GET .../terraform/applies` expone status, error_code, started_at, finished_at y
 result. `POST .../applies/{approval_id}/recover` no concede permisos de apply.
-Durante conciliación se permite observar aunque apply esté deshabilitado; la
-planificación debe estar habilitada y las credenciales de lectura disponibles.
-La huella del contexto exige las mismas credenciales, endpoint y contenido de CA
-del plan original. Si fueron rotados, no se debe alterar el manifiesto: preservar
-el intento, investigar el state y realizar una recuperación operativa autorizada.
+Durante conciliación se permite observar aunque apply y planificación estén
+deshabilitados; se necesitan credenciales de lectura vigentes con alcance sobre
+el backend y clúster autorizados. La huella original sigue siendo obligatoria
+para una mutación nueva. La conciliación admite manifests históricos sin huella
+y verifica siempre SHA-256, backend, variables, revisión e intento.
+El [procedimiento de planes históricos](../HISTORICAL_PLAN_RECOVERY.md) detalla
+la evidencia exigida y el cierre auditado por ausencia, sin SQL manual.
 
 El diagnóstico estructurado de una autorización puede señalar `apply.init`,
 `apply.inspect`, `apply`, `observe.init`, `observe.refresh` u `observe.inspect`.
