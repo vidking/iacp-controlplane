@@ -31,7 +31,7 @@ def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
             if row.status not in ACTIVE:
                 return
             operation = session.get(Operation, identifier, with_for_update=True)
-            target, job = binding(session, row, operation)
+            target, job = binding(session, row, operation, check_ownership=row.submitted_at is None)
             tenant = session.get(Tenant, operation.tenant_id)
             if tenant is None or not tenant.active:
                 raise PowerError("TENANT_INACTIVE")
@@ -64,7 +64,7 @@ def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
                 with sessions() as session:
                     row = session.get(PowerExecution, identifier, with_for_update=True)
                     operation = session.get(Operation, identifier)
-                    binding(session, row, operation)
+                    binding(session, row, operation, check_ownership=True)
                     tenant = session.get(Tenant, operation.tenant_id)
                     if not tenant or not tenant.active:
                         raise PowerError("TENANT_INACTIVE")

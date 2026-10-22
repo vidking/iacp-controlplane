@@ -4,26 +4,29 @@ Este incremento agrega observación y operaciones asíncronas de energía median
 IACP. El portal conserva la autenticación por tenant y los IDs de instancia y
 operación; no recibe credenciales ni acceso a la API nativa de Proxmox.
 
-**Las mutaciones quedan bloqueadas en este release hasta completar la promoción
-del contrato de propiedad IaC.** `IACP_KVM_LIFECYCLE_ENABLED=1` no basta para
-habilitarlas. GET de energía puede utilizarse con credenciales de lectura.
+**Lifecycle permanece apagado por defecto; las instancias históricas exigen
+certificación explícita.** La fuente del PR #7 ya está fijada en ambos pins.
+`IACP_KVM_LIFECYCLE_ENABLED=1` no basta para promover VM 106. El procedimiento
+vigente está en [KVM_POWER_PROMOTION.md](KVM_POWER_PROMOTION.md).
+GET de energía puede utilizarse con credenciales de lectura.
 El aprovisionamiento de VMID 106, intento 4, ya fue confirmado completed como
 hito previo; este incremento no repite provisioning ni recovery Terraform.
 
 ## Propiedad de started y dependencia de activación
 
-El Control Plane fija la fuente IaC en
-`40dc5d10387cfb50384ecd3ddddfd75289fe7bc4`. Su recurso
+La fuente histórica
+`40dc5d10387cfb50384ecd3ddddfd75289fe7bc4` contiene el recurso
 `module.kvm.proxmox_virtual_environment_vm.this` declara
 `started = var.started`, `on_boot = false` y `reboot_after_update = false`, sin
 `lifecycle.ignore_changes`. Por tanto, un futuro plan declarativo podría intentar
 restaurar la energía elegida durante la creación. Lifecycle no puede actuar con
 ese contrato.
 
-La [propuesta independiente para iac-proxmox](proposals/iac-proxmox-started-ownership.patch)
-agrega únicamente `lifecycle { ignore_changes = [started] }` al recurso KVM y
-conserva `started = var.started`. No se aplicó al repositorio IaC. Se validó el
-patch contra una copia temporal de la revisión fijada.
+El [PR #7 de iac-proxmox](https://scm.cyberfuel.com/CyberFuel/iac-proxmox/pulls/7)
+ya fusionado agrega `lifecycle { ignore_changes = [started] }` al recurso KVM y
+conserva `started = var.started`. El Control Plane fija ahora
+`9aeb8ec846342d279a5d16be7c8e20157e9bf5ae`, merge certificado en `main`.
+El patch en proposals se conserva únicamente como referencia histórica.
 
 Terraform considera los atributos ignorados durante create y los omite al
 planificar updates, según su [contrato oficial](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle#ignore_changes).
@@ -40,20 +43,17 @@ otros atributos por Lifecycle.
 
 Activación requiere, en orden:
 
-1. Revisar y fusionar la propuesta en iac-proxmox; conservar `started` en create
-   y excluir únicamente ese atributo de los updates. Certificar la revisión
-   exacta y los planes relevantes, también contra la versión desplegada de PVE.
+1. Verificar el SHA certificado del PR #7 y las imágenes efectivamente desplegadas;
+   certificar los planes relevantes y la versión desplegada de PVE.
 2. Completar o resolver por los flujos autorizados todos los planes y Applies
    antiguos antes de la promoción; drenar workers antiguos. Un plan guardado
    conserva su configuración anterior y no incorpora ignore retroactivamente.
-3. Mediante otro cambio revisado del Control Plane, fijar `SOURCE_REVISION` y
-   `KVM_POWER_SOURCE_REVISION` al **mismo SHA inmutable** de la fuente aprobada.
-   Este incremento deja el segundo en `None` y rechaza permanentemente el SHA
-   anterior conocido como propietario Terraform de la energía. No hay un flag,
-   parámetro cliente o edición SQL que sustituya esta promoción.
-4. Desplegar las imágenes de esa promoción y su clon IaC autorizado conforme al
-   procedimiento de releases, con el mismo código fijado para todos los workers
-   Terraform. Solo entonces activar `IACP_KVM_LIFECYCLE_ENABLED=1` en API y worker.
+3. Los dos pins usan el mismo SHA inmutable aprobado y rechazan el SHA anterior
+   como propietario. Desplegar con flag 0, migraciones 0005 y 0006, y realizar
+   la certificación auditada por instancia histórica. Conservar las revisiones
+   de aprovisionamiento originales. Actualizar constantes no las promueve.
+4. Completar [el procedimiento operativo](KVM_POWER_PROMOTION.md), conservando
+   Apply=1. Solo después activar `IACP_KVM_LIFECYCLE_ENABLED=1` en API y worker.
 
 Para recursos futuros, `started` mantiene el comportamiento inicial solicitado y
 las postcondiciones de provisioning de PR #18 siguen comprobándolo. Para recursos
@@ -64,8 +64,7 @@ Apply de creación de VMID 106 debe seguir terminal y consumido. Una vez ready,
 `Instance.result` sigue siendo evidencia histórica del aprovisionamiento;
 GET `/power` es la observación vigente de energía.
 
-Esta promoción es una dependencia pendiente, no una afirmación de que el recurso
-actual ya cedió su propiedad. Escritores Terraform externos también deberán usar
+La certificación operativa de VM 106 sigue pendiente. Escritores Terraform externos también deberán usar
 la configuración aprobada; no se puede proteger contra un operador que ejecute
 fuera de IACP una revisión antigua o cambie energía directamente.
 
@@ -158,6 +157,10 @@ selecciona explícitamente `instance.create`. El índice parcial de energía per
 como máximo una operación queued/running/uncertain por instancia, incluso tras
 un fallo o liberación del lock de proceso.
 
+`0006_power_ownership` agrega certificados históricos y su vínculo opcional a
+operaciones de energía, sin backfill. El head/readiness de esta promoción es
+0006. La migración 0005 original permanece intacta.
+
 Se reutiliza exactamente el advisory lock por instancia del ejecutor Terraform.
 La API serializa admisión; el worker conserva el lock durante la tarea y
 comprueba su conexión antes de mutar y confirmar. Una entrega duplicada ocupada
@@ -221,8 +224,9 @@ segundo comando mientras el primero puede seguir en vuelo.
 
 ## Prueba controlada futura: primer arranque de VMID 106
 
-Este procedimiento es posterior a revisión, promoción IaC, despliegue autorizado
-y certificación de permisos. No se ejecuta durante desarrollo ni al preparar PR.
+Este procedimiento es posterior a revisión, despliegue autorizado y certificación
+auditada del contrato/identidad/state de VM 106. Usar los comandos exactos de
+[la promoción](KVM_POWER_PROMOTION.md). No se ejecuta durante desarrollo ni al preparar PR.
 
 1. Confirmar que el intento 4 de
    `a1b2d063-6240-4969-bc04-e7e0e6be9e73` sigue completed, aprobación
@@ -237,10 +241,11 @@ y certificación de permisos. No se ejecuta durante desarrollo ni al preparar PR
 3. Instalar imágenes revisadas y migración por el servicio `migrate`, conservando
    proyecto, volúmenes y overrides. Incluir el override Lifecycle de forma
    optativa y montar su secreto/CA. No ejecutar SQL manual, `down -v`, restaurar
-   state ni recrear volúmenes. Health/readiness deben aprobar la revisión 0005.
+   state ni recrear volúmenes. Health/readiness deben aprobar el head 0006 después
+   de ejecutar 0005 y 0006. Completar la certificación explícita antes de activar.
 4. Obtener GET `/v1/instances/<id>/power` con identidad del tenant. Exigir stopped,
-   `mutations_available=true`, sin bloqueo. Si el contrato sigue no promovido,
-   detener la prueba; activar flags no sustituye su revisión.
+   `mutations_available=true`, sin bloqueo, solo después de certificar y activar.
+   Sin certificado histórico, detener la prueba; los flags no lo sustituyen.
 5. En una ventana acordada, enviar únicamente POST
    `/v1/instances/a1b2d063-6240-4969-bc04-e7e0e6be9e73/power/start`, sin cuerpo,
    con Bearer operator del tenant y una clave nueva conservada para esa solicitud.
@@ -270,8 +275,9 @@ automático para deshacer la prueba.
 - La migración amplía el modelo de operaciones y readiness exige la revisión
   actual. **El binario anterior 7b4e24e no es un rollback compatible con 0005**:
   presupone una sola operación por instancia. Se mantiene downgrade deshabilitado.
-  Usar el flag para rollback funcional o un release correctivo que conserve 0005
-  y la relación de creación filtrada. No restaurar/borrar PostgreSQL o Wasabi.
+  Esta promoción agrega 0006: PR #19 tampoco es rollback binario compatible.
+  Usar el flag con este release o un correctivo que conserve 0005/0006, el pin
+  promovido y la relación de creación filtrada. No restaurar/borrar PostgreSQL o Wasabi.
 - Entre la consulta de pending y el POST no hay fencing de escritores externos
   en la API de energía de PVE. Coordinar cambios externos; el lock IACP serializa
   sus propios workers, no a operadores ajenos. La identidad se verifica de nuevo

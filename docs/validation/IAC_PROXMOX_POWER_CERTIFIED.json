@@ -1,0 +1,117 @@
+{
+  "terraform": "1.16.6",
+  "provider": {
+    "registry.terraform.io/bpg/proxmox": "0.116.1"
+  },
+  "source_revision": "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae",
+  "source_files_sha256": {
+    "modules/compute/kvm/main.tf": "30fcf02cba6d6d25dec5ece5afcf5623335c38c0d61feaf3d231230178f9071f",
+    "modules/compute/kvm/outputs.tf": "ce7cc2f47516189240ebd0c81b8c9de64bc73adf3f2396fe806400ca7dce6e61",
+    "modules/compute/kvm/variables.tf": "0ec8578b2d712935499262fb36161fdea05a5b6c522ed4319b1010366964c782",
+    "modules/compute/kvm/versions.tf": "7a81c343a5b28c7995d1fdc9e52bcc8eba6a76c5caa83e2a04b40abbbf416a17",
+    "scripts/test-power-ownership.py": "76e513b9ab4f6cc3b0eabc7842705d15056a6b8a89599314b4d9debce433d693",
+    "stacks/kvm-instance/.terraform.lock.hcl": "ed7c7dd95fbd5d072bdb4e1b769650c3fa30ca45feb414ac77267c49496c768f",
+    "stacks/kvm-instance/main.tf": "0aa32a726e3f500f486b2dbc7a3893020881c13aa5b9e494a609dde8baec52c7",
+    "stacks/kvm-instance/outputs.tf": "d3b084fb313a23a21bf5a7d33eb5181771690cc5858c28d40c90f09de24e3e4a",
+    "stacks/kvm-instance/providers.tf": "e3fd4ac7a7218bdbdda9b56e82570fbe5070abf812a692431e1cc1092574ebc2",
+    "stacks/kvm-instance/variables.tf": "3c3609e3f0e71c8d58f667f35d1f89d71067699167cfd203ef3a7c0f7c804e73",
+    "stacks/kvm-instance/versions.tf": "648251c82bc4756f2014c4ec95a108c9396ae16c320e99fbf5f550f7dfc9253c"
+  },
+  "legacy_revision": "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4",
+  "resource": "module.kvm.proxmox_virtual_environment_vm.this",
+  "state": "synthetic-local",
+  "refresh": false,
+  "cases": [
+    {
+      "case": "legacy_create_False",
+      "actions": [
+        "create"
+      ],
+      "before_started": null,
+      "started": false,
+      "replace_paths": []
+    },
+    {
+      "case": "promoted_create_False",
+      "actions": [
+        "create"
+      ],
+      "before_started": null,
+      "started": false,
+      "replace_paths": []
+    },
+    {
+      "case": "legacy_reverts_external_True",
+      "actions": [
+        "update"
+      ],
+      "before_started": true,
+      "started": false,
+      "replace_paths": []
+    },
+    {
+      "case": "promoted_preserves_external_True",
+      "actions": [
+        "no-op"
+      ],
+      "before_started": true,
+      "started": true,
+      "replace_paths": []
+    },
+    {
+      "case": "metadata_update_preserves_external_True",
+      "actions": [
+        "update"
+      ],
+      "before_started": true,
+      "started": true,
+      "replace_paths": []
+    },
+    {
+      "case": "legacy_create_True",
+      "actions": [
+        "create"
+      ],
+      "before_started": null,
+      "started": true,
+      "replace_paths": []
+    },
+    {
+      "case": "promoted_create_True",
+      "actions": [
+        "create"
+      ],
+      "before_started": null,
+      "started": true,
+      "replace_paths": []
+    },
+    {
+      "case": "legacy_reverts_external_False",
+      "actions": [
+        "update"
+      ],
+      "before_started": false,
+      "started": true,
+      "replace_paths": []
+    },
+    {
+      "case": "promoted_preserves_external_False",
+      "actions": [
+        "no-op"
+      ],
+      "before_started": false,
+      "started": false,
+      "replace_paths": []
+    },
+    {
+      "case": "metadata_update_preserves_external_False",
+      "actions": [
+        "update"
+      ],
+      "before_started": false,
+      "started": false,
+      "replace_paths": []
+    }
+  ],
+  "passed": 10
+}

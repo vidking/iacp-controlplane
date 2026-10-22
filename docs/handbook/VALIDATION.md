@@ -3,6 +3,12 @@
 Evidencia preparada el 21 de octubre de 2026. Los resultados corresponden al
 código revisado localmente, no a ejecución nueva en VM 104 ni a una KVM real.
 
+La promoción de propiedad de energía del 22 de octubre añade
+[507 pruebas aprobadas](../validation/POWER_OWNERSHIP_VALIDATION.json), incluidas
+35 de integración con servicios desechables, y 10 planes del provider real sobre
+el SHA IaC certificado. [El procedimiento operativo](../KVM_POWER_PROMOTION.md)
+mantiene pendientes la certificación real de VM 106 y la activación en VM 104.
+
 | Entrega | Base/revisión | Resultado |
 |---|---|---|
 | Ejecutor autorizado, integrado externamente por PR #9 | 2B `0c7219d`; código `2017d23`, aclaración operativa `25e571e` | 159 pruebas Docker aprobadas (33.00 s) y validación completa de recreación |

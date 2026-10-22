@@ -1,7 +1,7 @@
 # Propiedad de energía KVM y operaciones Lifecycle
 
-Estado: implementación propuesta; activación dependiente de promoción IaC
-independiente. Sin número reservado.
+Estado: contrato IaC promovido tras el merge del PR #7; activación operativa
+pendiente de certificación explícita. Sin número reservado.
 
 Terraform conserva atributos declarativos y la energía inicial de creación.
 IACP Lifecycle administra start, shutdown y reboot posteriores mediante tareas
@@ -9,10 +9,13 @@ Proxmox y operaciones asíncronas persistidas. No se utiliza Terraform como
 ejecutor de comandos imperativos de energía.
 
 La transferencia requiere `ignore_changes = [started]` en la revisión IaC
-fijada, conservando `started = var.started` durante create. La revisión actual
-carece de esta regla; la compuerta compilada permanece no promovida y no puede
-habilitarse mediante configuración o parámetros cliente. Tras revisión del
-cambio independiente, ambos pins deben promoverse al mismo commit inmutable.
+fijada, conservando `started = var.started` durante create. Ambos pins usan
+`9aeb8ec846342d279a5d16be7c8e20157e9bf5ae`. La revisión anterior permanece
+rechazada como propietaria de energía. Las instancias históricas requieren un
+certificado auditado separado que vincula identidad, evidencia original, state
+estable y plan local no-op. No se reescribe la revisión del aprovisionamiento;
+actualizar los pins o habilitar el flag no certifica instancias históricas.
+La migración aditiva 0006 conserva intacta la 0005 y no genera certificados.
 
 Se reutilizan autenticación por tenant, operación/job/evento, PostgreSQL, Celery,
 Redis y advisory lock por instancia. Una reserva persistente admite una sola
@@ -32,3 +35,5 @@ forma parte de ese rollback.
 
 Contratos, propuesta IaC, límites, pruebas y procedimiento de primera operación:
 [KVM_LIFECYCLE_API.md](../KVM_LIFECYCLE_API.md).
+Certificación, despliegue, activación y rollback:
+[KVM_POWER_PROMOTION.md](../KVM_POWER_PROMOTION.md).

@@ -69,8 +69,11 @@ Idempotency-Key; el resultado se consulta en `/v1/operations/{operation_id}`.
 Lifecycle agrega estado `uncertain` y el bloque tipado `power`; un job failed
 puede acompañar una operación incierta que necesita observación, no otro comando.
 Running no implica SO, agente, Cloud-Init o conectividad: guest_ready permanece
-null. Las mutaciones se bloquean hasta promover el contrato de propiedad started.
+null. El contrato del PR #7 ya está fijado; las instancias históricas siguen
+bloqueadas hasta su certificación explícita y la activación operativa.
 Consultar [contratos y activación de Lifecycle](../KVM_LIFECYCLE_API.md).
+La [certificación histórica](../KVM_POWER_PROMOTION.md) no cambia los IDs ni la
+revisión original de aprovisionamiento.
 
 Flujo Terraform, solo después de revisión y autorización operativa:
 

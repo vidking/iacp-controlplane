@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..lifecycle.ownership import mutation_revision
+from ..lifecycle.ownership import instance_ownership, mutation_revision
 from ..lifecycle.proxmox import PowerError
 from ..lifecycle.service import managed_target, request_power
 from ..models import Instance
@@ -40,13 +40,14 @@ def owned(session, principal, instance_id):
 def get_power(instance_id: str, principal: PrincipalRead, session: Database, client_factory: ClientFactory):
     instance = owned(session, principal, instance_id)
     try:
-        target, _ = managed_target(session, instance)
+        target, approval = managed_target(session, instance)
         client = client_factory()
         client.permissions(target)
         observed = client.observe(target)
         reason = None
         try:
             mutation_revision()
+            instance_ownership(session, instance, approval)
         except PowerError as failure:
             reason = failure.code
         return PowerState(instance_id=instance.id, **observed, mutations_available=reason is None, blocked_reason=reason)

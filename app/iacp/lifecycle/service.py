@@ -11,7 +11,7 @@ from ..schemas import PowerAccepted
 from ..services.instances import Conflict, event
 from ..services.jobs import QueueUnavailable
 from ..terraform.locks import ExecutionBusy, instance_lock
-from .ownership import mutation_revision
+from .ownership import instance_ownership, mutation_revision
 from .proxmox import PowerError, Target
 
 ACTIVE = {"queued", "running", "uncertain"}
@@ -36,7 +36,7 @@ def managed_target(session, instance):
     return target, approval
 
 
-def binding(session, row, operation):
+def binding(session, row, operation, *, check_ownership=False):
     instance = session.get(Instance, row.instance_id, populate_existing=True)
     job = session.scalar(select(Job).where(Job.operation_id == operation.id))
     if (instance is None or job is None or row.action not in {"start", "shutdown", "reboot"}
@@ -49,6 +49,8 @@ def binding(session, row, operation):
     except (Conflict, PowerError):
         raise PowerError("POWER_BINDING_CHANGED") from None
     if (target != Target(row.vmid, row.node, row.name) or approval.id != row.approval_id):
+        raise PowerError("POWER_BINDING_CHANGED")
+    if check_ownership and instance_ownership(session, instance, approval) != row.ownership_certificate_id:
         raise PowerError("POWER_BINDING_CHANGED")
     return target, job
 
@@ -91,6 +93,10 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                 except PowerError as failure:
                     raise Conflict(failure.code) from None
                 target, approval = managed_target(session, instance)
+                try:
+                    certificate_id = instance_ownership(session, instance, approval)
+                except PowerError as failure:
+                    raise Conflict(failure.code) from None
                 if session.scalar(select(PowerExecution.operation_id).where(
                         PowerExecution.instance_id == instance.id, PowerExecution.status.in_(ACTIVE))):
                     raise Conflict("POWER_OPERATION_ACTIVE")
@@ -104,7 +110,7 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                                 tenant_id=principal.tenant_id, operation_id=operation.id))
                 session.add(PowerExecution(operation_id=operation.id, instance_id=instance.id, action=action,
                     status="queued", phase="queued", vmid=target.vmid, node=target.node, name=target.name,
-                    approval_id=approval.id, ownership_revision=revision))
+                    approval_id=approval.id, ownership_revision=revision, ownership_certificate_id=certificate_id))
                 event(session, operation, "power_accepted", principal.subject)
                 heartbeat()
                 session.commit()
