@@ -1,0 +1,75 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.16.6",
+  "planned_values": {
+    "root_module": {}
+  },
+  "prior_state": {
+    "format_version": "1.0",
+    "terraform_version": "1.16.6",
+    "values": {
+      "root_module": {
+        "child_modules": [
+          {
+            "resources": [
+              {
+                "address": "module.kvm.terraform_data.this",
+                "mode": "managed",
+                "type": "terraform_data",
+                "name": "this",
+                "provider_name": "terraform.io/builtin/terraform",
+                "schema_version": 0,
+                "values": {
+                  "id": "11111111-1111-4111-8111-111111111111",
+                  "input": "synthetic-fixture",
+                  "output": "synthetic-fixture",
+                  "store": null,
+                  "triggers_replace": null
+                },
+                "sensitive_values": {}
+              }
+            ],
+            "address": "module.kvm"
+          }
+        ]
+      }
+    }
+  },
+  "configuration": {
+    "provider_config": {
+      "module.kvm:terraform": {
+        "name": "terraform",
+        "full_name": "terraform.io/builtin/terraform",
+        "module_address": "module.kvm"
+      }
+    },
+    "root_module": {
+      "module_calls": {
+        "kvm": {
+          "source": "./kvm",
+          "module": {
+            "resources": [
+              {
+                "address": "terraform_data.this",
+                "mode": "managed",
+                "type": "terraform_data",
+                "name": "this",
+                "provider_config_key": "module.kvm:terraform",
+                "expressions": {
+                  "input": {
+                    "constant_value": "synthetic-fixture"
+                  }
+                },
+                "schema_version": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "timestamp": "2026-10-22T03:59:45Z",
+  "applyable": false,
+  "complete": true,
+  "errored": false
+}

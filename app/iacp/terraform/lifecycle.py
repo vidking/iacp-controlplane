@@ -28,8 +28,8 @@ def fail_dispatch(session, execution, code="DISPATCH_FAILED"):
     attempt.status, attempt.error_code, attempt.finished_at = "failed", code, utcnow()
 
 
-def build_executor():
-    if os.environ.get("IACP_TERRAFORM_PLAN_ENABLED") != "1":
+def build_executor(*, observation=False):
+    if not observation and os.environ.get("IACP_TERRAFORM_PLAN_ENABLED") != "1":
         raise PlanError("REAL_PLAN_DISABLED")
     try:
         return TerraformExecutor(Path(os.environ["IACP_TERRAFORM_SOURCE_DIR"]), Path(os.environ["IACP_TERRAFORM_ARTIFACTS_DIR"]))

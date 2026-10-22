@@ -1,7 +1,9 @@
 """Compatibilidad histórica con artefactos sintéticos; nunca accede a infraestructura."""
 from datetime import timedelta
+from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
@@ -24,12 +26,35 @@ class ObservationRunner:
     def __init__(self, variables, outcome="existing"):
         self.variables, self.outcome, self.commands = variables, outcome, []
         self.apply_saved = Mock(side_effect=AssertionError("La recuperación nunca aplica"))
+        self.state_override = None
+        self.proxmox_override = None
+
+    def values(self):
+        values = plan_json(self.variables)["resource_changes"][0]["change"]["after"]
+        values.update(id=str(values["vm_id"]), started=False)
+        return values
+
+    def state(self):
+        return self.state_override if self.state_override is not None else {
+            "version": 4, "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644", "serial": 3,
+            "resources": [] if self.outcome == "empty" else [{
+                "module": "module.kvm", "mode": "managed", "type": "proxmox_virtual_environment_vm",
+                "name": "this", "instances": [{"attributes": self.values()}]}]}
+
+    def proxmox(self, env, expected, cancelled):
+        assert not cancelled()
+        return self.proxmox_override if self.proxmox_override is not None else {
+            "present": self.outcome != "empty", "power_state": "stopped"}
 
     def run(self, args, cwd, env, cancelled, allowed=(0,), phase=None):
         self.commands.append(args)
         assert not cancelled()
         if args[0] == "version":
             return json.dumps({"terraform_version": TERRAFORM_VERSION}).encode()
+        if args == ["state", "pull"]:
+            if self.outcome == "backend-error":
+                raise PlanError("TERRAFORM_COMMAND_FAILED", phase=phase, command="state", exit_code=1)
+            return json.dumps(self.state()).encode()
         if args[0] == "plan":
             assert args[1] == "-refresh-only"
             if self.outcome == "provider-error":
@@ -38,10 +63,13 @@ class ObservationRunner:
             assert args == ["show", "-json", "observation.tfplan"]
             if self.outcome == "invalid-json":
                 return b"not-json"
-            values = plan_json(self.variables)["resource_changes"][0]["change"]["after"]
-            values["started"] = False
+            values = self.values()
             resources = [] if self.outcome == "empty" else [{"address": ADDRESS, "values": values}]
-            return json.dumps({"planned_values": {"root_module": {"resources": resources}}}).encode()
+            # Terraform 1.16.6 refresh-only: no resource_changes/planned resources.
+            # prior_state contiene el state refrescado, incluidos los módulos.
+            observed = deepcopy(json.loads((Path(__file__).parent / "fixtures/terraform_1_16_6_refresh_only.json").read_text()))
+            observed["prior_state"]["values"]["root_module"]["child_modules"][0]["resources"] = resources
+            return json.dumps(observed).encode()
         return b""
 
 
@@ -52,6 +80,7 @@ def artifacts(tmp_path, monkeypatch, *, identifier=None, attempt=2, allocation=N
     runner = ObservationRunner(variables)
     executor = TerraformExecutor(tmp_path, tmp_path / "plans", runner)
     monkeypatch.setattr(executor, "environment", lambda workspace: {})
+    monkeypatch.setattr("iacp.terraform.executor.proxmox_resource", runner.proxmox)
     workspace = executor.workspace(identifier, attempt)
     root = workspace / "source/stacks/kvm-instance"
     root.mkdir(parents=True)
@@ -96,7 +125,7 @@ def test_historical_and_current_manifests_reconcile_without_rewriting(tmp_path, 
     assert result["vmid"] == 21001 and result["simulated"] is False
     runner.apply_saved.assert_not_called()
     assert before == {path: path.read_bytes() for path in before}
-    assert [command[0] for command in runner.commands] == ["version", "init", "plan", "show"]
+    assert [command[0] for command in runner.commands] == ["version", "init", "state", "plan", "show", "state"]
 
 
 @pytest.mark.parametrize("change", ["plan", "approval-sha", "manifest-sha", "missing-plan", "state-key", "backend",

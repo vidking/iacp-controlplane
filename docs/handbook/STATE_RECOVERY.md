@@ -87,7 +87,8 @@ restaurada en un entorno aislado; validar lineage/serial y pertenencia exclusiva
 antes de una conmutación autorizada. El Control Plane no expone state push,
 import, force-unlock, target, replace ni destroy.
 
-La observación usa `plan -refresh-only` y lee planned_values; no aplica ese plan ni
+La observación contrasta state pull con GET nativos Proxmox y usa
+`plan -refresh-only`, leyendo `prior_state.values`; no aplica ese plan ni
 actualiza por sí misma el state remoto. El dato observado tiene fecha y no
 constituye monitoreo continuo. Si el provider no logra completar la lectura,
 IACP conserva la incertidumbre en vez de inventar estado de infraestructura.

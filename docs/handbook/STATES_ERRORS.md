@@ -88,7 +88,10 @@ puede haber sido 202 y el job terminar failed/uncertain.
 | TERRAFORM_TIMEOUT / EXECUTION_DEADLINE_EXCEEDED / OUTPUT_LIMIT_EXCEEDED | Límite de proceso o flujo | Revisar started_at; después de mutar exige conciliación |
 | TERRAFORM_COMMAND_FAILED / TERRAFORM_EXECUTION_FAILED | Fallo sin exponer diagnóstico sensible | Inspección privada; no reaplicar a ciegas |
 | INVALID_PLAN_OUTPUT / INVALID_TERRAFORM_OUTPUT / OBSERVED_RESOURCE_MISMATCH | Resultado inválido o distinto de la asignación | Mantener incertidumbre y revisar provider/state |
-| RESOURCE_ABSENT | Observación sin recurso administrado | No crear automáticamente; verificar state y Proxmox |
+| RESOURCE_ABSENT | State vacío y VM ausente con alcance de clúster verificado | Mantener uncertain; solo permite revisión independiente para el cierre controlado |
+| UNMANAGED_RESOURCE / STATE_RESOURCE_MISSING | Presencia en una sola fuente: infraestructura no administrada o drift | No crear, importar ni declarar éxito automáticamente |
+| PROXMOX_OBSERVATION_FAILED / PROXMOX_OBSERVATION_SCOPE_INSUFFICIENT | Error HTTP/red/TLS o inventario de alcance insuficiente | Revisar fase y status HTTP; nunca inferir ausencia |
+| INCOMPLETE_OBSERVATION / PROVIDER_OBSERVATION_INCONSISTENT / STATE_CHANGED_DURING_OBSERVATION / RESOURCE_OPERATION_IN_PROGRESS | Evidencia incompleta, contradictoria, concurrente o tarea activa | Conservar uncertain y repetir observación tras revisión autorizada |
 | RESOURCE_ABSENCE_CONFIRMED | Cierre auditado failed por ausencia en ambas fuentes | No reaplicar autorización consumida; futura decisión exige intento y aprobación nuevos |
 | ABSENCE_NOT_CONFIRMED / INVALID_ABSENCE_EVIDENCE | Falta conciliación verificada o evidencia temporal válida | Conservar uncertain; completar revisión independiente |
 | CANCELLED / TENANT_INACTIVE | Cancelación o suspensión del tenant | Antes de mutar: revisar; después: conciliar |
