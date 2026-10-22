@@ -1,0 +1,137 @@
+{
+  "base_commit": "7b4e24edc74b65ad4132cad38cce81a6d4cc64c4",
+  "timestamp_utc": "2026-10-22T18:36:12.287203+00:00",
+  "environment": {
+    "isolation": "compose.test.yaml, internal network, disposable services; no production endpoints",
+    "python": "3.12.15",
+    "pytest": "8.3.5",
+    "postgresql": "17.11",
+    "redis": "7.4.11",
+    "celery": "5.5.2 (pinned)",
+    "terraform": "1.16.6",
+    "proxmox": "synthetic loopback HTTPS server with verified ephemeral CA; Guest Agent absent"
+  },
+  "full_suite": {
+    "executed": 466,
+    "passed": 466,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "unit_cases": 434,
+    "integration_cases": 32,
+    "new_unit_cases": 56,
+    "new_integration_cases": 7,
+    "pytest_duration_seconds": 74.78,
+    "junit_duration_seconds": 74.763,
+    "warnings": 17
+  },
+  "targeted_integration": {
+    "executed": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 11.92
+  },
+  "images": {
+    "tests": "sha256:a7b65857a69773e07c8126e5f51a31aeb7888cd23b071e967aba5cb4245bfd1a",
+    "postgresql": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "redis": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+  },
+  "validation_input_sha256": {
+    "app/iacp/lifecycle/__init__.py": "b73b7879ec56d33736532ef0ed302341436b95cc4e9b2e989d719c0ee59c1656",
+    "app/iacp/lifecycle/execution.py": "4778427368beee126a71694c05491b3839adb5293248bdcd6535f38c41dd3e2b",
+    "app/iacp/lifecycle/ownership.py": "df7d3f8e220a07d8fec8f206f0bfd25fd41df2f10ede800953c956849991296c",
+    "app/iacp/lifecycle/proxmox.py": "974413f8aff8c25e0bbcbbbfc1ffdf3abd71522694e352df0a67222cab033c8c",
+    "app/iacp/lifecycle/service.py": "5bba5aeb5c35b9b4dee865ab93929da28c7e3430fc711070812178ac620249de",
+    "app/iacp/lifecycle/worker.py": "5efa59ffc02cc84e85b9f8d6ab0bf848970c7ecc50badf2e3ed0c72af97fcaea",
+    "app/iacp/api/power.py": "e9dd9e0e5e719b11f8b8e331e7398e81f89f211e6729ebccc0a8c535f4f613ce",
+    "app/iacp/api/operations.py": "c5aa82c12b109c56e10c1491867be05b77cdbd00afbff9dab322db278bf3ad61",
+    "app/iacp/api/dependencies.py": "4ce9b4ba0bc59c62b4599f94782d0c2641428a2b1ea08699d8596cc800baa903",
+    "app/iacp/models.py": "566cadb440c8ab6872dc314f132e3ac1813899295ff3430fc173b46371f556ed",
+    "app/iacp/main.py": "3f0989a99ba597e5a1e8f3b086de1d8cfcb9c6abfd8716521538358cb4856355",
+    "app/iacp/schemas.py": "c00cd76f495dc1f789ebc0aac7f1c040f611fa133741ab72b2ba5e68d86caa47",
+    "app/alembic/versions/0005_kvm_lifecycle.py": "bbd61087758d6c503aef4efe9b96f9b75ca783ae6358deb74ca17263d20b4e72",
+    "compose.lifecycle.yaml": "b0ce08c3c6354faf597b58bf159133bd3168d00efb7812f11da8b6a6a9abfa48",
+    "tests/test_power.py": "4dae0f7360eb1ca8a0c87cab86152b604c70ab82151c825f94a395ec2f7dc6a5",
+    "tests/test_power_proxmox.py": "1181c64198f5421107c0443d46bd32a74975ba5aa147778ea04c01c6db74237b",
+    "tests/power_helpers.py": "d9e3a2f499ad6b7ef3e5bda9c30499caca5458aecdd3a933233f1370453d4afa",
+    "tests/power_fixture.py": "6edc004d148c8c7d21117bbff1c994405c17af50f6a8a877214b67e7eef04615",
+    "tests/lifecycle_worker.py": "0b333a6b5f21d279de23ebec298208c9abde094c3c38cfd69663ad5b3a3ce5dc",
+    "tests/integration/test_power.py": "3ea97093838acd25b663e33afffe2d875e4ac5b48d75f31126405f7ad479395a",
+    "tests/integration/test_apply.py": "45bb1c3891fac18fade4edfca74a07b84aec4af059ced836b617a1517a10f466",
+    "tests/test_migrations.py": "33e9130237b212d46002a4477fc6253a0b0e7dd64b6120605b98cc41d46a6d64",
+    "docs/openapi.json": "a422eef8560812753b624384755ce77b77fbf7fdcd313b13d413425997215609",
+    "scripts/validate-handbook.py": "577311dcbc3d244d3487c5e13c94c375eed1485b04fe24f0c1a9d2d38c9b4550"
+  },
+  "junit_sha256": "f9e6ad1fd47d0fc172d19e789ba5939625f338382764f5fce19dfb50d3db514f",
+  "new_integration_cases": [
+    "test_https_native_tasks_with_postgres_and_no_guest_agent[start]",
+    "test_https_native_tasks_with_postgres_and_no_guest_agent[shutdown]",
+    "test_https_native_tasks_with_postgres_and_no_guest_agent[reboot]",
+    "test_two_workers_share_the_terraform_instance_lock",
+    "test_0005_preserves_existing_instances_and_history",
+    "test_real_celery_worker_interruption_redelivery_and_api_restart",
+    "test_terraform_ignore_changes_preserves_creation_and_only_ignores_updates"
+  ],
+  "retained_readonly_evidence": [
+    {
+      "test": "test_recovery_preserves_s3_version_or_blocks_an_external_write[False]",
+      "evidence": {
+        "state_consistency": "{\"after\": {\"content_sha256\": \"7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 3, \"sha256\": \"c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77\", \"version_id\": \"fixture-version-1\"}, \"before\": {\"content_sha256\": \"7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 3, \"sha256\": \"c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77\", \"version_id\": \"fixture-version-1\"}, \"change\": \"unchanged\"}",
+        "recovery_status": "completed",
+        "s3_requests": "[[\"GET\", \"/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/7f5a3c4f-3eaa-411e-81b5-f3b15f57d84c/terraform.tfstate\"], [\"GET\", \"/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/7f5a3c4f-3eaa-411e-81b5-f3b15f57d84c/terraform.tfstate\"]]",
+        "apply_enabled_during_recovery": "1"
+      }
+    },
+    {
+      "test": "test_recovery_preserves_s3_version_or_blocks_an_external_write[True]",
+      "evidence": {
+        "state_consistency": "{\"after\": {\"content_sha256\": \"e1e0bc67a5d3d4a1d4e59cb9dcb2df06c8484d484c6c5df9d07124f3525d80d1\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 4, \"sha256\": \"f1201d2e3dd816ce6ac258585e900d218f03b00af4962b7639ddf2c3c7a3466b\", \"version_id\": \"fixture-version-2\"}, \"before\": {\"content_sha256\": \"7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 3, \"sha256\": \"c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77\", \"version_id\": \"fixture-version-1\"}, \"change\": \"serial_advanced\"}",
+        "recovery_status": "uncertain",
+        "s3_requests": "[[\"GET\", \"/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/6fd666fb-8bba-426e-bd8b-ab10d76b376a/terraform.tfstate\"], [\"GET\", \"/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/6fd666fb-8bba-426e-bd8b-ab10d76b376a/terraform.tfstate\"]]",
+        "apply_enabled_during_recovery": "1"
+      }
+    },
+    {
+      "test": "test_real_refresh_only_cli_preserves_remote_object_and_uses_native_lock",
+      "evidence": {
+        "state_consistency": "{\"after\": {\"content_sha256\": \"90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 3, \"sha256\": \"c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a\", \"version_id\": \"fixture-version-1\"}, \"before\": {\"content_sha256\": \"90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2\", \"lineage\": \"d954af88-6ae6-2d04-9ead-55ed1f95d644\", \"serial\": 3, \"sha256\": \"c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a\", \"version_id\": \"fixture-version-1\"}, \"change\": \"unchanged\"}",
+        "s3_writes": "[[\"PUT\", \"/fixture-state/terraform.tfstate.tflock\"], [\"DELETE\", \"/fixture-state/terraform.tfstate.tflock\"]]",
+        "terraform_version": "1.16.6"
+      }
+    }
+  ],
+  "ownership": {
+    "current_iac_revision": "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4",
+    "lifecycle_contract_promoted": false,
+    "mutations_blocked": true,
+    "proposal": "../proposals/iac-proxmox-started-ownership.patch",
+    "native_terraform_test_scope": "Core boolean ignore_changes contract using terraform_data; not a live Proxmox provider test"
+  },
+  "limits": [
+    "No production VM power operations or deployment.",
+    "No production PostgreSQL, Wasabi state or Proxmox permission changes.",
+    "Independent IaC merge and coordinated immutable source/ownership promotion required before enabling mutations.",
+    "Lost UPID after an ambiguous POST requires independent audited resolution; never blind resend.",
+    "Functional rollback uses disabled admission and retains schema 0005; old binary is not schema compatible.",
+    "17 upstream deprecation warnings; no dependency changes."
+  ],
+  "previous_full_suite": {
+    "executed": 465,
+    "passed": 465,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 78.13
+  },
+  "additional_checks": {
+    "handbook_authenticated_contracts": 13,
+    "compose_lifecycle_config": "passed with synthetic settings; no containers started",
+    "patch_on_temporary_baseline_copy": "passed; no foreign repository modifications",
+    "targeted_qemu_restart_regressions": {
+      "passed": 4,
+      "failed": 0,
+      "duration_seconds": 0.73
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# Optional power API/worker. Admission stays disabled until the reviewed IaC
+# ownership contract is promoted in code AND IACP_KVM_LIFECYCLE_ENABLED=1.
+services:
+  api:
+    environment:
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:-0}
+    secrets: [kvm_credentials]
+    networks: [egress]
+
+  lifecycle-worker:
+    build: ./app
+    image: iacp/controlplane-api:${IACP_RELEASE:?Define el commit aprobado}
+    command: [celery, -A, 'iacp.lifecycle.worker:celery_app', worker, -Q, lifecycle, '--concurrency=1', '--loglevel=WARNING', '--without-gossip', '--without-mingle']
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      CELERY_BROKER_URL: redis://redis:6379/0
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:-0}
+    secrets: [db_password, kvm_credentials]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    networks: [backend, egress]
+
+secrets:
+  kvm_credentials:
+    file: ${IACP_KVM_CREDENTIALS_PATH:?Credencial dedicada VM.Audit y VM.PowerMgmt; no credencial Terraform}

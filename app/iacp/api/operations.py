@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import Operation, OperationEvent
-from ..schemas import ErrorResponse, EventResponse, OperationResponse
+from ..models import Operation, OperationEvent, PowerExecution
+from ..schemas import ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"], responses={
@@ -22,8 +22,13 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
     if row is None:
         raise HTTPException(status_code=404, detail="Operation not found")
     events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == row.id).order_by(OperationEvent.id))
+    power = session.get(PowerExecution, row.id)
     return OperationResponse(
         id=row.id, instance_id=row.instance_id, kind=row.kind, status=row.status,
         requested_by=row.requested_by, error_code=row.error_code, created_at=row.created_at, updated_at=row.updated_at,
         events=[EventResponse.model_validate(item) for item in events],
+        power=(PowerProgress(action=power.action, status=power.status, phase=power.phase,
+                             power_state=(power.result or {}).get("power_state"),
+                             recovery_required=power.status == "uncertain", started_at=power.started_at,
+                             submitted_at=power.submitted_at, finished_at=power.finished_at) if power else None),
     )

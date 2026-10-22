@@ -15,6 +15,7 @@ Estado del código propuesto; no equivale a una validación nueva de producción
 | Apply de plan aprobado | Implementado, deshabilitado por defecto | Gate doble, claim, caducidad y simulación probados; ningún apply real ejecutado |
 | VMID/nodo/recursos/encendido observados | Implementado | Proyección y validación del provider probadas con fixtures; KVM lab pendiente |
 | Recuperación de apply incierto | Implementada, explícita, solo observación | Fallos/cancelación/reintentos probados; incidentes reales requieren runbook |
+| GET de energía y operaciones Lifecycle start/shutdown/reboot | Implementadas; mutaciones bloqueadas hasta promoción IaC | HTTPS, PostgreSQL, Celery, idempotencia y recuperación probados con servicios desechables; [contrato y límites](../KVM_LIFECYCLE_API.md) |
 | HTTPS/allowlist/Origin/certificados externos | Preparado en PR TLS independiente | Traefik real probado en Docker con certificado efímero; DNS/CA/firewall corporativos pendientes |
 | Contrato CRM/OpenAPI y ejemplos oficiales | Implementado/documentado | Snapshot y pruebas; homologación desde backend CRM pendiente |
 | Eliminación KVM por API | Pendiente | Guía de eliminación manual por Infraestructura con aprobación distinta |
@@ -34,6 +35,11 @@ espera autorización. La operación continúa running hasta aplicar y observar.
 **¿Puedo confiar en ready sin mirar executor?** No. Una instancia simulada también
 puede estar ready. Usar infrastructure_kind, executor y result.simulated; para una
 KVM revisar además observed_at y power_state.
+
+El hito posterior confirmado por operación es VMID 106, intento 4 completed,
+state consistente y postcondiciones verificadas. Para energía vigente usar GET
+`/power`; el snapshot de creación no es monitoreo. Lifecycle no ha ejecutado una
+operación real de energía y su activación depende de la propuesta IaC independiente.
 
 **¿El CRM puede elegir tenant, VMID o red?** No en el contrato de creación. El
 contexto autenticado determina tenant y la asignación externa determina recursos
@@ -76,6 +82,11 @@ activo. Restaurar state no revierte los recursos y puede provocar duplicados.
 rollback binario; readiness exige el head exacto. Conservar una imagen compatible
 con 0004 y deshabilitar funciones nuevas; probar una imagen de compatibilidad o
 restauración aislada antes de ofrecer una reversión de esquema.
+
+**¿Puedo volver al binario anterior tras migrar 0005?** No como rollback directo:
+su modelo presupone una operación por instancia. Pausar Lifecycle con su flag y
+usar un release compatible con 0005, conservando historial y propiedad de started.
+No devolver energía a Terraform ni editar SQL como parte de la reversión.
 
 **¿TLS queda activo al fusionar el PR?** No. El override exige certificados,
 política y parámetros externos. La configuración activa del servidor no cambia.

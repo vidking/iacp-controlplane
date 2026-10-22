@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs, operations, terraform, applies
+from .api import health, instances, jobs, operations, terraform, applies, power
 
 
 def create_app() -> FastAPI:
@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
     application.include_router(operations.router)
     application.include_router(terraform.router)
     application.include_router(applies.router)
+    application.include_router(power.router)
 
     from .terraform.config import PlanError
 

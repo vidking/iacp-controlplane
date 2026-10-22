@@ -1,0 +1,10 @@
+--- a/modules/compute/kvm/main.tf
++++ b/modules/compute/kvm/main.tf
+@@ -80,2 +80,7 @@
+   delete_unreferenced_disks_on_destroy = false
++
++  # IACP Lifecycle gestiona la energía después de crear el recurso.
++  lifecycle {
++    ignore_changes = [started]
++  }
+ }
