@@ -16,8 +16,9 @@ el adaptador se simula con PostgreSQL 17, Redis 7 y Celery reales en Docker loca
    usaron al planificar mediante una huella salada que no revela credenciales;
    adquiere el lock PostgreSQL por instancia y aplica **solamente** `saved.tfplan`.
    Terraform conserva `use_lockfile=true` en Wasabi y espera hasta 30 s el lock.
-5. Una consulta `plan -refresh-only` al provider verifica VMID, nodo, nombre y
-   recursos; PostgreSQL registra la observación. `ready` significa KVM observada,
+5. State pull, GET nativos Proxmox y `plan -refresh-only` verifican presencia,
+   VMID, nodo, nombre y recursos; se leen los valores de `prior_state.values`,
+   nunca planned_values del refresh-only. PostgreSQL registra la observación. `ready` significa KVM observada,
    no disponibilidad del sistema operativo o de la aplicación invitada.
 
 Las autorizaciones son de un solo uso. Caducan antes de iniciar la mutación y no
@@ -53,7 +54,11 @@ Los fallos de integridad, versión, inicialización e inspección anteriores a
 de invocar el único comando mutante se consume la autorización y se fija
 `started_at`; desde ese punto, cualquier error de apply u observación termina en
 `uncertain`. La conciliación de `uncertain` ejecuta exclusivamente inicialización,
-refresh-only y show; nunca vuelve a ejecutar `apply`.
+state pull, GET nativos, refresh-only y show; nunca vuelve a ejecutar `apply`.
+`observe.state`, `observe.proxmox` y `observe.state_verify` identifican las lecturas
+nuevas; los diagnósticos incluyen status HTTP y presencia conocida de cada fuente,
+sin respuestas ni secretos. La conciliación funciona con Plan y Apply en 0.
+Consultar [el incidente del intento 4 y su corrección](PRESENT_RESOURCE_RECONCILIATION.md).
 
 Para el incidente del release `a97c5ac`, la evidencia disponible no permite
 atribuir con certeza el código genérico al provider: tampoco distingue si falló

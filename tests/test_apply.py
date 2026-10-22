@@ -47,7 +47,7 @@ class ApplyingExecutor:
         if self.failure:
             raise self.failure if isinstance(self.failure, PlanError) else PlanError(self.failure)
         values = plan_json(variables)["resource_changes"][0]["change"]["after"]
-        values["started"] = False
+        values.update(started=False, id=str(values["vm_id"]))
         return observed_resource({"root_module": {"child_modules": [{"resources": [
             {"address": ADDRESS, "values": values}]}]}}, variables)
 
@@ -198,7 +198,7 @@ def test_provider_observations_are_strictly_scoped(change):
     allocation = Allocation.model_validate(allocation_data())
     variables = allocation.variables(SimpleNamespace(**SPEC))
     actual = plan_json(variables)["resource_changes"][0]["change"]["after"]
-    actual["started"] = False
+    actual.update(started=False, id=str(actual["vm_id"]))
     resource = {"address": ADDRESS, "values": actual}
     if change == "foreign": resource["address"] = "another.vm"
     if change == "protected": actual["vm_id"] = 104
@@ -216,7 +216,7 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
     commands = []
     planned = plan_json(variables)
     actual = planned["resource_changes"][0]["change"]["after"]
-    actual["started"] = True
+    actual.update(started=True, id=str(actual["vm_id"]))
     class Runner:
         def run(self, args, cwd, env, cancelled, allowed=(0,), phase=None):
             commands.append(args)
@@ -224,8 +224,14 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
                 from iacp.terraform.config import TERRAFORM_VERSION
                 return json.dumps({"terraform_version": TERRAFORM_VERSION}).encode()
             if args == ["show", "-json", "saved.tfplan"]: return json.dumps(planned).encode()
+            if args == ["state", "pull"]:
+                return json.dumps({"version": 4, "lineage": "fixture-lineage", "serial": 3, "resources": [{
+                    "module": "module.kvm", "mode": "managed", "type": "proxmox_virtual_environment_vm", "name": "this",
+                    "instances": [{"attributes": actual}]}]}).encode()
             if args == ["show", "-json", "observation.tfplan"]:
-                return json.dumps({"planned_values": {"root_module": {"resources": [{"address": ADDRESS, "values": actual}]}}}).encode()
+                return json.dumps({"complete": True, "errored": False, "planned_values": {},
+                    "prior_state": {"values": {"root_module": {"child_modules": [{"resources": [
+                        {"address": ADDRESS, "values": actual}]}]}}}}).encode()
             return b""
         def apply_saved(self, root, env, cancelled):
             assert commands[-1] == ["authorized"]
@@ -234,6 +240,7 @@ def test_adapter_rechecks_plan_before_fixed_apply_and_observes_provider(tmp_path
     integrity = Mock()
     monkeypatch.setattr(executor, "prepare_apply", integrity)
     monkeypatch.setattr(executor, "environment", lambda workspace: {})
+    monkeypatch.setattr("iacp.terraform.executor.proxmox_resource", lambda *args: {"present": True, "power_state": "running"})
     result = executor.apply(str(uuid4()), 1, "a" * 64, "fixture-key", allocation.model_dump(), variables,
                             lambda: False, lambda: commands.append(["authorized"]))
     assert integrity.call_count == 2 and result["power_state"] == "running"

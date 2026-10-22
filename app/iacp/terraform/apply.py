@@ -167,7 +167,9 @@ def resolve_absence(session, execution, identifier, body, key, principal):
             if principal.subject in {operation.requested_by, row.requested_by}:
                 raise Conflict("INDEPENDENT_APPROVAL_REQUIRED")
             if (row.status != "uncertain" or row.error_code != "RESOURCE_ABSENT"
-                    or (row.result or {}).get("reconciliation", {}).get("plan_sha256") != row.plan_sha256):
+                    or (row.result or {}).get("reconciliation", {}).get("plan_sha256") != row.plan_sha256
+                    or (row.result or {}).get("diagnostic", {}).get("state_present") is not False
+                    or (row.result or {}).get("diagnostic", {}).get("proxmox_present") is not False):
                 raise Conflict("ABSENCE_NOT_CONFIRMED")
             check_binding(row, execution)
             allocation = Allocation.model_validate(execution.allocation)
@@ -258,7 +260,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             raise PlanError("CANCELLED")
         if not reconcile and not enabled():
             raise PlanError("APPLY_DISABLED")
-        executor = executor or build_executor()
+        executor = executor or (build_executor(observation=True) if reconcile else build_executor())
         allocation = Allocation.model_validate(allocation_data)
         variables = allocation.variables(instance)
         with sessions() as session:

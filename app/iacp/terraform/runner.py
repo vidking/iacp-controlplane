@@ -22,7 +22,7 @@ class CommandRunner:
                              cwd, env, cancelled, (0,), "apply")
 
     def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,), phase=None) -> bytes:
-        if not args or args[0] not in {"version", "init", "validate", "plan", "show"}:
+        if args != ["state", "pull"] and (not args or args[0] not in {"version", "init", "validate", "plan", "show"}):
             raise PlanError("COMMAND_FORBIDDEN")
         if any(value.startswith(("-destroy", "-lock=false", "-target", "-replace", "-migrate-state", "-force")) for value in args):
             raise PlanError("COMMAND_FORBIDDEN")

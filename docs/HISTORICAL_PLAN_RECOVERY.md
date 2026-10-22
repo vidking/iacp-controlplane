@@ -65,8 +65,10 @@ conserva el cerco y permite repetir `recover`. Ninguna de esas rutas concede una
 autorización nueva. Repetir `/apply` con su clave original devuelve el run anterior
 sin republicar; otra clave o aprobación del mismo intento se rechaza.
 
-La observación ejecuta `version`, `init -reconfigure`, `plan -refresh-only` y
-`show` del plan de observación. No ejecuta Apply ni persiste el refresh en el
+La observación ejecuta `version`, `init -reconfigure`, lectura remota con
+`state pull`, GET nativos Proxmox y, si hay recurso en ambas fuentes,
+`plan -refresh-only` y `show` del plan de observación, leyendo `prior_state.values`.
+Después verifica que el state remoto no haya cambiado. No ejecuta Apply ni persiste el refresh en el
 state remoto. Mantiene el locking de Terraform: el backend puede crear y retirar
 su `.tflock`; «solo lectura» se refiere al recurso y al contenido del state, no
 a eliminar el mecanismo de exclusión. No se ejecutó esta observación contra
@@ -77,7 +79,9 @@ Wasabi o Proxmox durante el desarrollo.
 | Resultado de conciliación | Persistencia y decisión |
 |---|---|
 | Recurso exacto observado | Autorización `completed`; instancia `ready` con observación del provider |
-| State sin recursos | `uncertain` / `RESOURCE_ABSENT`; no demuestra ausencia en Proxmox |
+| State vacío y VM ausente con alcance de clúster verificado | `uncertain` / `RESOURCE_ABSENT`; requiere revisión independiente antes del cierre |
+| VM presente solo en Proxmox | `uncertain` / `UNMANAGED_RESOURCE`; nunca crear ni importar automáticamente |
+| VM presente solo en state | `uncertain` / `STATE_RESOURCE_MISSING`; drift, nunca éxito |
 | Recurso ajeno o distinto | `uncertain`; no adoptar ni declarar éxito |
 | Error, timeout o respuesta inválida del provider | `uncertain`; no inferir ausencia |
 | Artefactos alterados o incompletos | `uncertain` / `PLAN_INTEGRITY_FAILED`; detener la investigación de infraestructura por esta ruta |
@@ -90,6 +94,9 @@ el clúster Proxmox, incluida cualquier tarea de clonación aún en curso. La
 resolución por ausencia es una atestación humana auditable de esas comprobaciones;
 el endpoint no consulta esas fuentes ni valida automáticamente sus documentos.
 `result.reconciliation` conserva el hash verificado y si el manifest era histórico.
+La corrección del intento 4 exige observación negativa de ambas fuentes antes de
+aceptar `resolve-absence`; resultados antiguos requieren otra conciliación. Ver
+[causa raíz y procedimiento actualizado](PRESENT_RESOURCE_RECONCILIATION.md).
 
 ## Procedimiento de recuperación
 

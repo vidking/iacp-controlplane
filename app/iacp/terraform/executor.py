@@ -11,6 +11,7 @@ import tarfile
 
 from .config import Allocation, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from .runner import CommandRunner
+from .observation import proxmox_resource
 
 ADDRESS = "module.kvm.proxmox_virtual_environment_vm.this"
 
@@ -188,7 +189,8 @@ class TerraformExecutor:
     def prepare_reconcile(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
         return {"plan_sha256": sha256, "legacy_manifest": "execution_context_salt" not in manifest,
-                "state_key": state_key, "source_revision": SOURCE_REVISION, "execution_enabled": False}
+                "state_key": state_key, "workspace": "default", "backend_bucket": manifest["backend"]["bucket"],
+                "source_revision": SOURCE_REVISION, "execution_enabled": False}
 
     def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
         manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
@@ -222,30 +224,113 @@ class TerraformExecutor:
 
     def read_json(self, args, root, env, cancelled, phase):
         try:
-            return json.loads(self.runner.run(args, root, env, cancelled, phase=phase))
+            value = json.loads(self.runner.run(args, root, env, cancelled, phase=phase))
+            if not isinstance(value, dict):
+                raise ValueError("Expected a JSON object")
+            return value
         except (ValueError, TypeError):
             raise PlanError("INVALID_TERRAFORM_OUTPUT", phase=phase, command=args[0]) from None
 
     def initialize(self, root, env, cancelled, phase):
         if self.read_json(["version", "-json"], root, env, cancelled, f"{phase}.preflight").get("terraform_version") != TERRAFORM_VERSION:
-            raise PlanError("TERRAFORM_VERSION_MISMATCH")
+            raise PlanError("TERRAFORM_VERSION_MISMATCH", phase=f"{phase}.preflight", command="version")
         self.runner.run(["init", "-input=false", "-no-color", "-lockfile=readonly", "-reconfigure",
                          "-backend-config=backend.tfbackend.json"], root, env, cancelled, phase=f"{phase}.init")
 
     def observe(self, instance_id, attempt, allocation, variables, cancelled):
         workspace = self.workspace(instance_id, attempt)
         root = workspace / "source" / "stacks" / "kvm-instance"
-        env = self.environment(workspace)
-        # Consultar el provider; show del state por sí solo podría devolver datos antiguos.
-        self.initialize(root, env, cancelled, "observe")
-        self.runner.run(["plan", "-refresh-only", "-input=false", "-no-color", "-lock-timeout=30s",
-                         "-out=observation.tfplan"], root, env, cancelled, phase="observe.refresh")
         try:
-            observed = json.loads(self.runner.run(["show", "-json", "observation.tfplan"], root, env, cancelled,
-                                                  phase="observe.inspect"))
-        except (ValueError, TypeError):
-            raise PlanError("INVALID_TERRAFORM_OUTPUT", phase="observe.inspect", command="show") from None
-        return observed_resource(observed.get("planned_values", {}), variables)
+            env = self.environment(workspace)
+        except PlanError as failure:
+            failure.phase = failure.phase or "observe.credentials"
+            raise
+        self.initialize(root, env, cancelled, "observe")
+        state_present, proxmox_present = None, None
+        try:
+            state = self.read_json(["state", "pull"], root, env, cancelled, "observe.state")
+            resource = state_resource(state, variables)
+            state_present = resource is not None
+            proxmox = proxmox_resource(env, variables["instance"], cancelled)
+            proxmox_present = proxmox["present"]
+            if state_present and proxmox_present:
+                # El plan refresh-only NO contiene cambios de recursos. Sus valores
+                # refrescados se serializan en prior_state, no en planned_values.
+                self.runner.run(["plan", "-refresh-only", "-input=false", "-no-color", "-lock-timeout=30s",
+                                 "-out=observation.tfplan"], root, env, cancelled, phase="observe.refresh")
+                observed = self.read_json(["show", "-json", "observation.tfplan"], root, env, cancelled, "observe.inspect")
+                if (not isinstance(observed, dict) or observed.get("errored") is not False
+                        or observed.get("complete") is not True or observed.get("resource_changes")
+                        or observed.get("deferred_changes") or observed.get("action_invocations")
+                        or observed.get("deferred_action_invocations")):
+                    raise PlanError("INCOMPLETE_OBSERVATION", phase="observe.inspect")
+                try:
+                    values = observed.get("prior_state", {}).get("values", {})
+                    result = observed_resource(values, variables)
+                except PlanError as failure:
+                    if failure.code == "RESOURCE_ABSENT":
+                        raise PlanError("PROVIDER_OBSERVATION_INCONSISTENT", phase="observe.inspect") from None
+                    raise
+                result["power_state"] = proxmox["power_state"]
+            # Los pulls no adquieren lock. Detectar cambios del backend durante
+            # la observación; refresh-only mantiene el lock nativo de Terraform.
+            latest = self.read_json(["state", "pull"], root, env, cancelled, "observe.state_verify")
+            if latest != state:
+                raise PlanError("STATE_CHANGED_DURING_OBSERVATION", phase="observe.state_verify")
+            if not state_present or not proxmox_present:
+                code = ("UNMANAGED_RESOURCE" if proxmox_present else
+                        "STATE_RESOURCE_MISSING" if state_present else "RESOURCE_ABSENT")
+                raise PlanError(code, phase="observe.compare")
+            return {**result, "observation": {"state_present": True, "proxmox_present": True,
+                    "state_serial": state["serial"], "values_source": "prior_state.values"}}
+        except PlanError as failure:
+            failure.phase = failure.phase or "observe.inspect"
+            failure.state_present, failure.proxmox_present = state_present, proxmox_present
+            raise
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise PlanError("INVALID_TERRAFORM_OUTPUT", phase="observe.inspect") from None
+
+
+def state_resource(state, variables):
+    """State pull usa recursos planos con module e instances[].attributes (v4)."""
+    try:
+        if (state["version"] != 4 or not isinstance(state["lineage"], str) or not state["lineage"]
+                or type(state["serial"]) is not int or state["serial"] < 0
+                or not isinstance(state["resources"], list)):
+            raise ValueError("Invalid state")
+        if any(row["mode"] not in {"managed", "data"} for row in state["resources"]):
+            raise ValueError("Invalid resource mode")
+        resources = [row for row in state["resources"] if row["mode"] == "managed"]
+        if not resources:
+            return None
+        if len(resources) != 1:
+            raise PlanError("UNOWNED_STATE", phase="observe.state")
+        resource = resources[0]
+        address = ".".join(filter(None, [resource.get("module"), resource["type"], resource["name"]]))
+        if address != ADDRESS:
+            raise PlanError("UNOWNED_STATE", phase="observe.state")
+        instances = resource["instances"]
+        if (len(instances) != 1 or instances[0].get("deposed") or instances[0].get("index_key") is not None
+                or instances[0].get("status") == "tainted"):
+            raise PlanError("INCOMPLETE_OBSERVATION", phase="observe.state")
+        attributes = instances[0]["attributes"]
+        verify_identity(attributes, variables["instance"])
+        return attributes
+    except PlanError as failure:
+        failure.phase = failure.phase or "observe.state"
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+        raise PlanError("INVALID_TERRAFORM_OUTPUT", phase="observe.state") from None
+
+
+def verify_identity(actual, expected):
+    # id es una cadena en el provider; vm_id es numérico. Exigir ambos evita
+    # adoptar un objeto con identidad parcial o un ID de Terraform diferente.
+    if (str(actual.get("id")) != str(expected["vm_id"])
+            or str(actual.get("vm_id")) != str(expected["vm_id"])
+            or expected["vm_id"] == 104 or actual.get("node_name") != expected["node_name"]
+            or actual.get("name") != expected["vm_name"]):
+        raise PlanError("OBSERVED_RESOURCE_MISMATCH")
 
 
 def observed_resource(values: dict, variables: dict) -> dict:
@@ -261,6 +346,7 @@ def observed_resource(values: dict, variables: dict) -> dict:
         raise PlanError("UNOWNED_STATE")
     actual = resources[0].get("values", {})
     expected = variables["instance"]
+    verify_identity(actual, expected)
     try:
         disk = next(row for row in actual["disk"] if row["interface"] == expected["boot_disk"]["interface"])
         if (actual["vm_id"] != expected["vm_id"] or actual["vm_id"] == 104
