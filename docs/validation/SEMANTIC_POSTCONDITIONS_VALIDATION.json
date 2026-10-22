@@ -1,0 +1,152 @@
+{
+  "base_commit": "c47f0bf7b0b59ea0f6a451327b9786c8ac16c391",
+  "timestamp_utc": "2026-10-22T17:26:22.831146+00:00",
+  "environment": {
+    "isolation": "compose.test.yaml; internal network; disposable PostgreSQL/Redis/Celery; loopback S3/Proxmox mocks",
+    "python": "3.12.15",
+    "pytest": "8.3.5",
+    "postgresql": "17.11",
+    "redis": "7.4.11",
+    "celery": "5.5.2 (pinned dependency)",
+    "terraform": "1.16.6"
+  },
+  "full_suite": {
+    "executed": 403,
+    "passed": 403,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "integration_cases": 25,
+    "unit_cases": 378,
+    "new_semantic_unit_cases": 56,
+    "new_semantic_integration_cases": 5,
+    "pytest_duration_seconds": 47.75,
+    "junit_duration_seconds": 47.743,
+    "warnings": 17
+  },
+  "images": {
+    "tests": "sha256:4bb6d3304a14ed787a2557f618bd1ceb730dba54230c92d51a7efd2cb0eb10cc",
+    "postgresql": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "redis": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+  },
+  "validation_input_sha256": {
+    "app/iacp/terraform/config.py": "346ff2138e84e9594aca94ef42b1bce6d0d972c0440d6438389e701a8965fab9",
+    "app/iacp/terraform/executor.py": "a1f0ef77dde1fe4550bbd5ce640f1ca2965be82aef5c7e589845440fa7da22b4",
+    "tests/test_semantic_postconditions.py": "93122e0423bd8ceabae51013df6846f37f3fc6934f850934ea569fe8be0ecab8",
+    "tests/integration/test_readonly_state.py": "dcd6e18867102a77b3b9b1d3a9f34d590e5da9ae5969b10b1041006d2a7597e6",
+    "tests/Dockerfile": "b822bc7e2f309cab9673b006d2931cc299660f8945df438dd82f3d39852477b0",
+    "tests/s3_fixture.py": "e1172fbadf99ab85285d6790ccfc9f463aaffe826c92751ff15f7a61568fdf90",
+    "compose.test.yaml": "77cc5627be75d19d57cf6e715b06e6b2f8d0c3d2052c52145a83e583d82d62d0"
+  },
+  "junit_sha256": "78e787296ff7e3f93a706b15e720c44444de5dc1a59a0ee039a39f382b8fd8c2",
+  "readonly_evidence": [
+    {
+      "test": "tests.integration.test_readonly_state::test_recovery_preserves_s3_version_or_blocks_an_external_write[False]",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "before": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "change": "unchanged"
+        },
+        "recovery_status": "completed",
+        "s3_requests": [
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/8da2bafc-f7ee-4fd6-abb4-15acfd976f53/terraform.tfstate"
+          ],
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/8da2bafc-f7ee-4fd6-abb4-15acfd976f53/terraform.tfstate"
+          ]
+        ],
+        "apply_enabled_during_recovery": 1
+      }
+    },
+    {
+      "test": "tests.integration.test_readonly_state::test_recovery_preserves_s3_version_or_blocks_an_external_write[True]",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "e1e0bc67a5d3d4a1d4e59cb9dcb2df06c8484d484c6c5df9d07124f3525d80d1",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 4,
+            "sha256": "f1201d2e3dd816ce6ac258585e900d218f03b00af4962b7639ddf2c3c7a3466b",
+            "version_id": "fixture-version-2"
+          },
+          "before": {
+            "content_sha256": "7312ae8677afd9faeee2ff7124b824e66f366a05a947cfe9b61a3acb4381e88d",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c83fde1847089d2630b741662eb3a21068b78415d875f3d663766e28f5574c77",
+            "version_id": "fixture-version-1"
+          },
+          "change": "serial_advanced"
+        },
+        "recovery_status": "uncertain",
+        "s3_requests": [
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/8492e5a9-f0dc-4feb-9381-173ede2d0a22/terraform.tfstate"
+          ],
+          [
+            "GET",
+            "/fixture-iacp-lab/iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/8492e5a9-f0dc-4feb-9381-173ede2d0a22/terraform.tfstate"
+          ]
+        ],
+        "apply_enabled_during_recovery": 1
+      }
+    },
+    {
+      "test": "tests.integration.test_readonly_state::test_real_refresh_only_cli_preserves_remote_object_and_uses_native_lock",
+      "evidence": {
+        "state_consistency": {
+          "after": {
+            "content_sha256": "90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a",
+            "version_id": "fixture-version-1"
+          },
+          "before": {
+            "content_sha256": "90a34cb8c19009c376ceb235a45d5edc8e10833df4a5c8b652dc242c8aa6dcd2",
+            "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+            "serial": 3,
+            "sha256": "c040077bc42c3f1c6f06e06e77587a10bf19bb9273126338bffeaa0f75c4810a",
+            "version_id": "fixture-version-1"
+          },
+          "change": "unchanged"
+        },
+        "s3_writes": [
+          [
+            "PUT",
+            "/fixture-state/terraform.tfstate.tflock"
+          ],
+          [
+            "DELETE",
+            "/fixture-state/terraform.tfstate.tflock"
+          ]
+        ],
+        "terraform_version": "1.16.6"
+      }
+    }
+  ],
+  "incident_evidence": "POSTCONDITIONS_INCIDENT_SAFE.json",
+  "limits": [
+    "No new production refresh or recovery was executed.",
+    "Existing production artifacts passed the candidate pure comparator in memory; completion still requires a fresh authorized /recover.",
+    "Original snapshots for the earlier STATE_CHANGED_DURING_OBSERVATION incident do not exist.",
+    "Known upstream Starlette/AnyIO and botocore deprecation warnings; no dependency changes."
+  ]
+}
