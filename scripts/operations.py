@@ -28,13 +28,46 @@ def differences(a, b, path=''):
     return [] if a == b else [path]
 
 
-def compare(current, candidate, image_changes=()):
+def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None):
     if not set(image_changes) <= IMAGE_CHANGES:
         raise ValueError('Only separately reviewed application image changes may be allowed')
     if set(candidate.get('services', {})) != SERVICES:
         raise ValueError('Canonical service inventory differs')
     a, b = normalized(current), normalized(candidate)
     allowed = set(image_changes)
+    promoted_paths=[]
+    # Typed, reviewed promotion of exactly one readonly policy file and pinned
+    # IaC source. Never tolerate arbitrary volume/env/security changes.
+    for role in ('api','terraform-worker'):
+        old_service,new_service=a['services'][role],b['services'][role]
+        if profile_file:
+            old_mounts=old_service.get('volumes',[])
+            additions=[m for m in new_service.get('volumes',[]) if m.get('target')=='/run/config/profiles.json']
+            if not any(m.get('target')=='/run/config/profiles.json' for m in old_mounts) and len(additions)==1:
+                mount=additions[0]
+                if (mount.get('type')=='bind' and mount.get('source')==profile_file and mount.get('read_only') is True
+                        and mount.get('bind',{}).get('create_host_path') is False):
+                    new_service['volumes'].remove(mount)
+                    if not new_service['volumes'] and 'volumes' not in old_service:new_service.pop('volumes')
+                    promoted_paths.append('/services/'+role+'/volumes/profiles.json')
+                    env=new_service.get('environment',{})
+                    if ('IACP_TERRAFORM_PROFILES_FILE' not in old_service.get('environment',{})
+                            and env.get('IACP_TERRAFORM_PROFILES_FILE')=='/run/config/profiles.json'):
+                        env.pop('IACP_TERRAFORM_PROFILES_FILE')
+                        if not env and 'environment' not in old_service:new_service.pop('environment')
+                        promoted_paths.append('/services/'+role+'/environment/IACP_TERRAFORM_PROFILES_FILE')
+    if source_directory:
+        for role in ('terraform-worker','ownership-certifier'):
+            old_mount=next((m for m in a['services'][role].get('volumes',[]) if m.get('target')=='/iac-source'),None)
+            new_mount=next((m for m in b['services'][role].get('volumes',[]) if m.get('target')=='/iac-source'),None)
+            if old_mount and new_mount and new_mount.get('source')==source_directory and old_mount.get('source')!=source_directory:
+                if {k:v for k,v in old_mount.items() if k!='source'}=={k:v for k,v in new_mount.items() if k!='source'} and new_mount.get('read_only') is True:
+                    new_mount['source']=old_mount['source']
+                    promoted_paths.append('/services/'+role+'/volumes/iac-source')
+    for role in ('api','lifecycle-worker'):
+        old_env=a['services'][role].get('environment',{});new_env=b['services'][role].get('environment',{})
+        if 'IACP_LIFECYCLE_INSTANCE_IDS' not in old_env and new_env.get('IACP_LIFECYCLE_INSTANCE_IDS')=='':
+            allowed.add('/services/'+role+'/environment/IACP_LIFECYCLE_INSTANCE_IDS')
     # An upgrade may introduce the destructive capability ONLY disabled. Enabling
     # it or adding UUIDs is a separately reviewed operational change, never drift tolerance.
     for role in ('api', 'terraform-worker'):
@@ -50,13 +83,19 @@ def compare(current, candidate, image_changes=()):
         allowed.add('/services/ownership-certifier/tmpfs')
     changed = differences(a, b)
     unexpected = [p for p in changed if p not in allowed]
-    return {'passed': not unexpected, 'changed_paths': changed, 'unexpected_paths': unexpected,
+    return {'passed': not unexpected, 'changed_paths': changed + promoted_paths, 'unexpected_paths': unexpected,
             'ignored_build_metadata': sorted(role for role, s in current['services'].items() if 'build' in s),
             'note': 'No secret values included; certifier-only executable tmpfs is an explicit regression fix.'}
 
 
 def runtime_command(containers, docker):
     proxy = next(c for c in containers if c['Config']['Labels'].get('com.docker.compose.service') == 'traefik')
+    # Proxy labels intentionally remain historical when only app roles upgrade.
+    api = next((c for c in containers if c['Config']['Labels'].get('com.docker.compose.service') == 'api'), None)
+    if api:
+        files = api['Config']['Labels'].get('com.docker.compose.project.config_files','').split(',')
+        if len(files) == 1 and '/deploy/' in files[0] and files[0].endswith('/compose.yaml'):
+            proxy = api
     labels = proxy['Config']['Labels']
     args = docker + ['compose', '--env-file', labels['com.docker.compose.project.environment_file'], '-p', 'iacp-controlplane']
     for file in labels['com.docker.compose.project.config_files'].split(','):

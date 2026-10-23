@@ -15,7 +15,7 @@ from .security import authorize_docs
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Control Plane", version="0.7.0",
+        title="IACP Control Plane", version="0.8.0",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
         description=(
@@ -28,8 +28,10 @@ def create_app() -> FastAPI:
             "**Flujo real:** crear prepara un plan; consultar la ejecución Terraform, revisar y aprobar "
             "su SHA-256 y aplicar el plan autorizado. HTTP 202 acredita admisión, no una VM lista. "
             "Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n"
-            "VMID, nodo, plantilla y direccionamiento proceden de IPAM del servidor; no se aceptan en el payload. "
-            "DHCP no está implementado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene "
+            "VMID, nodo, plantilla y direccionamiento proceden de perfiles autorizados del servidor; no se aceptan en el payload. "
+            "Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. "
+            "Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. "
+            "Con admisión cerrada los comandos devuelven 503; Lifecycle tiene "
             "su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. "
             "Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n"
             "**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, "
@@ -37,7 +39,7 @@ def create_app() -> FastAPI:
         ),
         openapi_tags=[
             {"name": "health", "description": "Liveness y readiness; no crean infraestructura."},
-            {"name": "instances", "description": "Inventario del tenant. Crear requiere operator y asignación IPAM previa."},
+            {"name": "instances", "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa."},
             {"name": "operations", "description": "Seguimiento asíncrono y eventos auditados por operation_id."},
             {"name": "terraform", "description": "Estado, intento y SHA del plan; cancelar/reintentar no ejecuta Apply."},
             {"name": "terraform-apply", "description": "Revisión independiente y Apply de un único plan guardado."},
@@ -53,7 +55,7 @@ def create_app() -> FastAPI:
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
-            r'/v1/instances/[a-f0-9-]{36}/terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)', request.url.path)
+            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|network/discover)', request.url.path)
         if request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
             response = JSONResponse(status_code=503, content={"detail": "Admission drained"}, headers={"Retry-After": "60"})
         else:

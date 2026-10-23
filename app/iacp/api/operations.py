@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import DeletionExecution, Operation, OperationEvent, PowerExecution
+from ..models import DeletionExecution, NetworkDiscovery, Operation, OperationEvent, PowerExecution
 from ..schemas import DeletionProgress, ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
 
@@ -24,10 +24,12 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
     events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == row.id).order_by(OperationEvent.id))
     power = session.get(PowerExecution, row.id)
     deletion = session.get(DeletionExecution, row.id)
+    network = session.get(NetworkDiscovery,row.id)
     return OperationResponse(
         id=row.id, instance_id=row.instance_id, kind=row.kind, status=row.status,
         requested_by=row.requested_by, error_code=row.error_code, created_at=row.created_at, updated_at=row.updated_at,
         events=[EventResponse.model_validate(item) for item in events],
+        network=network.result if network else None,
         deletion=(DeletionProgress(**{key: getattr(deletion, key) for key in (
             "status", "phase", "plan_sha256", "approved_by", "expires_at", "started_at", "finished_at")},
             recovery_required=deletion.status == "uncertain") if deletion else None),

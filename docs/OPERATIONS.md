@@ -1,6 +1,6 @@
 # Operación canónica de IACP
 
-La normalización e03807d/0006 ya fue ejecutada. Esta rama propone 0007 para DELETE,
+La normalización e03807d/0006 ya fue ejecutada. Esta rama incorpora 0007 para DELETE y 0008 para perfiles DHCP,
 con flags OFF; no se aplicó en VM 104. Ver [piloto y DELETE](SAFE_DELETE.md).
 
 La normalización es global a IACP; `deploy/mng` representa el primer entorno de
@@ -19,7 +19,7 @@ flowchart LR
   E --> F[iacpctl deploy / driver oficial]
   F --> G[Sin recreación si solo se adopta config equivalente]
   F --> H[Si cambia imagen: drenado y despliegue coordinado]
-  H --> I[verify, schema 0006 y smoke LAN/VPN]
+  H --> I[verify, schema 0008 y smoke LAN/VPN]
   I --> J[Certificación separada; Lifecycle OFF hasta registro aprobado]
 ```
 
@@ -259,3 +259,7 @@ Pruebas locales/diagnósticos readonly reales se registran en
 [OPERATIONAL_NORMALIZATION.json](validation/OPERATIONAL_NORMALIZATION.json). CI
 requiere un runner desechable con label iacp-disposable-validation, nunca VM 104;
 el workflow se entrega pero no se declara ejecutado en Forgejo sin ese runner.
+
+## Perfiles DHCP y piloto API
+
+Ver [DHCP_PILOT](DHCP_PILOT.md) para Swagger/CRM, payloads reales, rutas de parámetros, fuente Terraform, migraciones 0007/0008 y recuperación. `IACP_TF_PROFILES_PATH` referencia `/etc/iacp/terraform/profiles.json` (0440 root:10001), montado readonly únicamente en API y Terraform Worker. Lifecycle no recibe perfiles, IPAM, credenciales Terraform ni claves SSH.

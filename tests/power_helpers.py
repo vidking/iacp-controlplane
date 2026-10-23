@@ -11,9 +11,17 @@ def managed_instance(sessions, tenant_id, *, vmid=21001, name="fixture-kvm"):
     result = {"simulated": False, "vmid": vmid, "node": "mng01", "name": name,
               "observation": {"postconditions_verified": True, "state_present": True, "proxmox_present": True}}
     with sessions() as session:
-        session.add(Instance(id=identifier, tenant_id=tenant_id, name=name, image="synthetic-image", vcpus=2,
+        instance = Instance(id=identifier, tenant_id=tenant_id, name=name, image="synthetic-image", vcpus=2,
                              memory_mb=2048, disk_gb=20, status="ready", executor="terraform", vmid=vmid,
-                             node="mng01", result=result))
+                             node="mng01", result=result)
+        from sqlalchemy import inspect, MetaData, Table
+        if "network_mode" in {c["name"] for c in inspect(session.get_bind()).get_columns("instances")}:
+            session.add(instance)
+        else:
+            table = Table("instances", MetaData(), autoload_with=session.get_bind())
+            values = {c.name: getattr(instance,c.name) for c in table.c if getattr(instance,c.name) is not None}
+            values.update(created_at=utcnow(), updated_at=utcnow())
+            session.execute(table.insert().values(**values))
         session.flush()
         session.add(Operation(id=operation_id, tenant_id=tenant_id, instance_id=identifier,
             kind="instance.create", status="completed", idempotency_key="seed-" + identifier,

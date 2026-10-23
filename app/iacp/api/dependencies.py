@@ -38,6 +38,11 @@ def get_deletion_publisher():
     return lambda identifier, mode: delete_instance.apply_async(args=[identifier, mode], queue="terraform")
 
 
+def get_network_publisher():
+    from ..terraform.worker import discover_network
+    return lambda identifier: discover_network.apply_async(args=[identifier],queue='terraform')
+
+
 def get_power_client():
     from ..lifecycle.proxmox import ProxmoxPower
     return ProxmoxPower.configured

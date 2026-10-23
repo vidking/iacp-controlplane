@@ -765,6 +765,16 @@
       },
       "InstanceCreate": {
         "additionalProperties": false,
+        "examples": [
+          {
+            "disk_gb": 20,
+            "image": "ubuntu-2404",
+            "memory_mb": 2048,
+            "name": "iacp-mvp-dhcp-01",
+            "network_profile": "lab-dhcp",
+            "vcpus": 2
+          }
+        ],
         "properties": {
           "disk_gb": {
             "default": 20,
@@ -793,7 +803,7 @@
             "type": "integer"
           },
           "name": {
-            "description": "Nombre previamente autorizado en IPAM para el tenant. No reserva red automáticamente.",
+            "description": "Nombre único por tenant. El perfil DHCP omite IPAM; el modo estático conserva la asignación autorizada.",
             "examples": [
               "iacp-mvp-demo-01"
             ],
@@ -802,6 +812,24 @@
             "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
             "title": "Name",
             "type": "string"
+          },
+          "network_profile": {
+            "anyOf": [
+              {
+                "maxLength": 63,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9._-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Perfil autorizado por tenant. DHCP omite IPAM; sin perfil se conserva el flujo estático existente.",
+            "examples": [
+              "lab-dhcp"
+            ],
+            "title": "Network Profile"
           },
           "vcpus": {
             "default": 2,
@@ -854,6 +882,13 @@
             "title": "Instance Id",
             "type": "string"
           },
+          "ip_addresses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ip Addresses",
+            "type": "array"
+          },
           "job_id": {
             "title": "Job Id",
             "type": "string"
@@ -865,6 +900,38 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "network_mode": {
+            "default": "static",
+            "enum": [
+              "static",
+              "dhcp"
+            ],
+            "title": "Network Mode",
+            "type": "string"
+          },
+          "network_observation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Observation"
+          },
+          "network_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Profile"
           },
           "node": {
             "anyOf": [
@@ -1017,6 +1084,42 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "NetworkAccepted": {
+        "description": "Read-only infrastructure observation, tracked asynchronously.",
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "uncertain"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "status"
+        ],
+        "title": "NetworkAccepted",
+        "type": "object"
+      },
       "OperationResponse": {
         "properties": {
           "created_at": {
@@ -1059,6 +1162,18 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
           },
           "operation_id": {
             "title": "Operation Id",
@@ -1461,9 +1576,9 @@
     }
   },
   "info": {
-    "description": "API corporativa privada por LAN/VPN.\n\n**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita energía; approver autoriza planes y debe ser distinto del solicitante.\n\n**Flujo real:** crear prepara un plan; consultar la ejecución Terraform, revisar y aprobar su SHA-256 y aplicar el plan autorizado. HTTP 202 acredita admisión, no una VM lista. Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\nVMID, nodo, plantilla y direccionamiento proceden de IPAM del servidor; no se aceptan en el payload. DHCP no está implementado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, plan destroy revisado y aprobación independiente. VM 104 y VM 106 están protegidas.",
+    "description": "API corporativa privada por LAN/VPN.\n\n**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita energía; approver autoriza planes y debe ser distinto del solicitante.\n\n**Flujo real:** crear prepara un plan; consultar la ejecución Terraform, revisar y aprobar su SHA-256 y aplicar el plan autorizado. HTTP 202 acredita admisión, no una VM lista. Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\nVMID, nodo, plantilla y direccionamiento proceden de perfiles autorizados del servidor; no se aceptan en el payload. Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, plan destroy revisado y aprobación independiente. VM 104 y VM 106 están protegidas.",
     "title": "IACP Control Plane",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1913,6 +2028,133 @@
           }
         ],
         "summary": "Get Instance",
+        "tags": [
+          "instances"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/network/discover": {
+      "post": {
+        "description": "Consulta asíncrona del Guest Agent con MAC e identidad verificadas. No reserva IPAM ni modifica state. Una IP pendiente no falla la creación.",
+        "operationId": "discoverInstanceNetwork",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Discover Network",
         "tags": [
           "instances"
         ]
@@ -4133,7 +4375,7 @@
       "name": "health"
     },
     {
-      "description": "Inventario del tenant. Crear requiere operator y asignación IPAM previa.",
+      "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa.",
       "name": "instances"
     },
     {

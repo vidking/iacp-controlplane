@@ -7,3 +7,5 @@ from .execution import execute_power
                  reject_on_worker_lost=True, soft_time_limit=220, time_limit=240)
 def power_operation(identifier: str) -> None:
     execute_power(identifier, get_session_factory())
+    from ..services.network import after_power
+    after_power(identifier,get_session_factory())

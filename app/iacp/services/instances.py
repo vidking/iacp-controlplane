@@ -1,6 +1,7 @@
 import hashlib
 import json
 from uuid import uuid4
+from contextlib import nullcontext
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -30,32 +31,47 @@ def accepted(session: Session, operation: Operation, digest: str) -> InstanceAcc
 
 def create_instance(session: Session, principal: Principal, spec: InstanceCreate,
                     key: str, publish: Publisher) -> InstanceAccepted:
-    digest = hashlib.sha256(json.dumps(spec.model_dump(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    values=spec.model_dump(exclude={"network_profile"} if spec.network_profile is None else set())
+    digest = hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
     previous = session.scalar(query)
     if previous is not None:
         return accepted(session, previous, digest)
     from ..terraform.config import instance_executor
     mode = instance_executor()
-    instance = Instance(id=str(uuid4()), tenant_id=principal.tenant_id, status="pending", executor=mode, **spec.model_dump())
+    if spec.network_profile and mode != "terraform":
+        from ..terraform.config import PlanError
+        raise PlanError("PROFILE_REQUIRES_TERRAFORM")
+    instance = Instance(id=str(uuid4()), tenant_id=principal.tenant_id, status="pending", executor=mode, **values)
     operation = Operation(
         id=str(uuid4()), tenant_id=principal.tenant_id, instance_id=instance.id, kind="instance.create",
         status="queued", idempotency_key=key, request_hash=digest, requested_by=principal.subject,
     )
     job = Job(id=str(uuid4()), operation="instance.plan" if mode == "terraform" else "instance.create", status="queued",
               tenant_id=principal.tenant_id, operation_id=operation.id)
+    from ..terraform.locks import ExecutionBusy, instance_lock
+    from ..terraform.profiles import reserve_profile
+    # Reuse the existing advisory lock utility; commit the VMID with the intent.
+    guard=instance_lock(session.get_bind(), 'machine-profile:vmid-reservations') if spec.network_profile and mode=='terraform' else nullcontext()
     try:
-        session.add(instance)
-        session.flush()
-        session.add(operation)
-        session.flush()
-        session.add(job)
-        if mode == "terraform":
-            from ..terraform.lifecycle import initial_execution
+        with guard:
+            previous=session.scalar(query)
+            if previous is not None:
+                return accepted(session,previous,digest)
+            allocation=reserve_profile(session,instance) if spec.network_profile and mode=='terraform' else None
+            session.add(instance)
             session.flush()
-            initial_execution(session, instance, operation, job)
-        event(session, operation, "accepted", principal.subject)
-        session.commit()
+            session.add(operation)
+            session.flush()
+            session.add(job)
+            if mode == "terraform":
+                from ..terraform.lifecycle import initial_execution
+                session.flush()
+                initial_execution(session, instance, operation, job, allocation)
+            event(session, operation, "accepted", principal.subject)
+            session.commit()
+    except ExecutionBusy:
+        raise Conflict("PROFILE_BUSY") from None
     except IntegrityError:
         session.rollback()
         # La restricción UNIQUE arbitra incluso solicitudes concurrentes entre APIs.

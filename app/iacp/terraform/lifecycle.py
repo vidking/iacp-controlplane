@@ -11,10 +11,13 @@ from .executor import TerraformExecutor
 from .locks import ExecutionBusy, instance_lock
 
 
-def initial_execution(session, instance, operation, job):
+def initial_execution(session, instance, operation, job, allocation=None):
     execution = TerraformExecution(instance_id=instance.id, job_id=job.id, operation_id=operation.id,
                                    status="queued", attempt=1,
-                                   state_key=f"iacp/lab/tenants/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate")
+                                   state_key=f"iacp/lab/tenants/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate",
+                                   allocation=allocation.model_dump() if allocation else None,
+                                   vmid=allocation.vm_id if allocation else None,
+                                   source_revision=SOURCE_REVISION if allocation else None)
     session.add(execution)
     session.flush()
     session.add(TerraformAttempt(instance_id=instance.id, number=1, status="queued", actor=operation.requested_by))
@@ -87,6 +90,12 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
             if execution.source_revision not in {None, SOURCE_REVISION}:
                 raise PlanError("SOURCE_REVISION_CHANGED")
             allocation = Allocation.model_validate(execution.allocation) if execution.allocation else load_allocation(instance)
+            if instance.network_profile:
+                from .profiles import load_profile
+                profile=load_profile(instance.network_profile,instance.tenant_id)
+                actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway'})
+                if actual != profile.settings.model_dump():
+                    raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
             execution.allocation = allocation.model_dump()
             execution.vmid, execution.source_revision = allocation.vm_id, SOURCE_REVISION

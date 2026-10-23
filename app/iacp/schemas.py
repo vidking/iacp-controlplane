@@ -32,14 +32,18 @@ class JobResponse(BaseModel):
 
 
 class InstanceCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra={"examples": [
+        {"name":"iacp-mvp-dhcp-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp"}
+    ]})
     name: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-                      examples=["iacp-mvp-demo-01"], description="Nombre previamente autorizado en IPAM para el tenant. No reserva red automáticamente.")
+                      examples=["iacp-mvp-demo-01"], description="Nombre único por tenant. El perfil DHCP omite IPAM; el modo estático conserva la asignación autorizada.")
     image: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$",
                        examples=["ubuntu-2404"], description="Perfil de imagen autorizado por el servidor; no una URL o VMID de Proxmox.")
     vcpus: int = Field(default=2, ge=1, le=64)
     memory_mb: int = Field(default=2048, ge=512, le=262144, multiple_of=256)
     disk_gb: int = Field(default=20, ge=8, le=4096)
+    network_profile: str | None = Field(default=None, min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$",
+        examples=["lab-dhcp"], description="Perfil autorizado por tenant. DHCP omite IPAM; sin perfil se conserva el flujo estático existente.")
 
 
 class InstanceAccepted(JobAccepted):
@@ -56,6 +60,10 @@ class InstanceResponse(BaseModel):
     tenant_id: str
     name: str
     image: str
+    network_profile: str | None = None
+    network_mode: Literal["static", "dhcp"] = "static"
+    ip_addresses: list[str] = Field(default_factory=list)
+    network_observation: dict | None = None
     vcpus: int
     memory_mb: int
     disk_gb: int
@@ -91,6 +99,7 @@ class OperationResponse(BaseModel):
     events: list[EventResponse]
     power: "PowerProgress | None" = None
     deletion: "DeletionProgress | None" = None
+    network: dict | None = None
 
 
 class PowerRequest(BaseModel):
@@ -107,6 +116,10 @@ class PowerAccepted(BaseModel):
 
 class DeletionAccepted(PowerAccepted):
     """Operation tracking for a disposable deletion plan or command."""
+
+
+class NetworkAccepted(PowerAccepted):
+    """Read-only infrastructure observation, tracked asynchronously."""
 
 
 class PowerState(BaseModel):
