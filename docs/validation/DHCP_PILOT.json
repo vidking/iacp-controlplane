@@ -1,0 +1,99 @@
+{
+  "release_status": "candidate, not deployed",
+  "base": "092976e8ea76aaff02739aca8bf2fc8be1816cd7",
+  "source_revision": "2c0f319ba5d7a45987cd9d0395673828c28f678b",
+  "source_pr": "https://scm.cyberfuel.com/CyberFuel/iac-proxmox/pulls/8",
+  "api_version": "0.8.0",
+  "alembic_head": "0008_dhcp_profiles",
+  "tests": {
+    "full_suite": {
+      "passed": 667,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Real isolated PostgreSQL17/Redis7/Celery/CLI; Proxmox/S3 fixture where applicable"
+    },
+    "latest_observer_and_pilot_controls": {
+      "passed": 36,
+      "failed": 0,
+      "note": "Includes four added regressions after the full suite"
+    },
+    "terraform_module": {
+      "passed": 13,
+      "scope": "Mock provider, no real apply"
+    },
+    "terraform_stack": {
+      "passed": 5,
+      "scope": "Mock provider, no real apply"
+    },
+    "tls_routing": "PASS, isolated public+internal TLS/auth fixture",
+    "certifier_workspace": "PASS, UID10001 executable workspace and noexec regression",
+    "handbook": "PASS, OpenAPI0.8 authenticated contracts"
+  },
+  "real_lab_evidence": {
+    "dhcp_offer_received": true,
+    "dhcp_server": "192.168.0.1",
+    "diagnostic_request_sent": false,
+    "assigned_guest_ip": null,
+    "baseline_doctor": "PASS",
+    "baseline_live_api_version": "0.6.0",
+    "https_tls_valid": true,
+    "swagger_anonymous": 401,
+    "swagger_authorized": 200,
+    "backup_schema": "0006_power_ownership",
+    "backup_restore_isolated": "PASS",
+    "active_runtime_modified": false,
+    "profiles_file_prepared": true,
+    "source_checkout_prepared": true,
+    "vm_created": false,
+    "terraform_apply_executed": false,
+    "delete_executed": false
+  },
+  "artifacts": {
+    "all-final.log": {
+      "sha256": "cd59ff241f7e82a7d0429a01530928218a1176b553c40ab07a1bcaf86c734317",
+      "location": "Operator private evidence /tmp/iacp-dhcp/all-final.log"
+    },
+    "changed-final.log": {
+      "sha256": "1d0b7ae421cab761fc32149d3bc5d3d5454d4d156fb166076fbab05e97889d70",
+      "location": "Operator private evidence /tmp/iacp-dhcp/changed-final.log"
+    },
+    "iac-module-final.log": {
+      "sha256": "ba0ba04fcadfd4d1ecb13ad1e6490ffd1a0b4476b7503310c7228175c28f6339",
+      "location": "Operator private evidence /tmp/iacp-dhcp/iac-module-final.log"
+    },
+    "iac-stack-final.log": {
+      "sha256": "3ec918e1305418c5ede17ec6e09474a92c2626a5669559c06c0069c4e4783d2f",
+      "location": "Operator private evidence /tmp/iacp-dhcp/iac-stack-final.log"
+    },
+    "tls-routing.log": {
+      "sha256": "fe0a87aa0233af85df61f9ca25c8ed39b4aad381e9f7326e19cc4963f930b37a",
+      "location": "Operator private evidence /tmp/iacp-dhcp/tls-routing.log"
+    },
+    "certifier.log": {
+      "sha256": "cf0375398b10e9f2c5ca49c6dfd28b7ec34cae78e0521e97c88fae5e98266af2",
+      "location": "Operator private evidence /tmp/iacp-dhcp/certifier.log"
+    },
+    "baseline-doctor.log": {
+      "sha256": "99f9b5f2b34ab2ab24ab2b6cf1b8e7f3dfedec24ea78bf462c46fb2af0bde39a",
+      "location": "Operator private evidence /tmp/iacp-dhcp/baseline-doctor.log"
+    },
+    "swagger-baseline.json": {
+      "sha256": "c75acc31b10f40f77677784a3337c22bae745b489a80c4b5836316f31e2f4e0b",
+      "location": "Operator private evidence /tmp/iacp-dhcp/swagger-baseline.json"
+    },
+    "dhcp-network-proof.json": {
+      "sha256": "8480c9d331a54573baddc02952d08f1846655117a82df01a4cd7ff465b54312c",
+      "location": "Operator private evidence /tmp/iacp-dhcp/dhcp-network-proof.json"
+    },
+    "preparation.json": {
+      "sha256": "e161c1c50fbeb5402f8b0d7fa42df99015ff7e89c87e5c12df625ae0b65fd8d3",
+      "location": "Operator private evidence /tmp/iacp-dhcp/preparation.json"
+    }
+  },
+  "acceptance_limitations": [
+    "Candidate not deployed; HTTP0.8 and real disposable VM pilot remain pending integration/promotion.",
+    "Independent Apply/DELETE review requires actual saved plan and cannot be fabricated.",
+    "VM106 WAN/activation controls remain separate; pilot UUID scope does not authorize VM106.",
+    "QEMU Guest Agent/CloudInit of the template is not certified; missing guest IP remains pending."
+  ]
+}

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_session
 from ..models import Instance, Operation
-from ..schemas import ErrorResponse, InstanceAccepted, InstanceCreate, InstanceResponse
+from ..schemas import ErrorResponse, InstanceAccepted, InstanceCreate, InstanceResponse, NetworkAccepted, PowerRequest
 from ..security import Principal, authorize, authorize_write
 from ..services.instances import Conflict, create_instance
 from ..services.jobs import Publisher, QueueUnavailable
@@ -61,3 +61,18 @@ def get_instance(instance_id: str, principal: Annotated[Principal, Depends(autho
     if row is None:
         raise HTTPException(status_code=404, detail="Instance not found")
     return InstanceResponse.model_validate(row)
+
+
+@router.post('/{instance_id}/network/discover',status_code=202,response_model=NetworkAccepted,operation_id='discoverInstanceNetwork',
+             responses={404:{'model':ErrorResponse},409:{'model':ErrorResponse}},
+             description='Consulta asíncrona del Guest Agent con MAC e identidad verificadas. No reserva IPAM ni modifica state. Una IP pendiente no falla la creación.')
+def discover_network(instance_id: str,principal: Annotated[Principal,Depends(authorize_write)],
+                     key: Annotated[str,Header(alias='Idempotency-Key',min_length=1,max_length=128,pattern=r'^[A-Za-z0-9._:-]+$')],
+                     session: Annotated[Session,Depends(get_session)],body: PowerRequest | None = None):
+    from .power import owned
+    from .dependencies import get_network_publisher
+    from ..services.network import request_discovery
+    row=owned(session,principal,instance_id)
+    try:return request_discovery(session,row,principal,key,get_network_publisher())
+    except Conflict as error:raise HTTPException(409,str(error)) from None
+    except QueueUnavailable:raise HTTPException(503,'NETWORK_DISPATCH_UNCONFIRMED') from None

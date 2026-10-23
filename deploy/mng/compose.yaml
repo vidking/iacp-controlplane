@@ -37,6 +37,8 @@ services:
     command: null
     entrypoint: null
     environment:
+      IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
+      IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
@@ -87,6 +89,13 @@ services:
       timeout: 5s
       interval: 20s
       retries: 5
+    volumes:
+    - type: bind
+      source: ${IACP_TF_PROFILES_PATH:-../profiles.json}
+      target: /run/config/profiles.json
+      read_only: true
+      bind:
+        create_host_path: false
   db:
     restart: unless-stopped
     command: null
@@ -130,6 +139,7 @@ services:
     - --without-mingle
     entrypoint: null
     environment:
+      IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
@@ -286,6 +296,7 @@ services:
     command: null
     entrypoint: null
     environment:
+      IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
@@ -316,6 +327,12 @@ services:
     tmpfs:
     - /tmp
     volumes:
+    - type: bind
+      source: ${IACP_TF_PROFILES_PATH:-../profiles.json}
+      target: /run/config/profiles.json
+      read_only: true
+      bind:
+        create_host_path: false
     - type: bind
       source: ${IACP_TF_SOURCE_PATH:?Required operating reference}
       target: /iac-source

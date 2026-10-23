@@ -18,6 +18,19 @@ from .state import S3StateReader
 ADDRESS = "module.kvm.proxmox_virtual_environment_vm.this"
 
 
+def verify_network(actual, expected):
+    if expected.get('network_mode', 'static') != 'dhcp':
+        return
+    try:
+        nic=actual['network_device'];ipv4=actual['initialization'][0]['ip_config'][0]['ipv4'][0]
+        if (len(nic)!=1 or nic[0]['bridge']!=expected['network_bridge'] or nic[0]['model']!='virtio'
+                or nic[0].get('vlan_id') not in ({None,0} if expected['vlan_id'] is None else {expected['vlan_id']})
+                or ipv4['address']!='dhcp' or ipv4.get('gateway') not in {None,''}):
+            raise ValueError()
+    except (KeyError,TypeError,IndexError,ValueError):
+        raise PlanError('DHCP_NETWORK_CONTRACT_MISMATCH') from None
+
+
 def digest_file(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -79,6 +92,7 @@ def verify_plan(plan: dict, variables: dict) -> dict:
         correct = False
     if not correct:
         raise PlanError("UNSAFE_PLAN")
+    verify_network(after,instance)
     return {"address": ADDRESS, "actions": actions, "reserved_vmid": instance["vm_id"], "apply_enabled": False}
 
 
@@ -107,6 +121,13 @@ class TerraformExecutor:
              variables: dict, cancelled) -> PlanResult:
         if os.environ.get("IACP_TERRAFORM_PLAN_ENABLED") != "1":
             raise PlanError("REAL_PLAN_DISABLED")
+        if allocation.network_mode == 'dhcp':
+            # Never adopt an existing VM through a new DHCP profile intent.
+            import tempfile
+            with tempfile.TemporaryDirectory() as scratch:
+                env=self.environment(Path(scratch))
+                if proxmox_resource(env,variables['instance'],cancelled)['present']:
+                    raise PlanError('VMID_ALREADY_PRESENT')
         workspace = self.workspace(instance_id, attempt)
         # Un intento tiene un directorio exclusivo; nunca sobrescribir un plan anterior.
         workspace.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -530,6 +551,7 @@ def observed_resource(values: dict, variables: dict) -> dict:
     actual = resources[0].get("values", {})
     expected = variables["instance"]
     verify_identity(actual, expected)
+    verify_network(actual,expected)
     try:
         disk = next(row for row in actual["disk"] if row["interface"] == expected["boot_disk"]["interface"])
         if (actual["vm_id"] != expected["vm_id"] or actual["vm_id"] == 104
@@ -540,7 +562,12 @@ def observed_resource(values: dict, variables: dict) -> dict:
                 or disk["datastore_id"] != expected["boot_disk"]["datastore_id"]
                 or not isinstance(actual["started"], bool)):
             raise ValueError("Unexpected resource")
-        return {"simulated": False, "infrastructure_kind": "kvm", "vmid": actual["vm_id"],
+        network={}
+        if expected.get('network_mode')=='dhcp':
+            nic=actual['network_device'][0]
+            network={'network':{'mode':'dhcp','bridge':nic['bridge'],'model':nic['model'],
+                       'vlan_id':expected['vlan_id'],'mac_address':nic.get('mac_address'),'ip_addresses':[]}}
+        return {**network,"simulated": False, "infrastructure_kind": "kvm", "vmid": actual["vm_id"],
                 "node": actual["node_name"], "name": actual["name"],
                 "vcpus": actual["cpu"][0]["cores"], "memory_mb": actual["memory"][0]["dedicated"],
                 "disk_gb": disk["size"], "datastore": disk["datastore_id"],

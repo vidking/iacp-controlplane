@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SOURCE_REVISION = "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae"
+SOURCE_REVISION = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
 TERRAFORM_VERSION = "1.16.6"
 
 
@@ -79,21 +79,19 @@ class BootDisk(StrictModel):
     ssd: bool = False
 
 
-class Allocation(StrictModel):
+class MachineSettings(StrictModel):
     image: str = Field(min_length=1)
     environment: Literal["lab"]
     allowed_nodes: list[str] = Field(min_length=1)
     backend: Backend
-    vm_id: int = Field(ge=100, le=999999999)
     template_vm_id: int = Field(ge=100)
     node_name: str = Field(min_length=1)
     template_node_name: str | None = None
     pool_id: str | None = None
     clone_datastore_id: str | None = None
     network_bridge: str = Field(min_length=1)
-    vlan_id: int = Field(ge=1, le=4094)
-    ipv4_cidr: str
-    ipv4_gateway: str
+    network_mode: Literal["static", "dhcp"] = "static"
+    vlan_id: int | None = Field(default=None, ge=1, le=4094)
     cloudinit_datastore_id: str = Field(min_length=1)
     cloudinit_username: str = Field(min_length=1)
     ssh_public_keys: list[str] = Field(min_length=1)
@@ -102,18 +100,37 @@ class Allocation(StrictModel):
     boot_disk: BootDisk
 
     @model_validator(mode="after")
-    def authorized_target(self):
-        from ipaddress import IPv4Interface, IPv4Address
-        if 104 in {self.vm_id, self.template_vm_id} or self.vm_id == self.template_vm_id:
-            raise ValueError("El destino y la plantilla deben excluir VM 104 y ser distintos")
+    def authorized_machine(self):
+        if self.template_vm_id == 104:
+            raise ValueError("VM 104 no puede ser plantilla")
         if self.node_name not in self.allowed_nodes or (self.template_node_name and self.template_node_name not in self.allowed_nodes):
-            raise ValueError("El nodo debe estar autorizado")
-        if not set(self.allowed_nodes).issubset({"mng01", "mng02"}):
-            raise ValueError("Solo se admite el baseline MNG de laboratorio")
-        IPv4Interface(self.ipv4_cidr)
-        IPv4Address(self.ipv4_gateway)
+            raise ValueError("El nodo debe estar autorizado por el perfil")
+        if not self.allowed_nodes or any(not node.strip() for node in self.allowed_nodes):
+            raise ValueError("Se requieren nodos autorizados explícitos")
         if not all(key.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")) for key in self.ssh_public_keys):
             raise ValueError("Se requieren claves SSH públicas autorizadas")
+        return self
+
+
+class Allocation(MachineSettings):
+    vm_id: int = Field(ge=100, le=999999999)
+    ipv4_cidr: str | None = None
+    ipv4_gateway: str | None = None
+
+    @model_validator(mode="after")
+    def authorized_target(self):
+        from ipaddress import IPv4Interface, IPv4Address
+        if self.vm_id == 104 or self.vm_id == self.template_vm_id:
+            raise ValueError("El destino debe excluir VM 104 y ser distinto de la plantilla")
+        if self.network_mode == "static":
+            if self.vlan_id is None:
+                raise ValueError("El perfil estático heredado exige VLAN explícita")
+            if self.ipv4_cidr is None or self.ipv4_gateway is None:
+                raise ValueError("Static exige dirección/gateway IPv4 de IPAM")
+            IPv4Interface(self.ipv4_cidr)
+            IPv4Address(self.ipv4_gateway)
+        elif self.ipv4_cidr is not None or self.ipv4_gateway is not None:
+            raise ValueError("DHCP no acepta reservas IPv4 ni gateway estático")
         return self
 
     def variables(self, instance) -> dict:
@@ -122,6 +139,8 @@ class Allocation(StrictModel):
         if instance.disk_gb < self.boot_disk.minimum_size_gb:
             raise PlanError("DISK_SHRINK_FORBIDDEN")
         values = self.model_dump(exclude={"image", "environment", "allowed_nodes", "backend"})
+        if self.network_mode == "static":
+            values.pop("network_mode")  # Preserve sealed historical variables exactly.
         values["boot_disk"]["size_gb"] = instance.disk_gb
         values.update(vm_name=instance.name, cpu_cores=instance.vcpus, memory_mb=instance.memory_mb)
         return {"environment": self.environment, "allowed_nodes": self.allowed_nodes, "instance": values}

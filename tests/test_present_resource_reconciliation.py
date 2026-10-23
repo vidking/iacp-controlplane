@@ -317,3 +317,15 @@ def test_state_provider_and_native_api_share_worker_credentials_and_workspace(tm
     result = executor.observe(args[0], args[1], args[4], args[5], lambda: False)
     assert result["vmid"] == args[4]["vm_id"] and verification["state_key"] == args[3]
     assert all(env is native.call_args.args[0] for env in environments)
+
+@pytest.mark.parametrize('bad',[None,'tag=0','tag=204','trunks=204','gateway'])
+def test_dhcp_native_configuration_requires_omitted_tag_and_gateway(native_api,bad):
+    env,expected,responses,_=native_api
+    expected.update(network_mode='dhcp',vlan_id=None,network_bridge='vmbr0')
+    config=responses['/nodes/mng01/qemu/21001/config']
+    config.update(net0='virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0',ipconfig0='ip=dhcp')
+    if bad=='gateway':config['ipconfig0']+=',gw=192.0.2.1'
+    elif bad:config['net0']+=','+bad
+    if bad:
+        with pytest.raises(PlanError,match='DHCP_NATIVE_CONFIGURATION_MISMATCH'):proxmox_resource(env,expected,lambda:False)
+    else:assert proxmox_resource(env,expected,lambda:False)['present'] is True

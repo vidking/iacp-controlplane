@@ -19,8 +19,10 @@ def test_readonly_promotion_snapshot_survives_both_real_migrations(pg_engine, ru
     assert before["schema"] == ["0004_authorized_apply"]
     upgrade(pg_engine)
     after = inspector.snapshot()
-    assert after["schema"] == ["0007_safe_deletion"]
+    assert after["schema"] == ["0008_dhcp_profiles"]
     for table, fingerprint in before["tables"].items():
-        assert after["tables"][table] == fingerprint
+        actual = dict(after["compatibility"]["instances_before_0008"]) if table == "instances" else after["tables"][table]
+        actual.pop("new_fields_default", None)
+        assert actual == fingerprint
     assert after["tables"]["power_executions"]["count"] == 0
     assert after["tables"]["power_ownership_certificates"]["count"] == 0

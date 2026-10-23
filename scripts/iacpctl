@@ -41,7 +41,7 @@ def main():
     p.add_argument('--evidence-dir', type=Path)
     p.add_argument('--compose-file', type=Path, default=ROOT / 'deploy/mng/compose.yaml')
     sub = p.add_subparsers(dest='action', required=True)
-    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete'):
+    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete', 'activate-pilot'):
         s = sub.add_parser(action)
         if action == 'certify':
             s.add_argument('--record', action='store_true')
@@ -106,7 +106,7 @@ def main():
         current_ids = run(docker + ['ps', '-aq', '--filter', 'label=com.docker.compose.project=iacp-controlplane']).split()
         actual = json.loads(run(docker + ['inspect', *current_ids]))
         current_cfg = json.loads(run(runtime_command(actual, docker)))
-        comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []))
+        comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []), profile_file=m.get('profile_configuration',{}).get('path'), source_directory=m.get('source_promotion',{}).get('path'))
         operation.evidence('candidate-environment-comparison', comparison)
         if not comparison['passed']:
             raise ValueError('Candidate environment changes unapproved operating settings')
@@ -195,7 +195,8 @@ def main():
     elif args.action == 'doctor':
         current = json.loads(run(runtime_command(live, docker)))
         candidate = json.loads(run(dc + ['--profile', 'certification', 'config', '--format', 'json']))
-        report = compare(current, candidate)
+        reviewed_manifest=json.loads(args.manifest.read_text())
+        report = compare(current, candidate, reviewed_manifest.get('configuration_changes',[]), profile_file=reviewed_manifest.get('profile_configuration',{}).get('path'), source_directory=reviewed_manifest.get('source_promotion',{}).get('path'))
         report['live_compatibility'] = live_compatibility(current, live)
         report['passed'] &= report['live_compatibility']['passed']
         report['roles_running'] = {c['Config']['Labels'].get('com.docker.compose.service'): c['State']['Running'] for c in live}
@@ -231,7 +232,7 @@ def main():
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete',
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot',
                   'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
         subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
 

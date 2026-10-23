@@ -64,17 +64,24 @@ def test_postgres_lock_rejects_concurrent_worker_and_retry(pg_engine, monkeypatc
 def test_0003_preserves_every_2a_entity_and_job(pg_engine):
     from iacp.models import Tenant, OperationEvent
     upgrade(pg_engine, "0002_instances_operations")
-    sessions = sessionmaker(bind=pg_engine, expire_on_commit=False, autoflush=False)
-    with sessions() as session:
-        accepted = create_instance(session, Principal(BOOTSTRAP_TENANT_ID, "legacy-2a", "operator"),
-                                   InstanceCreate(name="preserved-2a", image="fixture"), "preserved-2a", lambda job: None)
-    models = (Tenant, Instance, Operation, Job, OperationEvent)
-    with pg_engine.connect() as connection:
-        before = {model.__tablename__: connection.execute(select(model.__table__)).all() for model in models}
-    upgrade(pg_engine)
-    upgrade(pg_engine)
-    with pg_engine.connect() as connection:
-        assert {model.__tablename__: connection.execute(select(model.__table__)).all() for model in models} == before
+    # Independent historical 0002 fixture, not the current ORM against old DDL.
+    from sqlalchemy import MetaData,select
+    from uuid import uuid4
+    from iacp.models import utcnow
+    metadata=MetaData();metadata.reflect(pg_engine)
+    identifier,op,job=(str(uuid4()) for _ in range(3));now=utcnow()
+    with pg_engine.begin() as c:
+        c.execute(metadata.tables['instances'].insert(),dict(id=identifier,tenant_id=BOOTSTRAP_TENANT_ID,
+            name='preserved-2a',image='fixture',vcpus=2,memory_mb=2048,disk_gb=20,status='ready',executor='simulated',created_at=now,updated_at=now))
+        c.execute(metadata.tables['operations'].insert(),dict(id=op,tenant_id=BOOTSTRAP_TENANT_ID,instance_id=identifier,
+            kind='instance.create',status='completed',idempotency_key='legacy-2a',request_hash='a'*64,requested_by='legacy-2a',created_at=now,updated_at=now))
+        c.execute(metadata.tables['jobs'].insert(),dict(id=job,tenant_id=BOOTSTRAP_TENANT_ID,operation_id=op,
+            operation='instance.create',status='completed',message='',created_at=now,updated_at=now))
+        c.execute(metadata.tables['operation_events'].insert(),dict(operation_id=op,status='completed',code='accepted',actor='legacy-2a',created_at=now))
+        before={name:c.execute(select(table)).all() for name,table in metadata.tables.items() if name!='alembic_version'}
+    upgrade(pg_engine);upgrade(pg_engine)
+    with pg_engine.connect() as c:
+        assert {name:c.execute(select(metadata.tables[name])).all() for name in before}==before
 
 
 def test_ambiguous_dispatch_and_worker_claim_use_consistent_lock_order(pg_engine, monkeypatch):

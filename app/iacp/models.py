@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from .db import Base
 
 
@@ -24,12 +25,17 @@ class Instance(Base):
     __tablename__ = "instances"
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_instances_tenant_name"),
+        CheckConstraint("network_mode IN ('static','dhcp')", name="ck_instances_network_mode"),
         CheckConstraint("status IN ('pending', 'provisioning', 'ready', 'failed', 'deleting', 'deleted')", name="ck_instances_status"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(63), nullable=False)
     image: Mapped[str] = mapped_column(String(63), nullable=False)
+    network_profile: Mapped[str | None] = mapped_column(String(63))
+    network_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="static", server_default="static")
+    ip_addresses: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
+    network_observation: Mapped[dict | None] = mapped_column(JSON)
     vcpus: Mapped[int] = mapped_column(Integer, nullable=False)
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     disk_gb: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -238,4 +244,12 @@ class DeletionExecution(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict | None] = mapped_column(JSON)
+
+
+class NetworkDiscovery(Base):
+    __tablename__ = "network_discoveries"
+    operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False, index=True)
+    provisioning_binding: Mapped[str] = mapped_column(String(64), nullable=False)
     result: Mapped[dict | None] = mapped_column(JSON)

@@ -87,3 +87,40 @@ def test_delete_enable_invalid_allowlist_never_mutates(driver,promotion,fields):
 def test_current_network_profile_does_not_fabricate_dhcp_support():
     with pytest.raises(ValueError):Allocation.model_validate({**allocation_data(30000),'ipv4_cidr':'dhcp'})
     with pytest.raises(ValueError):Allocation.model_validate({**allocation_data(30000),'vlan_id':None})
+
+def test_dhcp_admission_requires_actual_profile_hash_and_keeps_apply(driver,promotion):
+    op,env,path=promotion
+    op.compose.return_value=json.dumps({'services':{'terraform-worker':{'volumes':[{'source':str(path),'target':'/run/config/profiles.json'}]}}})
+    review(driver,promotion,'admission_review',purpose='dhcp-provisioning',profile_file={'path':str(path),'sha256':driver.digest(path)},
+           profiles=[{'profile':'lab-dhcp','tenant_id':str(uuid4())}])
+    op.admit();ast.parse(op.exec_python.call_args.args[1])
+    assert 'IACP_TERRAFORM_APPLY_ENABLED=1' in env.read_text() and 'IACP_KVM_LIFECYCLE_ENABLED=0' in env.read_text()
+
+def test_pilot_without_functional_dhcp_evidence_never_enables_lifecycle(driver,promotion):
+    op,env,path=promotion;before=env.read_bytes();op.review_instances=Mock()
+    path.write_text(json.dumps({'dhcp_offer_received':False}))
+    review(driver,promotion,'pilot_review',lab_network_authorized=True,identities={str(uuid4()):{'vmid':30000,'node':'fixture','name':'one'}},
+           dhcp_evidence={'path':str(path),'sha256':driver.digest(path)})
+    with pytest.raises(RuntimeError,match='Functional DHCP'):op.activate_pilot()
+    assert env.read_bytes()==before;op.up.assert_not_called()
+
+def test_lifecycle_scope_excludes_historical_vm106(sessions,monkeypatch):
+    from iacp.lifecycle.ownership import instance_ownership
+    from iacp.lifecycle.proxmox import PowerError
+    from iacp.models import Instance,BOOTSTRAP_TENANT_ID
+    from tests.power_helpers import managed_instance
+    identifier=managed_instance(sessions,BOOTSTRAP_TENANT_ID,vmid=106)
+    monkeypatch.setenv('IACP_LIFECYCLE_INSTANCE_IDS',str(uuid4()))
+    with sessions() as s,pytest.raises(PowerError,match="POWER_INSTANCE_NOT_AUTHORIZED"):
+        instance_ownership(s,s.get(Instance,identifier),None)
+
+def test_pilot_tls_without_docs_authentication_never_activates(driver,promotion):
+    from datetime import datetime,timezone
+    op,env,path=promotion;op.review_instances=Mock();before=env.read_bytes()
+    path.write_text(json.dumps({'dhcp_offer_received':True}))
+    https=env.with_name('https.json');https.write_text(json.dumps({'passed':True,'tls_verified':True,'host':'iac.cyberfuel.com',
+        'at':datetime.now(timezone.utc).isoformat(),'checks':[]}))
+    review(driver,promotion,'pilot_review',lab_network_authorized=True,identities={str(uuid4()):{'vmid':30000}},
+        dhcp_evidence={'path':str(path),'sha256':driver.digest(path)},https_evidence={'path':str(https),'sha256':driver.digest(https)})
+    with pytest.raises(RuntimeError,match='documentation authentication'):op.activate_pilot()
+    assert env.read_bytes()==before;op.up.assert_not_called()

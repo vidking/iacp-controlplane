@@ -21,3 +21,9 @@ def apply_instance(identifier: str, mode: str = "apply") -> None:
 def delete_instance(identifier: str, mode: str) -> None:
     from .deletion import execute_deletion
     execute_deletion(identifier, mode, get_session_factory())
+
+
+@celery_app.task(name='iacp.network.discover',autoretry_for=(),acks_late=True,reject_on_worker_lost=True)
+def discover_network(identifier: str) -> None:
+    from ..services.network import execute_discovery
+    execute_discovery(identifier,get_session_factory())

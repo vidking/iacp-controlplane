@@ -117,3 +117,21 @@ def test_environment_cannot_reinterpret_live_flags_and_ports():
     assert not live_compatibility(cfg, live)['passed']
     live[0]['HostConfig']['PortBindings'] = {'8000/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '8000'}]}
     assert '/live/api/ports' in live_compatibility(cfg, live)['unexpected_paths']
+
+def test_profile_promotion_does_not_allow_extra_mounts_or_readwrite_policy():
+    old=fixture_config();new=deepcopy(old)
+    for role in ('api','terraform-worker'):
+        new['services'][role]={'environment':{'IACP_TERRAFORM_PROFILES_FILE':'/run/config/profiles.json'},
+            'volumes':[{'type':'bind','source':'/policy.json','target':'/run/config/profiles.json','read_only':True,'bind':{'create_host_path':False}}]}
+    assert compare(old,new,profile_file='/policy.json')['passed']
+    assert not compare(old,new,profile_file='/other.json')['passed']
+    new['services']['api']['volumes'][0]['read_only']=False
+    assert not compare(old,new,profile_file='/policy.json')['passed']
+
+def test_runtime_comparison_uses_active_canonical_api_not_stale_proxy_labels():
+    from operations import runtime_command
+    def container(role,files):
+        return {'Config':{'Labels':{'com.docker.compose.service':role,'com.docker.compose.project.config_files':files,
+                                   'com.docker.compose.project.environment_file':'/etc/iacp/server.env'}}}
+    result=runtime_command([container('traefik','/old/compose.yaml,/override.yaml'),container('api','/new/deploy/mng/compose.yaml')],['docker'])
+    assert '/new/deploy/mng/compose.yaml' in result and '/override.yaml' not in result

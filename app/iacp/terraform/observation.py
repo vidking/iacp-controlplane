@@ -65,6 +65,15 @@ def proxmox_resource(env, expected, cancelled):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH", phase=phase)
         if config.get("lock"):
             raise PlanError("RESOURCE_OPERATION_IN_PROGRESS", phase=phase)
+        if expected.get('network_mode')=='dhcp':
+            nic=dict(part.split('=',1) for part in config.get('net0','').split(',') if '=' in part)
+            ip=dict(part.split('=',1) for part in config.get('ipconfig0','').split(',') if '=' in part)
+            vlan=expected['vlan_id']
+            if (nic.get('bridge')!=expected['network_bridge'] or 'virtio' not in nic
+                    or (vlan is None and ('tag' in nic or 'trunks' in nic))
+                    or (vlan is not None and nic.get('tag')!=str(vlan))
+                    or ip.get('ip')!='dhcp' or 'gw' in ip):
+                raise PlanError('DHCP_NATIVE_CONFIGURATION_MISMATCH',phase=phase)
         return {"present": True, "power_state": vm["status"]}
     except PlanError:
         raise
