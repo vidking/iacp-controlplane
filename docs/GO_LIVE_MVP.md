@@ -1,5 +1,12 @@
 # Promoción operativa del MVP
 
+**Perfil vigente de CyberFuel: corporate-internal.** La API se consume por LAN/VPN
+en `iac.cyberfuel.com → 192.168.1.50`; no requiere publicación Internet ni NAT
+público. Usar [el procedimiento interno](GO_LIVE_INTERNAL.md), que adapta este
+mismo driver. Los pasos de Internet siguientes se conservan para el perfil
+`public`; no son gates del despliegue interno. Las evidencias de PR #21 son
+históricas y no sustituyen pruebas ni autorizaciones del cambio actual.
+
 El hito **todavía no está completado**. La [evidencia real](validation/GO_LIVE_ENVIRONMENT.json)
 registra esquema 0004, API/TF Worker anteriores, ausencia de Lifecycle Worker,
 DNS público hacia una IP privada y ningún listener 443. Este cambio entrega el

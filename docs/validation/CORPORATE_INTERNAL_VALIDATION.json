@@ -1,0 +1,64 @@
+{
+  "observed_at": "2026-10-23T07:05:05.712969+00:00",
+  "base_commit": "b16374f78a388aac68139487103622e7768d7a8d",
+  "profiles": [
+    "public",
+    "corporate-internal"
+  ],
+  "pytest": {
+    "passed": 555,
+    "failed": 0,
+    "skipped": 0,
+    "unit": 519,
+    "integration": 36,
+    "seconds": 88.82,
+    "junit_sha256": "e528bd9488d9167d50a830bbbeae1e164d761241c90892c4919da9c92fbc1c0d"
+  },
+  "test_services": {
+    "postgres": "17.11",
+    "redis": "7.4.11",
+    "traefik": "v3.1"
+  },
+  "test_image": "sha256:f9769474342eef4232a6260114927c35d547db9f5147507ba46bea487fbce33b",
+  "traefik_fixture": {
+    "passed": true,
+    "identity_modes": [
+      "gateway",
+      "approved-internal-policy"
+    ],
+    "verified": [
+      "CA and hostname",
+      "redirect",
+      "docs and OpenAPI require identity",
+      "transport source restrictions with spoofed XFF",
+      "public middleware regression"
+    ],
+    "real_corporate_identity": false,
+    "real_corporate_certificate": false,
+    "real_wan_validation": false
+  },
+  "compose": {
+    "passed_for_both_profiles": true,
+    "services": 9,
+    "tls_bind": "192.168.1.50:443",
+    "diagnostic_bind": "127.0.0.1:8080",
+    "apply": "1",
+    "lifecycle": "0",
+    "host_ports_on_other_services": false
+  },
+  "production_modified": false,
+  "not_executed": [
+    "production migrations",
+    "production proxy publication",
+    "production secret permission changes",
+    "corporate LAN/VPN client probe",
+    "perimeter NAT/WAN review",
+    "VM106 certification or power"
+  ],
+  "commands": [
+    "docker compose -p iacp-internal-correction-tests -f compose.test.yaml run --build --rm -T tests python -m pytest -p no:cacheprovider -ra",
+    "bash scripts/test-tls.sh",
+    "python scripts/validate-handbook.py",
+    "git diff --check"
+  ]
+}

@@ -110,7 +110,35 @@ def client():
             if time.monotonic() > deadline: raise AssertionError("IP no autorizada o XFF falsificado aceptados")
             time.sleep(.2)
         assert client.get("http://traefik:8080/health/live").status_code == 200
-    print("TLS fixture passed: chain, redirect, Origin/XFF, gateway + bearer, spoofed prefix, body limit, rate limit. Not a production/external validation.")
+        for mode in ("gateway", "approved-internal-policy"):
+            internal_policy = {**POLICY, "crm_source_cidrs": ["10.255.255.254/32"], "identity_mode": mode}
+            if mode == "gateway":
+                internal_policy["admin_forward_auth_url"] = "https://identity.fixture.invalid:8443/verify"
+            configuration = renderer.build_public(internal_policy, internal=True)
+            if mode == "gateway":
+                configuration["http"]["middlewares"]["corporate-identity"]["forwardAuth"]["tls"]["ca"] = "/run/tls/fullchain.pem"
+            temporary = ROOT / "iacp.tmp"
+            temporary.write_text(json.dumps(configuration))
+            temporary.replace(ROOT / "iacp.yml")
+            deadline = time.monotonic() + 12
+            while client.get("https://iac.cyberfuel.com/docs", headers=identity).status_code != 200:
+                if time.monotonic() > deadline: raise AssertionError("Internal router failed to reload")
+                time.sleep(.2)
+            assert client.get("https://iac.cyberfuel.com/docs").status_code == 401
+            assert client.get("https://iac.cyberfuel.com/openapi.json").status_code == 401
+            assert client.get("https://iac.cyberfuel.com/openapi.json", headers=identity).status_code == 200
+            if mode == "gateway":
+                assert client.get("https://iac.cyberfuel.com/docs", headers={"Authorization": "Bearer fixture-token"}).status_code == 401
+            else:
+                assert client.get("https://iac.cyberfuel.com/docs", headers={"Authorization": "Bearer fixture-token"}).status_code == 200
+            configuration["http"]["middlewares"]["internal-sources"]["ipAllowList"]["sourceRange"] = ["10.22.0.0/16"]
+            temporary.write_text(json.dumps(configuration))
+            temporary.replace(ROOT / "iacp.yml")
+            deadline = time.monotonic() + 12
+            while client.get("https://iac.cyberfuel.com/docs", headers={**identity, "X-Forwarded-For": "10.22.0.1"}).status_code != 403:
+                if time.monotonic() > deadline: raise AssertionError("Internal unapproved source accepted")
+                time.sleep(.2)
+    print("TLS fixture passed: public and corporate-internal (gateway/internal policy), auth, source limits, redirect, headers and request limits. No production/WAN claim.")
 
 
 if __name__ == "__main__":

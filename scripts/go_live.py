@@ -21,6 +21,9 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from smoke_public import exposure_mode, internal_target, resolved_addresses
+
 HEAD = "0006_power_ownership"
 SOURCE = "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae"
 ARCHIVE = "98f0900d571a8d05e4bbb0eabdb10550a372655f61fda35aaa3a601537daa94a"
@@ -76,6 +79,9 @@ class Promotion:
         for file in manifest["compose_files"]:
             self.dc += ["-f", str(ROOT / file)]
         self.sequence = 0
+        exposure_mode(manifest)  # A typo must never silently select a weaker mode.
+        if exposure_mode(manifest) == "corporate-internal":
+            internal_target(manifest)
 
     def evidence(self, name, data):
         self.sequence += 1
@@ -269,11 +275,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.approve("publish-api")
         self.preflight()
         self.verify()
-        require("compose.public.yaml" in self.m["compose_files"] and "compose.tls.yaml" in self.m["compose_files"], "Public proxy overrides missing")
-        reviewed = self.m["publication_review"]
-        require(digest(reviewed["path"]) == reviewed["sha256"], "Publication review checksum mismatch")
-        controls = json.loads(Path(reviewed["path"]).read_text())
-        require(all(controls.get(key) is True for key in ("public_dns_approved", "nat_firewall_approved", "gateway_policy_approved", "proxy_version_approved")), "Publication controls incomplete")
+        require("compose.public.yaml" in self.m["compose_files"] and "compose.tls.yaml" in self.m["compose_files"], "TLS/proxy overrides missing")
+        self.publication_controls()
         dynamic = self.m["tls_dynamic_file"]
         require(digest(dynamic["path"]) == dynamic["sha256"], "Reviewed TLS routing changed")
         # The file provider loads every file in the directory. An extra router
@@ -282,8 +285,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require([p.name for p in directory.iterdir() if p.is_file()] == [Path(dynamic["path"]).name], "Unexpected dynamic proxy configuration")
         config = json.loads(Path(dynamic["path"]).read_text())
         require(set(config["http"]["routers"]) == {"diagnostic", "iacp-admin", "iacp-crm", "iacp-http"}, "Unexpected proxy routes")
-        require("corporate-identity" in config["http"]["routers"]["iacp-admin"]["middlewares"], "Administrative gateway missing")
         compose = json.loads(self.compose("config", "--format", "json"))
+        self.proxy_exposure(compose, config)
         proxy = compose["services"]["traefik"]
         require(proxy["command"] == ["--configFile=/etc/traefik/public.yml"], "Unexpected static proxy command")
         require(not any(key.startswith("TRAEFIK_") for key in proxy.get("environment", {})), "Unexpected static proxy environment override")
@@ -301,6 +304,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         spec.loader.exec_module(renderer)
         renderer.check_certificate(Path(mounts["/run/tls"]), self.m.get("api_ca_file"))
         self.up("traefik")
+        if exposure_mode(self.m) == "corporate-internal":
+            self.internal_live_bindings()
         deadline = time.monotonic() + 30
         while True:
             require(self.container("traefik")["State"]["Running"], "Traefik exited")
@@ -313,7 +318,61 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             except OSError:
                 require(time.monotonic() < deadline, "Local published TLS handshake failed; do not claim external readiness")
                 time.sleep(2)
-        self.evidence("publication", {"configured": True, "external_validation": "pending", "host": "iac.cyberfuel.com"})
+        self.evidence("publication", {"configured": True, "exposure_mode": exposure_mode(self.m),
+                                     "client_validation": "pending", "host": "iac.cyberfuel.com"})
+
+    def publication_controls(self):
+        reviewed = self.m["publication_review"]
+        require(digest(reviewed["path"]) == reviewed["sha256"], "Publication review checksum mismatch")
+        controls = json.loads(Path(reviewed["path"]).read_text())
+        if exposure_mode(self.m) == "corporate-internal":
+            bind, networks = internal_target(self.m)
+            require(controls.get("exposure_mode") == "corporate-internal" and controls.get("api_bind_ip") == bind
+                    and controls.get("approved_client_cidrs") == [str(net) for net in networks]
+                    and controls.get("identity_mode") == self.m["identity_mode"], "Internal review does not match manifest")
+            keys = ["corporate_dns_approved", "lan_vpn_firewall_approved", "no_public_nat", "no_wan_exposure",
+                    "internal_access_policy_approved", "proxy_version_approved"]
+            require(all(isinstance(controls.get(key), str) and controls[key].strip() for key in
+                        ("network_evidence_reference", "identity_policy_reference")), "Internal network/identity approval references missing")
+            if self.m["identity_mode"] == "gateway":
+                keys.append("gateway_policy_approved")
+            require(resolved_addresses() == [bind], "Corporate DNS does not resolve to the authorized API bind")
+        else:
+            keys = ["public_dns_approved", "nat_firewall_approved", "gateway_policy_approved", "proxy_version_approved"]
+        require(all(controls.get(key) is True for key in keys), "Publication controls incomplete")
+        self.evidence("publication-controls", {"exposure_mode": exposure_mode(self.m), "review_sha256": reviewed["sha256"]})
+
+    def proxy_exposure(self, compose, config):
+        routers = config["http"]["routers"]
+        internal = exposure_mode(self.m) == "corporate-internal"
+        if not internal or self.m["identity_mode"] == "gateway":
+            require("corporate-identity" in routers["iacp-admin"]["middlewares"], "Administrative gateway missing")
+        if internal:
+            bind, networks = internal_target(self.m)
+            # Compose binds alone cannot establish absence of perimeter NAT. That
+            # requires the separately reviewed network evidence above.
+            for role, service in compose["services"].items():
+                if role != "traefik":
+                    require(not service.get("ports"), "Only Traefik may publish host ports")
+            ports = compose["services"]["traefik"]["ports"]
+            expected = {(80, "80", bind), (443, "443", bind), (8080, "8080", "127.0.0.1")}
+            require({(p["target"], str(p["published"]), p.get("host_ip")) for p in ports} == expected
+                    and len(ports) == len(expected) and all(p.get("protocol", "tcp") == "tcp" for p in ports), "Internal proxy must bind only the approved private IP and loopback diagnostic")
+            for name in ("iacp-admin", "iacp-crm", "iacp-http"):
+                require("internal-sources" in routers[name]["middlewares"], "Internal source restriction missing")
+            for name in ("iacp-admin", "iacp-crm"):
+                require(set(("strip-identity", "request-rate", "inflight", "body-limit", "crm-headers")) <= set(routers[name]["middlewares"])
+                        and routers[name].get("tls") == {"options": "corporate"}, "Internal proxy security/TLS controls missing")
+            require(config["http"]["middlewares"]["internal-sources"]["ipAllowList"] == {"sourceRange": [str(net) for net in networks]}, "Internal allowlist differs from approved LAN/VPN networks")
+
+    def internal_live_bindings(self):
+        bind, _ = internal_target(self.m)
+        proxy = self.container("traefik")
+        require(proxy["State"]["Running"] and proxy["HostConfig"]["PortBindings"] == {
+            "80/tcp": [{"HostIp": bind, "HostPort": "80"}],
+            "443/tcp": [{"HostIp": bind, "HostPort": "443"}],
+            "8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}],
+        }, "Running Traefik exposes unexpected addresses or ports")
 
     def up(self, *roles):
         self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *roles, timeout=180)
@@ -329,6 +388,9 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             actual_mounts = {m["Destination"]: (m["Type"], m.get("Name") if m["Type"] == "volume" else m["Source"], m["RW"])
                              for m in c["Mounts"] if m["Type"] != "tmpfs"}
             require(actual_mounts == self.planned_mounts(config, role), "Running mounts differ from reviewed configuration: " + role)
+            # Validate effective UID and actual reads, not only host mode bits.
+            secrets = [target for target in actual_mounts if target.startswith("/run/secrets/")]
+            self.exec_python(role, "import os\nassert os.geteuid() == 10001\nfor path in " + repr(secrets) + ":\n with open(path, 'rb') as stream: assert stream.read(1)\nprint('UID10001_SECRET_READS_OK')")
             if role in {"api", "terraform-worker"}:
                 require(values.get("IACP_TERRAFORM_APPLY_ENABLED") == "1", "Apply changed")
             if role in {"api", "lifecycle-worker"}:
@@ -366,15 +428,32 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         record = self.m["activation_review"]
         require(digest(record["path"]) == record["sha256"], "Activation controls checksum mismatch")
         controls = json.loads(Path(record["path"]).read_text())
-        require(all(controls.get(k) is True for k in ("assigned_public_ip_validated", "security_controls_passed", "external_https_passed", "pve_permissions_passed", "vm104_excluded")), "Activation controls incomplete")
-        probe = controls["external_probe"]
-        require(digest(probe["path"]) == probe["sha256"], "External probe checksum mismatch")
+        internal = exposure_mode(self.m) == "corporate-internal"
+        https_control = "lan_vpn_https_passed" if internal else "external_https_passed"
+        require(all(controls.get(k) is True for k in ("assigned_public_ip_validated", "security_controls_passed", https_control, "pve_permissions_passed", "vm104_excluded")), "Activation controls incomplete")
+        probe = controls["lan_vpn_probe" if internal else "external_probe"]
+        require(digest(probe["path"]) == probe["sha256"], "API probe checksum mismatch")
         proof = json.loads(Path(probe["path"]).read_text())
-        require(proof["passed"] is True and proof["external_vantage_asserted"] is True
-                and proof["host"] == "iac.cyberfuel.com" and proof["resolved_ips"]
-                and all(ipaddress.ip_address(ip).is_global for ip in proof["resolved_ips"]), "External validation did not pass")
+        require(proof["passed"] is True and proof["host"] == "iac.cyberfuel.com"
+                and exposure_mode(proof) == exposure_mode(self.m), "API validation did not pass for this exposure mode")
+        if internal:
+            self.publication_controls()
+            bind, networks = internal_target(self.m)
+            require(proof.get("lan_vpn_vantage_asserted") is True and proof.get("external_vantage_asserted") is False
+                    and proof["resolved_ips"] == [bind] and proof.get("api_bind_ip") == bind
+                    and proof.get("approved_client_cidrs") == [str(net) for net in networks]
+                    and proof.get("identity_mode") == self.m["identity_mode"] and proof.get("tls_min_validity_days", 0) >= 14
+                    and any(ipaddress.ip_address(proof["runner_ip"]) in net for net in networks), "Authorized LAN/VPN validation missing")
+            cfg = json.loads(self.compose("config", "--format", "json"))
+            dynamic = self.m["tls_dynamic_file"]
+            require(digest(dynamic["path"]) == dynamic["sha256"], "Reviewed TLS routing changed")
+            self.proxy_exposure(cfg, json.loads(Path(dynamic["path"]).read_text()))
+            self.internal_live_bindings()
+        else:
+            require(proof["external_vantage_asserted"] is True and proof["resolved_ips"]
+                    and all(ipaddress.ip_address(ip).is_global for ip in proof["resolved_ips"]), "External validation did not pass")
         age = datetime.now(timezone.utc) - datetime.fromisoformat(proof["at"])
-        require(0 <= age.total_seconds() < 86400, "External validation is stale")
+        require(0 <= age.total_seconds() < 86400, "API validation is stale")
         return controls
 
     def promote(self):
@@ -467,14 +546,20 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         return json.loads(self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T", "--entrypoint", "python", "ownership-certifier", "-",
                                       input=(ROOT / "scripts/vm106_state.py").read_text(), timeout=60))
 
+    def api_credentials(self):
+        from smoke_public import private_secret
+        token = private_secret(Path(self.m["operator_token_file"]))
+        gateway = exposure_mode(self.m) == "public" or self.m["identity_mode"] == "gateway"
+        cookie = private_secret(Path(self.m["gateway_cookie_file"])) if gateway else None
+        return token, cookie
+
     def first_start(self):
         self.approve("first-start")
         controls = self.activation_controls()
         intent_path = Path(self.m["start_intent_file"])
         before = self.verify(admission=1, lifecycle=1, idle=not intent_path.exists())
-        from smoke_public import private_secret, request
-        token = private_secret(Path(self.m["operator_token_file"]))
-        cookie = private_secret(Path(self.m["gateway_cookie_file"]))
+        from smoke_public import request
+        token, cookie = self.api_credentials()
         context = ssl.create_default_context(cafile=self.m.get("api_ca_file"))
         key = self.m["start_idempotency_key"]
         require(re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", key), "Invalid fixed start key")

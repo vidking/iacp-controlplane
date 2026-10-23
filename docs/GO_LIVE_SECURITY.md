@@ -1,5 +1,11 @@
 # Seguridad y exposición pública
 
+Para la API privada corporativa se aplica [corporate-internal](GO_LIVE_INTERNAL.md):
+LAN/VPN aprobadas, bind privado explícito y ausencia de NAT/WAN revisada. Conserva
+TLS, autenticación IACP, protección de docs y todos los middlewares; permite un
+gateway o una política interna equivalente expresamente aprobada. La ruta pública
+descrita aquí sigue disponible únicamente con su propio perfil y controles.
+
 La API oficial es `https://iac.cyberfuel.com`. Forgejo `scm.cyberfuel.com` no
 participa en estos routers ni se modifica. La publicación requiere controles
 corporativos pendientes; consultar [el runbook](GO_LIVE_MVP.md).
