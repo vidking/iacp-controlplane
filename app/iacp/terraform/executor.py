@@ -12,7 +12,7 @@ import zipfile
 
 from .config import Allocation, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from .runner import CommandRunner
-from .observation import proxmox_resource
+from .observation import proxmox_resource, require_clone_permissions
 from .state import S3StateReader
 
 ADDRESS = "module.kvm.proxmox_virtual_environment_vm.this"
@@ -126,6 +126,7 @@ class TerraformExecutor:
             import tempfile
             with tempfile.TemporaryDirectory() as scratch:
                 env=self.environment(Path(scratch))
+                require_clone_permissions(env,variables['instance'])
                 if proxmox_resource(env,variables['instance'],cancelled)['present']:
                     raise PlanError('VMID_ALREADY_PRESENT')
         workspace = self.workspace(instance_id, attempt)
@@ -257,6 +258,8 @@ class TerraformExecutor:
         workspace = self.workspace(instance_id, attempt)
         root = workspace / "source" / "stacks" / "kvm-instance"
         env = self.environment(workspace)
+        if variables["instance"].get("network_mode") == "dhcp":
+            require_clone_permissions(env, variables["instance"])
         self.initialize(root, env, cancelled, "apply")
         plan = self.read_json(["show", "-json", "saved.tfplan"], root, env, cancelled, "apply.inspect")
         verify_plan(plan, variables)

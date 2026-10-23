@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
-            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|network/discover)', request.url.path)
+            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|terraform/applies/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover)', request.url.path)
         if request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
             response = JSONResponse(status_code=503, content={"detail": "Admission drained"}, headers={"Retry-After": "60"})
         else:
