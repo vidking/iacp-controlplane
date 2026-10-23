@@ -59,21 +59,30 @@ def build(policy):
                             "default": {"minVersion": "VersionTLS12", "sniStrict": True}}}}
 
 
-def build_public(policy):
-    """CRM service access is source-bound; all other access requires the gateway.
+def build_public(policy, *, internal=False):
+    """Shared proxy: public gateway or explicitly selected internal access policy.
 
     Gateway identity never replaces IACP tenant authentication or role checks.
     No response identity header is trusted by the application.
     """
-    if set(policy) != {"lan_cidrs", "crm_source_cidrs", "crm_origins", "admin_forward_auth_url"}:
-        raise ValueError("Política pública incompleta")
-    address = policy["admin_forward_auth_url"]
-    url = urlsplit(address)
-    if (url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment or url.query
-            or url.hostname == "iac.cyberfuel.com" or any(c in address for c in "\r\n`")):
-        raise ValueError("Gateway corporativo HTTPS independiente requerido")
-    _ = url.port
-    base_policy = {k: v for k, v in policy.items() if k != "admin_forward_auth_url"}
+    identity = policy.get("identity_mode") if internal else "gateway"
+    if identity not in {"gateway", "approved-internal-policy"}:
+        raise ValueError("Identidad corporativa o política interna explícita requerida")
+    fields = {"lan_cidrs", "crm_source_cidrs", "crm_origins"}
+    if internal:
+        fields.add("identity_mode")
+    if identity == "gateway":
+        fields.add("admin_forward_auth_url")
+    if set(policy) != fields:
+        raise ValueError("Política de exposición incompleta")
+    if identity == "gateway":
+        address = policy["admin_forward_auth_url"]
+        url = urlsplit(address)
+        if (url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment or url.query
+                or url.hostname == "iac.cyberfuel.com" or any(c in address for c in "\r\n`")):
+            raise ValueError("Gateway corporativo HTTPS independiente requerido")
+        _ = url.port
+    base_policy = {k: policy[k] for k in ("lan_cidrs", "crm_source_cidrs", "crm_origins")}
     base_policy["crm_origins"] = list(dict.fromkeys(policy["crm_origins"] + ["https://iac.cyberfuel.com"]))
     config = build(base_policy)
     http = config["http"]
@@ -85,15 +94,16 @@ def build_public(policy):
         "strip-identity": {"headers": {"customRequestHeaders": {key: "" for key in (
             "X-Forwarded-Prefix", "X-Forwarded-Host", "X-Forwarded-Port", "X-Forwarded-Proto",
             "X-Forwarded-Uri", "X-Forwarded-Method", "X-Auth-Request-User", "X-Auth-Request-Email")}}},
-        "corporate-identity": {"forwardAuth": {"address": address, "trustForwardHeader": False,
-            "authRequestHeaders": ["Cookie"], "tls": {"insecureSkipVerify": False}}},
         "https-only": {"redirectScheme": {"scheme": "https", "permanent": True}},
     })
+    if identity == "gateway":
+        middleware["corporate-identity"] = {"forwardAuth": {"address": address, "trustForwardHeader": False,
+            "authRequestHeaders": ["Cookie"], "tls": {"insecureSkipVerify": False}}}
     middleware["crm-headers"]["headers"].update(frameDeny=True, referrerPolicy="no-referrer")
     common = ["strip-identity", "request-rate", "inflight", "body-limit", "crm-headers"]
     admin = {"rule": http["routers"]["iacp-https"]["rule"], "priority": 10,
              "entryPoints": ["websecure"], "service": "iacp-api", "tls": {"options": "corporate"},
-             "middlewares": common + ["corporate-identity"]}
+             "middlewares": common + (["corporate-identity"] if identity == "gateway" else [])}
     # The CRM never reaches approval/recovery/plan/smoke/documentation routes on
     # the source-only lane. Operators at arbitrary locations use the admin lane.
     paths = ("(Path(`/v1/instances`) || PathRegexp(`^/v1/instances/[^/]+(/power(/(start|shutdown|reboot))?)?$`)"
@@ -107,6 +117,17 @@ def build_public(policy):
         "iacp-http": {"rule": "Host(`iac.cyberfuel.com`)", "entryPoints": ["webhttp"],
                       "service": "noop@internal", "middlewares": ["https-only"]},
     }
+    if internal:
+        # Every LAN/VPN path, including docs and HTTP redirect, is source-bound.
+        # No ipStrategy: spoofed forwarded headers cannot expand this allowlist.
+        allowed = list(dict.fromkeys(ranges(policy["lan_cidrs"]) + ranges(policy["crm_source_cidrs"])))
+        private = [ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")]
+        if any(not any(net.version == parent.version and net.subnet_of(parent) for parent in private)
+               for net in map(ipaddress.ip_network, allowed)):
+            raise ValueError("Fuentes internas deben pertenecer a LAN/VPN privada")
+        middleware["internal-sources"] = {"ipAllowList": {"sourceRange": allowed}}
+        for name in ("iacp-admin", "iacp-crm", "iacp-http"):
+            http["routers"][name]["middlewares"] = ["internal-sources"] + http["routers"][name]["middlewares"]
     return config
 
 
@@ -130,6 +151,7 @@ def main():
     parser.add_argument("--certificates", required=True, type=Path)
     parser.add_argument("--bind-ip", required=True)
     parser.add_argument("--public", action="store_true", help="Exigir gateway corporativo; generar routers públicos")
+    parser.add_argument("--corporate-internal", action="store_true", help="Restringir todos los routers a fuentes LAN/VPN; identidad explícita")
     parser.add_argument("--ca-file", type=Path, help="Raíz corporativa aprobada, si no está en el trust store")
     parser.add_argument("--min-validity-days", type=int, default=14)
     args = parser.parse_args()
@@ -138,7 +160,12 @@ def main():
         raise ValueError("Se requiere una IP LAN privada específica")
     if args.min_validity_days < 0:
         raise ValueError("Vigencia mínima inválida")
-    configuration = (build_public if args.public else build)(json.loads(args.policy.read_text()))
+    if args.public and args.corporate_internal:
+        raise ValueError("Elegir un solo perfil de exposición")
+    if args.corporate_internal and not any(address in ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
+        raise ValueError("Bind interno debe ser RFC1918")
+    policy = json.loads(args.policy.read_text())
+    configuration = build_public(policy, internal=True) if args.corporate_internal else (build_public if args.public else build)(policy)
     check_certificate(args.certificates, args.ca_file, args.min_validity_days)
     # JSON es YAML válido; no se necesitan dependencias para interpolar entradas.
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)

@@ -1,0 +1,15 @@
+{
+  "exposure_mode": "corporate-internal",
+  "api_bind_ip": "192.168.1.50",
+  "approved_client_cidrs": ["REPLACE_WITH_APPROVED_LAN_OR_VPN_CIDR"],
+  "identity_mode": "gateway",
+  "corporate_dns_approved": false,
+  "lan_vpn_firewall_approved": false,
+  "no_public_nat": false,
+  "no_wan_exposure": false,
+  "internal_access_policy_approved": false,
+  "gateway_policy_approved": false,
+  "proxy_version_approved": false,
+  "network_evidence_reference": "REPLACE_WITH_APPROVED_FIREWALL_AND_NO_WAN_EVIDENCE",
+  "identity_policy_reference": "REPLACE_WITH_APPROVED_IDENTITY_OR_INTERNAL_ACCESS_POLICY"
+}

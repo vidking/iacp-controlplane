@@ -1,4 +1,5 @@
 {
+  "exposure_mode": "public",
   "hostname": "iacp-controlplane-01",
   "project": "iacp-controlplane",
   "runtime_dir": "/opt/iacp/releases/controlplane-v1",

@@ -1,4 +1,6 @@
-# Optional last proxy override. Reuses the single existing Traefik service.
+# Shared proxy override for public and corporate-internal manifests.
+# compose.tls.yaml publishes 443 on IACP_TLS_BIND_IP; this adds HTTP redirect.
+# Reuses the single existing Traefik service; the name is retained for compatibility.
 # No Docker provider/socket. All exposure is explicit in the file provider.
 services:
   traefik:

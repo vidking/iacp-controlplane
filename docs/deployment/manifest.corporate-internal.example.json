@@ -1,0 +1,32 @@
+{
+  "exposure_mode": "corporate-internal",
+  "api_bind_ip": "192.168.1.50",
+  "approved_client_cidrs": ["REPLACE_WITH_APPROVED_LAN_OR_VPN_CIDR"],
+  "identity_mode": "gateway",
+  "hostname": "iacp-controlplane-01",
+  "project": "iacp-controlplane",
+  "runtime_dir": "/opt/iacp/releases/controlplane-v1",
+  "environment_file": "/etc/iacp/server.env",
+  "release": "REPLACE_WITH_REVIEWED_40_CHARACTER_COMMIT",
+  "release_reference": "REPLACE_WITH_COMMIT_AND_BOTH_IMAGE_DIGESTS",
+  "compose_files": ["compose.yaml", "compose.server.yaml", "compose.terraform.yaml", "compose.tenants.yaml", "compose.lifecycle.yaml", "compose.promotion.yaml", "compose.tls.yaml", "compose.public.yaml"],
+  "images": {"api": "sha256:REVIEWED_IMAGE_ID", "terraform": "sha256:REVIEWED_IMAGE_ID", "proxy": "sha256:REVIEWED_IMAGE_ID"},
+  "backup": {
+    "path": "/opt/iacp/backups/iacp-before-lifecycle-20261023T014456Z.dump",
+    "sha256": "5babd150ffc164d789c3016270b528c5488411dd39b6f9d3424a68afa6fc08d6",
+    "restore_evidence": "/etc/iacp/changes/restore-evidence.json",
+    "restore_evidence_sha256": "REPLACE_WITH_EVIDENCE_DIGEST"
+  },
+  "change_record": {"path": "/etc/iacp/changes/approved-change.json", "sha256": "REPLACE_WITH_CHANGE_DIGEST"},
+  "expectations_file": "/opt/iacp/evidence/vm106-expectations.json",
+  "certification_review": {"path": "/opt/iacp/evidence/validate/REPLACE-certificate.json", "sha256": "REPLACE_WITH_REVIEWED_DIGEST"},
+  "recorded_certificate": {"path": "/opt/iacp/evidence/record/REPLACE-certificate.json", "sha256": "REPLACE_WITH_RECORDED_DIGEST"},
+  "publication_review": {"path": "/etc/iacp/changes/publication-review.corporate-internal.json", "sha256": "REPLACE_WITH_REVIEWED_DIGEST"},
+  "activation_review": {"path": "/etc/iacp/changes/activation-review.corporate-internal.json", "sha256": "REPLACE_WITH_REVIEWED_DIGEST"},
+  "tls_dynamic_file": {"path": "/etc/iacp/tls/dynamic/iacp.yml", "sha256": "REPLACE_WITH_REVIEWED_DIGEST"},
+  "api_ca_file": null,
+  "operator_token_file": "/etc/iacp/identity/operator.token",
+  "gateway_cookie_file": "/etc/iacp/identity/gateway.cookie",
+  "start_idempotency_key": "vm106-first-start-REPLACE_WITH_APPROVED_CHANGE",
+  "start_intent_file": "/opt/iacp/evidence/vm106-first-start-intent.json"
+}
