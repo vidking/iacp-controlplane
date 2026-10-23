@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Single operator entrypoint. Read-only by default; deployments use go_live.py."""
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import sys
+from uuid import UUID
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from operations import compare, runtime_command, live_compatibility
+
+
+def run(args, **kwargs):
+    result = subprocess.run(args, capture_output=True, text=True, env={k: os.environ[k] for k in ('PATH', 'HOME') if k in os.environ}, **kwargs)
+    if result.returncode:
+        raise RuntimeError('Command failed; use private diagnostics (no command output printed)')
+    return result.stdout
+
+
+def save(path, data):
+    with path.open('x') as out:
+        path.chmod(0o600)
+        json.dump(data, out, indent=2)
+        out.write('\n')
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def main():
+    os.umask(0o077)
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--env-file', type=Path, default=Path('/etc/iacp/server.env'))
+    p.add_argument('--manifest', type=Path, default=Path('/etc/iacp/changes/manifest-normalization.json'))
+    p.add_argument('--evidence-dir', type=Path)
+    p.add_argument('--compose-file', type=Path, default=ROOT / 'deploy/mng/compose.yaml')
+    sub = p.add_subparsers(dest='action', required=True)
+    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback'):
+        s = sub.add_parser(action)
+        if action == 'certify':
+            s.add_argument('--record', action='store_true')
+        if action == 'smoke':
+            s.add_argument('probe_args', nargs=argparse.REMAINDER)
+    logs = sub.add_parser('logs'); logs.add_argument('service'); logs.add_argument('--tail', type=int, default=100)
+    rotate = sub.add_parser('docs-rotate')
+    rotate.add_argument('--registry', type=Path, required=True)
+    rotate.add_argument('--tenant', required=True)
+    rotate.add_argument('--username', required=True)
+    rotate.add_argument('--handoff-dir', type=Path, required=True)
+    install_docs = sub.add_parser('docs-install')
+    install_docs.add_argument('--candidate', type=Path, required=True)
+    promote_env = sub.add_parser('env-promote')
+    promote_env.add_argument('--candidate', type=Path, required=True)
+    promote_env.add_argument('--backup-dir', type=Path, default=Path('/opt/iacp/backups/config'))
+    args = p.parse_args()
+    if args.action == 'docs-rotate':
+        UUID(args.tenant)
+        if not re.fullmatch(r'[A-Za-z0-9._:@-]{1,128}', args.username):
+            raise ValueError('Invalid documentation username')
+        directory = args.handoff_dir.resolve()
+        if directory.is_relative_to(ROOT):
+            raise ValueError('Keep credentials outside Git')
+        entries = json.loads(args.registry.read_text())
+        if not isinstance(entries, list):
+            raise ValueError('Expected the existing credential registry list')
+        password = secrets.token_urlsafe(48)
+        entries = [e for e in entries if not (e.get('role') == 'docs' and e.get('subject') == args.username)]
+        entries.append({'token_sha256': hashlib.sha256(password.encode()).hexdigest(), 'subject': args.username,
+                        'tenant_id': args.tenant, 'role': 'docs'})
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        save(directory / 'registry.next.json', entries)
+        save(directory / 'operator-handoff.json', {'username': args.username, 'password': password})
+        print(json.dumps({'prepared': True, 'handoff_directory': str(directory), 'active_registry_changed': False}))
+        return
+    if args.action == 'smoke':
+        extra = args.probe_args[1:] if args.probe_args[:1] == ['--'] else args.probe_args
+        subprocess.run([sys.executable, str(ROOT / 'scripts/smoke_public.py'), '--manifest', str(args.manifest), *extra], check=True)
+        return
+    if args.env_file.is_symlink() or args.env_file.stat().st_mode & 0o077:
+        raise ValueError('Operating environment file must be private, mode 0600')
+    docker = ['docker', '--host', 'unix:///var/run/docker.sock']
+    dc = docker + ['compose', '--env-file', str(args.env_file.resolve()), '-p', 'iacp-controlplane', '-f', str(args.compose_file.resolve())]
+    if args.action == 'env-promote':
+        import fcntl
+        from go_live import Promotion, digest
+        m = json.loads(args.manifest.read_text())
+        if not args.evidence_dir or m['environment_file'] != str(args.env_file.resolve()):
+            raise ValueError('Reviewed active environment and new evidence directory required')
+        if args.candidate.is_symlink() or args.candidate.stat().st_mode & 0o077:
+            raise ValueError('Candidate must be a private regular file')
+        ref = m['environment_candidate']
+        if str(args.candidate.resolve()) != ref['path'] or digest(args.candidate) != ref['sha256']:
+            raise ValueError('Candidate differs from approved configuration reference')
+        args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        operation = Promotion(m, args.evidence_dir)
+        operation.approve('promote-env')
+        candidate_dc = dc.copy()
+        candidate_dc[candidate_dc.index('--env-file') + 1] = str(args.candidate.resolve())
+        candidate_cfg = json.loads(run(candidate_dc + ['--profile', 'certification', 'config', '--format', 'json']))
+        current_ids = run(docker + ['ps', '-aq', '--filter', 'label=com.docker.compose.project=iacp-controlplane']).split()
+        actual = json.loads(run(docker + ['inspect', *current_ids]))
+        current_cfg = json.loads(run(runtime_command(actual, docker)))
+        comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []))
+        operation.evidence('candidate-environment-comparison', comparison)
+        if not comparison['passed']:
+            raise ValueError('Candidate environment changes unapproved operating settings')
+        args.backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with (args.env_file.parent / '.promotion.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            backup = args.backup_dir / ('server.env.' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
+            with backup.open('x') as stream:
+                backup.chmod(0o600); stream.write(args.env_file.read_text()); stream.flush(); os.fsync(stream.fileno())
+            temporary = args.env_file.with_name('server.env.installing')
+            with temporary.open('x') as stream:
+                temporary.chmod(0o600); stream.write(args.candidate.read_text()); stream.flush(); os.fsync(stream.fileno())
+            st = args.env_file.stat()
+            os.chown(temporary, st.st_uid, st.st_gid)
+            temporary.replace(args.env_file)
+            fd = os.open(args.env_file.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try: os.fsync(fd)
+            finally: os.close(fd)
+        operation.evidence('environment-promoted', {'backup': str(backup), 'containers_changed': False})
+        print(json.dumps({'promoted': True, 'backup': str(backup), 'containers_changed': False}))
+        return
+    if args.action == 'config-check':
+        cfg = json.loads(run(dc + ['--profile', 'certification', 'config', '--format', 'json']))
+        if cfg['services']['api']['environment']['IACP_TERRAFORM_APPLY_ENABLED'] != '1':
+            raise RuntimeError('Apply must remain enabled')
+        print(json.dumps({'passed': True, 'compose': str(args.compose_file.resolve()), 'services': sorted(cfg['services'])}))
+        return
+    ids = run(docker + ['ps', '-aq', '--filter', 'label=com.docker.compose.project=iacp-controlplane']).split()
+    if not ids:
+        raise RuntimeError('Existing operational stack not found; bootstrap is forbidden')
+    containers = json.loads(run(docker + ['inspect', *ids]))
+    live = [c for c in containers if c['Config']['Labels'].get('com.docker.compose.oneoff', '').lower() != 'true']
+    if args.action == 'docs-install':
+        from go_live import Promotion
+        if not args.evidence_dir:
+            raise ValueError('A new private evidence directory is required')
+        m = json.loads(args.manifest.read_text())
+        if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()):
+            raise ValueError('Use the reviewed canonical active environment for credential installation')
+        args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        operation = Promotion(m, args.evidence_dir)
+        operation.approve('rotate-docs')
+        api = next(c for c in live if c['Config']['Labels'].get('com.docker.compose.service') == 'api')
+        if api['Image'] != m['images']['api']:
+            raise ValueError('Running API is not the reviewed image')
+        if args.candidate.is_symlink() or args.candidate.stat().st_mode & 0o077:
+            raise ValueError('Credential candidate must be private')
+        cfg = json.loads(run(dc + ['--profile', 'certification', 'config', '--format', 'json']))
+        target = Path(cfg['secrets']['tenant_credentials']['file'])
+        if target.is_symlink():
+            raise ValueError('Credential registry may not be a symlink')
+        before, candidate = json.loads(target.read_text()), json.loads(args.candidate.read_text())
+        if [e for e in before if e['role'] != 'docs'] != [e for e in candidate if e['role'] != 'docs']:
+            raise ValueError('API credentials must remain identical')
+        # The running image must support docs-only identities before installing
+        # them. Old images reject the new role; fail before touching any file.
+        code = "import json,sys\nfrom iacp.security import Credential\na=[Credential.model_validate(v) for v in json.load(sys.stdin)]\nassert any(v.role=='docs' for v in a)\nassert len({v.token_sha256 for v in a})==len(a)\nassert len({v.subject for v in a if v.role=='docs'})==sum(v.role=='docs' for v in a)"
+        run(docker + ['exec', '-i', api['Id'], 'python', '-c', code], input=json.dumps(candidate))
+        import fcntl
+        rotation_lock = (args.env_file.parent / '.promotion.lock').open('a')
+        fcntl.flock(rotation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        backup = args.evidence_dir / 'registry.before.private.json'
+        save(backup, before)
+        temporary = target.with_name(target.name + '.installing')
+        save(temporary, candidate)
+        st = target.stat()
+        os.chown(temporary, st.st_uid, st.st_gid); temporary.chmod(st.st_mode & 0o770)
+        temporary.replace(target)
+        fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+        # A bind-mounted leaf keeps its old inode after atomic replacement.
+        # Only the API is recreated, explicitly in the approved rotation window.
+        run(dc + ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--force-recreate', 'api'])
+        operation.evidence('docs-rotation', {'installed': True, 'backup_private': str(backup), 'recreated': ['api']})
+        print(json.dumps({'installed': True, 'api_credentials_changed': False, 'backup_private': str(backup)}))
+        return
+    if args.action == 'status':
+        print(json.dumps([{'role': c['Config']['Labels'].get('com.docker.compose.service'), 'running': c['State']['Running'],
+             'health': c['State'].get('Health', {}).get('Status', 'not-configured'), 'image': c['Image']} for c in live], indent=2))
+    elif args.action == 'logs':
+        if args.service not in {c['Config']['Labels'].get('com.docker.compose.service') for c in live}:
+            raise ValueError('Unknown service')
+        # Logs can contain historical application output: explicitly requested, never archived automatically.
+        subprocess.run(dc + ['logs', '--tail', str(max(1, min(args.tail, 1000))), args.service], check=True)
+    elif args.action == 'doctor':
+        current = json.loads(run(runtime_command(live, docker)))
+        candidate = json.loads(run(dc + ['--profile', 'certification', 'config', '--format', 'json']))
+        report = compare(current, candidate)
+        report['live_compatibility'] = live_compatibility(current, live)
+        report['passed'] &= report['live_compatibility']['passed']
+        report['roles_running'] = {c['Config']['Labels'].get('com.docker.compose.service'): c['State']['Running'] for c in live}
+        expected = {'api', 'worker', 'terraform-worker', 'lifecycle-worker', 'traefik', 'db', 'redis'}
+        report['passed'] &= expected <= {k for k, value in report['roles_running'].items() if value}
+        for c in live:
+            if c['Config']['Labels'].get('com.docker.compose.service') in {'api', 'db', 'redis'}:
+                report['passed'] &= c['State'].get('Health', {}).get('Status') == 'healthy'
+        api = next(c for c in live if c['Config']['Labels'].get('com.docker.compose.service') == 'api')
+        code = "from iacp.api.health import ready\nassert ready().status == 'ready'\nprint('READY')"
+        run(docker + ['exec', api['Id'], 'python', '-c', code])
+        # Reuse existing DB/queue/worker/pin/secret checks. This is read-only.
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from go_live import Promotion
+        m = json.loads(args.manifest.read_text())
+        if m.get('configuration_mode') != 'canonical' or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
+            raise ValueError('Reviewed canonical manifest required')
+        if not args.evidence_dir:
+            raise ValueError('A new private --evidence-dir is required')
+        args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        Promotion(m, args.evidence_dir).verify()
+        save(args.evidence_dir / 'comparison.json', report)
+        print(json.dumps(report))
+        if not report['passed']:
+            raise RuntimeError('Semantic comparison or service health failed')
+    else:
+        if not args.evidence_dir:
+            raise ValueError('A new private --evidence-dir is required')
+        m = json.loads(args.manifest.read_text())
+        if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
+            raise ValueError('Manifest must use the one canonical Compose and active environment')
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
+        subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'passed': False, 'reason': str(error) if type(error) in {ValueError, RuntimeError} else type(error).__name__}), file=sys.stderr)
+        sys.exit(1)

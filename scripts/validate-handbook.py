@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     documents = sorted((ROOT / "docs" / "handbook").glob("*.md"))
+    documents.append(ROOT / "docs" / "OPERATIONS.md")
     if not documents:
         raise ValueError("Faltan los manuales")
     for document in documents:

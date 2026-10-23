@@ -33,7 +33,7 @@ class Credential(BaseModel):
     token_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     tenant_id: UUID
     subject: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:@-]+$")
-    role: Literal["operator", "reader", "approver"]
+    role: Literal["operator", "reader", "approver", "docs"]
 
 
 def authorize(
@@ -65,7 +65,7 @@ def authorize(
         if len(supplied) >= 32:
             digest = hashlib.sha256(supplied).hexdigest()
             for entry in entries:
-                if hmac.compare_digest(digest, entry.token_sha256):
+                if entry.role != "docs" and hmac.compare_digest(digest, entry.token_sha256):
                     principal = Principal(str(entry.tenant_id), entry.subject, entry.role)
     if principal is None:
         raise HTTPException(
@@ -93,10 +93,31 @@ def authorize_docs(
     session: Annotated[Session, Depends(get_session)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     basic: Annotated[HTTPBasicCredentials | None, Depends(docs_basic)],
-) -> Principal:
+) -> Principal | None:
     """Browser challenge uses the existing tenant token; no cookies or new identity store."""
-    if basic is not None and basic.username == "iacp":
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=basic.password)
+    if basic is not None:
+        try:
+            registry = os.environ.get("IACP_TENANT_CREDENTIALS_FILE")
+            entries = [Credential.model_validate(item) for item in json.loads(Path(registry).read_text())] if registry else []
+            docs = [entry for entry in entries if entry.role == "docs"]
+            if len({entry.token_sha256 for entry in entries}) != len(entries) or len({entry.subject for entry in docs}) != len(docs):
+                raise ValueError("Ambiguous credential registry")
+            # Once explicit docs identities exist, Basic no longer accepts API
+            # tokens. Bearer automation retains its existing tenant/RBAC checks.
+            if docs:
+                digest = hashlib.sha256(basic.password.encode()).hexdigest()
+                entry = next((entry for entry in docs if hmac.compare_digest(entry.subject, basic.username)
+                              and hmac.compare_digest(entry.token_sha256, digest)), None)
+                if entry is None:
+                    raise HTTPException(401, "Unauthorized", headers={"WWW-Authenticate": 'Basic realm="IACP docs"'})
+                tenant = session.get(Tenant, str(entry.tenant_id))
+                if tenant is None or not tenant.active:
+                    raise HTTPException(403, "Tenant unavailable")
+                return None
+        except (OSError, ValueError, TypeError, ValidationError):
+            raise HTTPException(503, "Documentation authentication unavailable") from None
+        if basic.username == "iacp":
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=basic.password)
     try:
         return authorize(credentials, session)
     except HTTPException as error:

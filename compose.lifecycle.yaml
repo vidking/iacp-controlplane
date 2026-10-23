@@ -43,6 +43,11 @@ services:
     environment:
       IACP_KVM_LIFECYCLE_ENABLED: "0"
       IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      TMPDIR: /run/iacp-certification
+    # /tmp remains noexec. Only the isolated, readonly-state certifier needs to
+    # execute the checksum-verified provider binary in its ephemeral workspace.
+    tmpfs:
+      - /run/iacp-certification:rw,exec,nosuid,nodev,size=536870912,mode=0700,uid=10001,gid=10001
     secrets: [db_password, terraform_credentials, kvm_credentials]
     volumes:
       - terraform_plans:/var/lib/iacp/terraform:ro
