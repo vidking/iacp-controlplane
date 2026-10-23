@@ -133,5 +133,5 @@ en failed. Véase el [procedimiento](../HISTORICAL_PLAN_RECOVERY.md).
 Lecturas de otro tenant devuelven 404. Un reader no puede escribir;
 un operator no puede aprobar; un approver no puede solicitar apply.
 
-Los ejemplos de eliminación están en [la demostración](LAB_DEMO.md): todavía no
-existe DELETE de instancias en la API. No simularlo borrando registros del inventario.
+El contrato nuevo de eliminación está en [DELETE seguro](../SAFE_DELETE.md).
+Permanece OFF y no está desplegado. No simularlo borrando registros del inventario.

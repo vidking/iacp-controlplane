@@ -88,6 +88,9 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                 identifier = previous.id
                 session.commit()
             else:
+                from ..terraform.deletion import active_deletion
+                if active_deletion(session, instance.id):
+                    raise Conflict("DELETE_OPERATION_ACTIVE")
                 try:
                     revision = mutation_revision()
                 except PowerError as failure:

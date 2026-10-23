@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0006_power_ownership"
+HEAD = "0007_safe_deletion"
 SOURCE = "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae"
 ARCHIVE = "98f0900d571a8d05e4bbb0eabdb10550a372655f61fda35aaa3a601537daa94a"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -171,12 +171,18 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.evidence("approval", {"action": action, "record_sha256": record["sha256"], "actor": change["actor"], "reference": change["reference"]})
         return change
 
-    def flags(self, *, admission, lifecycle):
+    def flags(self, *, admission, lifecycle, deletion=None, disposable_ids=None):
         path = Path(self.m["environment_file"])
         require(not path.is_symlink(), "Environment file must not be a symlink")
         original = path.read_text()
         values = {"IACP_ADMISSION_ENABLED": str(admission), "IACP_KVM_LIFECYCLE_ENABLED": str(lifecycle),
                   "IACP_TERRAFORM_APPLY_ENABLED": "1"}
+        if deletion is not None:
+            from uuid import UUID
+            require(deletion in (0, 1), "Invalid deletion flag")
+            identifiers = [str(UUID(identifier)) for identifier in disposable_ids or []]
+            require(not deletion or bool(identifiers), "Deletion requires an explicit UUID allowlist")
+            values.update(IACP_TERRAFORM_DELETE_ENABLED=str(deletion), IACP_DISPOSABLE_INSTANCE_IDS=','.join(identifiers))
         lines = [line for line in original.splitlines() if not re.match(
             r"^\s*(?:export\s+)?(?:" + "|".join(values) + r")\s*=", line)]
         new = "\n".join(lines + [key + "=" + value for key, value in values.items()]) + "\n"
@@ -276,7 +282,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 and restored["backup_sha256"] == backup["sha256"] and restored["schema"] == "0004_authorized_apply"
                 and restored["table_count"] >= 9, "Restore attestation is incomplete")
         report = self.snapshot()
-        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], [HEAD]], "Unsupported schema")
+        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], [HEAD]], "Unsupported schema")
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
         return report
 
@@ -416,6 +422,10 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             self.exec_python(role, "import os\nassert os.geteuid() == 10001\nfor path in " + repr(secrets) + ":\n with open(path, 'rb') as stream: assert stream.read(1)\nprint('UID10001_SECRET_READS_OK')")
             if role in {"api", "terraform-worker"}:
                 require(values.get("IACP_TERRAFORM_APPLY_ENABLED") == "1", "Apply changed")
+                planned_env = config['services'][role]['environment']
+                require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0')
+                        and values.get('IACP_DISPOSABLE_INSTANCE_IDS', '') == planned_env.get('IACP_DISPOSABLE_INSTANCE_IDS', ''),
+                        "Deletion flag/allowlist differs from reviewed configuration")
             if role in {"api", "lifecycle-worker"}:
                 require(values.get("IACP_KVM_LIFECYCLE_ENABLED", "0") == str(lifecycle), "Lifecycle flag mismatch")
             if role == "api":
@@ -432,7 +442,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         for role in ("api", "lifecycle-worker"):
             require(json.loads(self.exec_python(role, "import json\nfrom iacp.lifecycle.ownership import ownership_revision\nprint(json.dumps(ownership_revision()))")) == SOURCE, "Power ownership pin mismatch")
         report = self.snapshot()
-        require(report["schema"] == [HEAD], "Schema is not 0006")
+        require(report["schema"] == [HEAD], "Schema is not 0007")
         if idle:
             check_idle(report)
             self.workers_idle(lifecycle=True)
@@ -511,6 +521,97 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         after = self.verify()
         compare_history(before, after)
         self.evidence("promotion-completed", {"schema": HEAD, "lifecycle": 0, "admission": 0, "history_unchanged": True})
+
+    def operator_review(self, key, change):
+        reference = self.m[key]
+        require(digest(reference['path']) == reference['sha256'], "Operator review checksum mismatch")
+        review = json.loads(Path(reference['path']).read_text())
+        require(review.get('approved') is True and review.get('release') == self.m['release']
+                and review.get('change_reference') == change['reference'], "Operator review missing or for another change")
+        return review
+
+    def admit(self):
+        change = self.approve('enable-admission')
+        self.preflight()
+        self.verify()  # Idle, admission=0, Lifecycle=0; does not need VM106 activation.
+        review = self.operator_review('admission_review', change)
+        cfg = json.loads(self.compose('config', '--format', 'json'))
+        path = next(v['source'] for v in cfg['services']['terraform-worker']['volumes']
+                    if v['target'] == '/run/config/allocations.json')
+        require(review['allocation_file'] == {'path': path, 'sha256': digest(path)}, "IPAM allocation review mismatch")
+        require(bool(review['targets']), "At least one new lab target must be reviewed")
+        # Validate the real mounted allocation and cluster-wide absence using the
+        # existing read-only client; unsupported DHCP cannot pass this boundary.
+        code = '''import json, tempfile
+from pathlib import Path
+from iacp.terraform.config import Allocation
+from iacp.terraform.lifecycle import build_executor
+from iacp.terraform.observation import proxmox_resource
+from iacp.db import get_session_factory
+from iacp.models import Tenant, Instance
+from sqlalchemy import select
+from ipaddress import IPv4Interface
+targets = json.loads(REVIEW)
+import os
+entries = json.loads(Path(os.environ['IACP_TERRAFORM_ALLOCATIONS_FILE']).read_text())
+with tempfile.TemporaryDirectory() as directory:
+ env = build_executor(observation=True).environment(Path(directory))
+ for key in targets:
+  tenant,name=key.split('/',1)
+  with get_session_factory()() as s:
+   assert s.get(Tenant,tenant) and s.get(Tenant,tenant).active
+   assert s.scalar(select(Instance.id).where(Instance.tenant_id==tenant,Instance.name==name)) is None
+  a = Allocation.model_validate(entries[key])
+  assert a.vm_id >= 30000 and a.vm_id not in (104,106)
+  assert sum(v['vm_id'] == a.vm_id for v in entries.values()) == 1
+  assert sum(IPv4Interface(v['ipv4_cidr']).ip == IPv4Interface(a.ipv4_cidr).ip for v in entries.values()) == 1
+  assert proxmox_resource(env, {'vm_id': a.vm_id, 'node_name': a.node_name, 'vm_name': key.split('/',1)[1]}, lambda:False)['present'] is False
+print('AUTHORIZED_NEW_LAB_TARGETS')
+'''.replace('REVIEW', repr(json.dumps(review['targets'])))
+        self.exec_python('terraform-worker', code)
+        try:
+            self.flags(admission=1, lifecycle=0)
+            self.up('api')
+            self.verify(admission=1, lifecycle=0)
+        except Exception:
+            self.flags(admission=0, lifecycle=0)
+            self.up('api')
+            raise
+        self.evidence('admission-enabled', {'lifecycle': 0, 'apply': 1, 'allocation_sha256': digest(path)})
+
+    def enable_delete(self):
+        change = self.approve('enable-delete')
+        self.preflight()
+        self.verify()
+        review = self.operator_review('deletion_review', change)
+        from uuid import UUID
+        identifiers = [str(UUID(v)) for v in review['instance_ids']]
+        require(bool(identifiers) and len(set(identifiers)) == len(identifiers), "Unique disposable UUIDs required")
+        require(set(review['identities']) == set(identifiers), "Explicit reviewed VMID/node/name required per UUID")
+        code = '''import json
+from iacp.db import get_session_factory
+from iacp.models import Instance, Tenant, TerraformExecution
+from iacp.lifecycle.service import managed_target
+from iacp.terraform.config import SOURCE_REVISION, Allocation
+with get_session_factory()() as s:
+ for identifier,expected in json.loads(REVIEW).items():
+  i=s.get(Instance,identifier);assert i and s.get(Tenant,i.tenant_id).active
+  t,a=managed_target(s,i);assert t.vmid >= 30000 and t.vmid not in (104,106)
+  assert expected == {'vmid':t.vmid,'node':t.node,'name':t.name}
+  e=s.get(TerraformExecution,identifier);assert e.source_revision == SOURCE_REVISION
+  Allocation.model_validate(e.allocation)
+print('DISPOSABLE_PROVISIONING_VERIFIED')
+'''.replace('REVIEW', repr(json.dumps(review['identities'])))
+        self.exec_python('api', code)
+        try:
+            self.flags(admission=0, lifecycle=0, deletion=1, disposable_ids=identifiers)
+            self.up('terraform-worker', 'api')
+            self.verify()
+        except Exception:
+            self.flags(admission=0, lifecycle=0, deletion=0)
+            self.up('terraform-worker', 'api')
+            raise
+        self.evidence('delete-enabled', {'instance_ids': identifiers, 'admission': 0, 'lifecycle': 0, 'apply': 1})
 
     def snapshot_stopped(self):
         # All application containers are now stopped. Read through a one-shot
@@ -645,13 +746,13 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.workers_idle(lifecycle=True)
         self.up("lifecycle-worker")
         report = self.snapshot()
-        require(report["schema"] == [HEAD], "Keep schema 0006")
+        require(report["schema"] == [HEAD], "Keep current schema head")
         self.evidence("rollback", {"lifecycle": 0, "admission": 0, "apply": 1, "schema": HEAD})
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     args = parser.parse_args()

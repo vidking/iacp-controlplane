@@ -1,0 +1,168 @@
+"""Provider/state fixtures plus real Terraform core locally; no enterprise resources."""
+from copy import deepcopy
+import io
+import json
+from pathlib import Path
+import tarfile
+from types import SimpleNamespace
+from unittest.mock import Mock
+from uuid import uuid4
+
+import pytest
+
+from iacp.terraform import deletion_executor as module
+from iacp.terraform.config import Allocation, PlanError
+from iacp.terraform.deletion_executor import DeletionExecutor
+from iacp.terraform.executor import ADDRESS
+from iacp.terraform.runner import CommandRunner
+from iacp.terraform.state import StateSnapshot
+from tests.test_deletion import deletion_plan
+from tests.test_terraform import allocation_data, plan_json
+
+
+@pytest.fixture
+def deletion_executor(tmp_path,monkeypatch):
+    allocation=Allocation.model_validate(allocation_data(30000))
+    instance=SimpleNamespace(name='disposable',image='test-image',disk_gb=20,vcpus=2,memory_mb=2048)
+    ctx={'instance_id':str(uuid4()),'operation_id':str(uuid4()),'attempt':1,'provisioning_plan_sha256':'a'*64,
+         'state_key':'synthetic-state','allocation':allocation.model_dump(),'variables':allocation.variables(instance),
+         'backend':allocation.backend.arguments('synthetic-state')}
+    approved=plan_json(ctx['variables'])
+    values=deepcopy(approved['resource_changes'][0]['change']['after']);values['id']='30000'
+    destroy=deletion_plan();destroy['resource_changes'][0]['change']['before']=values
+    destroy['prior_state']['values']['root_module']['resources'][0]['values']=values
+    state={'version':4,'lineage':'synthetic-lineage','serial':1,'resources':[{'mode':'managed','module':'module.kvm',
+        'type':'proxmox_virtual_environment_vm','name':'this','instances':[{'attributes':values}]}]}
+    store=SimpleNamespace(state=state,version='v1',reader_calls=0,stopped=0)
+    class Reader:
+        def __init__(self,*args):pass
+        def read(self,cancelled):
+            cancelled();store.reader_calls+=1
+            return StateSnapshot.parse(json.dumps(store.state).encode(),store.version)
+        def close(self):pass
+    class Runner:
+        def __init__(self):self.calls=[]
+        def run(self,args,cwd,env,cancelled,**kwargs):
+            cancelled();self.calls.append(args)
+            if args==['version','-json']:return json.dumps({'terraform_version':'1.16.6'}).encode()
+            if args[0]=='show':return json.dumps(approved if args[-1].endswith('/saved.tfplan') else destroy).encode()
+            return b''
+        def plan_destroy(self,cwd,env,cancelled):
+            cancelled();self.calls.append(['plan_destroy']);(cwd/'deletion.tfplan').write_bytes(b'synthetic saved destroy plan')
+        def apply_destroy(self,cwd,env,cancelled):
+            cancelled();self.calls.append(['apply_destroy']);store.state['resources']=[];store.state['serial']=2;store.version='v2'
+    runner=Runner();executor=DeletionExecutor(tmp_path/'source',tmp_path/'artifacts',runner)
+    monkeypatch.setattr(executor,'verify_artifacts',lambda *args:None)
+    monkeypatch.setattr(executor,'environment',lambda *args:{'PROXMOX_VE_ENDPOINT':'https://fixture.invalid','PROXMOX_VE_API_TOKEN':'synthetic-token'})
+    archive=io.BytesIO()
+    with tarfile.open(fileobj=archive,mode='w') as tar:
+        data=b'terraform {}';item=tarfile.TarInfo('stacks/kvm-instance/main.tf');item.size=len(data);tar.addfile(item,io.BytesIO(data))
+    monkeypatch.setattr(module.subprocess,'run',lambda *args,**kwargs:SimpleNamespace(stdout=archive.getvalue()))
+    def stopped(*args):store.stopped+=1
+    monkeypatch.setattr(module,'stopped',stopped)
+    monkeypatch.setattr(module,'S3StateReader',Reader)
+    monkeypatch.setattr(module,'proxmox_resource',lambda *args:{'present':False})
+    return executor,ctx,store
+
+
+def test_saved_delete_plan_apply_and_readonly_reconciliation(deletion_executor):
+    executor,ctx,store=deletion_executor
+    plan=executor.plan_deletion(ctx,lambda:False);mutations=[]
+    result=executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:mutations.append(True))
+    assert mutations==[True] and result['deleted'] and store.stopped==4
+    assert executor.runner.calls.count(['apply_destroy'])==1
+    executor.runner.calls.clear()
+    assert executor.reconcile_deletion(ctx,plan['plan_sha256'],lambda:False)['deleted']
+    assert executor.runner.calls==[]
+
+
+@pytest.mark.parametrize('change',['binary','variables','context','credential','state-version','state-lineage','extra-state-resource'])
+def test_delete_revalidates_all_bindings_before_mutation(deletion_executor,change):
+    executor,ctx,store=deletion_executor;plan=executor.plan_deletion(ctx,lambda:False)
+    root=executor.deletion_workspace(ctx['instance_id'],ctx['operation_id'])/'source/stacks/kvm-instance'
+    if change=='binary':(root/'deletion.tfplan').write_bytes(b'tampered')
+    elif change=='variables':(root/'iacp.auto.tfvars.json').write_text('{}')
+    elif change=='context':ctx=deepcopy(ctx);ctx['state_key']='another-tenant'
+    elif change=='credential':executor.environment=lambda *args:{'PROXMOX_VE_ENDPOINT':'https://other.invalid','PROXMOX_VE_API_TOKEN':'other'}
+    elif change=='state-version':store.version='v2'
+    elif change=='state-lineage':store.state['lineage']='other-lineage'
+    else:store.state['resources'].append(deepcopy(store.state['resources'][0]))
+    with pytest.raises(PlanError):executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:pytest.fail('must not mutate'))
+    assert ['apply_destroy'] not in executor.runner.calls
+
+
+@pytest.mark.parametrize('problem',['resource-present','pve-present','same-serial','lineage-changed','unversioned','backend-error'])
+def test_recovery_requires_stable_versioned_absence_in_both_systems(deletion_executor,monkeypatch,problem):
+    executor,ctx,store=deletion_executor;plan=executor.plan_deletion(ctx,lambda:False)
+    store.state['serial']=2;store.version='v2'
+    if problem!='resource-present':store.state['resources']=[]
+    if problem=='pve-present':monkeypatch.setattr(module,'proxmox_resource',lambda *args:{'present':True})
+    elif problem=='same-serial':store.state['serial']=1
+    elif problem=='lineage-changed':store.state['lineage']='other'
+    elif problem=='unversioned':store.version=None
+    elif problem=='backend-error':
+        class Reader:
+            def __init__(self,*args):pass
+            def read(self,*args):raise PlanError('STATE_BACKEND_READ_FAILED')
+            def close(self):pass
+        monkeypatch.setattr(module,'S3StateReader',Reader)
+    executor.runner.calls.clear()
+    with pytest.raises(PlanError):executor.reconcile_deletion(ctx,plan['plan_sha256'],lambda:False)
+    assert executor.runner.calls==[]
+
+
+def test_real_terraform_core_saved_destroy_uses_fixed_commands(tmp_path,monkeypatch):
+    # Terraform's built-in provider, local scratch state; no Proxmox or Wasabi.
+    monkeypatch.setenv('IACP_TERRAFORM_APPLY_ENABLED','1');monkeypatch.setenv('IACP_TERRAFORM_DELETE_ENABLED','1')
+    (tmp_path/'main.tf').write_text('resource "terraform_data" "disposable" { input = "fixture" }')
+    env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(tmp_path),'TF_INPUT':'0','CHECKPOINT_DISABLE':'1'}
+    runner=CommandRunner(timeout=20)
+    runner.run(['init','-backend=false','-input=false'],tmp_path,env,lambda:False)
+    runner.run(['plan','-input=false','-out=saved.tfplan'],tmp_path,env,lambda:False)
+    runner.apply_saved(tmp_path,env,lambda:False)
+    runner.plan_destroy(tmp_path,env,lambda:False)
+    plan=json.loads(runner.run(['show','-json','deletion.tfplan'],tmp_path,env,lambda:False))
+    assert plan['resource_changes'][0]['change']['actions']==['delete']
+    runner.apply_destroy(tmp_path,env,lambda:False)
+    state=json.loads(runner.run(['state','pull'],tmp_path,env,lambda:False))
+    assert state['resources']==[]
+
+
+@pytest.mark.parametrize('case',['allowed','no-allocate','running','pending','ha'])
+def test_delete_pve_preflight_uses_terraform_identity_and_never_posts(monkeypatch,case):
+    from iacp.lifecycle.proxmox import PowerError
+    calls=[]
+    class Client:
+        def _request(self,method,path):
+            calls.append((method,path));return {'/vms/30000':{'VM.Audit':0,**({} if case=='no-allocate' else {'VM.Allocate':0})}}
+        def observe(self,target,preflight=False):
+            assert preflight
+            if case in {'pending','ha'}:raise PowerError('POWER_PENDING_CONFIGURATION' if case=='pending' else 'POWER_HA_UNSUPPORTED')
+            return {'power_state':'running' if case=='running' else 'stopped'}
+    monkeypatch.setattr(module,'ProxmoxPower',lambda *args:Client())
+    env={'PROXMOX_VE_ENDPOINT':'https://fixture.invalid','PROXMOX_VE_API_TOKEN':'synthetic'}
+    args=(env,{'instance':{'vm_id':30000,'node_name':'mng01','vm_name':'disposable'}},lambda:False)
+    if case=='allowed':module.stopped(*args)
+    else:
+        with pytest.raises(PlanError):module.stopped(*args)
+    assert all(method=='GET' for method,path in calls)
+
+
+@pytest.mark.parametrize('field',['disk','network_device','cpu','initialization'])
+def test_external_resource_topology_changes_are_never_swept_into_delete(field):
+    from iacp.terraform.deletion_executor import verify_topology
+    variables=Allocation.model_validate(allocation_data(30000)).variables(SimpleNamespace(name='disposable',image='test-image',disk_gb=20,vcpus=2,memory_mb=2048))
+    approved=plan_json(variables);current=deepcopy(approved['resource_changes'][0]['change']['after'])
+    if field in {'disk','network_device'}:current[field].append(deepcopy(current[field][0]))
+    elif field=='cpu':current['cpu'][0]['cores']=8
+    else:current['initialization'][0]['ip_config'][0]['ipv4'][0]['address']='192.0.2.99/24'
+    with pytest.raises(PlanError):verify_topology(approved,current)
+
+
+def test_only_power_ownership_is_ignored_for_delete_not_provisioning():
+    from iacp.terraform.deletion_executor import verify_topology
+    variables=Allocation.model_validate(allocation_data(30000)).variables(SimpleNamespace(name='disposable',image='test-image',disk_gb=20,vcpus=2,memory_mb=2048))
+    approved=plan_json(variables);original=deepcopy(approved);current=deepcopy(approved['resource_changes'][0]['change']['after'])
+    current['started']=not current['started']
+    verify_topology(approved,current)
+    assert approved==original

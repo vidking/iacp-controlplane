@@ -16,7 +16,7 @@ operator; no puede convertirse en approver mediante remapeo.
 | Cancelar/recuperar run | No | Sí | No | Conciliar sin duplicar recursos |
 | Crear tenant/emitir o rotar credencial | No | No | No | Administración explícita y registro externo |
 | Seleccionar VMID, plantilla, redes y backend | No | No | No | Asignación autorizada externa |
-| Eliminar KVM | No | No | No | Plan y autorización separados; API pendiente |
+| Eliminar KVM descartable | No | Sí, con plan aprobado | Solo aprobar plan, otro sujeto | Feature OFF, allowlist y propiedad; VM 104/106 protegidas |
 | Modificar VM 104 | No | No | No | Fuera del alcance de este despliegue |
 
 La aprobación debe ser de un sujeto distinto del creador; quien solicita apply

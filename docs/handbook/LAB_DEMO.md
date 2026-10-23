@@ -2,8 +2,8 @@
 
 El material prepara una demostración futura. No se ejecutó apply/destroy real ni
 se modificó VM 104. La creación está implementada con controles en el PR del
-ejecutor; la eliminación de KVM todavía no tiene endpoint API y se realiza como
-cambio de Infraestructura separado, con plan y aprobación propios.
+ejecutor. La eliminación API nueva permanece OFF y exige plan y aprobación
+independientes; no está desplegada ni ejecutada en este piloto.
 
 ## Información que debe autorizarse
 
@@ -76,60 +76,11 @@ Criterios de éxito: una única KVM, un único state por UUID, un único inicio 
 mutación registrado, pertenencia al tenant, dimensiones del disco correctas y
 ningún cambio sobre VM 104. Si aparece uncertain, detener la demo y conciliar.
 
-## Eliminar con control de Infraestructura
+## Eliminación API descartable
 
-La API actual rechaza planes destructivos y no expone DELETE. La demostración
-completa combina creación por API con eliminación controlada fuera de ella.
-No se debe presentar esta parte como una función automática del Control Plane.
-
-Antes de eliminar: autorización explícita distinta de la creación, registro del
-VMID/nodo/state/lineage/serial, backup del state, prueba de pertenencia exclusiva,
-KVM sin datos de terceros y plan de recuperación. Detener nuevas mutaciones y
-verificar que no haya procesos Terraform activos. Mantener el mismo módulo,
-variables congeladas y backend de la instancia, sin copiar su state a otro UUID.
-
-En un entorno operativo aprobado, Infraestructura prepara un contenedor de
-operación desde la imagen terraform-worker del release, con los mismos montajes
-privados y credenciales cargadas desde el gestor autorizado. No requiere Terraform
-del host. Debe fijar TF_WORKSPACE=default y TF_DATA_DIR del workspace original,
-sin TF_CLI_ARGS heredados. Con la identidad y directorio exactos del workspace
-lab, prepara y revisa estos comandos. Son instrucciones
-para una ventana futura y no se ejecutan mediante las pruebas de este repositorio:
-
-```sh
-# TF_LAB_ROOT es el workspace verificado de ESTA instancia; credenciales por entorno seguro.
-: "${TF_LAB_ROOT:?Workspace autorizado de laboratorio}"
-cd "$TF_LAB_ROOT"
-terraform version
-terraform init -input=false -no-color -lockfile=readonly -backend-config=backend.tfbackend.json
-terraform plan -destroy -input=false -no-color -lock-timeout=30s -out=lab-delete.tfplan
-chmod 600 lab-delete.tfplan
-terraform show -json lab-delete.tfplan > lab-delete.review.json
-chmod 600 lab-delete.review.json
-sha256sum lab-delete.tfplan
-```
-
-Revisar que resource_changes contenga únicamente
-`module.kvm.proxmox_virtual_environment_vm.this`, actions `delete`, before.vm_id
-igual al reservado y distinto de 104, nodo correcto y ningún recurso ajeno en
-prior_state. Eliminar la KVM implica pérdida de su disco: exigir la aprobación
-específica y el hash de ese plan antes del siguiente paso.
-
-```sh
-# Solo después de autorización explícita de eliminación y verificación del hash aprobado.
-: "${LAB_DELETE_APPROVED_SHA256:?Hash registrado por el aprobador de eliminación}"
-test "$(sha256sum lab-delete.tfplan | cut -d ' ' -f 1)" = "$LAB_DELETE_APPROVED_SHA256"
-terraform apply -input=false -no-color -lock-timeout=30s lab-delete.tfplan
-terraform state list
-```
-
-No usar `terraform destroy`, `-auto-approve`, `-lock=false`, state rm ni edición
-manual para ocultar fallos. Un apply de plan destructivo también es una operación
-real y requiere autorización, aunque el nombre del comando sea apply.
-
-Tras completar: confirmar ausencia por lectura del provider/Proxmox, state sin
-recursos, release de lock y evidencia de VMID/nodo/hash/fecha/aprobador. Conservar
-state versionado y eventos; no borrar la fila de instancia ni reutilizar VMID a
-ciegas. El inventario de IACP no se actualiza automáticamente tras una eliminación
-externa: documentar esa limitación y cerrar la evidencia en el registro de cambio.
-La automatización de eliminación y la conciliación periódica quedan pendientes.
+La rama 0.7.0 incorpora un plan DELETE revisado, aprobación independiente y un
+worker Terraform con recuperación por observación. No se ha desplegado ni
+probado sobre una KVM empresarial. Ver [DELETE seguro](../SAFE_DELETE.md).
+No usar el antiguo procedimiento manual de destroy para sortear los controles
+de IACP. Solo podrá probarse contra la nueva KVM descartable confirmada, nunca
+VM 106 o VM 104. DHCP/untagged sigue sin soporte en el perfil actual.

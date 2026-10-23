@@ -1,6 +1,6 @@
 # Manual del Control Plane
 
-Este manual describe el código propuesto para IACP, API 0.6.0, y separa las
+Este manual describe el código propuesto para IACP, API 0.7.0 (propuesta; runtime e03807d continúa en 0.6.0), y separa las
 pruebas locales de la validación pendiente sobre una KVM de laboratorio.
 Forgejo es la fuente oficial; ningún procedimiento depende de un equipo personal.
 La URL de integración es **https://iac.cyberfuel.com**.
@@ -29,5 +29,6 @@ y los digests antes de cualquier ventana; no desplegar nombres de ramas móviles
 
 La demostración no está autorizada por este manual. No se ejecutó apply, destroy,
 merge, despliegue ni acceso a VM 104 durante la preparación de estos cambios.
-La eliminación de laboratorio requiere un procedimiento separado de Infraestructura;
-la API de eliminación todavía no está implementada.
+La eliminación API descartable está implementada en esta rama y permanece OFF;
+requiere migración 0007, propiedad y aprobación separada. No se ha ejecutado en MNG.
+Ver [DELETE seguro](../SAFE_DELETE.md).

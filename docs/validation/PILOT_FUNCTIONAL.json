@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-23",
+  "environment": "MNG laboratory; VM104",
+  "deployed_release": "e03807d14690e0a225d89793a12f61eab13a4463",
+  "deployed_schema": "0006_power_ownership",
+  "normalization_redeployed": false,
+  "new_kvm": {
+    "executed": false,
+    "operation_id": null,
+    "vmid": null,
+    "blocking_evidence": "Only allocation is historical VM106. Current Allocation rejects DHCP and untagged networking; no new authorized static allocation exists.",
+    "requested_future_profile": {
+      "vmid_min": 30000,
+      "bridge": "vmbr0",
+      "network": "dhcp",
+      "vlan": null
+    }
+  },
+  "historical_certification": {
+    "instance_id": "a1b2d063-6240-4969-bc04-e7e0e6be9e73",
+    "provisioning_operation_id": "734bc349-137e-4d0b-90f3-b756fab534f5",
+    "vmid": 106,
+    "node": "mng01",
+    "validated": true,
+    "recorded": true,
+    "certificate_id": "c1bac78e-c9b6-4295-90b9-a7c32b5b717f",
+    "source_revision_preserved": "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4",
+    "ownership_revision": "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae",
+    "state_consistency": "unchanged",
+    "power_state": "stopped",
+    "power_operation_executed": false,
+    "activation_blocked": "Activation controls incomplete: independent IPAM/network/access review missing",
+    "operator_change": "IACP-LAB-PILOT-20261023T204121Z",
+    "operator_authority": "Laboratory operator request in session; not independent corporate approval",
+    "private_evidence": "/opt/iacp/evidence/pilot-functional-20261023T204121Z"
+  },
+  "proposed_feature": {
+    "branch": "feature/iacp-safe-delete",
+    "schema": "0007_safe_deletion",
+    "deployed": false,
+    "enterprise_deletion_executed": false,
+    "tests": {
+      "total": 641,
+      "unit_and_local_cli": 599,
+      "integration": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 130.696,
+      "junit_sha256": "a7ec70fb92b4a7f6b8369a96c6c4a3b460513b77d70cb35c0d50a3953e06fc8d",
+      "remote_forgejo_ci": "not claimed; local isolated run"
+    },
+    "validation_boundaries": [
+      "Unit tests: synthetic Terraform and Proxmox",
+      "Integration: real disposable PostgreSQL 17, Redis 7, Celery; infrastructure simulated",
+      "Terraform CLI: actual saved plan/destroy for local terraform_data fixture only",
+      "No actual KVM creation, start, shutdown or deletion is claimed"
+    ]
+  },
+  "live_swagger_checks": 9,
+  "compose_render": {
+    "passed": true,
+    "apply": 1,
+    "deletion": 0,
+    "published_services": [
+      "traefik"
+    ]
+  },
+  "post_certification_doctor": "PASS"
+}

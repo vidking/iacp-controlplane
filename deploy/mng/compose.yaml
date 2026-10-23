@@ -49,6 +49,8 @@ services:
       IACP_TENANT_CREDENTIALS_FILE: /run/secrets/tenant_credentials
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
         flag required}
+      IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
+      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
       POSTGRES_DB: ${POSTGRES_DB:-iacp}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
     image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
@@ -290,6 +292,8 @@ services:
       IACP_TERRAFORM_ALLOCATIONS_FILE: /run/config/allocations.json
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
         flag required}
+      IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
+      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
       IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
       IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials
       IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:?Explicit operating
