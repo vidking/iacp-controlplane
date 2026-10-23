@@ -55,8 +55,15 @@ def private_json(path, value):
         stream.write("\n")
 
 
-def check_idle(report):
-    require(not any(report["nonterminal"].values()), "Nonterminal DB work; use its approved recovery workflow")
+def check_idle(report, allowed_uncertain=()):
+    nonterminal={k:list(v) for k,v in report["nonterminal"].items()}
+    if allowed_uncertain:
+        expected=set(allowed_uncertain)
+        rows=nonterminal.get('terraform_applies',[])
+        found={r['id'] for r in rows if r['status']=='uncertain' and r['id'] in expected}
+        require(found==expected,'Reviewed uncertainty fence changed')
+        nonterminal['terraform_applies']=[r for r in rows if not (r['status']=='uncertain' and r['id'] in expected)]
+    require(not any(nonterminal.values()), "Nonterminal DB work; use its approved recovery workflow")
     require(not any(report["queues"].values()) and report["unacked"] == 0, "Broker has pending work")
 
 
@@ -429,7 +436,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
     def up(self, *roles):
         self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *roles, timeout=180)
 
-    def verify(self, *, admission=0, lifecycle=0, idle=True):
+    def verify(self, *, admission=0, lifecycle=0, idle=True, allowed_uncertain=()):
         config = json.loads(self.compose("config", "--format", "json"))
         if self.canonical():
             self.internal_live_bindings()
@@ -471,7 +478,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         report = self.snapshot()
         require(report["schema"] == [HEAD], "Schema is not current head")
         if idle:
-            check_idle(report)
+            check_idle(report, allowed_uncertain)
             self.workers_idle(lifecycle=True)
         deadline = time.monotonic() + 60
         while True:
@@ -517,13 +524,14 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         return controls
 
     def promote(self):
-        self.approve("deploy")
+        change=self.approve("deploy")
         before = self.preflight()
+        recovery_ids=self.review_recovery_deployment(change,before)
         current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
         if self.canonical() and before["schema"] == [HEAD] and all(
             self.container(role)["Image"] == self.m["images"]["terraform" if role == "terraform-worker" else "api"] for role in ROLES) and (
                 current_api_flags.get("IACP_ADMISSION_ENABLED") == "0" and current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED") == "0"):
-            self.verify()
+            self.verify(allowed_uncertain=recovery_ids)
             self.evidence("canonical-adoption", {"passed": True, "containers_recreated": [], "schema_changed": False})
             return
         # Stop admission at the source, including internal clients. Never stop shared Traefik.
@@ -533,7 +541,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         while True:
             try:
                 before = self.snapshot()
-                check_idle(before)
+                check_idle(before,recovery_ids)
                 self.workers_idle(lifecycle=any(c["Config"]["Labels"].get("com.docker.compose.service") == "lifecycle-worker" for c in self.containers()))
                 break
             except RuntimeError:
@@ -541,13 +549,54 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                     raise
                 time.sleep(5)
         self.compose("stop", "--timeout", "60", "worker", "terraform-worker", "lifecycle-worker", timeout=75)
-        check_idle(self.snapshot_stopped())
+        check_idle(self.snapshot_stopped(),recovery_ids)
         # Alembic owns its version table. Its ordered graph keeps 0005 intact.
         self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T", "migrate", timeout=180)
         self.up(*ROLES)
-        after = self.verify()
+        after = self.verify(allowed_uncertain=recovery_ids)
         compare_history(before, after)
         self.evidence("promotion-completed", {"schema": HEAD, "lifecycle": 0, "admission": 0, "history_unchanged": True})
+
+    def review_recovery_deployment(self, change, before):
+        if 'recovery_deployment_review' not in self.m:
+            return ()
+        review=self.operator_review('recovery_deployment_review',change)
+        require(self.canonical() and before['schema']==[HEAD] and review.get('mode')=='readonly-apply-recovery'
+                and review.get('source_revision')==SOURCE,'Recovery deployment must preserve schema/source')
+        cfg=json.loads(self.compose('config','--format','json'))
+        api=cfg['services']['api']['environment']
+        require(api.get('IACP_ADMISSION_ENABLED')=='0' and api.get('IACP_KVM_LIFECYCLE_ENABLED')=='0'
+                and api.get('IACP_TERRAFORM_DELETE_ENABLED','0')=='0','Recovery deployment must stay drained')
+        current=next(v['Source'] for v in self.container('terraform-worker')['Mounts'] if v['Destination']=='/iac-source')
+        require(current==next(v['source'] for v in cfg['services']['terraform-worker']['volumes'] if v['target']=='/iac-source'),
+                'Recovery deployment cannot change IaC source mount')
+        from uuid import UUID
+        identifier=str(UUID(review['approval_id']))
+        code="""import json
+from iacp.db import get_session_factory
+from iacp.models import TerraformApply,TerraformExecution,Instance,Job
+from iacp.terraform.config import SOURCE_REVISION,Allocation,PlanError
+from iacp.terraform.lifecycle import build_executor
+review=json.loads(REVIEW)
+with get_session_factory()() as s:
+ row=s.get(TerraformApply,review['approval_id']);assert row and row.status=='uncertain' and row.started_at and row.job_id
+ e=s.get(TerraformExecution,row.instance_id);i=s.get(Instance,row.instance_id)
+ assert row.instance_id==review['instance_id'] and row.attempt==review['attempt'] and row.plan_sha256==review['plan_sha256']
+ assert e.source_revision==SOURCE_REVISION==review['source_revision'] and e.plan_sha256==row.plan_sha256
+ assert e.vmid>=30000 and e.vmid not in (104,106) and i.network_mode=='dhcp' and i.status=='failed'
+ assert s.get(Job,row.job_id).status=='failed'
+ a=Allocation.model_validate(e.allocation);ex=build_executor(observation=True)
+ try:ex.observe(i.id,row.attempt,e.allocation,a.variables(i),lambda:False)
+ except PlanError as failure:
+  assert failure.code=='RESOURCE_ABSENT' and failure.state_present is False and failure.proxmox_present is False
+  assert failure.state_consistency['change']=='unchanged'
+  print(json.dumps({'approval_id':row.id,'vmid':e.vmid,'absent':True,'state_consistency':failure.state_consistency}))
+ else:raise AssertionError('Recovery maintenance is limited to proved empty-state/absent VM')
+""".replace('REVIEW',repr(json.dumps(review)))
+        result=json.loads(self.exec_python('terraform-worker',code))
+        require(result['approval_id']==identifier,'Reviewed recovery identity mismatch')
+        self.evidence('fenced-recovery-readonly',result)
+        return (identifier,)
 
     def operator_review(self, key, change):
         reference = self.m[key]

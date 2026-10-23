@@ -81,3 +81,25 @@ def proxmox_resource(env, expected, cancelled):
         raise PlanError("PROXMOX_OBSERVATION_FAILED", phase=phase, http_status=error.code) from None
     except (OSError, URLError, HTTPException, ValueError, KeyError, TypeError, AttributeError):
         raise PlanError("PROXMOX_OBSERVATION_FAILED", phase=phase) from None
+
+
+def require_clone_permissions(env, expected):
+    """Check effective permissions before planning/consuming a DHCP mutation.
+
+    Observation/recovery never calls this function: it needs no Clone permission.
+    """
+    from ..lifecycle.proxmox import ProxmoxPower, PowerError, granted
+    try:
+        client = ProxmoxPower(env['PROXMOX_VE_ENDPOINT'].rstrip('/'),env['PROXMOX_VE_API_TOKEN'],
+            build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context(cafile=env.get('SSL_CERT_FILE'))),NoRedirect()))
+        checks=[('/vms/'+str(expected['template_vm_id']),'VM.Clone','VM_CLONE_PERMISSION_REQUIRED'),
+                ('/vms/'+str(expected['vm_id']),'VM.Allocate','VM_ALLOCATE_PERMISSION_REQUIRED')]
+        stores={expected['cloudinit_datastore_id'],expected['boot_disk']['datastore_id']}
+        if expected.get('clone_datastore_id'):stores.add(expected['clone_datastore_id'])
+        checks += [('/storage/'+quote(store,safe=''),'Datastore.AllocateSpace','DATASTORE_ALLOCATION_PERMISSION_REQUIRED') for store in sorted(stores)]
+        checks.append(('/sdn/zones/localnetwork/'+quote(expected['network_bridge'],safe=''),'SDN.Use','SDN_USE_PERMISSION_REQUIRED'))
+        for path, privilege, code in checks:
+            effective=client._request('GET','/access/permissions?path='+quote(path,safe='/'))
+            if not granted(effective.get(path,{}),privilege):raise PlanError(code,phase='preflight.clone_permissions')
+    except PowerError:
+        raise PlanError('CLONE_PERMISSION_CHECK_UNAVAILABLE',phase='preflight.clone_permissions') from None

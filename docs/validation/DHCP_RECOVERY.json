@@ -1,0 +1,45 @@
+{
+  "status": "candidate, not yet deployed",
+  "base": "583ad79",
+  "tests": {
+    "full_suite_passed": 698,
+    "integration_tests": 44,
+    "unit_cli_tests": 654,
+    "failed": 0,
+    "skipped": 0,
+    "latest_recovery_subset_passed": 85
+  },
+  "real_execution": {
+    "instance_id": "084c83e5-8d44-41a9-a527-f496cd83168b",
+    "vmid_reserved": 30000,
+    "approval_id": "d3ecf7fe-08bf-4165-913c-9960acb02e4b",
+    "attempt": 2,
+    "apply_status": "uncertain",
+    "error": "TERRAFORM_COMMAND_FAILED, exit1",
+    "proxmox_present": false,
+    "managed_state_resources": 0,
+    "state_serial": 1,
+    "state_lineage": "988b3dd0-8538-fa59-ea9b-2d5f9b04f7de",
+    "state_stable": true,
+    "apply_replayed": false,
+    "admission": 0,
+    "lifecycle": 0,
+    "delete": 0,
+    "apply_enabled": 1
+  },
+  "operator_rbac_fix": {
+    "verified_from_worker": true,
+    "template_clone": true,
+    "bridge_use": true,
+    "target_allocate": true,
+    "storage_allocate": true,
+    "vm104_excluded": true,
+    "changed_by_agent": false
+  },
+  "limits": [
+    "No real KVM or power/DELETE success claimed yet.",
+    "Recovery rollout requires explicit reviewed consumed Apply and native empty-state/absent-VM evidence.",
+    "Observe and resolve through authenticated API before any future attempt and approval."
+  ],
+  "private_log_sha256": "98abac55a5912fba7eafa073d6028eb34a56f36921c61c5928e8e30c2f3a3e7d"
+}

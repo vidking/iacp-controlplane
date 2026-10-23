@@ -195,7 +195,9 @@ def historical_run(client, auth, prepared, sessions, monkeypatch, tmp_path):
 @pytest.mark.parametrize("outcome,expected,error", [("existing", "completed", None), ("empty", "uncertain", "RESOURCE_ABSENT"),
     ("provider-error", "uncertain", "TERRAFORM_COMMAND_FAILED"), ("invalid-json", "uncertain", "INVALID_TERRAFORM_OUTPUT"),
     ("tampered", "uncertain", "PLAN_INTEGRITY_FAILED")])
-def test_recovery_with_apply_disabled_never_applies(client, auth, prepared, historical_run, sessions, application, outcome, expected, error):
+@pytest.mark.parametrize("admission", ["0", "1"])
+def test_recovery_with_apply_disabled_never_applies(client, auth, prepared, historical_run, sessions, application, outcome, expected, error, admission, monkeypatch):
+    monkeypatch.setenv("IACP_ADMISSION_ENABLED", admission)
     row, executor, runner, workspace, root, args = historical_run
     runner.outcome = outcome
     if outcome == "tampered": (root / "saved.tfplan").write_bytes(b"alterado")
@@ -234,7 +236,9 @@ def resolution_body(args):
                     "observed_at": utcnow().isoformat().replace("+00:00", "Z"), "evidence_ref": "INC-FIXTURE/proxmox"}}
 
 
-def test_audited_absence_closes_as_failed_and_cannot_reuse_authorization(client, auth, prepared, historical_run, sessions, monkeypatch):
+@pytest.mark.parametrize("drained", [False, True])
+def test_audited_absence_closes_as_failed_and_cannot_reuse_authorization(client, auth, prepared, historical_run, sessions, monkeypatch, drained):
+    if drained: monkeypatch.setenv("IACP_ADMISSION_ENABLED", "0")
     row, executor, runner, workspace, root, args = historical_run
     runner.outcome = "empty"
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
@@ -264,6 +268,7 @@ def test_audited_absence_closes_as_failed_and_cannot_reuse_authorization(client,
         events = session.scalars(select(OperationEvent).where(OperationEvent.code == "terraform_absence_resolved")).all()
         assert len(events) == 1 and events[0].actor == "infra-review"
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
+    monkeypatch.setenv("IACP_ADMISSION_ENABLED", "1")
     # El replay solo devuelve el run anterior; ninguna clave nueva puede despacharlo.
     assert dispatch(client, prepared, auth, row).json() == result
     assert dispatch(client, prepared, auth, row, key="new-apply").status_code == 409
