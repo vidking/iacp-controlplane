@@ -145,3 +145,7 @@ lectura su valor dentro del huésped; no se infiere equivalencia de una máscara
 Una actualización del provider requiere revisar estas reglas antes de admitir
 nuevas representaciones. El éxito contra artefactos guardados no sustituye la
 observación fresca y las comprobaciones de concurrencia al ejecutar `/recover`.
+
+## Gateway DHCP omitido (provider 0.116.1)
+
+El primer plan real DHCP conservó `initialization[0].ip_config[0].ipv4[0].gateway=null` como valor conocido (no after_unknown). La función de lectura del [provider fijado](https://github.com/bpg/terraform-provider-proxmox/blob/v0.116.1/proxmoxtf/resource/vm/vm.go) asigna `""` cuando `GatewayIPv4` es nil. Se admite únicamente null → cadena vacía en esa ruta, con dirección aprobada `dhcp`, gateway aprobado null y el contrato bpg/proxmox 0.116.1 verificado. No admite gateway configurado, otros valores/tipos, direcciones estáticas ni otro provider. La observación nativa exige además `ip=dhcp` y ausencia de `gw` y tag; no se altera plan, revisión histórica ni state para hacer coincidir resultados. Esta corrección fue detectada antes del primer Apply; no acredita una VM creada.
