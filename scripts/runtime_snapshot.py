@@ -28,7 +28,7 @@ def snapshot():
             hashes = sorted(hashlib.sha256(json.dumps(dict(row), default=str, sort_keys=True,
                             separators=(",", ":")).encode()).hexdigest() for row in rows)
             report["tables"][name] = {"count": len(rows), "sha256": hashlib.sha256("".join(hashes).encode()).hexdigest()}
-            if name in {"operations", "terraform_applies", "power_executions", "jobs"}:
+            if name in {"operations", "terraform_applies", "power_executions", "deletion_executions", "jobs"}:
                 terminal = {"completed", "failed", "cancelled"}
                 report["nonterminal"][name] = [{"id": row.get("id", row.get("operation_id")), "status": row["status"]}
                     for row in rows if row["status"] not in terminal]

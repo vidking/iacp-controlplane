@@ -19,7 +19,7 @@ def test_readonly_promotion_snapshot_survives_both_real_migrations(pg_engine, ru
     assert before["schema"] == ["0004_authorized_apply"]
     upgrade(pg_engine)
     after = inspector.snapshot()
-    assert after["schema"] == ["0006_power_ownership"]
+    assert after["schema"] == ["0007_safe_deletion"]
     for table, fingerprint in before["tables"].items():
         assert after["tables"][table] == fingerprint
     assert after["tables"]["power_executions"]["count"] == 0

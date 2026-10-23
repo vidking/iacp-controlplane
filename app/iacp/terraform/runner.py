@@ -21,6 +21,22 @@ class CommandRunner:
         return self._execute(["apply", "-input=false", "-no-color", "-lock-timeout=30s", "saved.tfplan"],
                              cwd, env, cancelled, (0,), "apply")
 
+    @staticmethod
+    def deletion_enabled():
+        if (os.environ.get("IACP_TERRAFORM_DELETE_ENABLED") != "1"
+                or os.environ.get("IACP_TERRAFORM_APPLY_ENABLED") != "1"):
+            raise PlanError("DELETE_DISABLED")
+
+    def plan_destroy(self, cwd: Path, env: dict, cancelled) -> bytes:
+        self.deletion_enabled()
+        return self._execute(["plan", "-destroy", "-input=false", "-no-color", "-lock-timeout=30s",
+                              "-detailed-exitcode", "-out=deletion.tfplan"], cwd, env, cancelled, (0, 2), "delete.plan")
+
+    def apply_destroy(self, cwd: Path, env: dict, cancelled) -> bytes:
+        self.deletion_enabled()
+        return self._execute(["apply", "-input=false", "-no-color", "-lock-timeout=30s", "deletion.tfplan"],
+                             cwd, env, cancelled, (0,), "delete.apply")
+
     def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,), phase=None) -> bytes:
         if args != ["state", "pull"] and (not args or args[0] not in {"version", "init", "validate", "plan", "show"}):
             raise PlanError("COMMAND_FORBIDDEN")

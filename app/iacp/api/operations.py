@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import Operation, OperationEvent, PowerExecution
-from ..schemas import ErrorResponse, EventResponse, OperationResponse, PowerProgress
+from ..models import DeletionExecution, Operation, OperationEvent, PowerExecution
+from ..schemas import DeletionProgress, ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"], responses={
@@ -23,10 +23,14 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
         raise HTTPException(status_code=404, detail="Operation not found")
     events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == row.id).order_by(OperationEvent.id))
     power = session.get(PowerExecution, row.id)
+    deletion = session.get(DeletionExecution, row.id)
     return OperationResponse(
         id=row.id, instance_id=row.instance_id, kind=row.kind, status=row.status,
         requested_by=row.requested_by, error_code=row.error_code, created_at=row.created_at, updated_at=row.updated_at,
         events=[EventResponse.model_validate(item) for item in events],
+        deletion=(DeletionProgress(**{key: getattr(deletion, key) for key in (
+            "status", "phase", "plan_sha256", "approved_by", "expires_at", "started_at", "finished_at")},
+            recovery_required=deletion.status == "uncertain") if deletion else None),
         power=(PowerProgress(action=power.action, status=power.status, phase=power.phase,
                              power_state=(power.result or {}).get("power_state"),
                              recovery_required=power.status == "uncertain", started_at=power.started_at,

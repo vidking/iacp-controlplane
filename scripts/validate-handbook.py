@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     documents = sorted((ROOT / "docs" / "handbook").glob("*.md"))
-    documents.append(ROOT / "docs" / "OPERATIONS.md")
+    documents.extend([ROOT / "docs" / "OPERATIONS.md", ROOT / "docs" / "SAFE_DELETE.md"])
     if not documents:
         raise ValueError("Faltan los manuales")
     for document in documents:
@@ -26,7 +26,7 @@ def main():
             else:
                 subprocess.run(["bash", "-n"], input=body, text=True, check=True)
     api = json.loads((ROOT / "docs" / "openapi.json").read_text())
-    if api["info"]["version"] != "0.6.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
+    if api["info"]["version"] != "0.7.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
         raise ValueError("Versión/servidor del contrato distintos de los documentados")
     required = [
         ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),
@@ -39,6 +39,9 @@ def main():
         ("/v1/instances/{instance_id}/power/start", "post"),
         ("/v1/instances/{instance_id}/power/shutdown", "post"),
         ("/v1/instances/{instance_id}/power/reboot", "post"),
+        ("/v1/instances/{instance_id}", "delete"),
+        ("/v1/instances/{instance_id}/terraform/deletion-plan", "post"),
+        ("/v1/instances/{instance_id}/terraform/deletion-approval", "post"),
     ]
     for path, method in required:
         operation = api["paths"][path][method]
@@ -47,8 +50,6 @@ def main():
     create = api["paths"]["/v1/instances"]["post"]
     if "202" not in create["responses"] or not any(row["name"] == "Idempotency-Key" and row["required"] for row in create["parameters"]):
         raise ValueError("Contrato de creación no idempotente/asíncrono")
-    if "delete" in api["paths"]["/v1/instances/{instance_id}"]:
-        raise ValueError("Actualizar la matriz: eliminación API todavía documentada como pendiente")
     print(json.dumps({"status": "passed", "network_contacted": False, "documents": len(documents),
                       "authenticated_contracts": len(required), "api_version": api["info"]["version"],
                       "api_url": api["servers"][0]["url"]}, sort_keys=True))

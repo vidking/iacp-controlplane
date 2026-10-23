@@ -78,4 +78,4 @@ validación de respaldos/restauración, DNS/CA/firewall y permisos mínimos. Rev
 locking Wasabi y acceso Proxmox. Medir una clonación de la plantilla autorizada,
 observar VMID/nodo/disco y comprobar recuperación bajo un protocolo aprobado.
 La creación/eliminación real y la homologación CRM no están validadas por estas
-pruebas. La API de eliminación permanece pendiente.
+pruebas. El contrato DELETE nuevo se prueba por separado con fixtures; sigue sin prueba real de eliminación.

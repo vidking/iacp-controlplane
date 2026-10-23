@@ -1,5 +1,8 @@
 # Operación canónica de IACP
 
+La normalización e03807d/0006 ya fue ejecutada. Esta rama propone 0007 para DELETE,
+con flags OFF; no se aplicó en VM 104. Ver [piloto y DELETE](SAFE_DELETE.md).
+
 La normalización es global a IACP; `deploy/mng` representa el primer entorno de
 validación, no un algoritmo ligado a un clúster. Las asignaciones Proxmox siguen
 fuera de Git. Base inspeccionada: `60da261f901b609b042c742b74fe5903f272715f`.
@@ -123,7 +126,7 @@ sudo /opt/iacp/releases/iacp-normalization/scripts/iacpctl --manifest /etc/iacp/
 ```
 
 Deploy delega al driver oficial, exige acción deploy vigente y compara con runtime
-antes de parar nada. Si esquema 0006 e imágenes son ya las aprobadas, adopta la
+antes de parar nada. Si esquema coincide con el head de la release e imágenes son ya las aprobadas, adopta la
 entrada canónica con verify sin reiniciar contenedores. Con imágenes nuevas usa
 el drenado y despliegue coordinado existente, con una interrupción de admisión
 planificada; no se promete cero downtime para una actualización binaria de una
@@ -208,7 +211,7 @@ validate-certificate, no record-certificate, y tiene ventana acotada. No fabrica
 otra aprobación. Lifecycle y admisión permanecen OFF; VM 106 no se inicia.
 
 Demo completa bloqueada de forma verificable antes de crear recursos: no existe
-DELETE en el contrato API actual; Admission/Lifecycle OFF; la asignación disponible
+DELETE en el contrato de e03807d; esta rama lo implementa OFF. Admission/Lifecycle OFF; la asignación disponible
 es la VM 106 histórica, no una VM demo descartable autorizada. DHCP no está
 implementado: Allocation exige ipv4_cidr/gateway estáticos aprobados. No inventar
 /stop o /delete. Los endpoints existentes son create/read, power/start y
@@ -246,11 +249,11 @@ sudo "$CTL" --manifest /etc/iacp/changes/manifest-normalization.json \
   --evidence-dir /opt/iacp/evidence/normalization-rollback rollback
 ```
 
-Mantiene 0006 y Apply=1; cierra admisión/Lifecycle, conserva certificados y observa
+Mantiene el head aplicado y Apply=1; cierra admisión/Lifecycle, conserva certificados y observa
 UPID conocidos. No rollback de esquema, state resets, comandos qm manuales o
 restauración de DB. Para fallos de configuración, restaurar el backup de env en
 una ventana y verificar comparación antes de aplicar; las imágenes compatibles
-con 0006 y la propiedad started se preservan.
+con el head aplicado y la propiedad started se preservan.
 
 Pruebas locales/diagnósticos readonly reales se registran en
 [OPERATIONAL_NORMALIZATION.json](validation/OPERATIONAL_NORMALIZATION.json). CI

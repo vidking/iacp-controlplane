@@ -14,3 +14,10 @@ def apply_instance(identifier: str, mode: str = "apply") -> None:
     if mode not in {"apply", "reconcile"}:
         return
     execute_apply(identifier, get_session_factory(), reconcile=mode == "reconcile")
+
+
+@celery_app.task(name="iacp.terraform.delete", autoretry_for=(), acks_late=True,
+                 reject_on_worker_lost=True, soft_time_limit=910, time_limit=930)
+def delete_instance(identifier: str, mode: str) -> None:
+    from .deletion import execute_deletion
+    execute_deletion(identifier, mode, get_session_factory())

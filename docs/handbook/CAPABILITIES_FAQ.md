@@ -18,7 +18,7 @@ Estado del código propuesto; no equivale a una validación nueva de producción
 | GET de energía y operaciones Lifecycle start/shutdown/reboot | Implementadas; mutaciones bloqueadas hasta promoción IaC | HTTPS, PostgreSQL, Celery, idempotencia y recuperación probados con servicios desechables; [contrato y límites](../KVM_LIFECYCLE_API.md) |
 | HTTPS/allowlist/Origin/certificados externos | Preparado en PR TLS independiente | Traefik real probado en Docker con certificado efímero; DNS/CA/firewall corporativos pendientes |
 | Contrato CRM/OpenAPI y ejemplos oficiales | Implementado/documentado | Snapshot y pruebas; homologación desde backend CRM pendiente |
-| Eliminación KVM por API | Pendiente | Guía de eliminación manual por Infraestructura con aprobación distinta |
+| Eliminación KVM por API | Implementada en rama, OFF y sin prueba real | UUID allowlist, VMID >=30000, plan y aprobación independientes; [runbook](../SAFE_DELETE.md) |
 | Conciliación periódica / inventario tras cambios externos | Pendiente | La observación actual ocurre tras apply o recuperación explícita |
 | Cuotas, OIDC, rate limiting, webhooks, SIEM inmutable | Pendientes | Requieren un incremento posterior; no se simulan como implementados |
 | Backup/restauración de producción | Requisito operativo, no confirmado aquí | Sin evidencia de restauración válida no se autoriza transición/migración |
@@ -70,8 +70,10 @@ con una plantilla grande. Un timeout no garantiza que Proxmox haya cancelado su 
 VMID/plantilla 104, se verifica pertenencia del state y cada instancia tiene una
 clave nueva estable. No importar infraestructura del Control Plane.
 
-**¿Por qué no hay DELETE de instancias?** El ejecutor vigente admite create/no-op.
-La eliminación necesita su propio contrato, estados, aprobación y recuperación.
+**¿Hay DELETE de instancias?** En esta rama existe el contrato para una KVM
+descartable explícitamente autorizada. Requiere 0007 y habilitación separada;
+no está desplegado ni validado contra una VM empresarial. El ejecutor de creación
+sigue rechazando planes destructivos. Ver [DELETE seguro](../SAFE_DELETE.md).
 La guía lab utiliza un cambio separado de Infraestructura y conserva evidencia.
 
 **¿Puedo borrar un lock o restaurar un state anterior para recuperar rápido?** No

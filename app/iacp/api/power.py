@@ -48,6 +48,9 @@ def get_power(instance_id: str, principal: PrincipalRead, session: Database, cli
         try:
             mutation_revision()
             instance_ownership(session, instance, approval)
+            from ..terraform.deletion import active_deletion
+            if active_deletion(session, instance.id):
+                reason = "DELETE_OPERATION_ACTIVE"
         except PowerError as failure:
             reason = failure.code
         return PowerState(instance_id=instance.id, **observed, mutations_available=reason is None, blocked_reason=reason)

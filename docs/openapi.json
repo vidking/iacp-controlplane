@@ -280,6 +280,194 @@
         "title": "AttemptResponse",
         "type": "object"
       },
+      "DeleteApprovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "examples": [
+              "00000000-0000-4000-8000-000000000002"
+            ],
+            "pattern": "^[a-f0-9-]{36}$",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "plan_sha256": {
+            "description": "Digest exacto del plan DELETE revisado; no acepta VMID, nodo ni force.",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Plan Sha256",
+            "type": "string"
+          },
+          "valid_for_seconds": {
+            "default": 900,
+            "maximum": 3600.0,
+            "minimum": 60.0,
+            "title": "Valid For Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation_id",
+          "plan_sha256"
+        ],
+        "title": "DeleteApprovalRequest",
+        "type": "object"
+      },
+      "DeleteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "examples": [
+              "00000000-0000-4000-8000-000000000002"
+            ],
+            "pattern": "^[a-f0-9-]{36}$",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "plan_sha256": {
+            "description": "Digest exacto del plan DELETE revisado; no acepta VMID, nodo ni force.",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Plan Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "plan_sha256"
+        ],
+        "title": "DeleteRequest",
+        "type": "object"
+      },
+      "DeletionAccepted": {
+        "description": "Operation tracking for a disposable deletion plan or command.",
+        "properties": {
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "uncertain"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "status"
+        ],
+        "title": "DeletionAccepted",
+        "type": "object"
+      },
+      "DeletionProgress": {
+        "properties": {
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "plan_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Sha256"
+          },
+          "recovery_required": {
+            "title": "Recovery Required",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "planned",
+              "approved",
+              "uncertain",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "phase",
+          "plan_sha256",
+          "approved_by",
+          "expires_at",
+          "started_at",
+          "finished_at",
+          "recovery_required"
+        ],
+        "title": "DeletionProgress",
+        "type": "object"
+      },
       "EmptyStateEvidence": {
         "additionalProperties": false,
         "properties": {
@@ -586,6 +774,10 @@
             "type": "integer"
           },
           "image": {
+            "description": "Perfil de imagen autorizado por el servidor; no una URL o VMID de Proxmox.",
+            "examples": [
+              "ubuntu-2404"
+            ],
             "maxLength": 63,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]*$",
@@ -601,6 +793,10 @@
             "type": "integer"
           },
           "name": {
+            "description": "Nombre previamente autorizado en IPAM para el tenant. No reserva red automáticamente.",
+            "examples": [
+              "iacp-mvp-demo-01"
+            ],
             "maxLength": 63,
             "minLength": 1,
             "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
@@ -702,7 +898,9 @@
               "pending",
               "provisioning",
               "ready",
-              "failed"
+              "failed",
+              "deleting",
+              "deleted"
             ],
             "title": "Status",
             "type": "string"
@@ -825,6 +1023,16 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "deletion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeletionProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error_code": {
             "anyOf": [
@@ -1253,9 +1461,9 @@
     }
   },
   "info": {
-    "description": "Inventario por tenant y operaciones asíncronas. Simulación por defecto y Terraform con planes aprobados y doble autorización; ejecución real deshabilitada por defecto.",
+    "description": "API corporativa privada por LAN/VPN.\n\n**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita energía; approver autoriza planes y debe ser distinto del solicitante.\n\n**Flujo real:** crear prepara un plan; consultar la ejecución Terraform, revisar y aprobar su SHA-256 y aplicar el plan autorizado. HTTP 202 acredita admisión, no una VM lista. Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\nVMID, nodo, plantilla y direccionamiento proceden de IPAM del servidor; no se aceptan en el payload. DHCP no está implementado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, plan destroy revisado y aprobación independiente. VM 104 y VM 106 están protegidas.",
     "title": "IACP Control Plane",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1506,6 +1714,124 @@
       }
     },
     "/v1/instances/{instance_id}": {
+      "delete": {
+        "description": "Operator original y MISMA Idempotency-Key de deletion-plan. Requiere habilitación explícita, allowlist y aprobación independiente vigente. Worker Terraform aplica únicamente el plan guardado. Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. VM 104 y VM 106 quedan prohibidas. No invoca DELETE nativo ni borra volúmenes Docker.",
+        "operationId": "deleteDisposableInstance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Eliminar una KVM descartable con plan aprobado",
+        "tags": [
+          "disposable-deletion"
+        ]
+      },
       "get": {
         "operationId": "getInstance",
         "parameters": [
@@ -2948,6 +3274,501 @@
         ]
       }
     },
+    "/v1/instances/{instance_id}/terraform/deletion-approval": {
+      "post": {
+        "description": "Approver del mismo tenant, sujeto distinto del solicitante. Liga aprobación de un uso al operation_id y SHA-256 del plan, con caducidad. No ejecuta Terraform.",
+        "operationId": "approveDisposableDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Aprobar el plan DELETE revisado",
+        "tags": [
+          "disposable-deletion"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/terraform/deletion-plan": {
+      "post": {
+        "description": "Operator del tenant. Solo UUID en allowlist, VMID >=30000 y KVM propia con Apply completado. Reserva la instancia frente a Lifecycle; genera un plan destroy guardado, sin Apply. Consultar operation.deletion en GET /v1/operations/{operation_id}. Conservar esta misma Idempotency-Key para DELETE.",
+        "operationId": "planDisposableDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preparar plan de eliminación sin borrar",
+        "tags": [
+          "disposable-deletion"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel": {
+      "post": {
+        "description": "Operator original. Cancela únicamente si started_at sigue vacío, con lock exclusivo. No ejecuta infraestructura; disponible durante el drenado. No libera una mutación incierta.",
+        "operationId": "cancelDisposableDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancelar antes de consumir la autorización",
+        "tags": [
+          "disposable-deletion"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover": {
+      "post": {
+        "description": "Operator original. Exige started_at persistido y reserva running/uncertain. Publica el mismo identificador exclusivamente en modo reconcile. Disponible con admisión/DELETE OFF; nunca ejecuta init, plan ni Apply ni autoriza un segundo intento de borrado.",
+        "operationId": "recoverDisposableDeletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reconciliar eliminación consumida solo por lectura",
+        "tags": [
+          "disposable-deletion"
+        ]
+      }
+    },
     "/v1/instances/{instance_id}/terraform/retry": {
       "post": {
         "description": "Reintenta solo planificación. Conserva instancia, asignación y state; nunca aplica un plan.",
@@ -3304,6 +4125,36 @@
     {
       "description": "API oficial; acceso autorizado",
       "url": "https://iac.cyberfuel.com"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Liveness y readiness; no crean infraestructura.",
+      "name": "health"
+    },
+    {
+      "description": "Inventario del tenant. Crear requiere operator y asignación IPAM previa.",
+      "name": "instances"
+    },
+    {
+      "description": "Seguimiento asíncrono y eventos auditados por operation_id.",
+      "name": "operations"
+    },
+    {
+      "description": "Estado, intento y SHA del plan; cancelar/reintentar no ejecuta Apply.",
+      "name": "terraform"
+    },
+    {
+      "description": "Revisión independiente y Apply de un único plan guardado.",
+      "name": "terraform-apply"
+    },
+    {
+      "description": "Energía de KVM propias; exige contrato de propiedad y flag Lifecycle.",
+      "name": "kvm-lifecycle"
+    },
+    {
+      "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos.",
+      "name": "disposable-deletion"
     }
   ]
 }

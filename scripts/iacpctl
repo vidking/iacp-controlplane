@@ -41,7 +41,7 @@ def main():
     p.add_argument('--evidence-dir', type=Path)
     p.add_argument('--compose-file', type=Path, default=ROOT / 'deploy/mng/compose.yaml')
     sub = p.add_subparsers(dest='action', required=True)
-    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback'):
+    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete'):
         s = sub.add_parser(action)
         if action == 'certify':
             s.add_argument('--record', action='store_true')
@@ -216,7 +216,11 @@ def main():
         if not args.evidence_dir:
             raise ValueError('A new private --evidence-dir is required')
         args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
-        Promotion(m, args.evidence_dir).verify()
+        api_env = candidate['services']['api']['environment']
+        admission, lifecycle = api_env.get('IACP_ADMISSION_ENABLED', '0'), api_env.get('IACP_KVM_LIFECYCLE_ENABLED', '0')
+        if admission not in {'0', '1'} or lifecycle not in {'0', '1'}:
+            raise ValueError('Invalid configured admission/Lifecycle state')
+        Promotion(m, args.evidence_dir).verify(admission=int(admission), lifecycle=int(lifecycle))
         save(args.evidence_dir / 'comparison.json', report)
         print(json.dumps(report))
         if not report['passed']:
@@ -227,7 +231,8 @@ def main():
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete',
+                  'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
         subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
 
 

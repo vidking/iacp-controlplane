@@ -35,6 +35,14 @@ def compare(current, candidate, image_changes=()):
         raise ValueError('Canonical service inventory differs')
     a, b = normalized(current), normalized(candidate)
     allowed = set(image_changes)
+    # An upgrade may introduce the destructive capability ONLY disabled. Enabling
+    # it or adding UUIDs is a separately reviewed operational change, never drift tolerance.
+    for role in ('api', 'terraform-worker'):
+        old_env = a['services'][role].get('environment', {})
+        new_env = b['services'][role].get('environment', {})
+        for key, safe in [('IACP_TERRAFORM_DELETE_ENABLED', '0'), ('IACP_DISPOSABLE_INSTANCE_IDS', '')]:
+            if key not in old_env and new_env.get(key) == safe:
+                allowed.add('/services/' + role + '/environment/' + key)
     old, new = a['services']['ownership-certifier'], b['services']['ownership-certifier']
     if new.get('environment', {}).get('TMPDIR') == '/run/iacp-certification':
         allowed.add('/services/ownership-certifier/environment/TMPDIR')

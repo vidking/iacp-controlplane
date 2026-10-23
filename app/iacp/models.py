@@ -24,7 +24,7 @@ class Instance(Base):
     __tablename__ = "instances"
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_instances_tenant_name"),
-        CheckConstraint("status IN ('pending', 'provisioning', 'ready', 'failed')", name="ck_instances_status"),
+        CheckConstraint("status IN ('pending', 'provisioning', 'ready', 'failed', 'deleting', 'deleted')", name="ck_instances_status"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -213,3 +213,29 @@ class PowerExecution(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeletionExecution(Base):
+    __tablename__ = "deletion_executions"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','planned','approved','uncertain','completed','failed')", name="ck_deletion_status"),
+        CheckConstraint("vmid >= 30000 AND vmid NOT IN (104,106)", name="ck_deletion_disposable_vmid"),
+        Index("uq_deletion_active_instance", "instance_id", unique=True,
+              postgresql_where=text("status <> 'failed'"), sqlite_where=text("status <> 'failed'")),
+    )
+    operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str] = mapped_column(String(30), nullable=False)
+    vmid: Mapped[int] = mapped_column(Integer, nullable=False)
+    node: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
+    provisioning_binding: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_sha256: Mapped[str | None] = mapped_column(String(64))
+    approval_key: Mapped[str | None] = mapped_column(String(128))
+    approval_hash: Mapped[str | None] = mapped_column(String(64))
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict | None] = mapped_column(JSON)
