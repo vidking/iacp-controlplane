@@ -443,7 +443,7 @@ def postcondition_mismatch(source, path, category):
     raise failure
 
 
-def bpg_empty_default(path, found):
+def bpg_empty_default(path, found, desired=None):
     """Equivalencias direccionales null -> valor vacío de bpg 0.116.1.
 
     No se omite ningún atributo. Valores no vacíos y otras rutas siguen sujetos
@@ -451,6 +451,14 @@ def bpg_empty_default(path, found):
     """
     shape = tuple("*" if type(part) is int else part for part in path)
     match shape:
+        case ("initialization", "*", "ip_config", "*", "ipv4", "*", "gateway"):
+            try:
+                ipv4 = desired["initialization"][path[1]]["ip_config"][path[3]]["ipv4"][path[5]]
+            except (KeyError, IndexError, TypeError):
+                return False
+            # bpg 0.116.1 read flattens a missing GatewayIPv4 to an empty
+            # string. Only DHCP with an explicitly omitted gateway qualifies.
+            return type(found) is str and found == "" and ipv4.get("address") == "dhcp" and ipv4.get("gateway") is None
         case (("cpu", "*", "affinity" | "architecture")
               | ("disk", "*", "file_id" | "import_from" | "serial")
               | ("memory", "*", "hugepages") | ("network_device", "*", "trunks") | ("pool_id",)
@@ -505,7 +513,7 @@ def verify_postconditions(approved, actual, *, source="persisted_state", persist
                 if baseline != found:
                     fail("auto_interface_changed")
             return
-        if expected is None and bpg_empty_default(path, found):
+        if expected is None and bpg_empty_default(path, found, change["after"]):
             if not bpg_contract:
                 fail("provider_contract_unverified")
             return
