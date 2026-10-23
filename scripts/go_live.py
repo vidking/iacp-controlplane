@@ -685,14 +685,14 @@ from iacp.models import Instance,Tenant,TerraformExecution
 from iacp.lifecycle.service import managed_target
 from iacp.terraform.config import SOURCE_REVISION
 with get_session_factory()() as s:
- for identifier,expected in json.loads(REVIEW).items():
+ for identifier,expected in json.loads(__REVIEW_IDENTITIES__).items():
   i=s.get(Instance,identifier);assert i and s.get(Tenant,i.tenant_id).active
   t,a=managed_target(s,i)
   assert t.vmid>=30000 and t.vmid not in (104,106) and i.network_mode=='dhcp'
   assert expected=={'vmid':t.vmid,'node':t.node,'name':t.name}
   assert s.get(TerraformExecution,identifier).source_revision==SOURCE_REVISION
 print('REVIEWED_DISPOSABLE_IDENTITIES')
-""".replace('REVIEW',repr(json.dumps(identities)))
+""".replace('__REVIEW_IDENTITIES__',repr(json.dumps(identities)))
         self.exec_python('api',code)
 
     def activate_pilot(self):
