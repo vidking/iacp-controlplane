@@ -1,5 +1,8 @@
 # Promoción del contrato y certificación histórica
 
+Automatización operativa de estos pasos: [GO_LIVE_MVP.md](GO_LIVE_MVP.md).
+Mantiene este certificador, pins y migraciones; no sustituye aprobación de cambio.
+
 Fuente certificada: **`9aeb8ec846342d279a5d16be7c8e20157e9bf5ae`**, merge de
 [iac-proxmox PR #7](https://scm.cyberfuel.com/CyberFuel/iac-proxmox/pulls/7) en
 `main`. Base Control Plane: `05ee32857201797de9f8c4df4e16d74d4dc9f8d6`, que

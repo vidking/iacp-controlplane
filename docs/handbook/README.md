@@ -1,6 +1,6 @@
 # Manual del Control Plane
 
-Este manual describe el código propuesto para IACP, API 0.5.0, y separa las
+Este manual describe el código propuesto para IACP, API 0.6.0, y separa las
 pruebas locales de la validación pendiente sobre una KVM de laboratorio.
 Forgejo es la fuente oficial; ningún procedimiento depende de un equipo personal.
 La URL de integración es **https://iac.cyberfuel.com**.

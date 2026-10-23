@@ -1,0 +1,8 @@
+{
+  "passed": false,
+  "isolated": false,
+  "backup_sha256": "5babd150ffc164d789c3016270b528c5488411dd39b6f9d3424a68afa6fc08d6",
+  "schema": "0004_authorized_apply",
+  "table_count": 9,
+  "evidence_reference": "REPLACE_WITH_THE_ALREADY_APPROVED_RESTORE_JOB_AND_REPORT"
+}

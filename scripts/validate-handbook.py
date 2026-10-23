@@ -25,7 +25,7 @@ def main():
             else:
                 subprocess.run(["bash", "-n"], input=body, text=True, check=True)
     api = json.loads((ROOT / "docs" / "openapi.json").read_text())
-    if api["info"]["version"] != "0.5.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
+    if api["info"]["version"] != "0.6.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
         raise ValueError("Versión/servidor del contrato distintos de los documentados")
     required = [
         ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),

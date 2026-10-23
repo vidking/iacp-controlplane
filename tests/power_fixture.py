@@ -38,7 +38,7 @@ def power_server(folder, power="stopped", *, vmid=21001, name="fixture-kvm"):
             if path == "/version":
                 value = {"version": "fixture-pve"}
             elif path == "/access/permissions":
-                value = {f"/vms/{vmid}": {"VM.Audit": 1, "VM.PowerMgmt": int(store.permission)}}
+                value = {f"/vms/{vmid}": {"VM.Audit": 0, **({"VM.PowerMgmt": 0} if store.permission else {})}}
             elif path == f"/nodes/mng01/qemu/{vmid}/config":
                 value = {"name": name, "agent": "0", "acpi": 1}
             elif path == f"/nodes/mng01/qemu/{vmid}/status/current":

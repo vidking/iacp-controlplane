@@ -1,0 +1,79 @@
+{
+  "date_utc": "2026-10-23",
+  "base_commit": "622d607649bcfb6ed179d78246c8e8df50c900c8",
+  "pytest": {
+    "passed": 532,
+    "failed": 0,
+    "skipped": 0,
+    "unit": 496,
+    "integration": 36,
+    "elapsed_seconds": 87.51,
+    "junit": "GO_LIVE_FINAL.junit.xml",
+    "junit_sha256": "f8b53a68afc6646024c09d32cce24963b79924e6c0240218ec61c06022a0f0c3"
+  },
+  "services": {
+    "postgres": "17.11",
+    "redis": "7.4.11",
+    "terraform_cli": "1.16.6",
+    "traefik_fixture": "v3.1"
+  },
+  "images": {
+    "test_suite": "sha256:94fb104645f91c60c9248fd930bbd96402798a842128bd5304fb5c0cc6afebdb",
+    "postgres": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "redis": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+  },
+  "tls_fixture": {
+    "passed": true,
+    "external_vantage": false,
+    "production_certificate": false,
+    "gateway": "synthetic HTTPS identity fixture",
+    "checks": [
+      "verified CA and hostname",
+      "HTTP redirect",
+      "unauthorized Origin and spoofed XFF",
+      "gateway plus separate API Bearer",
+      "spoofed forwarded prefix",
+      "64 KiB body limit",
+      "rate limiting"
+    ]
+  },
+  "handbook": {
+    "passed": true,
+    "api_version": "0.6.0",
+    "authenticated_contracts": 13,
+    "documents": 10
+  },
+  "real_readonly_evidence": [
+    "GO_LIVE_ENVIRONMENT.json",
+    "GO_LIVE_READONLY_SNAPSHOT.json"
+  ],
+  "not_executed": [
+    "production migrations/deployment",
+    "historical offline VM106 certification",
+    "certificate recording",
+    "corporate TLS/gateway deployment",
+    "external-network API success",
+    "real Lifecycle POST",
+    "enterprise rollback"
+  ],
+  "test_boundaries": "PostgreSQL and Redis are real disposable services. Proxmox/Wasabi mutations and failures use fixtures. Real Proxmox/Wasabi checks were GET only. Driver guards are unit-tested; full operational promotion awaits an approved window.",
+  "driver_followup": {
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0,
+    "elapsed_seconds": 1.22,
+    "junit": "GO_LIVE_DRIVER_FINAL.junit.xml",
+    "junit_sha256": "d1b18f4ecf6caeecf2ef65647b85ea589f74e7e2ba6cd287a9f4d3f4474545e4"
+  },
+  "compose_configuration": {
+    "passed": true,
+    "services": 9,
+    "certification_profile_included_for_config_only": true,
+    "public_ports": [
+      80,
+      443
+    ],
+    "diagnostic": "127.0.0.1:8080",
+    "production_resources_used": false
+  }
+}

@@ -42,6 +42,14 @@ def readiness(power_state):
             "accessible": "unknown", "guest_ready": None}
 
 
+def granted(privileges, name):
+    # GET /access/permissions maps an effective privilege to its propagation
+    # flag. Both 0 and 1 grant THIS exact path; absence denies the privilege.
+    # Do not use this helper to infer permissions on descendants.
+    value = privileges.get(name)
+    return type(value) is int and value in (0, 1)
+
+
 class ProxmoxPower:
     timeout = 10
     acpi_timeout = 60
@@ -92,7 +100,7 @@ class ProxmoxPower:
         data = self._request("GET", "/access/permissions?" + urlencode({"path": path}))
         if not isinstance(data, dict) or not isinstance(data.get(path), dict):
             raise PowerError("POWER_PERMISSION_DENIED")
-        if data[path].get("VM.Audit") != 1 or (mutate and data[path].get("VM.PowerMgmt") != 1):
+        if not granted(data[path], "VM.Audit") or (mutate and not granted(data[path], "VM.PowerMgmt")):
             raise PowerError("POWER_PERMISSION_DENIED")
 
     def observe(self, target, *, preflight=False):

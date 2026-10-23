@@ -5,6 +5,7 @@ from pathlib import Path
 import ssl
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -26,7 +27,7 @@ def render(policy):
 
 def init():
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=iac.cyberfuel.com", "-addext", "subjectAltName=DNS:iac.cyberfuel.com",
+                    "-subj", "/CN=iac.cyberfuel.com", "-addext", "subjectAltName=DNS:iac.cyberfuel.com,DNS:identity.fixture.invalid",
                     "-keyout", str(ROOT / "privkey.pem"), "-out", str(ROOT / "fullchain.pem")],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     (ROOT / "privkey.pem").chmod(0o600)
@@ -36,12 +37,26 @@ def init():
 def api():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(401 if self.path.startswith("/v1") else 200)
+            protected = self.path.startswith(("/v1", "/docs", "/openapi.json"))
+            self.send_response(401 if protected and self.headers.get("Authorization") != "Bearer fixture-token" else 200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"fixture": true}')
         def log_message(self, *args):
             pass
+    class Gateway(BaseHTTPRequestHandler):
+        def do_GET(self):
+            # The API bearer must never be forwarded to the corporate gateway.
+            self.send_response(500 if self.headers.get("Authorization") else
+                               200 if self.headers.get("Cookie") == "fixture-session=approved" else 401)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    server = HTTPServer(("0.0.0.0", 8443), Gateway)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(ROOT / "fullchain.pem", ROOT / "privkey.pem")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 
 
@@ -61,6 +76,28 @@ def client():
         assert client.get("https://iac.cyberfuel.com/health/live", headers={"Origin": POLICY["crm_origins"][0]}).status_code == 200
         assert client.get("https://iac.cyberfuel.com/health/live", headers={"Origin": "https://unapproved.invalid"}).status_code == 404
         assert client.get("http://traefik:8080/health/live").status_code == 200
+        public = renderer.build_public({**POLICY, "admin_forward_auth_url": "https://identity.fixture.invalid:8443/verify"})
+        public["http"]["middlewares"]["corporate-identity"]["forwardAuth"]["tls"]["ca"] = "/run/tls/fullchain.pem"
+        temporary = ROOT / "iacp.tmp"
+        temporary.write_text(json.dumps(public))
+        temporary.replace(ROOT / "iacp.yml")
+        deadline = time.monotonic() + 12
+        while True:
+            redirect = client.get("http://traefik/docs", headers={"Host": "iac.cyberfuel.com"})
+            if redirect.status_code in {301, 308} and redirect.headers.get("Location") == "https://iac.cyberfuel.com/docs":
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(f"Public router did not reload: {redirect.status_code}, {redirect.headers.get('Location')}")
+            time.sleep(.2)
+        assert client.get("https://iac.cyberfuel.com/docs", headers={"Authorization": "Bearer fixture-token"}).status_code == 401
+        assert client.get("https://iac.cyberfuel.com/docs", headers={"Cookie": "fixture-session=approved"}).status_code == 401
+        identity = {"Cookie": "fixture-session=approved", "Authorization": "Bearer fixture-token"}
+        assert client.get("https://iac.cyberfuel.com/docs", headers=identity).status_code == 200
+        assert client.get("https://iac.cyberfuel.com/openapi.json", headers=identity).status_code == 200
+        assert client.get("https://iac.cyberfuel.com/docs", headers={"X-Forwarded-Prefix": "/verify", "Authorization": "Bearer fixture-token"}).status_code == 401
+        assert client.post("https://iac.cyberfuel.com/v1/instances", headers=identity, content=b"x" * 65537).status_code == 413
+        statuses = [client.get("https://iac.cyberfuel.com/docs").status_code for _ in range(30)]
+        assert 429 in statuses
         try:
             httpx.get("https://iac.cyberfuel.com/health/live", trust_env=False, timeout=2)
         except httpx.ConnectError:
@@ -73,7 +110,7 @@ def client():
             if time.monotonic() > deadline: raise AssertionError("IP no autorizada o XFF falsificado aceptados")
             time.sleep(.2)
         assert client.get("http://traefik:8080/health/live").status_code == 200
-    print("HTTPS y CA verificados; 401 conservado; orígenes y XFF/IP rechazados; diagnóstico local disponible.")
+    print("TLS fixture passed: chain, redirect, Origin/XFF, gateway + bearer, spoofed prefix, body limit, rate limit. Not a production/external validation.")
 
 
 if __name__ == "__main__":

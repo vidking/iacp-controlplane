@@ -13,7 +13,7 @@ RUN chown -R root:root /app \
     && find /app -type f -exec chmod 0644 {} +
 USER iacp
 EXPOSE 8000
-CMD ["uvicorn", "iacp.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "iacp.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--no-access-log"]
 
 FROM application AS terraform-worker
 USER root

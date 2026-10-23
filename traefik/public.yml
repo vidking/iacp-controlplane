@@ -1,0 +1,43 @@
+entryPoints:
+  web:
+    address: ':8080'
+    forwardedHeaders:
+      insecure: false
+  webhttp:
+    address: ':80'
+    forwardedHeaders:
+      insecure: false
+  websecure:
+    address: ':443'
+    forwardedHeaders:
+      insecure: false
+    transport:
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 120s
+        idleTimeout: 60s
+providers:
+  file:
+    directory: /etc/traefik/tls-dynamic
+    watch: true
+# Docker provider intentionally disabled; no discovery or exposedByDefault.
+# If a corporate Docker provider is approved later it MUST explicitly set
+# exposedByDefault: false and every public service MUST opt in.
+api:
+  dashboard: false
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+accessLog:
+  format: json
+  fields:
+    defaultMode: drop
+    names:
+      RequestMethod: keep
+      RouterName: keep
+      DownstreamStatus: keep
+      Duration: keep
+    headers:
+      defaultMode: drop
+log:
+  level: WARN

@@ -1,0 +1,144 @@
+{
+  "observed_date_utc": "2026-10-23",
+  "scope": "Authorized read-only SSH, Proxmox GET and Wasabi GET; local DNS/TCP probe",
+  "runtime_modified": false,
+  "schema_migrated": false,
+  "ownership_certificate_recorded": false,
+  "power_command_submitted": false,
+  "control_plane_base": "622d607649bcfb6ed179d78246c8e8df50c900c8",
+  "host": "iacp-controlplane-01",
+  "runtime_directory": "/opt/iacp/releases/controlplane-v1",
+  "schema": "0004_authorized_apply",
+  "active_application_overrides": [
+    "compose.yaml",
+    "compose.server.yaml",
+    "compose.terraform.yaml",
+    "compose.tenants.yaml"
+  ],
+  "active_env": "/etc/iacp/server.env",
+  "running_releases": {
+    "api": "7b4e24edc74b65ad4132cad38cce81a6d4cc64c4",
+    "terraform_worker": "7b4e24edc74b65ad4132cad38cce81a6d4cc64c4",
+    "worker": "8d75c7c223fb2e80dda8db938c902432553ca65e",
+    "lifecycle_worker": null,
+    "traefik": "v3.1"
+  },
+  "built_622d607_image_ids": {
+    "api": "sha256:2d6ca093d605cb2928da222736806ffe97619465a025a1eddae2e519e8a2ca8f",
+    "terraform": "sha256:10bcedf59824ae5d332b3cdcc56640bd161ab1af97bc1c1c67e362f73e3690bb"
+  },
+  "terraform_apply_enabled": true,
+  "terraform_plan_enabled": true,
+  "running_iac_source": "/opt/iacp/sources/iac-proxmox-40dc5d1",
+  "prepared_iac_source": "/opt/iacp/sources/iac-proxmox-power-9aeb8ec",
+  "nonterminal_operations": 0,
+  "unconsumed_or_nonterminal_applies": 0,
+  "celery_active_reserved_scheduled": 0,
+  "queues": {
+    "celery": 0,
+    "terraform": 0,
+    "unacked": 0
+  },
+  "historical_counts": {
+    "tenants": 1,
+    "instances": 1,
+    "operations": 1,
+    "jobs": 6,
+    "operation_events": 54,
+    "terraform_executions": 1,
+    "terraform_attempts": 4,
+    "terraform_applies": 3
+  },
+  "volumes": [
+    "iacp-controlplane_postgres_data",
+    "iacp-controlplane_redis_data",
+    "iacp-controlplane_terraform_plans"
+  ],
+  "backup": {
+    "path": "/opt/iacp/backups/iacp-before-lifecycle-20261023T014456Z.dump",
+    "bytes": 33771,
+    "sha256": "5babd150ffc164d789c3016270b528c5488411dd39b6f9d3424a68afa6fc08d6",
+    "restore": "Previously approved real isolated restore per user-provided confirmed state; not repeated"
+  },
+  "tls": {
+    "active": false,
+    "corporate_mechanism": "Not found on inspected host/configuration; corporate PKI owner confirmation pending",
+    "docker_provider_enabled": false,
+    "exposedByDefault": "Not applicable: file provider only, no Docker socket",
+    "published_listener": "127.0.0.1:8080",
+    "tcp443_listening": false
+  },
+  "public_probe": {
+    "resolver": "1.1.1.1",
+    "host": "iac.cyberfuel.com",
+    "A": [
+      "192.168.1.50"
+    ],
+    "AAAA": [],
+    "tcp443_result": "Connection failed",
+    "external_vantage_validated": false,
+    "external_https_passed": false
+  },
+  "firewall": {
+    "host_ufw": "inactive",
+    "perimeter_nat_rules": "not available to this session"
+  },
+  "vm106": {
+    "instance_id": "a1b2d063-6240-4969-bc04-e7e0e6be9e73",
+    "vmid": 106,
+    "node": "mng01",
+    "name": "iacp-kvm-lab-01",
+    "attempt": 4,
+    "historical_source": "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4",
+    "power": "stopped",
+    "ha_managed": false,
+    "lock": null,
+    "pending_configuration": false,
+    "configured_ipv4": "190.0.230.162/24",
+    "public_ip_assignment_independently_validated": false,
+    "pve_version": "9.2.20",
+    "pve_release": "9.2",
+    "pve_repoid": "49318c671b82f31e",
+    "permissions_106_response": {
+      "VM.Audit": 0,
+      "VM.PowerMgmt": 0
+    },
+    "permissions_104_response": {},
+    "permission_note": "0 is the propagation flag of an effective privilege; the client now handles both valid 0 and 1 at the exact queried path",
+    "kvm_secret_mode": "0600",
+    "application_uid_readability": "Requires approved permission adjustment/verification before mount",
+    "state": {
+      "version_id": "001792639816814569011-p-1nlqiJQT",
+      "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+      "serial": 3,
+      "sha256": "339193bb115444a891081b55efd7b6f8443551d0e7a8ce23963784187fbde106",
+      "content_sha256": "7750ab2e935a2efacb8ea876cbff46a70d5d484e70e3f9234e1e185f582b7d4b",
+      "two_reads_identical": true
+    },
+    "guest_ready": null,
+    "guest_agent_operational": "not certified",
+    "cloud_init": "not certified",
+    "offline_historical_certification": "pending migrations and approved maintenance window"
+  },
+  "blockers": [
+    "Reviewed release images and deployment change window; migrations 0005/0006 and coordinated runtime promotion pending",
+    "Corporate approval record and externally excluded writers not available in session",
+    "Public DNS currently resolves to RFC1918; approved public A/AAAA and NAT/firewall/443 path needed",
+    "Corporate TLS issuance/renewal mechanism, valid certificate chain/private key and gateway identity policy needed",
+    "Review/pin supported Traefik image for public deployment",
+    "Fix/verify Lifecycle credential readability for UID/GID 10001 during approved change",
+    "Historical offline certification and separate approved certificate recording pending",
+    "Independent validation of VM106 assigned public IP and operational energy authorization pending",
+    "External runner HTTPS/identity/RBAC validation and real audited start not performed"
+  ],
+  "local_http_readonly_checks": {
+    "health_live": 200,
+    "health_ready": 200,
+    "anonymous_docs": 200,
+    "anonymous_openapi": 200,
+    "anonymous_instances": 401,
+    "authorized_instances": 200,
+    "authorized_instance_count": 1,
+    "note": "Current older release; docs protection is in this PR, listener is loopback only"
+  }
+}

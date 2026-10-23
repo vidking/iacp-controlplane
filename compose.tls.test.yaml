@@ -12,11 +12,17 @@ services:
       context: .
       dockerfile: tests/Dockerfile
     command: ["python", "tests/tls_fixture.py", "api"]
-    networks: [test]
+    volumes: [tls_fixture:/test-tls:ro]
+    depends_on:
+      tls-init: {condition: service_completed_successfully}
+    networks:
+      test:
+        aliases: [identity.fixture.invalid]
   traefik:
     image: traefik:v3.1
     command:
       - --entrypoints.web.address=:8080
+      - --entrypoints.webhttp.address=:80
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.forwardedheaders.insecure=false
       - --providers.file.filename=/run/tls/iacp.yml

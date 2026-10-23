@@ -86,6 +86,21 @@ def test_minimum_native_rbac_is_verified(native, privilege):
         client.permissions(TARGET, mutate=True)
 
 
+@pytest.mark.parametrize("flag", [0, 1])
+def test_effective_privilege_does_not_require_propagation(native, flag):
+    client, responses, _ = native
+    responses["/access/permissions?path=%2Fvms%2F21001"]["/vms/21001"] = {"VM.Audit": flag, "VM.PowerMgmt": flag}
+    client.permissions(TARGET, mutate=True)
+
+
+@pytest.mark.parametrize("flag", [None, False, True, "0", "1", -1, 2, {}, []])
+def test_malformed_effective_permissions_fail_closed(native, flag):
+    client, responses, _ = native
+    responses["/access/permissions?path=%2Fvms%2F21001"]["/vms/21001"] = {"VM.Audit": 0, "VM.PowerMgmt": flag}
+    with pytest.raises(PowerError, match="POWER_PERMISSION_DENIED"):
+        client.permissions(TARGET, mutate=True)
+
+
 @pytest.mark.parametrize("failure", [URLError("private-url"), HTTPError("private-url", 403, "private-message", {}, None)])
 def test_transport_errors_are_safe_and_posts_are_never_retried(native, failure):
     client, _, _ = native
