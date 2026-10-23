@@ -12,7 +12,9 @@ COPY tests ./tests
 COPY docs ./docs
 COPY scripts ./scripts
 COPY traefik ./traefik
+COPY deploy ./deploy
 COPY pytest.ini compose*.yaml ./
-RUN find /workspace -type d -exec chmod 0755 {} + && find /workspace -type f -exec chmod 0644 {} +
+RUN find /workspace -type d -exec chmod 0755 {} + && find /workspace -type f -exec chmod 0644 {} + \
+    && chmod 0755 /workspace/scripts/iacpctl /workspace/scripts/test-certifier-workspace.sh
 USER iacp
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider"]

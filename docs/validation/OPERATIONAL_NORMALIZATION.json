@@ -1,0 +1,157 @@
+{
+  "at": "2026-10-23T20:01:54.391122+00:00",
+  "base": "60da261f901b609b042c742b74fe5903f272715f",
+  "branch": "feature/iacp_normalization",
+  "production_deployed": false,
+  "active_environment_modified": false,
+  "swagger_lan_tls_verified": {
+    "vantage": "authorized operator laptop via LAN/VPN",
+    "tls_verified": true,
+    "username_source": "app/iacp/security.py: fixed iacp",
+    "legacy_password_source": "/opt/iacp/stacks/controlplane/secrets/api_token",
+    "registry_source": "/etc/iacp/identity/tenant_credentials.json",
+    "checks": [
+      {
+        "path": "/health/ready",
+        "authenticated": false,
+        "status": 200
+      },
+      {
+        "path": "/docs",
+        "authenticated": false,
+        "status": 401
+      },
+      {
+        "path": "/docs",
+        "authenticated": true,
+        "status": 200
+      },
+      {
+        "path": "/openapi.json",
+        "authenticated": false,
+        "status": 401
+      },
+      {
+        "path": "/openapi.json",
+        "authenticated": true,
+        "status": 200
+      }
+    ]
+  },
+  "semantic_comparison_and_live_doctor": {
+    "passed": true,
+    "changed_paths": [
+      "/services/ownership-certifier/environment/TMPDIR",
+      "/services/ownership-certifier/tmpfs"
+    ],
+    "unexpected_paths": [],
+    "ignored_build_metadata": [
+      "api",
+      "lifecycle-worker",
+      "migrate",
+      "ownership-certifier",
+      "terraform-worker",
+      "worker"
+    ],
+    "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+    "live_compatibility": {
+      "passed": true,
+      "unexpected_paths": []
+    },
+    "roles_running": {
+      "traefik": true,
+      "terraform-worker": true,
+      "api": true,
+      "worker": true,
+      "lifecycle-worker": true,
+      "db": true,
+      "redis": true
+    }
+  },
+  "certifier_original_failure": {
+    "event": 63,
+    "returncode": 1,
+    "phase": "ownership.plan",
+    "command": "show",
+    "cause": "Provider binary in noexec /tmp cannot be executed",
+    "private_diagnostics": "/opt/iacp/evidence/normalization-readonly-diagnostic"
+  },
+  "certifier_fixed_readonly": {
+    "certificate_id": null,
+    "evidence": {
+      "actions": [
+        "no-op"
+      ],
+      "backend": "isolated-local",
+      "original_plan_sha256": "3e05b23314ab036d526f802fb81f5f01e125cd501ee8cda5fb82dc741225052c",
+      "plan_sha256": "e1ca0897078d7073cc1bcfad80c9f718f54e41f4d86817099c6b17e1de99f9b2",
+      "power_state": "stopped",
+      "provider": "0.116.1",
+      "pve_version": "9.2.20",
+      "refresh": false,
+      "release_reference": "PR22 merge=60da261f901b609b042c742b74fe5903f272715f; api=sha256:669daac9c08d9fdd1ae6fd16a7867ddc02c1d2644ad37d7861d4a22cd2b8d7af; terraform=sha256:1afc888decf53e42a431ab88b26508c4e5bbfe15510164e3c7d985542d01c17a",
+      "source_archive_sha256": "98f0900d571a8d05e4bbb0eabdb10550a372655f61fda35aaa3a601537daa94a",
+      "state_consistency": {
+        "after": {
+          "content_sha256": "7750ab2e935a2efacb8ea876cbff46a70d5d484e70e3f9234e1e185f582b7d4b",
+          "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+          "serial": 3,
+          "sha256": "339193bb115444a891081b55efd7b6f8443551d0e7a8ce23963784187fbde106",
+          "version_id": "001792639816814569011-p-1nlqiJQT"
+        },
+        "before": {
+          "content_sha256": "7750ab2e935a2efacb8ea876cbff46a70d5d484e70e3f9234e1e185f582b7d4b",
+          "lineage": "d954af88-6ae6-2d04-9ead-55ed1f95d644",
+          "serial": 3,
+          "sha256": "339193bb115444a891081b55efd7b6f8443551d0e7a8ce23963784187fbde106",
+          "version_id": "001792639816814569011-p-1nlqiJQT"
+        },
+        "change": "unchanged"
+      },
+      "terraform": "1.16.6"
+    },
+    "ownership_revision": "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae",
+    "recorded": false,
+    "source_revision": "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4",
+    "validated": true
+  },
+  "registration_blocker": "Observed approved actions: deploy, validate-certificate. No record-certificate approval. No approval created or extended.",
+  "crud_demo": {
+    "contract": {
+      "create": true,
+      "read": true,
+      "start": true,
+      "shutdown": true,
+      "delete": false
+    },
+    "complete_crud_supported": false,
+    "operation_ids": [],
+    "writes_submitted": false,
+    "vm106_untouched": true,
+    "tls_verified": true,
+    "elapsed_seconds": 0.131
+  },
+  "disposable_allocation_available": false,
+  "dhcp_supported": false,
+  "ci": "Workflow provided; isolated runner label must be configured. No Forgejo CI success claimed.",
+  "tests": {
+    "passed": 567,
+    "unit": 531,
+    "integration": 36,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 97.8,
+    "junit_sha256": "2722dbc588aeb671ccc8343592c93cd834bed00320de0e3c6413db0d706f68f2",
+    "followup_normalization_tests": 12,
+    "docker_exec_workspace_regression": "PASS; UID10001, /tmp noexec denies execution, private exec mount succeeds",
+    "postgres": "17.11",
+    "redis": "7.4.11"
+  },
+  "corporate_controls": "Temporary CIDR scope and absence of WAN require the existing owner review; doctor is not a corporate approval.",
+  "operator_handoff": "Prepared private 0700 directory and 0600 files on the operator workstation; not installed in production.",
+  "documentation_validation": {
+    "passed": true,
+    "documents": 11,
+    "api_version": "0.6.0"
+  }
+}

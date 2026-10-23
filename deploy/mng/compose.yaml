@@ -1,0 +1,437 @@
+# Canonical production definition. Values and references live in the private active environment.
+name: iacp-controlplane
+networks:
+  backend:
+    name: iacp-controlplane_backend
+    ipam: {}
+    internal: true
+  egress:
+    name: iacp-controlplane_egress
+    ipam: {}
+  frontend:
+    name: iacp-controlplane_frontend
+    ipam: {}
+  proxy_network:
+    name: ${IACP_PROXY_NETWORK:?Required operating reference}
+    ipam: {}
+    external: true
+secrets:
+  api_token:
+    name: iacp-controlplane_api_token
+    file: ${IACP_SERVER_API_TOKEN_FILE:?Required operating reference}
+  db_password:
+    name: iacp-controlplane_db_password
+    file: ${IACP_SERVER_DB_PASSWORD_FILE:?Required operating reference}
+  kvm_credentials:
+    name: iacp-controlplane_kvm_credentials
+    file: ${IACP_KVM_CREDENTIALS_PATH:?Required operating reference}
+  tenant_credentials:
+    name: iacp-controlplane_tenant_credentials
+    file: ${IACP_TENANT_CREDENTIALS_PATH:?Required operating reference}
+  terraform_credentials:
+    name: iacp-controlplane_terraform_credentials
+    file: ${IACP_TF_CREDENTIALS_PATH:?Required operating reference}
+services:
+  api:
+    restart: unless-stopped
+    command: null
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_ADMISSION_ENABLED: ${IACP_ADMISSION_ENABLED:?Explicit operating flag required}
+      IACP_API_TOKEN_FILE: /run/secrets/api_token
+      IACP_INSTANCE_EXECUTOR: terraform
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:?Explicit operating
+        flag required}
+      IACP_TENANT_CREDENTIALS_FILE: /run/secrets/tenant_credentials
+      IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
+        flag required}
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
+    networks:
+      backend: null
+      egress: null
+      frontend: null
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    - source: api_token
+      target: /run/secrets/api_token
+    - source: tenant_credentials
+      target: /run/secrets/tenant_credentials
+    - source: kvm_credentials
+      target: /run/secrets/kvm_credentials
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',
+        timeout=5)
+      timeout: 5s
+      interval: 20s
+      retries: 5
+  db:
+    restart: unless-stopped
+    command: null
+    entrypoint: null
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: postgres:17-alpine
+    networks:
+      backend: null
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    volumes:
+    - type: volume
+      source: postgres_data
+      target: /var/lib/postgresql/data
+      volume: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER:-iacp} -d ${POSTGRES_DB:-iacp}
+      timeout: 5s
+      interval: 10s
+      retries: 6
+  lifecycle-worker:
+    restart: unless-stopped
+    cap_drop:
+    - ALL
+    command:
+    - celery
+    - -A
+    - iacp.lifecycle.worker:celery_app
+    - worker
+    - -Q
+    - lifecycle
+    - --concurrency=1
+    - --loglevel=WARNING
+    - --without-gossip
+    - --without-mingle
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:?Explicit operating
+        flag required}
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
+    networks:
+      backend: null
+      egress: null
+    read_only: true
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    - source: kvm_credentials
+      target: /run/secrets/kvm_credentials
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+  migrate:
+    restart: 'no'
+    command:
+    - alembic
+    - upgrade
+    - head
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_API_TOKEN_FILE: /run/secrets/api_token
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
+    networks:
+      backend: null
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+  ownership-certifier:
+    profiles:
+    - certification
+    restart: 'no'
+    cap_drop:
+    - ALL
+    command:
+    - python
+    - -m
+    - iacp.lifecycle.certify
+    - --help
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
+      IACP_KVM_LIFECYCLE_ENABLED: '0'
+      IACP_TERRAFORM_ALLOCATIONS_FILE: /run/config/allocations.json
+      IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
+        flag required}
+      IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
+      IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials
+      IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:?Explicit operating
+        flag required}
+      IACP_TERRAFORM_SOURCE_DIR: /iac-source
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      TMPDIR: /run/iacp-certification
+    image: ${IACP_TF_WORKER_IMAGE:?Required operating reference}
+    networks:
+      backend: null
+      egress: null
+    read_only: true
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    - source: terraform_credentials
+      target: /run/secrets/terraform_credentials
+    - source: kvm_credentials
+      target: /run/secrets/kvm_credentials
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
+    - /run/iacp-certification:rw,exec,nosuid,nodev,size=536870912,mode=0700,uid=10001,gid=10001
+    volumes:
+    - type: bind
+      source: ${IACP_TF_SOURCE_PATH:?Required operating reference}
+      target: /iac-source
+      read_only: true
+    - type: bind
+      source: ${IACP_TF_ALLOCATIONS_PATH:?Required operating reference}
+      target: /run/config/allocations.json
+      read_only: true
+    - type: volume
+      source: terraform_plans
+      target: /var/lib/iacp/terraform
+      read_only: true
+      volume: {}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+  redis:
+    restart: unless-stopped
+    command:
+    - redis-server
+    - --appendonly
+    - 'yes'
+    entrypoint: null
+    image: redis:7-alpine
+    networks:
+      backend: null
+    volumes:
+    - type: volume
+      source: redis_data
+      target: /data
+      volume: {}
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      timeout: 5s
+      interval: 10s
+      retries: 6
+  terraform-worker:
+    restart: unless-stopped
+    cap_drop:
+    - ALL
+    command: null
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_TERRAFORM_ALLOCATIONS_FILE: /run/config/allocations.json
+      IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
+        flag required}
+      IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
+      IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials
+      IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:?Explicit operating
+        flag required}
+      IACP_TERRAFORM_SOURCE_DIR: /iac-source
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: ${IACP_TF_WORKER_IMAGE:?Required operating reference}
+    networks:
+      backend: null
+      egress: null
+    read_only: true
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    - source: terraform_credentials
+      target: /run/secrets/terraform_credentials
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
+    volumes:
+    - type: bind
+      source: ${IACP_TF_SOURCE_PATH:?Required operating reference}
+      target: /iac-source
+      read_only: true
+    - type: bind
+      source: ${IACP_TF_ALLOCATIONS_PATH:?Required operating reference}
+      target: /run/config/allocations.json
+      read_only: true
+    - type: volume
+      source: terraform_plans
+      target: /var/lib/iacp/terraform
+      volume: {}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+  traefik:
+    restart: unless-stopped
+    command:
+    - --configFile=/etc/traefik/public.yml
+    entrypoint: null
+    image: ${IACP_TRAEFIK_IMAGE:?Required operating reference}
+    networks:
+      frontend: null
+      proxy_network: null
+    volumes:
+    - type: bind
+      source: ${IACP_TRAEFIK_CONFIG_DIR:?Existing verified static directory}/traefik.yml
+      target: /etc/traefik/traefik.yml
+      read_only: true
+      bind: {}
+    - type: bind
+      source: ${IACP_TRAEFIK_CONFIG_DIR:?Existing verified static directory}/dynamic.yml
+      target: /etc/traefik/dynamic.yml
+      read_only: true
+      bind: {}
+    - type: bind
+      source: ${IACP_TRAEFIK_CONFIG_DIR:?Existing verified static directory}/tls.yml
+      target: /etc/traefik/tls.yml
+      read_only: true
+      bind: {}
+    - type: bind
+      source: ${IACP_TLS_DYNAMIC_DIR:?Required operating reference}
+      target: /etc/traefik/tls-dynamic
+      read_only: true
+    - type: bind
+      source: ${IACP_TLS_CERTS_DIR:?Required operating reference}
+      target: /run/tls
+      read_only: true
+    - type: bind
+      source: ${IACP_TRAEFIK_CONFIG_DIR:?Existing verified static directory}/public.yml
+      target: /etc/traefik/public.yml
+      read_only: true
+      bind: {}
+    depends_on:
+      api:
+        condition: service_healthy
+        required: true
+    ports:
+    - mode: ingress
+      host_ip: ${IACP_TLS_BIND_IP:?Approved private API bind IP}
+      target: 80
+      published: '80'
+      protocol: tcp
+    - mode: ingress
+      host_ip: ${IACP_TLS_BIND_IP:?Approved private API bind IP}
+      target: 443
+      published: '443'
+      protocol: tcp
+  worker:
+    restart: unless-stopped
+    command:
+    - celery
+    - -A
+    - iacp.worker:celery_app
+    - worker
+    - --loglevel=INFO
+    - --concurrency=1
+    - --without-gossip
+    - --without-mingle
+    entrypoint: null
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_HOST: db
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      IACP_API_TOKEN_FILE: /run/secrets/api_token
+      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+    image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
+    networks:
+      backend: null
+      egress: null
+    secrets:
+    - source: db_password
+      target: /run/secrets/db_password
+    - source: api_token
+      target: /run/secrets/api_token
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+volumes:
+  postgres_data:
+    name: ${IACP_POSTGRES_VOLUME:?Required operating reference}
+    external: true
+  redis_data:
+    name: ${IACP_REDIS_VOLUME:?Required operating reference}
+    external: true
+  terraform_plans:
+    name: ${IACP_TF_PLANS_VOLUME:?Required operating reference}
+    external: true

@@ -215,6 +215,15 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 and services["terraform-worker"]["environment"].get("IACP_TERRAFORM_APPLY_ENABLED") == "1", "Apply must remain 1")
         require("IACP_ADMISSION_ENABLED" in services["api"]["environment"], "Promotion override missing")
         active = self.containers()
+        if self.canonical():
+            from operations import compare, runtime_command, live_compatibility
+            current = json.loads(self.run(runtime_command(active, self.docker)))
+            compatibility = live_compatibility(current, active)
+            self.evidence("live-compatibility", compatibility)
+            require(compatibility["passed"], "Active environment differs from the running containers")
+            comparison = compare(current, cfg, self.m.get("configuration_changes", []))
+            self.evidence("canonical-comparison", comparison)
+            require(comparison["passed"], "Canonical configuration differs outside the reviewed changes")
         planned_files = {str((ROOT / file).resolve()) for file in self.m["compose_files"]}
         # Old bootstrap labels reference a different compose for DB/Redis. Their
         # immutable volumes/secrets are checked directly; all application overrides persist.
@@ -223,7 +232,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             if role not in ROLES + ["traefik"]:
                 continue
             old_files = set(c["Config"]["Labels"]["com.docker.compose.project.config_files"].split(","))
-            require(old_files <= planned_files, "An active override was omitted")
+            require(self.canonical() or old_files <= planned_files, "An active override was omitted")
         for role, service in services.items():
             if role != "traefik":
                 require(not service.get("ports"), "Unexpected published service: " + role)
@@ -271,11 +280,19 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
         return report
 
+    def canonical(self):
+        if self.m.get("configuration_mode") != "canonical":
+            return False
+        files = self.m["compose_files"]
+        require(len(files) == 1 and Path(files[0]).parts[0] == "deploy"
+                and Path(files[0]).name == "compose.yaml" and (ROOT / files[0]).resolve().is_relative_to(ROOT / "deploy"), "One versioned canonical Compose required")
+        return True
+
     def publish(self):
         self.approve("publish-api")
         self.preflight()
         self.verify()
-        require("compose.public.yaml" in self.m["compose_files"] and "compose.tls.yaml" in self.m["compose_files"], "TLS/proxy overrides missing")
+        require(self.canonical() or ("compose.public.yaml" in self.m["compose_files"] and "compose.tls.yaml" in self.m["compose_files"]), "TLS/proxy configuration missing")
         self.publication_controls()
         dynamic = self.m["tls_dynamic_file"]
         require(digest(dynamic["path"]) == dynamic["sha256"], "Reviewed TLS routing changed")
@@ -294,7 +311,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         image = json.loads(self.run(self.docker + ["image", "inspect", proxy["image"]]))[0]["Id"]
         require(image == self.m["images"]["proxy"], "Unreviewed proxy image")
         mounts = {item["target"]: item["source"] for item in proxy["volumes"]}
-        require(Path(mounts["/etc/traefik/public.yml"]).resolve() == ROOT / "traefik/public.yml", "Unreviewed static proxy file/provider")
+        require(digest(mounts["/etc/traefik/public.yml"]) == digest(ROOT / "traefik/public.yml"), "Unreviewed static proxy file/provider")
         require(Path(mounts["/etc/traefik/tls-dynamic"]).resolve() == directory.resolve(), "Reviewed routing is not mounted")
         # Validate the current chain immediately before exposing it, even if the
         # renderer already checked it when generating the reviewed artifact.
@@ -355,7 +372,9 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 if role != "traefik":
                     require(not service.get("ports"), "Only Traefik may publish host ports")
             ports = compose["services"]["traefik"]["ports"]
-            expected = {(80, "80", bind), (443, "443", bind), (8080, "8080", "127.0.0.1")}
+            expected = {(80, "80", bind), (443, "443", bind)}
+            if not self.canonical():
+                expected.add((8080, "8080", "127.0.0.1"))
             require({(p["target"], str(p["published"]), p.get("host_ip")) for p in ports} == expected
                     and len(ports) == len(expected) and all(p.get("protocol", "tcp") == "tcp" for p in ports), "Internal proxy must bind only the approved private IP and loopback diagnostic")
             for name in ("iacp-admin", "iacp-crm", "iacp-http"):
@@ -368,17 +387,21 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
     def internal_live_bindings(self):
         bind, _ = internal_target(self.m)
         proxy = self.container("traefik")
-        require(proxy["State"]["Running"] and proxy["HostConfig"]["PortBindings"] == {
+        expected = {
             "80/tcp": [{"HostIp": bind, "HostPort": "80"}],
             "443/tcp": [{"HostIp": bind, "HostPort": "443"}],
-            "8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}],
-        }, "Running Traefik exposes unexpected addresses or ports")
+        }
+        if not self.canonical():
+            expected["8080/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "8080"}]
+        require(proxy["State"]["Running"] and proxy["HostConfig"]["PortBindings"] == expected, "Running Traefik exposes unexpected addresses or ports")
 
     def up(self, *roles):
         self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *roles, timeout=180)
 
     def verify(self, *, admission=0, lifecycle=0, idle=True):
         config = json.loads(self.compose("config", "--format", "json"))
+        if self.canonical():
+            self.internal_live_bindings()
         for role in ROLES:
             c = self.container(role)
             require(c["State"]["Running"], "Container stopped: " + role)
@@ -458,7 +481,14 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
 
     def promote(self):
         self.approve("deploy")
-        self.preflight()
+        before = self.preflight()
+        current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
+        if self.canonical() and before["schema"] == [HEAD] and all(
+            self.container(role)["Image"] == self.m["images"]["terraform" if role == "terraform-worker" else "api"] for role in ROLES) and (
+                current_api_flags.get("IACP_ADMISSION_ENABLED") == "0" and current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED") == "0"):
+            self.verify()
+            self.evidence("canonical-adoption", {"passed": True, "containers_recreated": [], "schema_changed": False})
+            return
         # Stop admission at the source, including internal clients. Never stop shared Traefik.
         self.compose("stop", "--timeout", "60", "api", timeout=75)
         self.flags(admission=0, lifecycle=0)

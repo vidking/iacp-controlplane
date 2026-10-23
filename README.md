@@ -5,6 +5,11 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
+Entrada operativa canónica: [scripts/iacpctl](scripts/iacpctl) y
+[docs/OPERATIONS.md](docs/OPERATIONS.md). `deploy/mng` es el primer entorno de
+validación; la normalización no depende del clúster. Las credenciales docs-only
+se rotan separadas de los permisos Bearer de la API.
+
 Go-live MVP: [operación y rollback](docs/GO_LIVE_MVP.md),
 [seguridad](docs/GO_LIVE_SECURITY.md), [consumo API](docs/GO_LIVE_API.md) y
 [evidencias/bloqueos](docs/GO_LIVE_VALIDATION.md).

@@ -1,5 +1,10 @@
 # Consumo autenticado desde desarrollo
 
+La [normalización operativa](OPERATIONS.md) agrega identidades Basic de rol docs,
+sin acceso a /v1. Si se configura ese rol, el password de documentación y el token
+HTTPBearer usado en Authorize son distintos. El modo legacy se conserva hasta
+la rotación aprobada; no hay JWT ni htpasswd de Traefik en este mecanismo.
+
 Base oficial: `https://iac.cyberfuel.com`. Requiere publicación, IP de salida CRM
 o gateway corporativo y credencial del tenant. Ver [roles y exposición](GO_LIVE_SECURITY.md)
 y [OpenAPI](openapi.json). No enviar tokens al frontend del CRM ni incluirlos en

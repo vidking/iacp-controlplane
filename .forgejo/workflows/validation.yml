@@ -1,0 +1,19 @@
+name: IACP validation
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  validation:
+    # Register an isolated disposable runner with this label; never VM 104.
+    runs-on: iacp-disposable-validation
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit and integration tests
+        run: |
+          docker compose -p "iacp-ci-${{ github.run_id }}" -f compose.test.yaml run --build --rm -T tests python -m pytest -p no:cacheprovider -ra
+      - name: TLS and authenticated routing
+        run: bash scripts/test-tls.sh
+      - name: Documents
+        run: docker compose -p "iacp-ci-${{ github.run_id }}" -f compose.test.yaml run --rm -T --no-deps tests python scripts/validate-handbook.py
+      - name: Certifier Docker execution regression
+        run: IACP_TEST_IMAGE="iacp-ci-${{ github.run_id }}-tests" bash scripts/test-certifier-workspace.sh
