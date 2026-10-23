@@ -1,0 +1,10 @@
+{
+  "assigned_public_ip_validated": false,
+  "assigned_public_ip": "REPLACE_WITH_INDEPENDENTLY_VALIDATED_VM106_PUBLIC_IP",
+  "security_controls_passed": false,
+  "external_https_passed": false,
+  "pve_permissions_passed": false,
+  "vm104_excluded": false,
+  "external_probe": {"path": "/opt/iacp/evidence/external-probe.json", "sha256": "REPLACE_WITH_REAL_EXTERNAL_REPORT_DIGEST"},
+  "ipam_and_security_reference": "REPLACE_WITH_IPAM_AND_SECURITY_REFERENCES"
+}

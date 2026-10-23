@@ -1,0 +1,12 @@
+{
+  "approved": false,
+  "reference": "REPLACE_WITH_APPROVED_CHANGE_REFERENCE",
+  "actor": "REPLACE_WITH_AUTHORIZED_OPERATOR",
+  "hostname": "iacp-controlplane-01",
+  "project": "iacp-controlplane",
+  "release": "REPLACE_WITH_REVIEWED_40_CHARACTER_COMMIT",
+  "window_start": "2026-01-01T00:00:00Z",
+  "window_end": "2026-01-01T01:00:00Z",
+  "external_writers_excluded": false,
+  "actions": []
+}

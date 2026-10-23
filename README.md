@@ -1,9 +1,13 @@
 # IACP — Control Plane
 
-Forgejo es la fuente oficial: [CyberFuel/iacp-controlplane](https://iac.cyberfuel.com/CyberFuel/iacp-controlplane).
+Forgejo es la fuente oficial: [CyberFuel/iacp-controlplane](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane).
 El código y los contenedores son portables entre equipos autorizados. El destino
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
+
+Go-live MVP: [operación y rollback](docs/GO_LIVE_MVP.md),
+[seguridad](docs/GO_LIVE_SECURITY.md), [consumo API](docs/GO_LIVE_API.md) y
+[evidencias/bloqueos](docs/GO_LIVE_VALIDATION.md).
 
 ## Clonar y probar
 
@@ -13,9 +17,9 @@ No se requieren Python, PostgreSQL, Redis, OpenSSL ni paquetes de la aplicación
 el host para ejecutar las pruebas Docker.
 
 ```bash
-git clone https://iac.cyberfuel.com/CyberFuel/iacp-controlplane.git
+git clone https://scm.cyberfuel.com/CyberFuel/iacp-controlplane.git
 cd iacp-controlplane
-git switch feature/KVMHOST-91-controlplane-core
+git switch main
 docker compose -p iacp-tests -f compose.test.yaml run --build --rm -T tests
 docker compose -p iacp-tests -f compose.test.yaml down --remove-orphans
 ```
@@ -42,6 +46,8 @@ docker compose --env-file .env.dev -f compose.dev.yaml run --rm -T --no-deps dev
 ```
 
 La API estará en `http://127.0.0.1:18080/docs` con la configuración de ejemplo.
+Swagger/OpenAPI requieren token del tenant: challenge de navegador con usuario
+`iacp` y token como contraseña; Authorize HTTPBearer para llamadas /v1.
 Los secretos se generan dentro de un volumen exclusivo de desarrollo y se
 conservan al recrear los contenedores. La guía de desarrollo explica cómo usar
 el token sin depender de rutas o identidades del host.

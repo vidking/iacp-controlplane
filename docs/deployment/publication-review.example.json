@@ -1,0 +1,7 @@
+{
+  "public_dns_approved": false,
+  "nat_firewall_approved": false,
+  "gateway_policy_approved": false,
+  "proxy_version_approved": false,
+  "security_change_reference": "REPLACE_WITH_SECURITY_APPROVAL"
+}

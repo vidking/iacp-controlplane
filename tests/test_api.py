@@ -18,7 +18,7 @@ def test_import_startup_liveness_and_contract_need_no_secrets(monkeypatch):
     monkeypatch.delenv("IACP_API_TOKEN_FILE", raising=False)
     with TestClient(create_app()) as client:
         assert client.get("/health/live").json() == {"status": "live"}
-        assert client.get("/openapi.json").status_code == 200
+    assert "/v1/instances" in create_app().openapi()["paths"]
 
 
 @pytest.mark.parametrize("route,method", [

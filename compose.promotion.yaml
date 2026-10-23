@@ -1,0 +1,7 @@
+# Last override. Values persist in the environment of the sole reconciler.
+services:
+  api:
+    environment:
+      IACP_ADMISSION_ENABLED: ${IACP_ADMISSION_ENABLED:-0}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]

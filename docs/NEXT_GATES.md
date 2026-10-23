@@ -1,5 +1,14 @@
 # Gates posteriores al primer smoke
 
+Actualización go-live 2026-10-23: el respaldo y su restauración aislada ya fueron
+aprobados; no repetir ese ensayo. La inspección actual confirma esquema 0004,
+sin operaciones no terminales ni colas pendientes. Migraciones/runtime, registro
+de certificación y energía siguen pendientes de ventana. DNS público devuelve
+192.168.1.50 y no hay listener 443. Seguir [el procedimiento consolidado](GO_LIVE_MVP.md),
+[controles de exposición](GO_LIVE_SECURITY.md) y [evidencia](validation/GO_LIVE_ENVIRONMENT.json).
+Los puntos siguientes conservan su contexto histórico; no invalidan controles
+ya acreditados ni autorizan repetir cambios operativos.
+
 1. Registrar VM 104 e IP 192.168.1.50/20 en inventario/IPAM.
 2. Verificar que el disco `scsi0` de VM 104 **no** lleve `backup=0`.
 3. Configurar respaldo PBS y ensayar restore **aislado** de la VM 104.

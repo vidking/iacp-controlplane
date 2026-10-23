@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from .db import get_session
 from .models import BOOTSTRAP_TENANT_ID, Tenant
 
 bearer = HTTPBearer(auto_error=False, description="Token ligado en el servidor a un tenant y un rol.")
+docs_basic = HTTPBasic(auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -86,3 +87,19 @@ def authorize_approval(principal: Annotated[Principal, Depends(authorize)]) -> P
     if principal.role != "approver":
         raise HTTPException(status_code=403, detail="Approval permission required")
     return principal
+
+
+def authorize_docs(
+    session: Annotated[Session, Depends(get_session)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    basic: Annotated[HTTPBasicCredentials | None, Depends(docs_basic)],
+) -> Principal:
+    """Browser challenge uses the existing tenant token; no cookies or new identity store."""
+    if basic is not None and basic.username == "iacp":
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=basic.password)
+    try:
+        return authorize(credentials, session)
+    except HTTPException as error:
+        if error.status_code == 401:
+            raise HTTPException(401, "Unauthorized", headers={"WWW-Authenticate": 'Basic realm="IACP docs", charset="UTF-8"'}) from None
+        raise

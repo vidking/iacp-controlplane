@@ -1,0 +1,51 @@
+{
+  "data": {
+    "nonterminal": {
+      "jobs": [],
+      "operations": [],
+      "terraform_applies": []
+    },
+    "queues": {},
+    "redis": true,
+    "schema": [
+      "0004_authorized_apply"
+    ],
+    "tables": {
+      "instances": {
+        "count": 1,
+        "sha256": "8ab62c1fcb44201440a6ac7eba3718a63f9af6d8c7626c67dc1eafe4cc39342a"
+      },
+      "jobs": {
+        "count": 6,
+        "sha256": "df805346e63b8a4336aff6ac1343f3084ec9215031500518ce514c4deaa33a2d"
+      },
+      "operation_events": {
+        "count": 54,
+        "sha256": "af4741898c518eb019fcca928e19cac90322b518733a6e4fe9e17d38d3f071e7"
+      },
+      "operations": {
+        "count": 1,
+        "sha256": "966359cff562a6e3d60366400a5d9e463d1ee6c9629df5c3695b23af9842193d"
+      },
+      "tenants": {
+        "count": 1,
+        "sha256": "d856cf7e85e87aa56833e248d4a3608b0d89dd32f57f08f09215380e2cca407c"
+      },
+      "terraform_applies": {
+        "count": 3,
+        "sha256": "a0e879b7e2190fd6e968b8be6975ace101dedb7edf52056e4a5c2dde878539cc"
+      },
+      "terraform_attempts": {
+        "count": 4,
+        "sha256": "f9a8e2865a2a4815e5c25f11fda40d848f820a82b7083f0bdb8d607c515b4de8"
+      },
+      "terraform_executions": {
+        "count": 1,
+        "sha256": "a1d958be782ee372b7863b8d4e3936847ae55454476b0299642efd57b357a295"
+      }
+    },
+    "unacked": 0
+  },
+  "observed_date_utc": "2026-10-23",
+  "scope": "Authorized read-only snapshot via the existing conventional worker; no migrations or mutations"
+}

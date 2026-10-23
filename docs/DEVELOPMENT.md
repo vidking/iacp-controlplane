@@ -81,7 +81,9 @@ timeouts finitos. No comprueba capacidad de workers, outbox, backup ni drift
 posterior a la migración. `/health/live` se mantiene independiente de DB/Redis.
 
 El contrato está en `docs/openapi.json` y el runtime expone `/openapi.json` y
-`/docs`. Para regenerarlo sin secretos ni conexión:
+`/docs`, ambos protegidos por identidad del tenant. En navegador usar el challenge
+con usuario `iacp` y token como contraseña, y Authorize HTTPBearer para /v1.
+Para regenerarlo sin secretos ni conexión:
 
 ```bash
 PYTHONPATH=app .venv/bin/python scripts/export-openapi.py

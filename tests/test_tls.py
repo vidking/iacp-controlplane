@@ -66,13 +66,18 @@ def test_generator_validates_certificate_pair_and_writes_no_private_material(tmp
     policy_file.write_text(json.dumps(policy()))
     destination = tmp_path / "dynamic"
     argv = ["render-tls", "--policy", str(policy_file), "--output-dir", str(destination),
-            "--certificates", str(certificates), "--bind-ip", "10.23.45.67"]
+            "--certificates", str(certificates), "--ca-file", str(certificates / "fullchain.pem"),
+            "--min-validity-days", "0", "--bind-ip", "10.23.45.67"]
     monkeypatch.setattr("sys.argv", argv)
     renderer.main()
     output = destination / "iacp.yml"
     assert output.stat().st_mode & 0o777 == 0o600
     assert "PRIVATE KEY" not in output.read_text()
     assert yaml.safe_load(output.read_text())["tls"]["certificates"][0]["keyFile"] == "/run/tls/privkey.pem"
+    with pytest.raises(ValueError, match="Certificado"):
+        renderer.check_certificate(certificates, None, 0)
+    with pytest.raises(ValueError, match="Certificado"):
+        renderer.check_certificate(certificates, certificates / "fullchain.pem", 2)
     monkeypatch.setattr("sys.argv", argv[:-1] + ["0.0.0.0"])
     with pytest.raises(ValueError): renderer.main()
     (certificates / "privkey.pem").write_text("invalid key")

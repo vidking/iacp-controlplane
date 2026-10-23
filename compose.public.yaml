@@ -1,0 +1,10 @@
+# Optional last proxy override. Reuses the single existing Traefik service.
+# No Docker provider/socket. All exposure is explicit in the file provider.
+services:
+  traefik:
+    image: ${IACP_TRAEFIK_IMAGE:?Imagen Traefik aprobada y fijada por digest}
+    command: ["--configFile=/etc/traefik/public.yml"]
+    volumes:
+      - ./traefik/public.yml:/etc/traefik/public.yml:ro
+    ports:
+      - "${IACP_TLS_BIND_IP:?IP LAN autorizada}:80:80"

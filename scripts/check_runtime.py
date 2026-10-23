@@ -69,7 +69,7 @@ def check(base_url: str, timeout: float = 60) -> dict:
     status, operation = request(base_url, f'/v1/operations/{instance_job["operation_id"]}', token)
     assert status == 200 and operation["status"] == "completed"
     assert [item["code"] for item in operation["events"]] == ["accepted", "started", "completed"]
-    status, contract = request(base_url, "/openapi.json")
+    status, contract = request(base_url, "/openapi.json", token)
     assert status == 200 and "/v1/jobs/smoke" in contract["paths"]
     return {"status": "passed", "job_id": job_id, "job_status": result["status"],
             "instance_id": instance_job["instance_id"], "operation_status": operation["status"], "provisioning": "simulated"}
