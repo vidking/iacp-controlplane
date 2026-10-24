@@ -1,12 +1,938 @@
 {
-  "status": "implementation under verification; not promoted yet",
-  "candidate_api_version": "0.9.0",
-  "candidate_schema": "0009_lab_self_service",
+  "status": "verified self-service available; all explicitly authorized disposable pilot VMs cleaned",
+  "verified_at": "2026-10-24T02:04:17.840850+00:00",
   "verified_runtime": {
-    "revision": "2b1aea29cd207cb48f930c1c193acb0c0e699b61",
-    "api_version": "0.8.0",
-    "schema": "0008_dhcp_profiles"
+    "at": "2026-10-24T02:02:07.586031+00:00",
+    "release": "724fa107212b20dfd28bbd334af6c683005c293e",
+    "api_version": "0.9.1",
+    "schema": "0010_guest_identity",
+    "tls_and_authentication": [
+      {
+        "path": "/health/ready",
+        "identity": "anonymous",
+        "http": 200,
+        "tls_verified": true
+      },
+      {
+        "path": "/docs",
+        "identity": "anonymous",
+        "http": 401,
+        "tls_verified": true
+      },
+      {
+        "path": "/openapi.json",
+        "identity": "anonymous",
+        "http": 401,
+        "tls_verified": true
+      },
+      {
+        "path": "/docs",
+        "identity": "docs-basic",
+        "http": 200,
+        "tls_verified": true
+      },
+      {
+        "path": "/openapi.json",
+        "identity": "docs-basic",
+        "http": 200,
+        "tls_verified": true
+      },
+      {
+        "path": "/v1/instances",
+        "identity": "docs-basic",
+        "http": 401,
+        "tls_verified": true
+      },
+      {
+        "path": "/v1/instances",
+        "identity": "docs-password-as-bearer",
+        "http": 401,
+        "tls_verified": true
+      }
+    ],
+    "openapi_canonical_sha256": "93953845491f493f28ff846df386320a1e9c3861df8d6661892a1f18b25921da",
+    "paths": [
+      "/health/live",
+      "/health/ready",
+      "/v1/jobs/smoke",
+      "/v1/jobs/{job_id}",
+      "/v1/instances",
+      "/v1/instances/{instance_id}",
+      "/v1/instances/{instance_id}/network/discover",
+      "/v1/instances/{instance_id}/network/initialize",
+      "/v1/operations",
+      "/v1/operations/{operation_id}",
+      "/v1/instances/{instance_id}/terraform",
+      "/v1/instances/{instance_id}/terraform/cancel",
+      "/v1/instances/{instance_id}/terraform/retry",
+      "/v1/instances/{instance_id}/terraform/approvals",
+      "/v1/instances/{instance_id}/terraform/apply",
+      "/v1/instances/{instance_id}/terraform/applies",
+      "/v1/instances/{instance_id}/terraform/applies/{approval_id}/cancel",
+      "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover",
+      "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence",
+      "/v1/instances/{instance_id}/power",
+      "/v1/instances/{instance_id}/power/start",
+      "/v1/instances/{instance_id}/power/shutdown",
+      "/v1/instances/{instance_id}/power/reboot",
+      "/v1/instances/{instance_id}/terraform/deletion-plan",
+      "/v1/instances/{instance_id}/terraform/deletion-approval",
+      "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel",
+      "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover",
+      "/v1/profiles",
+      "/v1/lab/usage",
+      "/v1/lab/policies",
+      "/v1/lab/policies/{policy_id}",
+      "/v1/lab/policies/{policy_id}/approve",
+      "/v1/lab/policies/{policy_id}/renew",
+      "/v1/lab/policies/{policy_id}/revoke",
+      "/v1/instances/{instance_id}/provision",
+      "/v1/instances/{instance_id}/retry-provision",
+      "/v1/instances/{instance_id}/reconcile"
+    ],
+    "roles": {
+      "terraform-worker": {
+        "container_id": "8cc6770e8533f3ad59940fe2fdd8c991d53b5ddbafe4a9f83e6ae529dcc8458b",
+        "image_id": "sha256:b01480ad0f034bc4539797cb558b43c0a6221a8b799e54fd7775a3f7cfebee8e",
+        "revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+        "flags": {
+          "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+          "IACP_KVM_LIFECYCLE_ENABLED": "1",
+          "IACP_TERRAFORM_APPLY_ENABLED": "1",
+          "IACP_TERRAFORM_DELETE_ENABLED": "1",
+          "IACP_DISPOSABLE_INSTANCE_IDS": ""
+        }
+      },
+      "api": {
+        "container_id": "8bddd98692c8c76ef4902843fa4c6c2db7d3a16bdd1a3e5de12c8bc5af44471c",
+        "image_id": "sha256:e070027a259870418d4a3f60616979dd49a34867c190f04767fd08b1ae067661",
+        "revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+        "flags": {
+          "IACP_ADMISSION_ENABLED": "1",
+          "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+          "IACP_KVM_LIFECYCLE_ENABLED": "1",
+          "IACP_TERRAFORM_APPLY_ENABLED": "1",
+          "IACP_TERRAFORM_DELETE_ENABLED": "1",
+          "IACP_DISPOSABLE_INSTANCE_IDS": "",
+          "IACP_LIFECYCLE_INSTANCE_IDS": ""
+        }
+      },
+      "lifecycle-worker": {
+        "container_id": "a81a52eda2834cc95f1f3c949264affc58c0eb7272a599e56b4505bff5f2d49d",
+        "image_id": "sha256:e070027a259870418d4a3f60616979dd49a34867c190f04767fd08b1ae067661",
+        "revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+        "flags": {
+          "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+          "IACP_KVM_LIFECYCLE_ENABLED": "1",
+          "IACP_LIFECYCLE_INSTANCE_IDS": ""
+        }
+      },
+      "worker": {
+        "container_id": "dfbe6ad03ee82655fa5a1c3f11aa79052b9a4a859c60b4a47156f719fc9d9cfe",
+        "image_id": "sha256:e070027a259870418d4a3f60616979dd49a34867c190f04767fd08b1ae067661",
+        "revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+        "flags": {}
+      }
+    },
+    "active_policy": {
+      "policy_id": "ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "status": "approved",
+      "specification": {
+        "environment": "lab",
+        "profiles": [
+          "lab-dhcp"
+        ],
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "max_instances": 4,
+        "max_vcpus": 8,
+        "max_memory_mb": 8192,
+        "max_disk_gb": 80,
+        "max_concurrent_operations": 2,
+        "valid_for_seconds": 604800,
+        "change_reference": "IACP-LAB-SELF-SERVICE-370ce98"
+      },
+      "policy_sha256": "6feea8186e364418c4019c40d1556125d44f458b4118d26f42faf21b8d8d1317",
+      "requested_by": "bootstrap",
+      "approved_by": "iacp-lab-approver",
+      "created_at": "2026-10-24T01:23:03.638702Z",
+      "approved_at": "2026-10-24T01:23:03.757943Z",
+      "expires_at": "2026-10-31T01:23:03.757995Z",
+      "revoked_at": null,
+      "revoked_by": null,
+      "review_history": [
+        {
+          "at": "2026-10-24T01:23:03.636910+00:00",
+          "actor": "bootstrap",
+          "action": "proposed",
+          "expires_at": null,
+          "policy_sha256": "6feea8186e364418c4019c40d1556125d44f458b4118d26f42faf21b8d8d1317"
+        },
+        {
+          "at": "2026-10-24T01:23:03.758010+00:00",
+          "actor": "iacp-lab-approver",
+          "action": "approved",
+          "expires_at": "2026-10-31T01:23:03.757995+00:00",
+          "policy_sha256": "6feea8186e364418c4019c40d1556125d44f458b4118d26f42faf21b8d8d1317"
+        }
+      ]
+    },
+    "usage": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "usage": {
+        "instances": 1,
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20,
+        "concurrent_operations": 0
+      },
+      "description": "Incluye reservas fallidas e inciertas y todos los perfiles del tenant; se libera capacidad solo con deleted verificado."
+    },
+    "profile_catalog": [
+      {
+        "profile": "lab-dhcp",
+        "image": "ubuntu-2404",
+        "network_mode": "dhcp",
+        "bridge": "vmbr0",
+        "vlan_tag": null,
+        "nodes": [
+          "mng01"
+        ],
+        "minimum_disk_gb": 20,
+        "max_vcpus_per_instance": 4,
+        "max_memory_mb_per_instance": 4096,
+        "max_disk_gb_per_instance": 40,
+        "self_service_enabled": true,
+        "guest_initialization": "ubuntu-2404-lab-identity-v1",
+        "quotas": {
+          "instances": 4,
+          "vcpus": 8,
+          "memory_mb": 8192,
+          "disk_gb": 80,
+          "concurrent_operations": 2
+        }
+      }
+    ],
+    "missing_policy_rejected": {
+      "detail": "LAB_POLICY_REQUIRED"
+    },
+    "admission_remains_open_under_bounded_policy": true
   },
+  "deployment": {
+    "manifest": "/opt/iacp/evidence/guest-identity-20261024T015344Z/manifest-activated.json",
+    "release_directory": "/opt/iacp/releases/iacp-self-service-724fa10",
+    "images": {
+      "api": "sha256:e070027a259870418d4a3f60616979dd49a34867c190f04767fd08b1ae067661",
+      "terraform": "sha256:b01480ad0f034bc4539797cb558b43c0a6221a8b799e54fd7775a3f7cfebee8e",
+      "proxy": "sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56"
+    },
+    "backup": {
+      "path": "/opt/iacp/backups/iacp-before-guest-identity-20261024T015344Z.dump",
+      "sha256": "79aab14c7cfd2c618bf1e028c76788353ca9cf49d7f8e7c61ec893fa1a4eebc9",
+      "schema": "0010_guest_identity",
+      "restore_evidence": "/opt/iacp/evidence/guest-identity-20261024T015344Z/restore-evidence.json",
+      "restore_evidence_sha256": "12dbeeeacee61e0fb7fc511f5132c52348143ecc3e183e8fcaea0f4e56bcedb1"
+    },
+    "profile_configuration": {
+      "path": "/etc/iacp/terraform/profiles-guest-identity-370ce98.json",
+      "sha256": "58e67ac6eb17375477bc358c5b28e6373088e6dc6324b8e3210e446843988ef5"
+    },
+    "source": {
+      "path": "/opt/iacp/sources/iac-proxmox-dhcp-2c0f319",
+      "revision": "2c0f319ba5d7a45987cd9d0395673828c28f678b",
+      "archive_sha256": "05ed1d0d6f2b886df8072eb24cd764dc881f63e9f536baa9af3bafa0804d156b"
+    },
+    "deploy": {
+      "action": "promote",
+      "at": "2026-10-24T01:55:18.006748+00:00",
+      "passed": true
+    },
+    "activation": {
+      "action": "activate-lab",
+      "at": "2026-10-24T01:56:41.269729+00:00",
+      "passed": true
+    },
+    "doctor": {
+      "passed": true,
+      "changed_paths": [],
+      "unexpected_paths": [],
+      "ignored_build_metadata": [],
+      "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+      "live_compatibility": {
+        "passed": true,
+        "unexpected_paths": []
+      },
+      "roles_running": {
+        "terraform-worker": true,
+        "api": true,
+        "lifecycle-worker": true,
+        "worker": true,
+        "traefik": true,
+        "db": true,
+        "redis": true
+      }
+    }
+  },
+  "multi_vm_pilot": {
+    "executed": true,
+    "group_application_revision": "4259483b227f517ef83cbb0addfaf99578089b5b",
+    "sequential_first_then_two_concurrent_creations": true,
+    "controlled_plan_cancel_then_retry_same_uuid_vmid": true,
+    "instances": [
+      {
+        "instance_id": "aaea8360-faf9-4093-aa8b-19b06580b0ae",
+        "vmid": 30004,
+        "node": "mng01",
+        "name": "iacp-selfservice-1-370ce98",
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20,
+        "node_preference": null,
+        "ip_addresses_verified_after_reboot": [
+          "192.168.3.227"
+        ],
+        "mac_address": "bc:24:11:2f:ca:4c",
+        "machine_id_sha256": "4b3ee45e97139230a62f3e467f7b39870a153e4f8aea61d9ce69f1e0041d38ff",
+        "creation_operation_id": "c1d61fee-b162-455f-89f4-98ecb030f5fa",
+        "creation_idempotency_key": "f48c2dee-3b06-48f3-9a55-89136d9b0740",
+        "creation_replay_same_ids": true,
+        "creation_application_revision": "370ce98a26578aeae108270bd275e6b026267d77",
+        "creation_attempt": 1,
+        "creation_event_codes": [
+          "lab_policy_bound",
+          "accepted",
+          "terraform_plan_started",
+          "terraform_planned",
+          "terraform_apply_approved",
+          "terraform_apply_queued",
+          "terraform_apply_started",
+          "terraform_mutation_started"
+        ],
+        "consumed_apply_count": 1,
+        "apply_id": "ef620fe2-196b-4708-97cc-94641a2d2c32",
+        "initialization_operation_id": "ffea880e-decd-4595-9dbc-0e27aae71c06",
+        "guest_exec_dispatch_count": 1,
+        "initialization_program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+        "initialization_event_codes": [
+          "guest_initialization_accepted",
+          "guest_initialization_failed",
+          "guest_initialization_retry_before_dispatch",
+          "guest_initialization_dispatch_consumed",
+          "guest_initialization_uncertain",
+          "guest_initialization_verified"
+        ],
+        "state_after_creation_and_lifecycle": {
+          "version_id": "001792805226013211016-8gSMvmnhuk",
+          "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+          "serial": 1,
+          "sha256": "27e474a95e1bac412cdd20d306a48d82556e61127b8c44e35270c1c7264efae6",
+          "content_sha256": "f86a5e73469e67766ae574ef1268bc784b14fb873e6e3a837249ae1f6ac28568"
+        },
+        "state_unchanged_by_lifecycle_and_guest_initialization": true,
+        "lifecycle": [
+          {
+            "operation_id": "cf8a0a25-bf5b-4a03-a9d7-a041c1909f0e",
+            "action": "start",
+            "status": "completed",
+            "task_id": "UPID:mng01:002B9CF7:04BCD168:6ADC098A:qmstart:30004:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "f4ba14e1-2644-421c-9574-119761d55353",
+            "action": "reboot",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BC900:04BE019C:6ADC0C95:qmreboot:30004:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "807dc214-32c4-471b-8644-e81cc65d0f6e",
+            "action": "reboot",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BE800:04BEB366:6ADC0E5C:qmreboot:30004:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "1137f907-3702-41df-a975-87d2e72d2f85",
+            "action": "shutdown",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BF237:04BEEBCA:6ADC0EEC:qmshutdown:30004:iacp-lifecycle@pve!power-lab:"
+          }
+        ],
+        "final_status": "deleted",
+        "deletion": {
+          "operation_id": "7d6bd3c0-c1ad-4226-af69-9cee2ad69c2d",
+          "status": "completed",
+          "phase": "deleted",
+          "plan_sha256": "f1598225ead1c7e04cf24176cfe16ddf41b47f483d5183c0a47d418eda542be2",
+          "approved_by": "policy:ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+          "started_at": "2026-10-24 01:51:16.810261+00:00",
+          "finished_at": "2026-10-24 01:51:20.516449+00:00",
+          "result": {
+            "deleted": true,
+            "state_present": false,
+            "proxmox_present": false,
+            "state_consistency": {
+              "change": "unchanged",
+              "before": {
+                "version_id": "001792806679334009760-ie07Cz_CWd",
+                "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+                "serial": 2,
+                "sha256": "5802df810b5d1dc823eb0636ad246c8a8500d1752389490b123dc91790d4c4d7",
+                "content_sha256": "e344b4f15c1b29bfa90051c65c4884cf16a0601dcbcfac50c22323e0918628f3"
+              },
+              "after": {
+                "version_id": "001792806679334009760-ie07Cz_CWd",
+                "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+                "serial": 2,
+                "sha256": "5802df810b5d1dc823eb0636ad246c8a8500d1752389490b123dc91790d4c4d7",
+                "content_sha256": "e344b4f15c1b29bfa90051c65c4884cf16a0601dcbcfac50c22323e0918628f3"
+              }
+            },
+            "vmid": 30004
+          }
+        },
+        "state_after_deletion": {
+          "version_id": "001792806679334009760-ie07Cz_CWd",
+          "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+          "serial": 2,
+          "sha256": "5802df810b5d1dc823eb0636ad246c8a8500d1752389490b123dc91790d4c4d7",
+          "content_sha256": "e344b4f15c1b29bfa90051c65c4884cf16a0601dcbcfac50c22323e0918628f3"
+        },
+        "state_resources_after_deletion": 0,
+        "two_consistent_state_reads": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792806679334009760-ie07Cz_CWd",
+            "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+            "serial": 2,
+            "sha256": "5802df810b5d1dc823eb0636ad246c8a8500d1752389490b123dc91790d4c4d7",
+            "content_sha256": "e344b4f15c1b29bfa90051c65c4884cf16a0601dcbcfac50c22323e0918628f3"
+          },
+          "after": {
+            "version_id": "001792806679334009760-ie07Cz_CWd",
+            "lineage": "c182778c-8a7f-9ea0-f444-8f41bff461d2",
+            "serial": 2,
+            "sha256": "5802df810b5d1dc823eb0636ad246c8a8500d1752389490b123dc91790d4c4d7",
+            "content_sha256": "e344b4f15c1b29bfa90051c65c4884cf16a0601dcbcfac50c22323e0918628f3"
+          }
+        },
+        "proxmox_present_after_deletion": false,
+        "delete_replay_completed": true
+      },
+      {
+        "instance_id": "dce49c55-b87e-4e3e-8fd8-39409f83a08b",
+        "vmid": 30006,
+        "node": "mng01",
+        "name": "iacp-selfservice-2-370ce98",
+        "vcpus": 1,
+        "memory_mb": 1536,
+        "disk_gb": 20,
+        "node_preference": null,
+        "ip_addresses_verified_after_reboot": [
+          "192.168.3.105"
+        ],
+        "mac_address": "bc:24:11:ed:4f:4a",
+        "machine_id_sha256": "06776acd89ca86d4a3679d0b7220cd6619a6d289c371b48575f84ee68760935c",
+        "creation_operation_id": "bba1dfb0-d00b-419f-988f-928399ec408e",
+        "creation_idempotency_key": "016c91a6-4576-4026-a5aa-c5352dfa3e64",
+        "creation_replay_same_ids": true,
+        "creation_application_revision": "4259483b227f517ef83cbb0addfaf99578089b5b",
+        "creation_attempt": 1,
+        "creation_event_codes": [
+          "lab_policy_bound",
+          "accepted",
+          "terraform_plan_started",
+          "terraform_planned",
+          "terraform_apply_approved",
+          "terraform_apply_queued",
+          "terraform_apply_started",
+          "terraform_mutation_started",
+          "terraform_apply_completed"
+        ],
+        "consumed_apply_count": 1,
+        "apply_id": "965f4370-ebc7-4c77-af77-beab2fed3645",
+        "initialization_operation_id": "9ce15b94-715b-47ac-9233-979007d6ac50",
+        "guest_exec_dispatch_count": 1,
+        "initialization_program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+        "initialization_event_codes": [
+          "guest_initialization_accepted",
+          "guest_initialization_dispatch_consumed",
+          "guest_initialization_uncertain",
+          "guest_initialization_uncertain",
+          "guest_initialization_verified"
+        ],
+        "state_after_creation_and_lifecycle": {
+          "version_id": "001792806114803685717-WhYtjDj4E5",
+          "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+          "serial": 1,
+          "sha256": "b88e59f889195cc33ffab6a644a0e866bd98f6c85cccb289b9c3e0ef2cda1d69",
+          "content_sha256": "9300d5d72811004e5048807e4d1237ccaf824221a7dcd889fa1a71ab5ef78329"
+        },
+        "state_unchanged_by_lifecycle_and_guest_initialization": true,
+        "lifecycle": [
+          {
+            "operation_id": "59ef5214-1e9e-45f7-af75-f8a35abfdcaa",
+            "action": "start",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BD46E:04BE30DF:6ADC0D0E:qmstart:30006:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "a6fb1a1e-72ce-4dfc-b23b-bb6f2661042e",
+            "action": "shutdown",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BF256:04BEEE6C:6ADC0EF3:qmshutdown:30006:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "f6e6b10e-f86d-4efd-bb6d-b67db2f033f0",
+            "action": "reboot",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BE921:04BEB615:6ADC0E63:qmreboot:30006:iacp-lifecycle@pve!power-lab:"
+          }
+        ],
+        "final_status": "deleted",
+        "deletion": {
+          "operation_id": "d670e922-b234-408d-82d9-af896ceca811",
+          "status": "completed",
+          "phase": "deleted",
+          "plan_sha256": "d5532e431c98780baad26252acda1d8b505017dada81f5cd963bb21c9bbe50f9",
+          "approved_by": "policy:ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+          "started_at": "2026-10-24 01:51:36.770182+00:00",
+          "finished_at": "2026-10-24 01:51:42.733042+00:00",
+          "result": {
+            "deleted": true,
+            "state_present": false,
+            "proxmox_present": false,
+            "state_consistency": {
+              "change": "unchanged",
+              "before": {
+                "version_id": "001792806700256487936-PCm-k8Qz4u",
+                "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+                "serial": 2,
+                "sha256": "6002b56c57201d137da38b3c5e1048296a6f178c139b4e6b4b2cf89a76128522",
+                "content_sha256": "25db6acbdc2bf10750bc2f4a5205eadc1713193fe46ead3f9ac50aeb393fb2aa"
+              },
+              "after": {
+                "version_id": "001792806700256487936-PCm-k8Qz4u",
+                "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+                "serial": 2,
+                "sha256": "6002b56c57201d137da38b3c5e1048296a6f178c139b4e6b4b2cf89a76128522",
+                "content_sha256": "25db6acbdc2bf10750bc2f4a5205eadc1713193fe46ead3f9ac50aeb393fb2aa"
+              }
+            },
+            "vmid": 30006
+          }
+        },
+        "state_after_deletion": {
+          "version_id": "001792806700256487936-PCm-k8Qz4u",
+          "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+          "serial": 2,
+          "sha256": "6002b56c57201d137da38b3c5e1048296a6f178c139b4e6b4b2cf89a76128522",
+          "content_sha256": "25db6acbdc2bf10750bc2f4a5205eadc1713193fe46ead3f9ac50aeb393fb2aa"
+        },
+        "state_resources_after_deletion": 0,
+        "two_consistent_state_reads": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792806700256487936-PCm-k8Qz4u",
+            "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+            "serial": 2,
+            "sha256": "6002b56c57201d137da38b3c5e1048296a6f178c139b4e6b4b2cf89a76128522",
+            "content_sha256": "25db6acbdc2bf10750bc2f4a5205eadc1713193fe46ead3f9ac50aeb393fb2aa"
+          },
+          "after": {
+            "version_id": "001792806700256487936-PCm-k8Qz4u",
+            "lineage": "51dafd1b-aa3a-a52f-1bb4-e2b93de9bc0b",
+            "serial": 2,
+            "sha256": "6002b56c57201d137da38b3c5e1048296a6f178c139b4e6b4b2cf89a76128522",
+            "content_sha256": "25db6acbdc2bf10750bc2f4a5205eadc1713193fe46ead3f9ac50aeb393fb2aa"
+          }
+        },
+        "proxmox_present_after_deletion": false,
+        "delete_replay_completed": true
+      },
+      {
+        "instance_id": "e024cd8d-0bc3-4bc6-b990-47af1d38b1f3",
+        "vmid": 30005,
+        "node": "mng01",
+        "name": "iacp-selfservice-3-370ce98",
+        "vcpus": 3,
+        "memory_mb": 2560,
+        "disk_gb": 20,
+        "node_preference": null,
+        "ip_addresses_verified_after_reboot": [
+          "192.168.3.196"
+        ],
+        "mac_address": "bc:24:11:f8:56:fc",
+        "machine_id_sha256": "a6a583e829e811fef2b34d3cadcf2e0e5f6b277e8f96a963dfa9bf3e501ee128",
+        "creation_operation_id": "90617a76-2cf7-4b01-97fb-48732baf27d6",
+        "creation_idempotency_key": "95d797f4-bba8-485f-8345-59a60b084745",
+        "creation_replay_same_ids": true,
+        "creation_application_revision": "4259483b227f517ef83cbb0addfaf99578089b5b",
+        "creation_attempt": 2,
+        "creation_event_codes": [
+          "lab_policy_bound",
+          "accepted",
+          "terraform_plan_started",
+          "terraform_cancel_requested",
+          "terraform_cancelled",
+          "terraform_retry_queued",
+          "terraform_plan_started",
+          "terraform_planned",
+          "terraform_apply_approved",
+          "terraform_apply_queued",
+          "terraform_apply_started",
+          "terraform_mutation_started",
+          "terraform_apply_uncertain",
+          "terraform_recovery_requested",
+          "terraform_reconcile_started",
+          "terraform_apply_uncertain",
+          "terraform_recovery_requested",
+          "terraform_reconcile_started",
+          "terraform_apply_completed"
+        ],
+        "consumed_apply_count": 1,
+        "apply_id": "da583ae7-4bf2-4a1b-b842-0ba04f2a94e6",
+        "initialization_operation_id": "6bd1a7e4-4337-4208-952a-d109d72d562f",
+        "guest_exec_dispatch_count": 1,
+        "initialization_program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+        "initialization_event_codes": [
+          "guest_initialization_accepted",
+          "guest_initialization_dispatch_consumed",
+          "guest_initialization_uncertain",
+          "guest_initialization_verified"
+        ],
+        "state_after_creation_and_lifecycle": {
+          "version_id": "001792806130376198952-C0D9i8_s90",
+          "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+          "serial": 1,
+          "sha256": "fa1a74aaeeb309fe48e55d244f982292a27add76f66332642b4f1e6728c34fe4",
+          "content_sha256": "eb4cf4f2ff668d5c53a5f1323e195e9b51bc8a0031d276950cffa467148d3cf5"
+        },
+        "state_unchanged_by_lifecycle_and_guest_initialization": true,
+        "lifecycle": [
+          {
+            "operation_id": "d22d0cbe-1347-467f-bd7a-081871388de0",
+            "action": "start",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BE128:04BE8779:6ADC0DEB:qmstart:30005:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "8bee171b-a7af-43de-a93a-809f067816d4",
+            "action": "reboot",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BEA4F:04BEB8B1:6ADC0E69:qmreboot:30005:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "3dd3c736-c8a5-462a-8030-24aa2e8a4d86",
+            "action": "shutdown",
+            "status": "completed",
+            "task_id": "UPID:mng01:002BF2E8:04BEF11F:6ADC0EFA:qmshutdown:30005:iacp-lifecycle@pve!power-lab:"
+          }
+        ],
+        "final_status": "deleted",
+        "deletion": {
+          "operation_id": "6731a09f-f1ff-4744-bab7-09c571cd4379",
+          "status": "completed",
+          "phase": "deleted",
+          "plan_sha256": "43444945197b364170d7fb9b5c65886c6b672a2e1d03d2764e29496f15f00908",
+          "approved_by": "policy:ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+          "started_at": "2026-10-24 01:51:59.000941+00:00",
+          "finished_at": "2026-10-24 01:52:02.579056+00:00",
+          "result": {
+            "deleted": true,
+            "state_present": false,
+            "proxmox_present": false,
+            "state_consistency": {
+              "change": "unchanged",
+              "before": {
+                "version_id": "001792806721505150450-mcOET9sL7-",
+                "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+                "serial": 2,
+                "sha256": "2cc4bd13956dbb6dff62e545d12adb6eafa3c55c1117c1e43b3fe5b610eeef2c",
+                "content_sha256": "beed6541591edf1bbd2c8c55c47acbcd1fd463e8be67d5a827ca3ec048520276"
+              },
+              "after": {
+                "version_id": "001792806721505150450-mcOET9sL7-",
+                "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+                "serial": 2,
+                "sha256": "2cc4bd13956dbb6dff62e545d12adb6eafa3c55c1117c1e43b3fe5b610eeef2c",
+                "content_sha256": "beed6541591edf1bbd2c8c55c47acbcd1fd463e8be67d5a827ca3ec048520276"
+              }
+            },
+            "vmid": 30005
+          }
+        },
+        "state_after_deletion": {
+          "version_id": "001792806721505150450-mcOET9sL7-",
+          "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+          "serial": 2,
+          "sha256": "2cc4bd13956dbb6dff62e545d12adb6eafa3c55c1117c1e43b3fe5b610eeef2c",
+          "content_sha256": "beed6541591edf1bbd2c8c55c47acbcd1fd463e8be67d5a827ca3ec048520276"
+        },
+        "state_resources_after_deletion": 0,
+        "two_consistent_state_reads": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792806721505150450-mcOET9sL7-",
+            "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+            "serial": 2,
+            "sha256": "2cc4bd13956dbb6dff62e545d12adb6eafa3c55c1117c1e43b3fe5b610eeef2c",
+            "content_sha256": "beed6541591edf1bbd2c8c55c47acbcd1fd463e8be67d5a827ca3ec048520276"
+          },
+          "after": {
+            "version_id": "001792806721505150450-mcOET9sL7-",
+            "lineage": "e9e1d9ce-2c01-8052-a9cd-a8347c55f883",
+            "serial": 2,
+            "sha256": "2cc4bd13956dbb6dff62e545d12adb6eafa3c55c1117c1e43b3fe5b610eeef2c",
+            "content_sha256": "beed6541591edf1bbd2c8c55c47acbcd1fd463e8be67d5a827ca3ec048520276"
+          }
+        },
+        "proxmox_present_after_deletion": false,
+        "delete_replay_completed": true
+      },
+      {
+        "instance_id": "7e017bd4-b1c1-4daa-98cd-ffb2f70b1408",
+        "vmid": 30007,
+        "node": "mng01",
+        "name": "iacp-repeatability-4-724fa10",
+        "vcpus": 1,
+        "memory_mb": 1024,
+        "disk_gb": 24,
+        "node_preference": "mng01",
+        "ip_addresses_verified_after_reboot": [
+          "192.168.3.193"
+        ],
+        "mac_address": "bc:24:11:a2:25:ee",
+        "machine_id_sha256": "f2772935ac40fb14b13e6e0e3c81989351f46d92531bbcb29642ce551e3a96ee",
+        "creation_operation_id": "b1e84ea9-9562-451e-84b4-6d6ffd487fec",
+        "creation_idempotency_key": "8f689283-2f34-4d1f-b8b8-25546ab2a2ea",
+        "creation_replay_same_ids": true,
+        "creation_application_revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+        "creation_attempt": 1,
+        "creation_event_codes": [
+          "lab_policy_bound",
+          "accepted",
+          "terraform_plan_started",
+          "terraform_planned",
+          "terraform_apply_approved",
+          "terraform_apply_queued",
+          "terraform_apply_started",
+          "terraform_mutation_started",
+          "terraform_apply_uncertain",
+          "terraform_recovery_requested",
+          "terraform_reconcile_started",
+          "terraform_apply_completed"
+        ],
+        "consumed_apply_count": 1,
+        "apply_id": "08afe3ee-0d16-4882-becd-17fcf1026103",
+        "initialization_operation_id": "c513dbfc-15c0-4f87-b065-ec6f567b5f15",
+        "guest_exec_dispatch_count": 1,
+        "initialization_program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+        "initialization_event_codes": [
+          "guest_initialization_accepted",
+          "guest_initialization_dispatch_consumed",
+          "guest_initialization_verified"
+        ],
+        "state_after_creation_and_lifecycle": {
+          "version_id": "001792807031872916439-FgVGZVS98L",
+          "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+          "serial": 1,
+          "sha256": "463a2bdafef824d2c45629b51c0cad9808bca45f1152e09f96149ea53750b73c",
+          "content_sha256": "967f628a4a327c9608c72a3adc0f697f95aa8effd7dcc9d1e11d2c2a82915b2a"
+        },
+        "state_unchanged_by_lifecycle_and_guest_initialization": true,
+        "lifecycle": [
+          {
+            "operation_id": "92c3c21a-bc4a-4bdb-b001-d37b61b91183",
+            "action": "start",
+            "status": "completed",
+            "task_id": "UPID:mng01:002C0E67:04BF8A10:6ADC1081:qmstart:30007:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "031ee3ea-66eb-45ee-9703-c4473308f3fd",
+            "action": "reboot",
+            "status": "completed",
+            "task_id": "UPID:mng01:002C1529:04BFB532:6ADC10F0:qmreboot:30007:iacp-lifecycle@pve!power-lab:"
+          },
+          {
+            "operation_id": "21280cb0-1def-4314-9100-df40bd56ecab",
+            "action": "shutdown",
+            "status": "completed",
+            "task_id": "UPID:mng01:002C1AAD:04BFD691:6ADC1145:qmshutdown:30007:iacp-lifecycle@pve!power-lab:"
+          }
+        ],
+        "final_status": "deleted",
+        "deletion": {
+          "operation_id": "63f475a4-e16a-4014-be1f-00002d2890d2",
+          "status": "completed",
+          "phase": "deleted",
+          "plan_sha256": "5c02455ec8a602cffee157e73fdeb68ea3e2e907a4d6753e79ae01e2d7baa2a1",
+          "approved_by": "policy:ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+          "started_at": "2026-10-24 02:00:57.496577+00:00",
+          "finished_at": "2026-10-24 02:01:04.009338+00:00",
+          "result": {
+            "deleted": true,
+            "state_present": false,
+            "proxmox_present": false,
+            "state_consistency": {
+              "change": "unchanged",
+              "before": {
+                "version_id": "001792807260101163678-cbEiGzd1qw",
+                "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+                "serial": 2,
+                "sha256": "be7659a13c00abb6890de26c20aad61ed89be4109d53ace0f427d6ecfffd7b3f",
+                "content_sha256": "d23824a71b01e49421ccf842617507bd4aa6a99afee2d91910b45ad9e66e78e7"
+              },
+              "after": {
+                "version_id": "001792807260101163678-cbEiGzd1qw",
+                "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+                "serial": 2,
+                "sha256": "be7659a13c00abb6890de26c20aad61ed89be4109d53ace0f427d6ecfffd7b3f",
+                "content_sha256": "d23824a71b01e49421ccf842617507bd4aa6a99afee2d91910b45ad9e66e78e7"
+              }
+            },
+            "vmid": 30007
+          }
+        },
+        "state_after_deletion": {
+          "version_id": "001792807260101163678-cbEiGzd1qw",
+          "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+          "serial": 2,
+          "sha256": "be7659a13c00abb6890de26c20aad61ed89be4109d53ace0f427d6ecfffd7b3f",
+          "content_sha256": "d23824a71b01e49421ccf842617507bd4aa6a99afee2d91910b45ad9e66e78e7"
+        },
+        "state_resources_after_deletion": 0,
+        "two_consistent_state_reads": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792807260101163678-cbEiGzd1qw",
+            "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+            "serial": 2,
+            "sha256": "be7659a13c00abb6890de26c20aad61ed89be4109d53ace0f427d6ecfffd7b3f",
+            "content_sha256": "d23824a71b01e49421ccf842617507bd4aa6a99afee2d91910b45ad9e66e78e7"
+          },
+          "after": {
+            "version_id": "001792807260101163678-cbEiGzd1qw",
+            "lineage": "048fd5c6-08a7-0621-08d0-19d1659c0d66",
+            "serial": 2,
+            "sha256": "be7659a13c00abb6890de26c20aad61ed89be4109d53ace0f427d6ecfffd7b3f",
+            "content_sha256": "d23824a71b01e49421ccf842617507bd4aa6a99afee2d91910b45ad9e66e78e7"
+          }
+        },
+        "proxmox_present_after_deletion": false,
+        "delete_replay_completed": true
+      }
+    ],
+    "tenant_isolation": {
+      "/v1/instances": {
+        "http": 200,
+        "body": []
+      },
+      "/v1/instances/aaea8360-faf9-4093-aa8b-19b06580b0ae": {
+        "http": 404,
+        "body": {
+          "detail": "Instance not found"
+        }
+      },
+      "/v1/operations/c1d61fee-b162-455f-89f4-98ecb030f5fa": {
+        "http": 404,
+        "body": {
+          "detail": "Operation not found"
+        }
+      },
+      "/v1/lab/policies": {
+        "http": 200,
+        "body": []
+      },
+      "/v1/profiles": {
+        "http": 200,
+        "body": []
+      }
+    },
+    "vm_quota_rejection": {
+      "http": 409,
+      "request_id": "d024996b-50bb-4e1c-9097-0022ab4cf81a",
+      "body": {
+        "detail": "LAB_QUOTA_EXCEEDED:instances"
+      },
+      "at": "2026-10-24T01:42:36.850293+00:00"
+    },
+    "resource_and_node_rejections": {
+      "cpu": {
+        "http": 409,
+        "request_id": "a255faec-7cfe-47a3-9ec4-051c7a955c6c",
+        "body": {
+          "detail": "LAB_QUOTA_EXCEEDED:vcpus"
+        },
+        "at": "2026-10-24T01:26:47.126928+00:00"
+      },
+      "ram": {
+        "http": 409,
+        "request_id": "a8382699-4550-4446-a703-67ac4cbf709d",
+        "body": {
+          "detail": "LAB_QUOTA_EXCEEDED:memory_mb"
+        },
+        "at": "2026-10-24T01:26:47.244166+00:00"
+      },
+      "disk": {
+        "http": 409,
+        "request_id": "d8a133b7-d4c3-4e8d-a389-c6aa3ac75590",
+        "body": {
+          "detail": "LAB_QUOTA_EXCEEDED:disk_gb"
+        },
+        "at": "2026-10-24T01:26:47.350364+00:00"
+      },
+      "node": {
+        "http": 503,
+        "request_id": "2d04febf-43f7-44a5-bfcb-942ad1d8316a",
+        "body": {
+          "detail": "PROFILE_NODE_NOT_AUTHORIZED"
+        },
+        "at": "2026-10-24T01:26:47.535695+00:00"
+      }
+    },
+    "second_round_after_cleanup": {
+      "application_revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+      "vmid": 30007,
+      "disk_gb": 24,
+      "node_preference": "mng01",
+      "initialization_completed_without_reconcile": true,
+      "prior_vmids_not_reused": true,
+      "capacity_released_by_verified_deletion": true
+    }
+  },
+  "resolved_dhcp_collision": {
+    "first_attempt_revision": "7c61c9980f0a1d775358baf7e4e13c5816e3370a",
+    "vmids": [
+      30001,
+      30003,
+      30002
+    ],
+    "failure": "Distinct MAC/SMBIOS/UUID clones inherited identical machine-id and DHCP CLIENTID and all received 192.168.3.59",
+    "all_cleaned_by_api_and_verified_absent": true,
+    "resolution": "Opt-in policy-bound fixed Ubuntu guest identity initializer, MAC-based DHCP and unique persistent machine-id; shared template29000 unchanged",
+    "private_diagnostic": "/opt/iacp/evidence/self-service-20261024T003605Z/dhcp-guest-identity-readonly.json"
+  },
+  "protection": {
+    "vm106_configuration_sha256": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+    "vm106_configuration_unchanged": true,
+    "vm104_effective_permissions": {},
+    "no_proxmox_mutation_of_vm104_vm106_shared_template_or_other_tenant_resources": true
+  },
+  "private_evidence_roots": [
+    "/opt/iacp/evidence/self-service-20261024T003605Z",
+    "/opt/iacp/evidence/guest-identity-20261024T012104Z/pilot",
+    "/opt/iacp/evidence/guest-identity-20261024T015344Z"
+  ],
+  "remaining_blockers": [],
+  "validation_boundaries": [
+    "Automated tests use simulated infrastructure; their PostgreSQL/Redis/Celery integrations are real disposable services.",
+    "The VM records above were executed through the real IACP HTTPS API and verified against native Proxmox and versioned S3 state.",
+    "No qm command replaced any IACP mutation. Basic documentation authentication does not authorize API actions."
+  ],
   "first_pilot_deletion": {
     "instance_id": "084c83e5-8d44-41a9-a527-f496cd83168b",
     "vmid": 30000,
@@ -29,10 +955,19 @@
     "audit_and_tombstone_preserved": true,
     "private_evidence": "/opt/iacp/evidence/dhcp-continuation-20261023T233200Z/deletion-completed-verified.json"
   },
-  "validation_boundaries": [
-    "Unit and provider fixtures do not certify real KVM operations",
-    "Integration uses real disposable PostgreSQL17/Redis7/Celery with simulated infrastructure",
-    "The first pilot deletion above is an actual API execution"
-  ],
-  "multi_vm_pilot": {"executed": false}
+  "automated_tests": {
+    "revision": "724fa107212b20dfd28bbd334af6c683005c293e",
+    "tests": 749,
+    "passed": 749,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "integration": 49,
+    "unit_and_cli": 700,
+    "seconds": 166.96,
+    "junit_sha256": "df7e328095df84b6a3eb6b271b48affe2c1fa0717d0e6b35da8970523f6c8795",
+    "private_artifact": "/opt/iacp/evidence/guest-identity-20261024T015344Z/self-service-complete-final.junit.xml",
+    "command": "docker compose -p iacp-selfservice-tests -f compose.test.yaml run --rm -T tests python -m pytest -p no:cacheprovider"
+  },
+  "openapi_snapshot_matches_live": true
 }
