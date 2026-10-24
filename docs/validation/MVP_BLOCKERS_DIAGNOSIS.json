@@ -1,0 +1,54 @@
+{
+  "investigated_at": "2026-10-24",
+  "historical_instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+  "historical_vmid": 30008,
+  "historical_vm_already_deleted": true,
+  "initializer": {
+    "operation_id": "37c0a11a-41b2-417c-862b-e2771647a85b",
+    "program_sha256": "e5083da0fc91d4a4c8b219ed795813d4162a1e432b3454ba83477dad70b8d1ed",
+    "pid": 956,
+    "consumed_at": "2026-10-24T04:45:28.604347Z",
+    "failed_at": "2026-10-24T04:45:33.577183Z",
+    "error_code": "GUEST_INITIALIZATION_PROGRAM_FAILED",
+    "guest_stderr_retained": false,
+    "historical_root_cause_confirmed": false,
+    "identified_code_defect": "root policy assumes /run/sshd exists and ssh.service is active; socket activation satisfies neither assumption",
+    "correction": "create sshd runtime directory; validate configuration and effective root policy; reload-or-restart ssh.service",
+    "historical_consumed_intent_retried": false
+  },
+  "shutdown": {
+    "task_id": "UPID:mng01:002E4D2D:04CF45CD:6ADC38C8:qmshutdown:30008:iacp-lifecycle@pve!power-lab:",
+    "start_epoch": 1792817352,
+    "end_epoch": 1792817416,
+    "task_log": [
+      "QEMU Guest Agent is not running - VM 30008 qga command 'guest-ping' failed - got timeout",
+      "TASK ERROR: VM quit/powerdown failed - got timeout"
+    ],
+    "preceding_reboot_completed_epoch": 1792817349,
+    "preceding_qemu_start_completed_epoch": 1792817350,
+    "guest_agent_readiness_demonstrated_before_shutdown": false,
+    "interpretation": "Shutdown was requested two seconds after QEMU restart completion, without QGA readiness; this supports a reboot/readiness race, not proof that QGA was absent from the image",
+    "forced_stop_counted_as_shutdown_success": false,
+    "automatic_force_fallback_added": false
+  },
+  "golden_image": {
+    "vmid": 29000,
+    "name": "iacp-ubuntu-2404-golden",
+    "proxmox_version": "9.2.20",
+    "template": true,
+    "status": "stopped",
+    "agent_config": "enabled=1",
+    "ipconfig0": "ip=dhcp",
+    "ciuser": "root",
+    "bios": "ovmf",
+    "machine": "q35",
+    "acpi_explicit_override": false,
+    "guest_packages_verified_directly_on_stopped_template": false,
+    "mutations": 0
+  },
+  "lifecycle_permissions": ["VM.Audit", "VM.PowerMgmt"],
+  "lifecycle_guest_agent_permissions_added": false,
+  "protected_vm_proxmox_mutations": {"104": 0, "106": 0},
+  "tests": {"passed": 770, "failed": 0, "skipped": 0, "new_regressions": 3},
+  "end_to_end_validation": "pending corrected candidate and single disposable VM"
+}
