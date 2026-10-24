@@ -1,0 +1,18 @@
+{
+  "fecha_local": "2026-10-24T16:02:46.731070-06:00",
+  "doctor_pass": true,
+  "imagenes_y_arranques_preservados": true,
+  "sin_oom": true,
+  "esquema": "0011_crm_contract",
+  "sin_operaciones_no_terminales": true,
+  "sin_applies_pendientes": true,
+  "sin_jobs_pendientes": true,
+  "sin_locks_advisory": true,
+  "sin_colas_o_unacked": true,
+  "sin_vms_descartables_presentes": true,
+  "hashes_protegidas_106_y_29000_preservados": true,
+  "tres_workers_con_ping": true,
+  "states_observados_vacios_sin_lock": true,
+  "alcance_states": "Solo cuatro states recientes, incluidas las tres VMs de E5; no inspección universal de Wasabi",
+  "passed": true
+}

@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "changed_paths": [],
+  "unexpected_paths": [],
+  "ignored_build_metadata": [],
+  "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+  "live_compatibility": {
+    "passed": true,
+    "unexpected_paths": []
+  },
+  "roles_running": {
+    "terraform-worker": true,
+    "api": true,
+    "lifecycle-worker": true,
+    "worker": true,
+    "traefik": true,
+    "db": true,
+    "redis": true
+  },
+  "fecha_local": "2026-10-24T16:02:46.729803-06:00",
+  "directorio_privado_evidencia": "/opt/iacp/evidence/fase-e-doctor-cierre-20261024T220213Z"
+}

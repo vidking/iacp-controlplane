@@ -1,0 +1,27 @@
+{
+  "fecha_local": "2026-10-24T15:23:31.079610-06:00",
+  "estado": "PASS de controles; incidencias de preparación resueltas sin cambiar runtime",
+  "observaciones": [
+    {
+      "comprobacion": "Alias SSH histórico",
+      "resultado": "No incluido por configuración local actual",
+      "resolucion": "Uso explícito del host/IP y clave ya configurados; configuración SSH conservada"
+    },
+    {
+      "comprobacion": "Referencia operator.token histórica",
+      "resultado": "Archivo ausente",
+      "resolucion": "Referencia real del mount activo contrastada; credencial existente reutilizada"
+    },
+    {
+      "comprobacion": "iacpctl doctor durante E2E",
+      "resultado": "Rechazó trabajo no terminal; comportamiento esperado",
+      "resolucion": "No se forzó; doctor repetido tras E2E y ausencia de trabajo, PASS antes de la escalera"
+    },
+    {
+      "comprobacion": "Primera invocación de doctor",
+      "resultado": "Exigió directorio privado nuevo de evidencias",
+      "resolucion": "Se proporcionó nueva ruta privada; sin excepción a la guarda"
+    }
+  ],
+  "acciones_sobre_credenciales_acl_compose": false
+}

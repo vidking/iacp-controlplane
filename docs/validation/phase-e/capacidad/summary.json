@@ -1,0 +1,679 @@
+{
+  "fecha_local": "2026-10-24T16:01:44.004384-06:00",
+  "results": [
+    {
+      "fecha_local": "2026-10-24T15:19:01.680232-06:00",
+      "profile": {
+        "rps": 5,
+        "users": 10,
+        "warmup": 30,
+        "seconds": 180
+      },
+      "global": {
+        "requests": 900,
+        "errors": 0,
+        "statuses": {
+          "200": 900
+        },
+        "p50_ms": 85.25830800135736,
+        "p95_ms": 182.48897200101055,
+        "p99_ms": 274.1371590000199
+      },
+      "actual_rps": 5.0,
+      "measurement_seconds": 180,
+      "observed_global": {
+        "requests": 1050,
+        "errors": 0,
+        "statuses": {
+          "200": 1050
+        },
+        "p50_ms": 82.44861999992281,
+        "p95_ms": 187.58598299973528,
+        "p99_ms": 294.06731400013086
+      },
+      "observed_seconds": 211.80070990400054,
+      "observed_rps": 4.957490465805882,
+      "observed_endpoints": {
+        "GET /docs": {
+          "requests": 58,
+          "errors": 0,
+          "statuses": {
+            "200": 58
+          },
+          "p50_ms": 29.004691999944043,
+          "p95_ms": 39.54123299990897,
+          "p99_ms": 43.325593000190565
+        },
+        "GET /openapi.json": {
+          "requests": 68,
+          "errors": 0,
+          "statuses": {
+            "200": 68
+          },
+          "p50_ms": 154.47329999915382,
+          "p95_ms": 269.12935499967716,
+          "p99_ms": 675.2490020007826
+        },
+        "GET /v1/instances": {
+          "requests": 353,
+          "errors": 0,
+          "statuses": {
+            "200": 353
+          },
+          "p50_ms": 85.18687399919145,
+          "p95_ms": 121.70194900136266,
+          "p99_ms": 219.06435299933946
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 185,
+          "errors": 0,
+          "statuses": {
+            "200": 185
+          },
+          "p50_ms": 32.956470999124576,
+          "p95_ms": 42.680886001107865,
+          "p99_ms": 134.99545800004853
+        },
+        "GET /v1/operations": {
+          "requests": 262,
+          "errors": 0,
+          "statuses": {
+            "200": 262
+          },
+          "p50_ms": 148.78690400109917,
+          "p95_ms": 228.26789600003394,
+          "p99_ms": 337.7859060001356
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 124,
+          "errors": 0,
+          "statuses": {
+            "200": 124
+          },
+          "p50_ms": 36.19818500010297,
+          "p95_ms": 46.755238001424004,
+          "p99_ms": 48.50328599968634
+        }
+      },
+      "offered_rps": 5,
+      "skipped_slots": 0,
+      "elapsed": 211.80070990400054,
+      "endpoints": {
+        "GET /docs": {
+          "requests": 47,
+          "errors": 0,
+          "statuses": {
+            "200": 47
+          },
+          "p50_ms": 29.480662000423763,
+          "p95_ms": 38.34115300014673,
+          "p99_ms": 43.325593000190565
+        },
+        "GET /openapi.json": {
+          "requests": 57,
+          "errors": 0,
+          "statuses": {
+            "200": 57
+          },
+          "p50_ms": 155.02961600031995,
+          "p95_ms": 269.12935499967716,
+          "p99_ms": 294.2624639999849
+        },
+        "GET /v1/instances": {
+          "requests": 299,
+          "errors": 0,
+          "statuses": {
+            "200": 299
+          },
+          "p50_ms": 87.07332800076983,
+          "p95_ms": 116.64360400027363,
+          "p99_ms": 350.1297919992794
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 155,
+          "errors": 0,
+          "statuses": {
+            "200": 155
+          },
+          "p50_ms": 33.82903700003226,
+          "p95_ms": 42.680886001107865,
+          "p99_ms": 53.69893600072828
+        },
+        "GET /v1/operations": {
+          "requests": 229,
+          "errors": 0,
+          "statuses": {
+            "200": 229
+          },
+          "p50_ms": 151.0409279999294,
+          "p95_ms": 226.91072700035875,
+          "p99_ms": 303.57959200046025
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 113,
+          "errors": 0,
+          "statuses": {
+            "200": 113
+          },
+          "p50_ms": 36.39478200057056,
+          "p95_ms": 47.39884499940672,
+          "p99_ms": 48.50328599968634
+        }
+      },
+      "stops": [],
+      "stable": true,
+      "process_returncode": 0,
+      "telemetry_stop": null
+    },
+    {
+      "fecha_local": "2026-10-24T15:23:36.277414-06:00",
+      "profile": {
+        "rps": 10,
+        "users": 20,
+        "warmup": 30,
+        "seconds": 180
+      },
+      "global": {
+        "requests": 1800,
+        "errors": 0,
+        "statuses": {
+          "200": 1800
+        },
+        "p50_ms": 77.9947600003652,
+        "p95_ms": 179.0226929988421,
+        "p99_ms": 268.150963998778
+      },
+      "actual_rps": 10.0,
+      "measurement_seconds": 180,
+      "observed_global": {
+        "requests": 2100,
+        "errors": 0,
+        "statuses": {
+          "200": 2100
+        },
+        "p50_ms": 78.28605699978652,
+        "p95_ms": 177.3627349994058,
+        "p99_ms": 266.0946019987023
+      },
+      "observed_seconds": 211.9006043270001,
+      "observed_rps": 9.91030680006617,
+      "observed_endpoints": {
+        "GET /docs": {
+          "requests": 125,
+          "errors": 0,
+          "statuses": {
+            "200": 125
+          },
+          "p50_ms": 26.48497399968619,
+          "p95_ms": 46.549676000722684,
+          "p99_ms": 155.9071280007629
+        },
+        "GET /openapi.json": {
+          "requests": 137,
+          "errors": 0,
+          "statuses": {
+            "200": 137
+          },
+          "p50_ms": 143.48581800004467,
+          "p95_ms": 251.22767999891948,
+          "p99_ms": 276.84869099903153
+        },
+        "GET /v1/instances": {
+          "requests": 648,
+          "errors": 0,
+          "statuses": {
+            "200": 648
+          },
+          "p50_ms": 80.74206100172887,
+          "p95_ms": 122.00698899869167,
+          "p99_ms": 200.32390499909525
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 386,
+          "errors": 0,
+          "statuses": {
+            "200": 386
+          },
+          "p50_ms": 30.477496000457904,
+          "p95_ms": 43.37328499968862,
+          "p99_ms": 134.19474000147602
+        },
+        "GET /v1/operations": {
+          "requests": 528,
+          "errors": 0,
+          "statuses": {
+            "200": 528
+          },
+          "p50_ms": 122.57899600081146,
+          "p95_ms": 218.92694699999993,
+          "p99_ms": 310.14305200005765
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 276,
+          "errors": 0,
+          "statuses": {
+            "200": 276
+          },
+          "p50_ms": 34.48912400017434,
+          "p95_ms": 49.72354099845688,
+          "p99_ms": 255.68942499921832
+        }
+      },
+      "offered_rps": 10,
+      "skipped_slots": 0,
+      "elapsed": 211.9006043270001,
+      "endpoints": {
+        "GET /docs": {
+          "requests": 105,
+          "errors": 0,
+          "statuses": {
+            "200": 105
+          },
+          "p50_ms": 26.56766600011906,
+          "p95_ms": 46.549676000722684,
+          "p99_ms": 155.9071280007629
+        },
+        "GET /openapi.json": {
+          "requests": 115,
+          "errors": 0,
+          "statuses": {
+            "200": 115
+          },
+          "p50_ms": 146.44973000031314,
+          "p95_ms": 256.48633200034965,
+          "p99_ms": 276.84869099903153
+        },
+        "GET /v1/instances": {
+          "requests": 542,
+          "errors": 0,
+          "statuses": {
+            "200": 542
+          },
+          "p50_ms": 80.94505000008212,
+          "p95_ms": 116.45085200143512,
+          "p99_ms": 186.56260399984603
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 338,
+          "errors": 0,
+          "statuses": {
+            "200": 338
+          },
+          "p50_ms": 30.72206100114272,
+          "p95_ms": 43.990206000671606,
+          "p99_ms": 134.19474000147602
+        },
+        "GET /v1/operations": {
+          "requests": 451,
+          "errors": 0,
+          "statuses": {
+            "200": 451
+          },
+          "p50_ms": 128.15733200113755,
+          "p95_ms": 225.5728830004955,
+          "p99_ms": 315.6863570002315
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 249,
+          "errors": 0,
+          "statuses": {
+            "200": 249
+          },
+          "p50_ms": 34.408665998853394,
+          "p95_ms": 49.72354099845688,
+          "p99_ms": 199.79062999846064
+        }
+      },
+      "stops": [],
+      "stable": true,
+      "process_returncode": 0,
+      "telemetry_stop": null
+    },
+    {
+      "fecha_local": "2026-10-24T15:28:08.972779-06:00",
+      "profile": {
+        "rps": 20,
+        "users": 40,
+        "warmup": 30,
+        "seconds": 180
+      },
+      "global": {
+        "requests": 201,
+        "errors": 24,
+        "statuses": {
+          "200": 177,
+          "429": 24
+        },
+        "p50_ms": 81.30685399919457,
+        "p95_ms": 175.42513999978837,
+        "p99_ms": 254.6261659990705
+      },
+      "actual_rps": 16.889101841846454,
+      "measurement_seconds": 11.901165727000262,
+      "observed_global": {
+        "requests": 801,
+        "errors": 46,
+        "statuses": {
+          "200": 755,
+          "429": 46
+        },
+        "p50_ms": 86.91082500081393,
+        "p95_ms": 199.2501139993692,
+        "p99_ms": 354.40937299972575
+      },
+      "observed_seconds": 41.90116572700026,
+      "observed_rps": 19.11641325730114,
+      "observed_endpoints": {
+        "GET /docs": {
+          "requests": 64,
+          "errors": 0,
+          "statuses": {
+            "200": 64
+          },
+          "p50_ms": 30.959563999203965,
+          "p95_ms": 137.1983110002475,
+          "p99_ms": 335.8872369990422
+        },
+        "GET /openapi.json": {
+          "requests": 42,
+          "errors": 0,
+          "statuses": {
+            "200": 42
+          },
+          "p50_ms": 144.95224399979634,
+          "p95_ms": 306.59226100033266,
+          "p99_ms": 370.38462000055006
+        },
+        "GET /v1/instances": {
+          "requests": 260,
+          "errors": 24,
+          "statuses": {
+            "200": 236,
+            "429": 24
+          },
+          "p50_ms": 82.74615300069854,
+          "p95_ms": 158.34973900018667,
+          "p99_ms": 434.29438400016807
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 125,
+          "errors": 18,
+          "statuses": {
+            "200": 107,
+            "429": 18
+          },
+          "p50_ms": 32.82683600082237,
+          "p95_ms": 148.99649700055306,
+          "p99_ms": 217.6535029993829
+        },
+        "GET /v1/operations": {
+          "requests": 238,
+          "errors": 0,
+          "statuses": {
+            "200": 238
+          },
+          "p50_ms": 124.68457899922214,
+          "p95_ms": 254.6261659990705,
+          "p99_ms": 420.64563800158794
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 72,
+          "errors": 4,
+          "statuses": {
+            "200": 68,
+            "429": 4
+          },
+          "p50_ms": 36.84296899882611,
+          "p95_ms": 86.99965699997847,
+          "p99_ms": 114.7650020011497
+        }
+      },
+      "offered_rps": 20,
+      "skipped_slots": 0,
+      "elapsed": 41.90116572700026,
+      "endpoints": {
+        "GET /docs": {
+          "requests": 13,
+          "errors": 0,
+          "statuses": {
+            "200": 13
+          },
+          "p50_ms": 25.899690999722225,
+          "p95_ms": 34.395431001030374,
+          "p99_ms": 34.395431001030374
+        },
+        "GET /openapi.json": {
+          "requests": 12,
+          "errors": 0,
+          "statuses": {
+            "200": 12
+          },
+          "p50_ms": 165.53142399970966,
+          "p95_ms": 271.4977009982249,
+          "p99_ms": 271.4977009982249
+        },
+        "GET /v1/instances": {
+          "requests": 65,
+          "errors": 13,
+          "statuses": {
+            "200": 52,
+            "429": 13
+          },
+          "p50_ms": 81.30685399919457,
+          "p95_ms": 142.76913800131297,
+          "p99_ms": 294.9771959993086
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 32,
+          "errors": 8,
+          "statuses": {
+            "200": 24,
+            "429": 8
+          },
+          "p50_ms": 32.480663001479115,
+          "p95_ms": 167.5929550001456,
+          "p99_ms": 217.6535029993829
+        },
+        "GET /v1/operations": {
+          "requests": 50,
+          "errors": 0,
+          "statuses": {
+            "200": 50
+          },
+          "p50_ms": 125.32843799999682,
+          "p95_ms": 226.70429899881128,
+          "p99_ms": 254.6261659990705
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 29,
+          "errors": 3,
+          "statuses": {
+            "200": 26,
+            "429": 3
+          },
+          "p50_ms": 36.1241800001153,
+          "p95_ms": 102.30025700002443,
+          "p99_ms": 114.7650020011497
+        }
+      },
+      "stops": [
+        {
+          "fecha_local": "2026-10-24T15:25:16.792019-06:00",
+          "elapsed": 40.00919592900027,
+          "event": "parada",
+          "reason": "errores >=1% o p95 >=2000 ms durante tres ventanas"
+        }
+      ],
+      "stable": false,
+      "process_returncode": 2,
+      "telemetry_stop": null
+    },
+    {
+      "fecha_local": "2026-10-24T15:59:43.928205-06:00",
+      "profile": {
+        "rps": 10,
+        "users": 20,
+        "warmup": 30,
+        "seconds": 1800
+      },
+      "global": {
+        "requests": 18000,
+        "errors": 0,
+        "statuses": {
+          "200": 18000
+        },
+        "p50_ms": 80.73496900033206,
+        "p95_ms": 190.58352200045192,
+        "p99_ms": 325.35914099935326
+      },
+      "actual_rps": 10.0,
+      "measurement_seconds": 1800,
+      "observed_global": {
+        "requests": 18300,
+        "errors": 0,
+        "statuses": {
+          "200": 18300
+        },
+        "p50_ms": 80.6766140012769,
+        "p95_ms": 189.97745299930102,
+        "p99_ms": 324.7469229991111
+      },
+      "observed_seconds": 1831.8014082520003,
+      "observed_rps": 9.990165919493863,
+      "observed_endpoints": {
+        "GET /docs": {
+          "requests": 1169,
+          "errors": 0,
+          "statuses": {
+            "200": 1169
+          },
+          "p50_ms": 26.56843399927311,
+          "p95_ms": 46.426323999185115,
+          "p99_ms": 123.16447000011976
+        },
+        "GET /openapi.json": {
+          "requests": 1165,
+          "errors": 0,
+          "statuses": {
+            "200": 1165
+          },
+          "p50_ms": 161.72353500041936,
+          "p95_ms": 278.93742800006294,
+          "p99_ms": 387.36307399994985
+        },
+        "GET /v1/instances": {
+          "requests": 5685,
+          "errors": 0,
+          "statuses": {
+            "200": 5685
+          },
+          "p50_ms": 83.05859000029159,
+          "p95_ms": 129.86489400100254,
+          "p99_ms": 267.2250030009309
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 3412,
+          "errors": 0,
+          "statuses": {
+            "200": 3412
+          },
+          "p50_ms": 30.251386000600178,
+          "p95_ms": 46.33347199887794,
+          "p99_ms": 111.05104699890944
+        },
+        "GET /v1/operations": {
+          "requests": 4494,
+          "errors": 0,
+          "statuses": {
+            "200": 4494
+          },
+          "p50_ms": 150.7929650015285,
+          "p95_ms": 262.543075999929,
+          "p99_ms": 427.47822100136545
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 2375,
+          "errors": 0,
+          "statuses": {
+            "200": 2375
+          },
+          "p50_ms": 33.16136300054495,
+          "p95_ms": 50.428013999407995,
+          "p99_ms": 134.84242400045332
+        }
+      },
+      "offered_rps": 10,
+      "skipped_slots": 0,
+      "elapsed": 1831.8014082520003,
+      "endpoints": {
+        "GET /docs": {
+          "requests": 1141,
+          "errors": 0,
+          "statuses": {
+            "200": 1141
+          },
+          "p50_ms": 26.43741800056887,
+          "p95_ms": 45.7288769994193,
+          "p99_ms": 123.16447000011976
+        },
+        "GET /openapi.json": {
+          "requests": 1147,
+          "errors": 0,
+          "statuses": {
+            "200": 1147
+          },
+          "p50_ms": 161.9502529993042,
+          "p95_ms": 278.9887950002594,
+          "p99_ms": 387.36307399994985
+        },
+        "GET /v1/instances": {
+          "requests": 5584,
+          "errors": 0,
+          "statuses": {
+            "200": 5584
+          },
+          "p50_ms": 83.17353400161664,
+          "p95_ms": 130.1447290006763,
+          "p99_ms": 273.39680700060853
+        },
+        "GET /v1/instances/{id}": {
+          "requests": 3369,
+          "errors": 0,
+          "statuses": {
+            "200": 3369
+          },
+          "p50_ms": 30.252509999627364,
+          "p95_ms": 46.64602000048035,
+          "p99_ms": 111.32085700046446
+        },
+        "GET /v1/operations": {
+          "requests": 4419,
+          "errors": 0,
+          "statuses": {
+            "200": 4419
+          },
+          "p50_ms": 151.14967899899057,
+          "p95_ms": 263.90367900057754,
+          "p99_ms": 427.47822100136545
+        },
+        "GET /v1/operations/{id}": {
+          "requests": 2340,
+          "errors": 0,
+          "statuses": {
+            "200": 2340
+          },
+          "p50_ms": 33.13012800026627,
+          "p95_ms": 50.41055699985009,
+          "p99_ms": 134.84242400045332
+        }
+      },
+      "stops": [],
+      "stable": true,
+      "process_returncode": 0,
+      "telemetry_stop": null
+    }
+  ],
+  "baseline_ready_threshold_ms": 100,
+  "health_after": true,
+  "stop": null
+}

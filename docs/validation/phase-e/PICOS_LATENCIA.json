@@ -1,0 +1,109 @@
+{
+  "fecha_local": "2026-10-24T16:04:19.923132-06:00",
+  "estado": "Observación de cola de latencia; no causa raíz certificada",
+  "muestra": 18000,
+  "solicitudes_ge_500ms": 40,
+  "porcentaje": 0.2222222222222222,
+  "maximo_ms": 1867.4469830002636,
+  "ventanas_con_p95_ge_500ms": [
+    {
+      "inicio_local": "2026-10-24T15:38:30-06:00",
+      "duracion_segundos": 10,
+      "solicitudes": 99,
+      "p95_ms": 1311.1080819999188,
+      "p99_ms": 1867.4469830002636
+    },
+    {
+      "inicio_local": "2026-10-24T15:48:50-06:00",
+      "duracion_segundos": 10,
+      "solicitudes": 99,
+      "p95_ms": 1001.6088590000436,
+      "p99_ms": 1693.448650999926
+    }
+  ],
+  "peores_muestras": [
+    {
+      "fecha_local": "2026-10-24T15:38:35.865933-06:00",
+      "elapsed": 566.0687809520005,
+      "event": "request",
+      "route": "GET /v1/operations",
+      "status": 200,
+      "ms": 1867.4469830002636,
+      "started": 564.2012922989998,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:48:56.291235-06:00",
+      "elapsed": 1186.4940766889995,
+      "event": "request",
+      "route": "GET /v1/operations",
+      "status": 200,
+      "ms": 1693.448650999926,
+      "started": 1184.8005945959994,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:48:56.429417-06:00",
+      "elapsed": 1186.632279122001,
+      "event": "request",
+      "route": "GET /v1/instances",
+      "status": 200,
+      "ms": 1631.2732919996051,
+      "started": 1185.0009236059996,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:38:35.438634-06:00",
+      "elapsed": 565.6414828140005,
+      "event": "request",
+      "route": "GET /openapi.json",
+      "status": 200,
+      "ms": 1540.2256209999905,
+      "started": 564.1012112080007,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:38:35.600207-06:00",
+      "elapsed": 565.8030470430003,
+      "event": "request",
+      "route": "GET /v1/operations/{id}",
+      "status": 200,
+      "ms": 1500.9073239998543,
+      "started": 564.3021079480004,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:38:35.812986-06:00",
+      "elapsed": 566.0158391660007,
+      "event": "request",
+      "route": "GET /v1/instances",
+      "status": 200,
+      "ms": 1414.5864709989837,
+      "started": 564.6012021400002,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:48:56.388737-06:00",
+      "elapsed": 1186.5915828420002,
+      "event": "request",
+      "route": "GET /v1/instances",
+      "status": 200,
+      "ms": 1390.3928559993801,
+      "started": 1185.2011467720004,
+      "users": 20
+    },
+    {
+      "fecha_local": "2026-10-24T15:48:55.664369-06:00",
+      "elapsed": 1185.8672170049995,
+      "event": "request",
+      "route": "GET /v1/operations",
+      "status": 200,
+      "ms": 1366.7049729992868,
+      "started": 1184.5004683650004,
+      "users": 20
+    }
+  ],
+  "errores_http_en_picos": 0,
+  "causa": "No determinada; no se atribuye a PostgreSQL, Proxmox, red o worker sin trazas correlacionadas",
+  "limite_dictamen": "Cumple criterios agregados y por endpoint; no garantiza p95<500ms en cada ventana de diez segundos"
+}

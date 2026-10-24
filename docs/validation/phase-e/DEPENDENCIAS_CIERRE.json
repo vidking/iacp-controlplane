@@ -1,0 +1,330 @@
+{
+  "advisory_locks": [],
+  "at": "2026-10-24T22:02:06.272150+00:00",
+  "celery": {
+    "broker_transport_options": {
+      "socket_connect_timeout": 3,
+      "socket_timeout": 3
+    },
+    "task_acks_late": true,
+    "task_acks_on_failure_or_timeout": true,
+    "task_publish_retry": false,
+    "task_reject_on_worker_lost": null,
+    "worker_cancel_long_running_tasks_on_connection_loss": false,
+    "worker_prefetch_multiplier": 1
+  },
+  "cluster_nodes": [
+    "mng01",
+    "mng02"
+  ],
+  "db_activity": [
+    {
+      "count": 1,
+      "state": "active",
+      "wait_event_type": null
+    },
+    {
+      "count": 9,
+      "state": "idle",
+      "wait_event_type": "Client"
+    }
+  ],
+  "nonterminal_operations": [],
+  "pending_applies": [],
+  "pending_jobs": [],
+  "policies": [
+    {
+      "expires_at": "2026-10-31 04:16:35.899592+00:00",
+      "id": "67e81062-661d-4edb-9ed2-051bfe73b974",
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-MNG-CRM-ROOT-20261024T041036Z",
+        "environment": "lab",
+        "max_concurrent_operations": 2,
+        "max_disk_gb": 80,
+        "max_instances": 4,
+        "max_memory_mb": 8192,
+        "max_vcpus": 8,
+        "profiles": [
+          "lab-root-dhcp"
+        ],
+        "valid_for_seconds": 604800
+      },
+      "status": "approved"
+    },
+    {
+      "expires_at": "2026-10-31 01:23:03.757995+00:00",
+      "id": "ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-LAB-SELF-SERVICE-370ce98",
+        "environment": "lab",
+        "max_concurrent_operations": 2,
+        "max_disk_gb": 80,
+        "max_instances": 4,
+        "max_memory_mb": 8192,
+        "max_vcpus": 8,
+        "profiles": [
+          "lab-dhcp"
+        ],
+        "valid_for_seconds": 604800
+      },
+      "status": "approved"
+    },
+    {
+      "expires_at": "2026-10-24 09:25:35.637036+00:00",
+      "id": "f00bd06d-5b99-4723-b880-2b9fb6631f4b",
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-MVP-LAST-BLOCKERS-20261024",
+        "environment": "lab",
+        "max_concurrent_operations": 1,
+        "max_disk_gb": 24,
+        "max_instances": 1,
+        "max_memory_mb": 2048,
+        "max_vcpus": 2,
+        "profiles": [
+          "lab-root-dhcp"
+        ],
+        "valid_for_seconds": 14400
+      },
+      "status": "approved"
+    },
+    {
+      "expires_at": "2026-10-24 09:31:42.202266+00:00",
+      "id": "1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-MVP-LAST-BLOCKERS-20261024",
+        "environment": "lab",
+        "max_concurrent_operations": 1,
+        "max_disk_gb": 44,
+        "max_instances": 2,
+        "max_memory_mb": 4096,
+        "max_vcpus": 4,
+        "profiles": [
+          "lab-root-dhcp"
+        ],
+        "valid_for_seconds": 14400
+      },
+      "status": "approved"
+    },
+    {
+      "expires_at": "2026-10-24 22:46:00.405873+00:00",
+      "id": "179f58db-59ee-4da2-a676-30c1642441a8",
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-MNG-AUTONOMOUS-PHASE-B-20261024",
+        "environment": "lab",
+        "max_concurrent_operations": 2,
+        "max_disk_gb": 80,
+        "max_instances": 4,
+        "max_memory_mb": 8192,
+        "max_vcpus": 8,
+        "profiles": [
+          "lab-root-dhcp"
+        ],
+        "valid_for_seconds": 14400
+      },
+      "status": "approved"
+    }
+  ],
+  "protected_hashes": {
+    "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+    "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+  },
+  "queues": {},
+  "redis": {
+    "aof_enabled": 1,
+    "aof_last_write_status": "ok",
+    "blocked_clients": 3,
+    "connected_clients": 31,
+    "redis_version": "7.4.11",
+    "used_memory": 1862880
+  },
+  "redis_appendfsync": "everysec",
+  "schema": "0011_crm_contract",
+  "states": [
+    {
+      "instance_id": "f7364ce7-431d-4820-8027-2c23ed733e74",
+      "inventory_status": "deleted",
+      "lock_present": false,
+      "managed_resources": 0,
+      "metadata": {
+        "content_sha256": "09c394b2b73e149cd97502a243c43bb977db5386362d948353829d5b1c0f471d",
+        "lineage": "076c7792-fa0f-4839-2ab9-c1b8ebc0dd2a",
+        "serial": 2,
+        "sha256": "81d48685c5fbd806aae8bcda31a03fe386df75b85c3b182d0baec32ffffda606",
+        "version_id": "001792876358902248294-nAymdWZeKP"
+      },
+      "state_key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/f7364ce7-431d-4820-8027-2c23ed733e74/terraform.tfstate",
+      "vmid": 30021
+    },
+    {
+      "instance_id": "4eb59212-9ce3-48d3-ad42-12579c0f7d53",
+      "inventory_status": "deleted",
+      "lock_present": false,
+      "managed_resources": 0,
+      "metadata": {
+        "content_sha256": "25642b610e9265df338d971592d4b9e9235afd5e412127bfc5768d8a249e0bdb",
+        "lineage": "cbc2934a-1fa0-cddf-5c47-92334f857fd4",
+        "serial": 2,
+        "sha256": "291a7a3f35d34b9312d6a5187f40c1069935237119fe78284f1853df25796d99",
+        "version_id": "001792876350242677880-udse48DJ5v"
+      },
+      "state_key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/4eb59212-9ce3-48d3-ad42-12579c0f7d53/terraform.tfstate",
+      "vmid": 30020
+    },
+    {
+      "instance_id": "fd5fe8bb-79b8-4434-9f87-0292c78b3c66",
+      "inventory_status": "deleted",
+      "lock_present": false,
+      "managed_resources": 0,
+      "metadata": {
+        "content_sha256": "9f6963db6e2cd18c8032751a13c0e58b40f0faaaf8fb4428d2ea636b549be156",
+        "lineage": "95de2f51-2053-5c2f-6f87-1dc4ab053a2a",
+        "serial": 2,
+        "sha256": "7654a0c784b1edbdaf91f64c88c328aa9fae2a7b481e7573e109b0e1fcef95a1",
+        "version_id": "001792876057267777381-tpslaFg5bE"
+      },
+      "state_key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/fd5fe8bb-79b8-4434-9f87-0292c78b3c66/terraform.tfstate",
+      "vmid": 30019
+    },
+    {
+      "instance_id": "b3bacd63-5057-4cbc-bf97-b3fb35719770",
+      "inventory_status": "deleted",
+      "lock_present": false,
+      "managed_resources": 0,
+      "metadata": {
+        "content_sha256": "7fdd052075770652bd33342f304c4e677fbc2e653dfdc4944b95db28fdc30104",
+        "lineage": "f0d244f2-b54a-c50d-45b8-92aff8a64f45",
+        "serial": 2,
+        "sha256": "f40578ef85c5f111405a1001c7f820cf70de9a23e62616b173b2fc44cab7a0c1",
+        "version_id": "001792869561220883521-pldyNjoOCr"
+      },
+      "state_key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/b3bacd63-5057-4cbc-bf97-b3fb35719770/terraform.tfstate",
+      "vmid": 30018
+    }
+  ],
+  "tasks": {
+    "iacp.access.verify": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": 55,
+      "time_limit": 65
+    },
+    "iacp.guest.initialize": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": 250,
+      "time_limit": 270
+    },
+    "iacp.instance.autostart": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": 55,
+      "time_limit": 65
+    },
+    "iacp.instance.create": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": null,
+      "soft_time_limit": null,
+      "time_limit": null
+    },
+    "iacp.kvm.power": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": 220,
+      "time_limit": 240
+    },
+    "iacp.network.discover": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": null,
+      "time_limit": null
+    },
+    "iacp.smoke": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": null,
+      "soft_time_limit": null,
+      "time_limit": null
+    },
+    "iacp.terraform.apply": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": null,
+      "soft_time_limit": 910,
+      "time_limit": 930
+    },
+    "iacp.terraform.delete": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": true,
+      "soft_time_limit": 910,
+      "time_limit": 930
+    },
+    "iacp.terraform.plan": {
+      "acks_late": true,
+      "max_retries": 3,
+      "reject_on_worker_lost": null,
+      "soft_time_limit": null,
+      "time_limit": null
+    }
+  },
+  "test_vmids_present": [],
+  "unacked": 0,
+  "unacked_index": 0,
+  "visibility_timeout": 3600,
+  "vm104_effective_permissions": {
+    "/vms/104": {}
+  },
+  "worker_ping": {
+    "celery@1230d01af135": {
+      "ok": "pong"
+    },
+    "celery@ba666052a25e": {
+      "ok": "pong"
+    },
+    "celery@fc8204e0875b": {
+      "ok": "pong"
+    }
+  },
+  "fecha_local": "2026-10-24T16:02:13.103813-06:00"
+}

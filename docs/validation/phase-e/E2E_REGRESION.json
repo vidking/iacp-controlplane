@@ -1,0 +1,270 @@
+{
+  "fecha_local": "2026-10-24T15:24:25.318720-06:00",
+  "estado": "PASS de regresión real con limitaciones declaradas",
+  "destino_aplicacion": "IACP Control Plane (VM 104)",
+  "laboratorio": "clúster MNG, nodo mng01",
+  "sha_aplicacion": "7c0804d",
+  "version": "0.10.1",
+  "corridas": [
+    {
+      "nombre": "individual",
+      "inicio_local": "2026-10-24T15:04:48.304953-06:00",
+      "fin_local": "2026-10-24T15:07:51.635782-06:00",
+      "passed": true,
+      "automatic": true,
+      "run_id": "ee74ac14-83c3-44d2-af24-36d0baf84bd8",
+      "instancias_con_uncertain": 0,
+      "reconciliaciones_readonly_solicitadas": 0,
+      "instancias": [
+        {
+          "actions": {
+            "delete": {
+              "including_readiness_seconds": null,
+              "operation_seconds": 21.063
+            },
+            "reboot": {
+              "including_readiness_seconds": 32.521,
+              "operation_seconds": 6.754
+            },
+            "shutdown-1": {
+              "including_readiness_seconds": 7.18,
+              "operation_seconds": 6.75
+            },
+            "shutdown-2": {
+              "including_readiness_seconds": 7.152,
+              "operation_seconds": 6.79
+            },
+            "start": {
+              "including_readiness_seconds": 30.771,
+              "operation_seconds": 4.705
+            }
+          },
+          "final_lock": false,
+          "final_postgresql": "deleted",
+          "final_proxmox_present": false,
+          "final_state_resources": 0,
+          "instance_id": "fd5fe8bb-79b8-4434-9f87-0292c78b3c66",
+          "node": "mng01",
+          "provisioning_seconds": 25.502,
+          "queue_wait_seconds": 0.028,
+          "time_to_first_started_seconds": 28.455,
+          "time_to_ssh_seconds": 71.268,
+          "vmid": 30019,
+          "worker_event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "delete_apply_started": 1,
+            "delete_completed": 1,
+            "delete_mutation_started": 1,
+            "delete_plan_accepted": 1,
+            "delete_plan_approved": 1,
+            "delete_plan_ready": 1,
+            "delete_plan_started": 1,
+            "delete_queued": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 8,
+            "network_followup_dispatch_unconfirmed": 1,
+            "network_observed": 2,
+            "network_pending": 6,
+            "power_accepted": 5,
+            "power_completed": 5,
+            "power_dispatching": 5,
+            "power_started": 5,
+            "power_task_recorded": 5,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1
+          }
+        }
+      ],
+      "validaciones": [
+        "clonación Golden Image 29000",
+        "Cloud-Init/DHCP/QGA",
+        "SSH root con host key fijada",
+        "start/reboot/shutdown",
+        "DELETE normal",
+        "PostgreSQL deleted",
+        "ausencia física Proxmox",
+        "state Wasabi vacío y sin lock",
+        "un Apply consumido por VM"
+      ]
+    },
+    {
+      "nombre": "doble",
+      "inicio_local": "2026-10-24T15:08:58.448791-06:00",
+      "fin_local": "2026-10-24T15:12:53.429875-06:00",
+      "passed": true,
+      "automatic": true,
+      "run_id": "8c467830-e2c1-48dc-ab03-f30d7c8dded5",
+      "instancias_con_uncertain": 2,
+      "reconciliaciones_readonly_solicitadas": 2,
+      "instancias": [
+        {
+          "actions": {
+            "delete": {
+              "including_readiness_seconds": null,
+              "operation_seconds": 29.361
+            },
+            "reboot": {
+              "including_readiness_seconds": 35.267,
+              "operation_seconds": 7.012
+            },
+            "shutdown-1": {
+              "including_readiness_seconds": 7.162,
+              "operation_seconds": 6.772
+            },
+            "shutdown-2": {
+              "including_readiness_seconds": 7.169,
+              "operation_seconds": 6.774
+            },
+            "start": {
+              "including_readiness_seconds": 34.822,
+              "operation_seconds": 6.759
+            }
+          },
+          "final_lock": false,
+          "final_postgresql": "deleted",
+          "final_proxmox_present": false,
+          "final_state_resources": 0,
+          "instance_id": "4eb59212-9ce3-48d3-ad42-12579c0f7d53",
+          "node": "mng01",
+          "provisioning_seconds": 50.451,
+          "queue_wait_seconds": 0.026,
+          "time_to_first_started_seconds": 53.234,
+          "time_to_ssh_seconds": 98.875,
+          "vmid": 30020,
+          "worker_event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "delete_apply_started": 1,
+            "delete_completed": 1,
+            "delete_mutation_started": 1,
+            "delete_plan_accepted": 1,
+            "delete_plan_approved": 1,
+            "delete_plan_ready": 1,
+            "delete_plan_started": 1,
+            "delete_queued": 2,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 8,
+            "network_followup_dispatch_unconfirmed": 1,
+            "network_observed": 2,
+            "network_pending": 6,
+            "power_accepted": 5,
+            "power_completed": 5,
+            "power_dispatching": 5,
+            "power_started": 5,
+            "power_task_recorded": 5,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          }
+        },
+        {
+          "actions": {
+            "delete": {
+              "including_readiness_seconds": null,
+              "operation_seconds": 35.48
+            },
+            "reboot": {
+              "including_readiness_seconds": 37.784,
+              "operation_seconds": 9.001
+            },
+            "shutdown-1": {
+              "including_readiness_seconds": 5.42,
+              "operation_seconds": 5.048
+            },
+            "shutdown-2": {
+              "including_readiness_seconds": 7.316,
+              "operation_seconds": 6.912
+            },
+            "start": {
+              "including_readiness_seconds": 34.552,
+              "operation_seconds": 6.769
+            }
+          },
+          "final_lock": false,
+          "final_postgresql": "deleted",
+          "final_proxmox_present": false,
+          "final_state_resources": 0,
+          "instance_id": "f7364ce7-431d-4820-8027-2c23ed733e74",
+          "node": "mng01",
+          "provisioning_seconds": 56.823,
+          "queue_wait_seconds": 8.261,
+          "time_to_first_started_seconds": 59.599,
+          "time_to_ssh_seconds": 101.471,
+          "vmid": 30021,
+          "worker_event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "delete_apply_started": 1,
+            "delete_completed": 1,
+            "delete_mutation_started": 1,
+            "delete_plan_accepted": 1,
+            "delete_plan_approved": 1,
+            "delete_plan_ready": 1,
+            "delete_plan_started": 1,
+            "delete_queued": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 8,
+            "network_observed": 2,
+            "network_pending": 6,
+            "power_accepted": 5,
+            "power_completed": 5,
+            "power_dispatching": 5,
+            "power_started": 5,
+            "power_task_recorded": 5,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          }
+        }
+      ],
+      "validaciones": [
+        "clonación Golden Image 29000",
+        "Cloud-Init/DHCP/QGA",
+        "SSH root con host key fijada",
+        "start/reboot/shutdown",
+        "DELETE normal",
+        "PostgreSQL deleted",
+        "ausencia física Proxmox",
+        "state Wasabi vacío y sin lock",
+        "un Apply consumido por VM"
+      ]
+    }
+  ],
+  "limite_concurrencia": 2,
+  "cuotas_ampliadas": false,
+  "vms_protegidas_mutadas_desde_api": false,
+  "recuperacion_fisica_worker": "BLOCKED por aislamiento insuficiente; no ensayada",
+  "trazabilidad": "Persisten episodios uncertain sin diagnóstico inicial conservado tras reconcile; causa no atribuida"
+}

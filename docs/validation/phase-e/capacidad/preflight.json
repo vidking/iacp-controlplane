@@ -1,0 +1,13 @@
+{
+  "fecha_local": "2026-10-24T15:14:27.141593-06:00",
+  "checks": [
+    {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "api_version": "0.10.1",
+      "authenticated": true,
+      "openapi_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa"
+    }
+  ],
+  "generator": "whoami",
+  "version_client": "ccb89c654db129493ab0213fa7c6f026e7f482a5"
+}

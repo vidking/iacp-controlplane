@@ -1,0 +1,404 @@
+{
+  "fecha_local": "2026-10-24T16:06:21.611082-06:00",
+  "originales_contrastados_con_fuente_privada_sin_modificar": [
+    "capacidad/summary.json",
+    "capacidad/metrics.jsonl",
+    "capacidad/preflight.json",
+    "capacidad/rps-5/summary.json",
+    "capacidad/rps-5/requests.jsonl",
+    "capacidad/rps-5/locust_stats.csv",
+    "capacidad/rps-5/locust_stats_history.csv",
+    "capacidad/rps-5/locust_failures.csv",
+    "capacidad/rps-5/locust_exceptions.csv",
+    "capacidad/rps-5/locust.html",
+    "capacidad/rps-10/summary.json",
+    "capacidad/rps-10/requests.jsonl",
+    "capacidad/rps-10/locust_stats.csv",
+    "capacidad/rps-10/locust_stats_history.csv",
+    "capacidad/rps-10/locust_failures.csv",
+    "capacidad/rps-10/locust_exceptions.csv",
+    "capacidad/rps-10/locust.html",
+    "capacidad/rps-20/summary.json",
+    "capacidad/rps-20/requests.jsonl",
+    "capacidad/rps-20/locust_stats.csv",
+    "capacidad/rps-20/locust_stats_history.csv",
+    "capacidad/rps-20/locust_failures.csv",
+    "capacidad/rps-20/locust_exceptions.csv",
+    "capacidad/rps-20/locust.html",
+    "capacidad/sostenida-30min/summary.json",
+    "capacidad/sostenida-30min/requests.jsonl",
+    "capacidad/sostenida-30min/locust_stats.csv",
+    "capacidad/sostenida-30min/locust_stats_history.csv",
+    "capacidad/sostenida-30min/locust_failures.csv",
+    "capacidad/sostenida-30min/locust_exceptions.csv",
+    "capacidad/sostenida-30min/locust.html"
+  ],
+  "archivos": [
+    {
+      "archivo": "ADMISION_TRAEFIK.json",
+      "bytes": 1836,
+      "sha256": "128b030aa954dda4e640f8736439cc5ce3b062904e71f43046715329da7463b0"
+    },
+    {
+      "archivo": "ARTEFACTOS_INICIALES.json",
+      "bytes": 1657,
+      "sha256": "a287c93efd0bcbd3895f79c51365e8c78cdb084cbfa6753b92174d076968bb5b"
+    },
+    {
+      "archivo": "AUDITORIA_CARGA.json",
+      "bytes": 2215,
+      "sha256": "dc46c7113f80c592745844b24af5bb6580a2807fe1f565286ea72093fb4a62f3"
+    },
+    {
+      "archivo": "CIERRE_GENERADOR_INTEGRACION.json",
+      "bytes": 471,
+      "sha256": "60dbb2879ebc1c0307ee4cedbcfccd2712a11b7d9ff38b7f795fd29f7e1688a7"
+    },
+    {
+      "archivo": "CIERRE_VERIFICADO.json",
+      "bytes": 652,
+      "sha256": "541b13e3e00606f24d33935152f1366fe96bda56305d8f0abb6bf9698340986d"
+    },
+    {
+      "archivo": "CODIGO_EJECUTADO.json",
+      "bytes": 296,
+      "sha256": "a1322e69827618b488c0c072a3eaf6e6c553b5c4e66e8c517de5547ea37f92b1"
+    },
+    {
+      "archivo": "CORRECCION_GENERADOR.json",
+      "bytes": 1151,
+      "sha256": "bbb9c3c9475dbe556a5b785f5940e98649912426c5c655c398604cb7f5cdf2c7"
+    },
+    {
+      "archivo": "DEPENDENCIAS_ANTES.json",
+      "bytes": 9405,
+      "sha256": "edd2ba7c49ebe1a9f2388ba71a5acce895f3b26e12a17c2de428fe3ab7b3da72"
+    },
+    {
+      "archivo": "DEPENDENCIAS_CIERRE.json",
+      "bytes": 9405,
+      "sha256": "d1573b08ae9ada7b0f99f423af9b6c8129012949929b767628114c3871ca4400"
+    },
+    {
+      "archivo": "DEPENDENCIAS_PRE_CARGA.json",
+      "bytes": 9405,
+      "sha256": "ed0f92f00e5a670fcab7e84a1b1d0b297c1a42cf3fa775c00b00ee0d2dfe4251"
+    },
+    {
+      "archivo": "DOBLE_EVENTOS.jsonl",
+      "bytes": 73424,
+      "sha256": "4c7d541b00ec2f14c7f4113811c85c14e0c10fe9f315c144b71577eb904bda25"
+    },
+    {
+      "archivo": "DOBLE_HTTP.jsonl",
+      "bytes": 38901,
+      "sha256": "84a550571d1f4853af01c3f1aa1658ec10be98079fc53107850862da31a279ee"
+    },
+    {
+      "archivo": "DOBLE_RESUMEN.json",
+      "bytes": 263770,
+      "sha256": "4dc2957a93e53091ffaeb48000277f21678a8f020faacc2604d00533acf8fd26"
+    },
+    {
+      "archivo": "DOCTOR_ANTES_CARGA.json",
+      "bytes": 514,
+      "sha256": "7840e1dd5a34c5ab97b851119e0a33d05a1d232e919f65ab7829a1ded6d2b93a"
+    },
+    {
+      "archivo": "DOCTOR_CIERRE.json",
+      "bytes": 608,
+      "sha256": "692c7f98b34ebc5e9b650999726dec2424339a3181e4d5e5ea565ceb3bcab210"
+    },
+    {
+      "archivo": "E2E_REGRESION.json",
+      "bytes": 9630,
+      "sha256": "157cbc43eefa52de2e682e12dea113521cc2cb2e129dab75c6453a0913c2683f"
+    },
+    {
+      "archivo": "ENTREGA.json",
+      "bytes": 2012,
+      "sha256": "f69f4a0fa34fcc633c8a4478c694057fc9100abffb6d3b80f05d3d24bb244014"
+    },
+    {
+      "archivo": "FECHAS_LOCALES.json",
+      "bytes": 87593,
+      "sha256": "481eea17a33f8d55f3b845e455f02e123629a116be3bd6113ea1c0bac650d5a7"
+    },
+    {
+      "archivo": "HOST_ANTES.json",
+      "bytes": 7933,
+      "sha256": "cc0340f57284535a6f6529faa2b790e295e17c86c74c04f877e03e3375e13eaa"
+    },
+    {
+      "archivo": "HOST_CIERRE.json",
+      "bytes": 7938,
+      "sha256": "a79647525bb298f5ccb50d1dc94267d65a4c6cb643a99ea173c75b7aab3ef61c"
+    },
+    {
+      "archivo": "INCIDENCIAS_PREPARACION.json",
+      "bytes": 1141,
+      "sha256": "b295cc243b901b1e21ed26627ec8c8c523d625a3a6424f09180aac66be44edd8"
+    },
+    {
+      "archivo": "INDIVIDUAL_EVENTOS.jsonl",
+      "bytes": 29628,
+      "sha256": "344338e8539eef622034238948910b12dfee7f2e9a9232926e136cfa076e3666"
+    },
+    {
+      "archivo": "INDIVIDUAL_HTTP.jsonl",
+      "bytes": 16556,
+      "sha256": "4b6266697b04a2f5ab9d8690f93878af76e8054d93519c6232ee584d5fe05abb"
+    },
+    {
+      "archivo": "INDIVIDUAL_RESUMEN.json",
+      "bytes": 135270,
+      "sha256": "4b004abb7c120ceca9c2ea6927bf9a03b39ab216171a53aa61b514ffade3b57c"
+    },
+    {
+      "archivo": "PERFIL_SQL_FISICO.json",
+      "bytes": 9129,
+      "sha256": "cbc6918a3c935673db35bb9419edf3eaec201459b11495f517fbbad613295b97"
+    },
+    {
+      "archivo": "PICOS_LATENCIA.json",
+      "bytes": 3174,
+      "sha256": "b4681c10c5e656c300d9c6f66f226dce899cf43e43ac2658c11f7fc144c3ab15"
+    },
+    {
+      "archivo": "REFERENCIAS_OPERATIVAS.json",
+      "bytes": 1824,
+      "sha256": "7c9d15054b4f8a95a8b53a39930f2a6e7e3b61359203d5b1e9bf0351957a7022"
+    },
+    {
+      "archivo": "REGRESIONES.json",
+      "bytes": 1330,
+      "sha256": "1e899e218d5c1dd8463fa3b6647891aaac1ef392534e7f907124c5ad7a710370"
+    },
+    {
+      "archivo": "RESUMEN_ENDPOINTS.md",
+      "bytes": 2893,
+      "sha256": "8a7971f37157c143c6946550d5a2d3e3902dd7a4eac7f5dfbf3b84a458f98823"
+    },
+    {
+      "archivo": "REVISION_CONTENIDO.json",
+      "bytes": 528,
+      "sha256": "40c48133daaacd63e7bd72d3146a5a32fe79bb9f6c2e9a40a8e2190c2dd74925"
+    },
+    {
+      "archivo": "capacidad/CAPACIDAD_HOST.png",
+      "bytes": 496889,
+      "sha256": "e37e8911ea56efdecb6e20bf3635ad68942d35d5eb7987524ed6e7d78cef76d5"
+    },
+    {
+      "archivo": "capacidad/CAPACIDAD_HOST.svg",
+      "bytes": 152994,
+      "sha256": "a6e2bb09ca6a16992f9facc8428d2a30e348d8d34e1433cbe42aebdeae8581be"
+    },
+    {
+      "archivo": "capacidad/DEPENDENCIAS_POR_NIVEL.json",
+      "bytes": 6281,
+      "sha256": "d7b4550d03bac8fab94e2e8df40037d69b429f246af04242602d94be9accead8"
+    },
+    {
+      "archivo": "capacidad/MATRIZ_CAPACIDAD.json",
+      "bytes": 22468,
+      "sha256": "d852ffd1c53ae0b2024375cd0e6e81cc2a19df01880cdbfc5210a8d0fe24f28b"
+    },
+    {
+      "archivo": "capacidad/RECUPERACION.json",
+      "bytes": 2882,
+      "sha256": "fad985899238820dbe9b47f38ba09613cc62e5f76afca428b0ee932aada58ff9"
+    },
+    {
+      "archivo": "capacidad/SERVICIOS.json",
+      "bytes": 5049,
+      "sha256": "040c325c82357bed2cf40d37f9fa8626f6d1cd18a49588e239b2541bcc30e342"
+    },
+    {
+      "archivo": "capacidad/SERVICIOS.png",
+      "bytes": 324289,
+      "sha256": "d93668ca6dce721ea144253d7388f48a63a92692d38e00a4f02516afe10785cb"
+    },
+    {
+      "archivo": "capacidad/SERVICIOS.svg",
+      "bytes": 113900,
+      "sha256": "8052a8a82306f50d4be555d5b67ca03ae41dec2419cc67d53fbb9a4d89614bd1"
+    },
+    {
+      "archivo": "capacidad/metrics.jsonl",
+      "bytes": 1400929,
+      "sha256": "73688a054f81b33920db0a59d4f7e2321f5b4bc8c19ae1be8b7efdd009528296"
+    },
+    {
+      "archivo": "capacidad/preflight.json",
+      "bytes": 386,
+      "sha256": "71905c982fcd77ae90d72d86b5664b294b20987950ff1bc933b765a031e453dd"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust.html",
+      "bytes": 878467,
+      "sha256": "36aba16bc2357c427ed175ed6c3543511758fd4ef5f9b84509f581dbe6f8469c"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust_exceptions.csv",
+      "bytes": 31,
+      "sha256": "3e73e8f665731ee4e45a6a91202a31b06999f2c53240f14aee2532e0e0b42b09"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust_failures.csv",
+      "bytes": 31,
+      "sha256": "ecadae309edce3f98facc62c31013d2720c05029732a1bb3d8f288639ffc3736"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust_stats.csv",
+      "bytes": 1350,
+      "sha256": "81b5329b4e5f034f3b567d98d8891d8697de1b6ee9c15ff1ccbe5f34c703975e"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust_stats_history.csv",
+      "bytes": 249350,
+      "sha256": "13e78ec14c65930e268c7bfa89cfb5d47fddc8916509066ed113d0a0dfb72f27"
+    },
+    {
+      "archivo": "capacidad/rps-10/locust_stats_history_hora_cr.csv",
+      "bytes": 287481,
+      "sha256": "2da61b0ba4d8d1e30458c37060b31b18269a1e443a2224571085057ed7fc6bce"
+    },
+    {
+      "archivo": "capacidad/rps-10/requests.jsonl",
+      "bytes": 457638,
+      "sha256": "9e2bb8a04ebe8ac7dd4a813eb25fb02fe36ff4aaf769bbe454234953dd261446"
+    },
+    {
+      "archivo": "capacidad/rps-10/summary.json",
+      "bytes": 3605,
+      "sha256": "c654cdd9a33e58e2d953bb5764a304745c31b71ad4d43bf526f6a6bde45c4b61"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust.html",
+      "bytes": 866470,
+      "sha256": "02b6775a665bdf8f865c7be04d52c6f6e1802ee444b89f082196ebb72ef27d93"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust_exceptions.csv",
+      "bytes": 31,
+      "sha256": "3e73e8f665731ee4e45a6a91202a31b06999f2c53240f14aee2532e0e0b42b09"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust_failures.csv",
+      "bytes": 212,
+      "sha256": "c137f93cd2abbf4b32067438bc38d0f8354a6be08ff06118297a413b205676df"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust_stats.csv",
+      "bytes": 1421,
+      "sha256": "505d1e6503f307c9f683f2e14b992fb5faa7bb9c6c8b5072e4ae43b88570a2e0"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust_stats_history.csv",
+      "bytes": 232223,
+      "sha256": "d0f7a9a0aac1e2700d0770300737d6897a1ecde072fa599ca3abff42819282cd"
+    },
+    {
+      "archivo": "capacidad/rps-20/locust_stats_history_hora_cr.csv",
+      "bytes": 270354,
+      "sha256": "3e8ebda7d333d858c2b41819993ec9cb39bf63a99de193574d5d997fe1b97b04"
+    },
+    {
+      "archivo": "capacidad/rps-20/requests.jsonl",
+      "bytes": 174608,
+      "sha256": "aa9229c9214cd7bb2928998a40da34deb1ec901bef61de3eb5275fca90210393"
+    },
+    {
+      "archivo": "capacidad/rps-20/summary.json",
+      "bytes": 3964,
+      "sha256": "cf5e29ca41c28f33d583b0d46fe6bde630098ea6c8120f1fd21cad8c8835aa05"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust.html",
+      "bytes": 878411,
+      "sha256": "bc78898e537112181f11d8fcb004aa2e251b30b3a60c92e486ccfc57f591af9f"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust_exceptions.csv",
+      "bytes": 31,
+      "sha256": "3e73e8f665731ee4e45a6a91202a31b06999f2c53240f14aee2532e0e0b42b09"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust_failures.csv",
+      "bytes": 31,
+      "sha256": "ecadae309edce3f98facc62c31013d2720c05029732a1bb3d8f288639ffc3736"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust_stats.csv",
+      "bytes": 1330,
+      "sha256": "91f8ec9a9f948463ca231e10333d9bffef359ab16663a32ff5773ca1e066e3a9"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust_stats_history.csv",
+      "bytes": 246563,
+      "sha256": "350e747ad74bbe1f90727254d842bfb8628d6b26c7dcff9d35a6ae4d65c5056f"
+    },
+    {
+      "archivo": "capacidad/rps-5/locust_stats_history_hora_cr.csv",
+      "bytes": 284538,
+      "sha256": "b6774a813d44daf68194f7396a2d04d7bb2369cd4ae9dda8b73af34818da6d50"
+    },
+    {
+      "archivo": "capacidad/rps-5/requests.jsonl",
+      "bytes": 228903,
+      "sha256": "ffa535705b00965891a93f9feec74c73a68069545f652f5d2c2fd02e54691767"
+    },
+    {
+      "archivo": "capacidad/rps-5/summary.json",
+      "bytes": 3597,
+      "sha256": "2b044c7d9fb8cf5c288876466326061fed98c4eff746215708aaade9fa85be02"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust.html",
+      "bytes": 996968,
+      "sha256": "07bde015f93d55012ae52e54bd10a845e6dabcb297f322f34ef803dcb10f9ebb"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust_exceptions.csv",
+      "bytes": 31,
+      "sha256": "3e73e8f665731ee4e45a6a91202a31b06999f2c53240f14aee2532e0e0b42b09"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust_failures.csv",
+      "bytes": 31,
+      "sha256": "ecadae309edce3f98facc62c31013d2720c05029732a1bb3d8f288639ffc3736"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust_stats.csv",
+      "bytes": 1364,
+      "sha256": "9512352f91e54c60ae5057cd418696041faff5b169937200f5f6388d55797213"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust_stats_history.csv",
+      "bytes": 2184918,
+      "sha256": "cd5fa9c83cb5dbf9cf292410d7cfaf93094d13994d9f834d83097bbe24b32c60"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/locust_stats_history_hora_cr.csv",
+      "bytes": 2516979,
+      "sha256": "21b4890e300dba6c7b779805afba31e90741758691d61d3a8664ae20b5ad2875"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/requests.jsonl",
+      "bytes": 3977128,
+      "sha256": "c8d98d6a29a397dfd8011e0cbdc51ccd3b18842c957b8c4a247446fc30903f5e"
+    },
+    {
+      "archivo": "capacidad/sostenida-30min/summary.json",
+      "bytes": 3637,
+      "sha256": "c4ac853303573f14e62753e7627d64c92fa4c4fb5879c26131e00a8d99cd8d89"
+    },
+    {
+      "archivo": "capacidad/summary.json",
+      "bytes": 17856,
+      "sha256": "a5eca48fcc5ad14bf4caca28e61cd790d8699bb543d27b205c640c533f2972ae"
+    }
+  ],
+  "contenido_privado_incluido": false
+}

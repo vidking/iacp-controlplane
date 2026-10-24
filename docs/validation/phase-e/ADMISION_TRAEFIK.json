@@ -1,0 +1,72 @@
+{
+  "middlewares": {
+    "request-rate": {
+      "rateLimit": {
+        "average": 10,
+        "burst": 20,
+        "period": "1s"
+      }
+    },
+    "inflight": {
+      "inFlightReq": {
+        "amount": 40
+      }
+    }
+  },
+  "routers": {
+    "diagnostic": {
+      "rule": "PathPrefix(`/`)",
+      "entryPoints": [
+        "web"
+      ],
+      "middlewares": [
+        "strip-root-transport"
+      ]
+    },
+    "iacp-admin": {
+      "rule": "Host(`iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || HeaderRegexp(`Origin`, `^(?:https://iac\\.cyberfuel\\.com)$`))",
+      "priority": 10,
+      "entryPoints": [
+        "websecure"
+      ],
+      "middlewares": [
+        "internal-sources",
+        "strip-identity",
+        "root-tls-transport",
+        "request-rate",
+        "inflight",
+        "body-limit",
+        "crm-headers"
+      ]
+    },
+    "iacp-crm": {
+      "rule": "Host(`iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || HeaderRegexp(`Origin`, `^(?:https://iac\\.cyberfuel\\.com)$`)) && (Path(`/v1/instances`) || PathRegexp(`^/v1/instances/[^/]+(/power(/(start|shutdown|reboot))?)?$`) || PathRegexp(`^/v1/operations/[^/]+$`) || Path(`/health/live`) || Path(`/health/ready`)) && (ClientIP(`192.168.0.0/20`))",
+      "priority": 20,
+      "entryPoints": [
+        "websecure"
+      ],
+      "middlewares": [
+        "internal-sources",
+        "strip-identity",
+        "root-tls-transport",
+        "request-rate",
+        "inflight",
+        "body-limit",
+        "crm-headers",
+        "authorized-sources"
+      ]
+    },
+    "iacp-http": {
+      "rule": "Host(`iac.cyberfuel.com`)",
+      "entryPoints": [
+        "webhttp"
+      ],
+      "middlewares": [
+        "internal-sources",
+        "https-only"
+      ]
+    }
+  },
+  "fecha_local": "2026-10-24T15:25:34.761654-06:00",
+  "solo_lectura": true
+}

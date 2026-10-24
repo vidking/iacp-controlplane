@@ -1,0 +1,58 @@
+{
+  "fecha_local": "2026-10-24T15:38:47.401768-06:00",
+  "estado": "PASS",
+  "repositorio_externo": "iacp-load-testing",
+  "baseline_cliente": "927a5c5",
+  "limitaciones_anteriores": [
+    "config.example.json y Settings.rps fijan por defecto 5 RPS",
+    "run.py --matrix cambia usuarios, no RPS",
+    "phase_c_load_config.py impone 5 RPS y 1600 solicitudes",
+    "wait_time=1 también puede limitar el generador con pocos usuarios"
+  ],
+  "escenarios": {
+    "readonly_historico": [
+      "inventario",
+      "detalle instancia",
+      "historial y detalle operación",
+      "Swagger/OpenAPI",
+      "GET power con llamadas físicas a Proxmox en instancias ready"
+    ],
+    "provision": "Rechazado por run.py/locustfile.py; usa e2e.py autónomo",
+    "e2e_y_cleanup": "Mutaciones reales con intención durable, cuotas y limpieza por UUID; fuera de Locust"
+  },
+  "perfil_fase_e": {
+    "archivo": "capacity_locust.py",
+    "metodos_http_encontrados": [
+      "get"
+    ],
+    "endpoints": [
+      "/v1/instances?limit=100",
+      "/v1/instances/{id}",
+      "/v1/operations?limit=50",
+      "/v1/operations/{id}",
+      "/docs",
+      "/openapi.json"
+    ],
+    "power_y_proxmox_en_perfil": false,
+    "mutaciones_disponibles": false,
+    "redirects_permitidos": false,
+    "tls_verificado": true,
+    "distribuido_permitido": false,
+    "ejecucion_en_vm104_permitida": false,
+    "presupuesto_http_maximo": 200500,
+    "motivo_presupuesto": "100 RPS durante 30 min y calentamiento; no modifica cuotas de VMs",
+    "max_vms_conservado": 3,
+    "max_concurrent_creations_conservado": 2
+  },
+  "versiones_ensayadas": {
+    "escalera": "ccb89c6",
+    "sostenida": "a8a779107ccb11314befd0b3f942f6b9d78e2156"
+  },
+  "sha256_archivos_nucleo": {
+    "capacity.py": "8e873ca96770223a3515fc5066162b7f52e0cff56dbdb9448eef359e43a2f04c",
+    "capacity_locust.py": "e7ec4843ee8c2dfa5802b025d4b3614412897830ae9476b25d0f37b2450477be",
+    "capacity_monitor.py": "005c366de8a816d9a7ed43e538e89cf3495ab19719274a2f05a51409373f672c",
+    "capacity_run.py": "9a13ff8a2fd35b9d8a1cae6c250b7d5a349c71e0ebec453adb58d09ac29097ab"
+  },
+  "protecciones": "Sin modificaciones de RBAC, políticas, cuotas, credenciales, Compose o runtime"
+}

@@ -1,0 +1,50 @@
+{
+  "fecha_local": "2026-10-24T15:15:21.867323-06:00",
+  "originales_sin_modificar": [
+    {
+      "archivo": "HOST_ANTES.json",
+      "sha256": "cc0340f57284535a6f6529faa2b790e295e17c86c74c04f877e03e3375e13eaa"
+    },
+    {
+      "archivo": "DEPENDENCIAS_ANTES.json",
+      "sha256": "edd2ba7c49ebe1a9f2388ba71a5acce895f3b26e12a17c2de428fe3ab7b3da72"
+    },
+    {
+      "archivo": "DOCTOR_ANTES_CARGA.json",
+      "sha256": "7840e1dd5a34c5ab97b851119e0a33d05a1d232e919f65ab7829a1ded6d2b93a"
+    },
+    {
+      "archivo": "DEPENDENCIAS_PRE_CARGA.json",
+      "sha256": "ed0f92f00e5a670fcab7e84a1b1d0b297c1a42cf3fa775c00b00ee0d2dfe4251"
+    },
+    {
+      "archivo": "PERFIL_SQL_FISICO.json",
+      "sha256": "cbc6918a3c935673db35bb9419edf3eaec201459b11495f517fbbad613295b97"
+    },
+    {
+      "archivo": "INDIVIDUAL_RESUMEN.json",
+      "sha256": "4b004abb7c120ceca9c2ea6927bf9a03b39ab216171a53aa61b514ffade3b57c"
+    },
+    {
+      "archivo": "INDIVIDUAL_EVENTOS.jsonl",
+      "sha256": "344338e8539eef622034238948910b12dfee7f2e9a9232926e136cfa076e3666"
+    },
+    {
+      "archivo": "INDIVIDUAL_HTTP.jsonl",
+      "sha256": "4b6266697b04a2f5ab9d8690f93878af76e8054d93519c6232ee584d5fe05abb"
+    },
+    {
+      "archivo": "DOBLE_RESUMEN.json",
+      "sha256": "4dc2957a93e53091ffaeb48000277f21678a8f020faacc2604d00533acf8fd26"
+    },
+    {
+      "archivo": "DOBLE_EVENTOS.jsonl",
+      "sha256": "4c7d541b00ec2f14c7f4113811c85c14e0c10fe9f315c144b71577eb904bda25"
+    },
+    {
+      "archivo": "DOBLE_HTTP.jsonl",
+      "sha256": "84a550571d1f4853af01c3f1aa1658ec10be98079fc53107850862da31a279ee"
+    }
+  ],
+  "valores_de_credenciales_exportados": false
+}

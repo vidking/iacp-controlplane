@@ -1,0 +1,29 @@
+{
+  "fecha_local": "2026-10-24T15:42:12.012716-06:00",
+  "cliente": {
+    "repositorio": "iacp-load-testing",
+    "sha_nucleo_ensayado": "ccb89c6",
+    "sha_herramientas_publicadas": "9c496320a9c864d9d21cbbabe58f30cb78aa7c5f",
+    "pr": "https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/pulls/6",
+    "pruebas_aprobadas": 45,
+    "duracion_segundos": 0.575,
+    "fallos": 0,
+    "comando": ".venv/bin/python -m unittest discover -s tests -v",
+    "alcance": "Guardas, E2E con fixtures, parada, duración completa y percentiles por endpoint; sin red en pruebas unitarias",
+    "sha_pruebas": "a8a779107ccb11314befd0b3f942f6b9d78e2156",
+    "pr_correccion_y_exportacion": "https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/pulls/7",
+    "regresion_cierre_dashboard": "FAIL antes; PASS después; no modifica carga HTTP"
+  },
+  "iacp": {
+    "aplicacion_modificada": false,
+    "archivos_python_runtime_comparados": 60,
+    "iguales_a_sha_desplegado": true,
+    "pruebas_886": "Antecedente aprobado de Fase D; no se presenta como nueva ejecución de Fase E"
+  },
+  "e2e_real": {
+    "individual": "PASS automático, VM 30019, mng01 del clúster MNG",
+    "doble": "PASS automático, VMs 30020 y 30021, mng01 del clúster MNG",
+    "maximo_aprovisionamientos_simultaneos": 2,
+    "limites_y_politicas_aumentados": false
+  }
+}

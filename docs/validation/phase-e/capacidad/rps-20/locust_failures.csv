@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+GET,GET /v1/instances,CatchResponseError('HTTP 429'),24
+GET,GET /v1/instances/{id},CatchResponseError('HTTP 429'),18
+GET,GET /v1/operations/{id},CatchResponseError('HTTP 429'),4
