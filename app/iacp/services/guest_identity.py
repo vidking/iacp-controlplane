@@ -76,10 +76,12 @@ write(network,content)
 subprocess.run(['/usr/sbin/netplan','generate'],check=True,capture_output=True,timeout=30)
 machine=uuid.uuid4().hex+'\n'
 write(Path('/etc/machine-id'),machine)
+os.chmod('/etc/machine-id',0o444)
 dbus=Path('/var/lib/dbus/machine-id')
 if dbus.is_symlink():
     assert dbus.resolve()==Path('/etc/machine-id')
-elif dbus.exists():write(dbus,machine)
+elif dbus.exists():
+    write(dbus,machine);os.chmod(dbus,0o444)
 subprocess.run(['/usr/sbin/netplan','apply'],check=True,capture_output=True,timeout=60)
 result={'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-lab-identity-v1',
         'program_sha256':program_sha,'machine_id_sha256':hashlib.sha256(machine.encode()).hexdigest(),
