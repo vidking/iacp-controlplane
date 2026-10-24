@@ -93,6 +93,15 @@ def verify_plan(plan: dict, variables: dict) -> dict:
     if not correct:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
+    if 'iacp_root_password' in variables:
+        import hmac
+        try:
+            account = after['initialization'][0]['user_account'][0]
+            if (account['username'] != 'root' or after.get('started') is not False
+                    or not hmac.compare_digest(account['password'], variables['iacp_root_password'])):
+                raise ValueError()
+        except (KeyError, TypeError, IndexError, ValueError):
+            raise PlanError('ROOT_ACCESS_PLAN_MISMATCH') from None
     return {"address": ADDRESS, "actions": actions, "reserved_vmid": instance["vm_id"], "apply_enabled": False}
 
 
@@ -143,6 +152,9 @@ class TerraformExecutor:
         except (OSError, subprocess.SubprocessError, tarfile.TarError):
             raise PlanError("SOURCE_UNAVAILABLE") from None
         root = workspace / "source" / "stacks" / "kvm-instance"
+        from .access_adapter import install as install_access_adapter, DIGEST as ACCESS_ADAPTER_SHA256
+        if 'iacp_root_password' in variables:
+            install_access_adapter(workspace / 'source')
         backend = allocation.backend.arguments(state_key)
         write_private(root / "iacp.auto.tfvars.json", variables)
         write_private(root / "backend.tfbackend.json", backend)
@@ -167,6 +179,9 @@ class TerraformExecutor:
                       "state_key": state_key, "variables": variables, "backend": backend, "summary": summary,
                       "execution_context_salt": salt,
                       "execution_context_sha256": self.context_digest(env, salt)})
+        if 'iacp_root_password' in variables:
+            manifest = json.loads((workspace / 'manifest.json').read_text())
+            write_private(workspace / 'manifest.json', {**manifest, 'access_adapter_sha256': ACCESS_ADAPTER_SHA256})
         return PlanResult(sha256, SOURCE_REVISION, summary)
 
     def environment(self, workspace: Path) -> dict:
@@ -213,6 +228,8 @@ class TerraformExecutor:
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
+            from .access_adapter import verify as verify_access_adapter
+            verify_access_adapter(workspace / 'source', manifest, variables)
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
                     or manifest["source_revision"] != revision

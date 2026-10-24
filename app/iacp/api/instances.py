@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
@@ -26,12 +26,16 @@ router = APIRouter(
                  "Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló."),
 )
 def post_instance(
+    request: Request,
     spec: InstanceCreate,
     key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
     principal: Annotated[Principal, Depends(authorize_write)],
     session: Annotated[Session, Depends(get_session)],
     publish: Annotated[Publisher, Depends(get_instance_publisher)],
 ) -> InstanceAccepted:
+    from ..security import request_uses_https
+    if spec.access and not request_uses_https(request):
+        raise HTTPException(422, 'ROOT_ACCESS_REQUIRES_HTTPS')
     try:
         return create_instance(session, principal, spec, key, publish)
     except Conflict as error:
@@ -102,3 +106,22 @@ def initialize_network(instance_id: str,principal: Annotated[Principal,Depends(a
     try:return request_initialization(session,row,principal,key,publish)
     except Conflict as error:raise HTTPException(409,str(error)) from None
     except QueueUnavailable:raise HTTPException(503,'GUEST_INITIALIZATION_DISPATCH_UNCONFIRMED; repeat the same key') from None
+
+
+@router.post('/{instance_id}/access/verify', status_code=202, response_model=NetworkAccepted,
+    operation_id='verifyInstanceAccess', responses={404: {'model': ErrorResponse}, 409: {'model': ErrorResponse}},
+    description='Observa Cloud-Init y autentica root por SSH con host key fijada desde QGA. Nunca devuelve ni cambia la contraseña. '
+    'Repetir la clave permite recuperar una verificación no confirmada.')
+def verify_access(instance_id: str, principal: Annotated[Principal, Depends(authorize_write)],
+    key: Annotated[str, Header(alias='Idempotency-Key', min_length=1, max_length=128, pattern=r'^[A-Za-z0-9._:-]+$')],
+    session: Annotated[Session, Depends(get_session)], body: PowerRequest | None = None):
+    from .power import owned
+    from .dependencies import get_access_verification_publisher
+    from ..services.access import request_verification
+    try:
+        return request_verification(session, owned(session, principal, instance_id), principal, key,
+            get_access_verification_publisher())
+    except Conflict as error:
+        raise HTTPException(409, str(error)) from None
+    except QueueUnavailable:
+        raise HTTPException(503, 'ACCESS_VERIFICATION_DISPATCH_UNCONFIRMED') from None

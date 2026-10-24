@@ -28,7 +28,7 @@ def differences(a, b, path=''):
     return [] if a == b else [path]
 
 
-def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None):
+def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None):
     if not set(image_changes) <= IMAGE_CHANGES:
         raise ValueError('Only separately reviewed application image changes may be allowed')
     if set(candidate.get('services', {})) != SERVICES:
@@ -36,6 +36,36 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
     a, b = normalized(current), normalized(candidate)
     allowed = set(image_changes)
     promoted_paths=[]
+    # Narrow opt-in for the lab's reviewed input key and exact TLS proxy IPs.
+    # This never changes DB/Redis, tenant tokens, RBAC, worker isolation or ports.
+    import ipaddress
+    review = root_bootstrap or {}
+    key_path = review.get('key_path', '/dev/null')
+    proxy_ips = review.get('proxy_ips', '')
+    if proxy_ips:
+        if any(str(ipaddress.ip_address(v.strip())) != v.strip() for v in proxy_ips.split(',')):
+            raise ValueError('Exact reviewed TLS proxy IPs required')
+    expected_enabled = '1' if review.get('enabled') is True else '0'
+    key = b.get('secrets', {}).get('root_input_key')
+    if key and key.get('file') == key_path and key.get('name') == 'iacp-controlplane_root_input_key':
+        if 'root_input_key' not in a.get('secrets', {}):
+            b['secrets'].pop('root_input_key')
+            promoted_paths.append('/secrets/root_input_key')
+        for role in ('api', 'terraform-worker'):
+            old_service, new_service = a['services'][role], b['services'][role]
+            old_env, new_env = old_service.get('environment', {}), new_service.get('environment', {})
+            settings = {'IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED': expected_enabled, 'IACP_ROOT_INPUT_KEY_FILE': '/run/secrets/root_input_key'}
+            if role == 'api':
+                settings['IACP_TLS_PROXY_IPS'] = proxy_ips
+            for name, value in settings.items():
+                if name not in old_env and new_env.get(name) == value:
+                    new_env.pop(name)
+                    promoted_paths.append('/services/'+role+'/environment/'+name)
+            additions = [s for s in new_service.get('secrets', []) if s.get('source') == 'root_input_key']
+            if (len(additions) == 1 and additions[0].get('target') == '/run/secrets/root_input_key'
+                    and not any(s.get('source') == 'root_input_key' for s in old_service.get('secrets', []))):
+                new_service['secrets'].remove(additions[0])
+                promoted_paths.append('/services/'+role+'/secrets/root_input_key')
     # Typed, reviewed promotion of exactly one readonly policy file and pinned
     # IaC source. Never tolerate arbitrary volume/env/security changes.
     for role in ('api','terraform-worker'):

@@ -31,15 +31,31 @@ def accepted(session: Session, operation: Operation, digest: str) -> InstanceAcc
 
 def create_instance(session: Session, principal: Principal, spec: InstanceCreate,
                     key: str, publish: Publisher) -> InstanceAccepted:
-    optional={"network_profile", "node_preference", "self_service_policy_id"}
-    values=spec.model_dump(exclude={name for name in optional if getattr(spec,name) is None})
-    digest = hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    # Preserve hashes for pre-0011 requests, including explicitly supplied defaults.
+    optional={"network_profile", "node_preference", "self_service_policy_id", "commercial_context"}
+    values=spec.model_dump(exclude={'access'} | {name for name in optional if getattr(spec,name) is None})
+    if not spec.start_on_create:
+        values.pop('start_on_create')
+    canonical = dict(values)
+    if spec.access:
+        from .access import password_fingerprint
+        canonical['access'] = {'username': 'root', 'fingerprint': password_fingerprint(spec.access.password.get_secret_value())}
+    digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
     previous = session.scalar(query)
     if previous is not None:
         return accepted(session, previous, digest)
     from ..terraform.config import instance_executor
     mode = instance_executor()
+    if spec.start_on_create:
+        if mode != 'terraform' or not spec.self_service_policy_id:
+            raise Conflict('AUTOSTART_REQUIRES_SELF_SERVICE_POLICY')
+        from ..lifecycle.ownership import mutation_revision
+        from ..lifecycle.proxmox import PowerError
+        try:
+            mutation_revision()
+        except PowerError as failure:
+            raise Conflict(failure.code) from None
     if spec.node_preference and not spec.network_profile:
         raise Conflict("NODE_PREFERENCE_REQUIRES_PROFILE")
     if spec.self_service_policy_id and (not spec.network_profile or mode != "terraform"):
@@ -69,6 +85,17 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
                     raise Conflict('LAB_POLICY_REQUIRED')
             from .lab import admit, instance_digest
             policy=admit(session,instance) if spec.self_service_policy_id else None
+            if spec.network_profile:
+                from ..terraform.profiles import load_profile
+                if load_profile(spec.network_profile, principal.tenant_id).root_password_bootstrap and not spec.access:
+                    raise Conflict('ROOT_ACCESS_REQUIRED_BY_PROFILE')
+            if spec.access:
+                from .access import admit_access, encrypt_password
+                admit_access(spec, principal.tenant_id)
+                instance.initial_access_ciphertext = encrypt_password(instance, spec.access.password.get_secret_value())
+                instance.initial_access_fingerprint = canonical['access']['fingerprint']
+            if spec.start_on_create and 'start' not in policy.specification['actions']:
+                raise Conflict('AUTOSTART_NOT_AUTHORIZED')
             allocation=reserve_profile(session,instance) if spec.network_profile and mode=='terraform' else None
             session.add(instance)
             session.flush()
@@ -95,6 +122,8 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
             return accepted(session, previous, digest)
         if session.scalar(select(Instance.id).where(Instance.tenant_id == principal.tenant_id, Instance.name == spec.name)):
             raise Conflict("Instance name already exists") from None
+        if spec.access:
+            raise Conflict('INITIAL_PASSWORD_ALREADY_USED') from None
         raise
     result = InstanceAccepted(instance_id=instance.id, operation_id=operation.id, job_id=job.id, executor=mode)
     try:

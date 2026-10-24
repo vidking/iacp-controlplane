@@ -9,3 +9,10 @@ def power_operation(identifier: str) -> None:
     execute_power(identifier, get_session_factory())
     from ..services.network import after_power
     after_power(identifier,get_session_factory())
+
+
+@celery_app.task(name='iacp.instance.autostart', autoretry_for=(), acks_late=True,
+                 reject_on_worker_lost=True, soft_time_limit=55, time_limit=65)
+def continue_instance_start(identifier: str) -> None:
+    from ..services.fulfillment import advance
+    advance(identifier, get_session_factory())

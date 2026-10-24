@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
 OperationStatus = Literal["queued", "running", "completed", "failed", "uncertain"]
@@ -31,6 +31,37 @@ class JobResponse(BaseModel):
     updated_at: datetime
 
 
+class CommercialContext(BaseModel):
+    """Opaque CRM references; never evidence of authorization or payment."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    customer_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    order_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    product_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class RootAccess(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    username: Literal['root']
+    password: SecretStr = Field(min_length=16, max_length=128, repr=False,
+        description='Solo entrada HTTPS. Contraseña única por VM. En laboratorio el plan/state y sus versiones históricas pueden conservarla; nunca se devuelve por API.')
+
+    @field_validator('password')
+    @classmethod
+    def usable_password(cls, value):
+        if any(ord(c) < 32 or ord(c) > 126 for c in value.get_secret_value()):
+            raise ValueError('Printable ASCII required')
+        return value
+
+
+class AccessProgress(BaseModel):
+    username: Literal['root'] = 'root'
+    status: Literal['pending', 'verifying', 'completed', 'failed', 'uncertain'] = 'pending'
+    cloud_init_complete: bool | None = None
+    ssh_authenticated: bool | None = None
+    observed_at: str | None = None
+    error_code: str | None = None
+
+
 class InstanceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra={"examples": [
         {"name":"iacp-mvp-dhcp-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp"},
@@ -49,6 +80,11 @@ class InstanceCreate(BaseModel):
         description="Preferencia opcional entre los nodos de destino del perfil. Omitir para selección automática.")
     self_service_policy_id: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$",
         description="UUID de una política de laboratorio aprobada e independiente. Solo vincula VMs nuevas; nunca adopta recursos existentes.")
+    commercial_context: CommercialContext | None = Field(default=None,
+        description="Referencias opacas del CRM. No incluyen datos personales ni secretos y no conceden autorización técnica.")
+    start_on_create: bool = Field(default=False,
+        description="Solicita start posterior al aprovisionamiento mediante Lifecycle Worker. Requiere política con start; conserva operaciones y fences independientes.")
+    access: RootAccess | None = None
 
 
 class InstanceAccepted(JobAccepted):
@@ -69,6 +105,9 @@ class InstanceResponse(BaseModel):
     network_profile: str | None = None
     node_preference: str | None = None
     self_service_policy_id: str | None = None
+    commercial_context: CommercialContext | None = None
+    start_on_create: bool = False
+    access: AccessProgress | None = None
     network_mode: Literal["static", "dhcp"] = "static"
     ip_addresses: list[str] = Field(default_factory=list)
     network_observation: dict | None = None
@@ -114,6 +153,8 @@ class OperationResponse(BaseModel):
     deletion: "DeletionProgress | None" = None
     network: dict | None = None
     initialization: dict | None = None
+    fulfillment: dict | None = Field(default=None,
+        description="Para start_on_create: estado conjunto de aprovisionamiento, start e inicialización; completed exige sus comprobaciones, no readiness de una aplicación.")
 
 
 class PowerRequest(BaseModel):

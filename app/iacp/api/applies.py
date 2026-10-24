@@ -17,7 +17,7 @@ from ..terraform.apply import approve, cancel_apply, dispatch, recover_apply, re
 from .dependencies import get_apply_publisher
 from .terraform import owned_execution
 
-router = APIRouter(prefix="/v1/instances/{instance_id}/terraform", tags=["terraform-apply"], responses={
+router = APIRouter(prefix="/v1/instances/{instance_id}/terraform", tags=["provisioning-approvals"], responses={
     401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
     409: {"model": ErrorResponse}, 503: {"model": ErrorResponse},
 })

@@ -16,6 +16,16 @@ El stack fijado de `CyberFuel/iac-proxmox`, revisión
 Los checks del driver conservan revisión y SHA-256 del archivo Git autorizado.
 El contrato de propiedad started continúa separado de la energía imperativa.
 
+En 0.10.0, las solicitudes root de laboratorio añaden el adaptador de
+`iacp.terraform.access_adapter` al workspace extraído, con SHA-256
+`bcab3f43fa4adb68df1e07e19e97c27188bea9e616c557d2219ae3e4bcc82fba`.
+Conserva exactamente la llamada base antes de conectar la variable sensible,
+añade sus declaraciones y reemplaza el bloque de inicialización en la clon.
+El manifest sella el digest y el verificador comprueba cada archivo del adaptador.
+La fuente original, CLI, provider y propiedad de energía permanecen fijados.
+El adaptador validó con los binarios reales sin credenciales ni llamadas Proxmox.
+Password es `sensitive`, recuperable en state/planes: riesgo aceptado solo en MNG.
+
 **OpenTofu no se ejecuta ni se certifica en esta release.** Una implementación
 futura exige otro adaptador validado, inventario de versiones/licencias, revisión
 de planes/state y pruebas de los mismos controles. Independencia del contrato no

@@ -15,7 +15,7 @@ from ..services.jobs import QueueUnavailable
 from ..terraform.actions import cancel, retry
 from .dependencies import get_plan_publisher
 
-router = APIRouter(prefix="/v1/instances", tags=["terraform"], responses={
+router = APIRouter(prefix="/v1/instances", tags=["provisioning-administration"], responses={
     401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
     409: {"model": ErrorResponse}, 503: {"model": ErrorResponse},
 })

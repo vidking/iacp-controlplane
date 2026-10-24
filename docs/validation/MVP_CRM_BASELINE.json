@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-24T03:53:59.023215+00:00",
+  "base_main": "4771f8e",
+  "operational_reference": "724fa107212b20dfd28bbd334af6c683005c293e",
+  "candidate_api_version": "0.10.0",
+  "schema": "0011_crm_contract",
+  "tests": {
+    "passed": 764,
+    "unit_and_cli": 715,
+    "integration": 49,
+    "failed": 0,
+    "skipped": 0,
+    "junit_sha256": "74b58ac53de33fbaf726b11e69f72244948c354a1ff9af36b06aec86938f2a89"
+  },
+  "openapi_canonical_sha256": "481289130f32a4893715fdccb570ffed064fe7d83c2ace7575c572a22e3ec24e",
+  "adapter_validation": {
+    "terraform": "1.16.6",
+    "provider": "bpg/proxmox 0.116.1",
+    "source_revision": "2c0f319ba5d7a45987cd9d0395673828c28f678b",
+    "adapter_sha256": "bcab3f43fa4adb68df1e07e19e97c27188bea9e616c557d2219ae3e4bcc82fba",
+    "terraform_validate": true,
+    "infrastructure_contacted": false
+  },
+  "infrastructure_validation": "pending candidate promotion; prior 0.9.1 evidence is not reassigned",
+  "locust_runtime_dependency": false
+}

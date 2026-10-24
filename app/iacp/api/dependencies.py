@@ -48,6 +48,16 @@ def get_guest_initialization_publisher():
     return lambda identifier: initialize_guest.apply_async(args=[identifier],queue='terraform')
 
 
+def get_access_verification_publisher():
+    from ..terraform.worker import verify_access
+    return lambda identifier: verify_access.apply_async(args=[identifier], queue='terraform')
+
+
+def get_autostart_publisher():
+    from ..lifecycle.worker import continue_instance_start
+    return lambda identifier: continue_instance_start.apply_async(args=[identifier], queue='lifecycle')
+
+
 def get_power_client():
     from ..lifecycle.proxmox import ProxmoxPower
     return ProxmoxPower.configured

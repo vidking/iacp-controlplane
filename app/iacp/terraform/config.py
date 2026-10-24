@@ -143,7 +143,13 @@ class Allocation(MachineSettings):
             values.pop("network_mode")  # Preserve sealed historical variables exactly.
         values["boot_disk"]["size_gb"] = instance.disk_gb
         values.update(vm_name=instance.name, cpu_cores=instance.vcpus, memory_mb=instance.memory_mb)
-        return {"environment": self.environment, "allowed_nodes": self.allowed_nodes, "instance": values}
+        result = {"environment": self.environment, "allowed_nodes": self.allowed_nodes, "instance": values}
+        if getattr(instance, 'initial_access_ciphertext', None):
+            from ..services.access import decrypt_password
+            if self.cloudinit_username != 'root' or self.environment != 'lab':
+                raise PlanError('ROOT_ACCESS_PROFILE_CHANGED')
+            result['iacp_root_password'] = decrypt_password(instance)
+        return result
 
 
 def allocation_for(instance) -> Allocation:

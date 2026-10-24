@@ -23,6 +23,7 @@ class Profile(StrictModel):
     target_nodes: list[str] | None = Field(default=None, min_length=1)
     self_service_enabled: bool = False
     guest_initialization: Literal['ubuntu-2404-lab-identity-v1'] | None = None
+    root_password_bootstrap: bool = False
     max_total_vcpus: int = Field(default=8, ge=1, le=4096)
     max_total_memory_mb: int = Field(default=8192, ge=512, le=1048576)
     max_total_disk_gb: int = Field(default=100, ge=8, le=1048576)
@@ -41,6 +42,10 @@ class Profile(StrictModel):
                 or self.settings.network_bridge!='vmbr0' or self.settings.vlan_id is not None
                 or self.settings.image!='ubuntu-2404' or not self.settings.guest_agent_enabled):
             raise ValueError('Guest identity initialization requires the bounded Ubuntu DHCP lab profile')
+        if self.root_password_bootstrap and (self.guest_initialization is None
+                or self.settings.template_vm_id != 29000 or self.settings.cloudinit_username != 'root'
+                or self.settings.started):
+            raise ValueError('Root bootstrap requires the authorized stopped Ubuntu 29000 lab clone and initializer')
         return self
 
 

@@ -1,0 +1,15 @@
+{
+  "name": "crm-demo-02",
+  "image": "ubuntu-2404",
+  "vcpus": 2,
+  "memory_mb": 2048,
+  "disk_gb": 24,
+  "network_profile": "lab-dhcp",
+  "self_service_policy_id": "ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+  "commercial_context": {
+    "customer_id": "cliente-demo-01",
+    "order_id": "pedido-demo-01",
+    "product_id": "kvm-small"
+  },
+  "start_on_create": false
+}
