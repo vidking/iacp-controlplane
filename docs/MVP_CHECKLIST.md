@@ -1,5 +1,20 @@
 # MVP KVM: estado de acreditación
 
+Actualización 24/10 UTC: candidata `dff8052` desplegada (PR #40), **770 pruebas
+aprobadas**. Una única VM nueva, **30009**, UUID
+`93899a50-f9e4-48c1-987b-5a05ae79a670`, completó Cloud-Init, DHCP/QGA, SSH root,
+rotación por SSH, observación de reconciliación sin cambio de state, start/reboot,
+dos Shutdown ordenados y DELETE por API. Contraseña nueva verificada después de
+start/reboot; contraseña inicial rechazada. No se usó Stop forzado. Evidencia:
+[validación final](validation/MVP_FINAL_E2E.json). La creación requirió reconciliar
+una observación post-Apply transitoria, conservando el mismo UUID y un solo Apply.
+
+Locust: `main` externo verificado en `6aeff5a`, revisión histórica sin hallazgos;
+[PR externo #1](https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/pulls/1)
+con cinco pruebas aprobadas, claves Lifecycle corregidas, tiempos completos y
+plan sostenido separado. No se ejecutó carga sostenida ni otra provisión Locust.
+Los registros siguientes conservan el cierre histórico de PR #39.
+
 Objetivo: 27 de octubre de 2026. No atribuir evidencia de 0.9.1 al candidato 0.10.0.
 
 | Capacidad | Implementado | Fixtures/integración | Infraestructura |

@@ -1,0 +1,26 @@
+{
+  "source_head": "6aeff5a5027f2e703baeef4fdbd0a037c93048c2",
+  "historical_blobs_scanned": 12,
+  "tracked_files": [
+    ".forgejo/workflows/validation.yml",
+    ".gitignore",
+    "README.md",
+    "cleanup.py",
+    "config.example.json",
+    "core.py",
+    "locustfile.py",
+    "requirements.txt",
+    "results/.gitkeep",
+    "run.py",
+    "tests/test_guards.py"
+  ],
+  "findings": [],
+  "scope": "all Git history and tracked filenames; manual review of configuration and journal allowlist",
+  "secret_values_emitted": false,
+  "published_main_verified": "6aeff5a5027f2e703baeef4fdbd0a037c93048c2",
+  "corrective_pr": "https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/pulls/1",
+  "corrective_commit": "fd2d498",
+  "guard_tests_passed": 5,
+  "sustained_load_executed": false,
+  "additional_vms_provisioned_by_locust": 0
+}
