@@ -35,6 +35,12 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def require_supported_schema(schema):
+    supported = {'0004_authorized_apply', '0005_kvm_lifecycle', '0006_power_ownership',
+        '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity', HEAD}
+    require(len(schema) == 1 and schema[0] in supported, 'Unsupported schema')
+
+
 def digest(path):
     value = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -353,7 +359,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 and expected_backup_schema in minimum_tables
                 and restored["table_count"] >= minimum_tables[expected_backup_schema], "Restore attestation is incomplete")
         report = self.snapshot()
-        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], ["0007_safe_deletion"], ['0008_dhcp_profiles'], ['0009_lab_self_service'], [HEAD]], "Unsupported schema")
+        require_supported_schema(report['schema'])
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
         return report
 

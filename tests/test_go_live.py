@@ -22,6 +22,14 @@ driver = load("go_live", "go_live.py")
 tls = load("go_live_tls", "render-tls.py")
 
 
+def test_promotion_accepts_the_deployed_0010_schema_before_migrating():
+    driver.require_supported_schema(['0010_guest_identity'])
+    driver.require_supported_schema([driver.HEAD])
+    for unknown in ([], ['future'], ['0010_guest_identity', driver.HEAD]):
+        with pytest.raises(RuntimeError, match='Unsupported schema'):
+            driver.require_supported_schema(unknown)
+
+
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
 def test_docs_require_tenant_authentication(client, auth, path):
     assert client.get(path).status_code == 401
