@@ -19,7 +19,7 @@ router = APIRouter(
 @router.post(
     "/smoke", status_code=202, response_model=JobAccepted,
     operation_id="createSmokeJob",
-    description="Valida la cola y persistencia del laboratorio. No ejecuta Terraform ni Proxmox.",
+    description="Valida la cola y persistencia del laboratorio. No ejecuta infraestructura.",
 )
 def create_smoke(
     session: Annotated[Session, Depends(get_session)],

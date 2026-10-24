@@ -43,6 +43,7 @@ class Principal:
     tenant_id: str
     subject: str
     role: str
+    administration: bool = False
 
 
 class Credential(BaseModel):
@@ -51,6 +52,7 @@ class Credential(BaseModel):
     tenant_id: UUID
     subject: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:@-]+$")
     role: Literal["operator", "reader", "approver", "docs"]
+    administration: bool = False
 
 
 def authorize(
@@ -78,12 +80,13 @@ def authorize(
     if credentials is not None:
         supplied = credentials.credentials.encode("utf8")
         if expected and hmac.compare_digest(supplied, expected.encode("utf8")):
-            principal = Principal(BOOTSTRAP_TENANT_ID, "bootstrap", "operator")
+            # Bootstrap is the platform operator, never a CRM credential.
+            principal = Principal(BOOTSTRAP_TENANT_ID, "bootstrap", "operator", True)
         if len(supplied) >= 32:
             digest = hashlib.sha256(supplied).hexdigest()
             for entry in entries:
                 if entry.role != "docs" and hmac.compare_digest(digest, entry.token_sha256):
-                    principal = Principal(str(entry.tenant_id), entry.subject, entry.role)
+                    principal = Principal(str(entry.tenant_id), entry.subject, entry.role, entry.administration)
     if principal is None:
         raise HTTPException(
             status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"}
@@ -104,6 +107,29 @@ def authorize_approval(principal: Annotated[Principal, Depends(authorize)]) -> P
     if principal.role != "approver":
         raise HTTPException(status_code=403, detail="Approval permission required")
     return principal
+
+
+def authorize_administration(principal: Annotated[Principal, Depends(authorize)]) -> Principal:
+    # Approvers are administrative identities; CRM operator/reader credentials
+    # require an explicit, server-side grant. Documentation is not a grant.
+    if principal.role != "approver" and not principal.administration:
+        raise HTTPException(status_code=403, detail="Administration permission required")
+    return principal
+
+
+def authorize_admin_docs(
+    session: Annotated[Session, Depends(get_session)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    basic: Annotated[HTTPBasicCredentials | None, Depends(docs_basic)],
+) -> Principal:
+    if basic is not None and basic.username == "iacp-admin":
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=basic.password)
+    try:
+        return authorize_administration(authorize(credentials, session))
+    except HTTPException as error:
+        if error.status_code == 401:
+            raise HTTPException(401, "Unauthorized", headers={"WWW-Authenticate": 'Basic realm="IACP administration"'}) from None
+        raise
 
 
 def authorize_docs(

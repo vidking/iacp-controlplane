@@ -6,17 +6,19 @@ import time
 
 from fastapi import Depends, FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability
-from .security import authorize_docs
+from .security import authorize_docs, authorize_admin_docs
 
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Orchestrator", version="0.10.0",
+        title="IACP Orchestrator", version="0.10.1",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
         description=(
@@ -52,7 +54,7 @@ def create_app() -> FastAPI:
             {"name": "instances", "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa."},
             {"name": "operations", "description": "Seguimiento asíncrono y eventos auditados por operation_id."},
             {"name": "lab-administration", "description": "Administración de políticas de laboratorio: propuesta, revisión independiente, vigencia, cuotas y revocación. No integra sistemas comerciales."},
-            {"name": "provisioning-administration", "description": "Administración interna del IaC Worker: planes e intentos. Rutas históricas conservadas; el CRM usa instances y operations."},
+            {"name": "provisioning-administration", "description": "Administración de Provisioning: planes e intentos. El CRM usa instances y operations."},
             {"name": "provisioning-approvals", "description": "Administración interna del IaC Worker: aprobación independiente y ejecución de un único plan guardado, o delegación auditable."},
             {"name": "kvm-lifecycle", "description": "Lifecycle Worker: energía de KVM propias; exige contrato de propiedad y habilitación."},
             {"name": "disposable-deletion", "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos."},
@@ -69,12 +71,15 @@ def create_app() -> FastAPI:
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
-            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|terraform/applies/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
+            r'/v1/instances/[a-f0-9-]{36}/(?:provisioning/deletions/[a-f0-9-]{36}/(?:cancel|recover)|provisioning/executions/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
         # Policy administration prepares/revokes delegation without submitting
         # infrastructure work. It must be usable before activate-lab opens gates.
         bookkeeping = bookkeeping or (request.method == 'POST' and re.fullmatch(
             r'/v1/lab/policies(?:/[a-f0-9-]{36}/(?:approve|renew|revoke))?',request.url.path))
-        if request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
+        if re.match(r'/v1/instances/[^/]+/terraform(?:/|$)', request.url.path):
+            # Removed HTTP routes stay absent even while admission is drained.
+            response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+        elif request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
             response = JSONResponse(status_code=503, content={"detail": "Admission drained"}, headers={"Retry-After": "60"})
         else:
             try:
@@ -106,6 +111,15 @@ def create_app() -> FastAPI:
     def contract():
         return JSONResponse(application.openapi())
 
+    @application.get("/admin/docs", include_in_schema=False, dependencies=[Depends(authorize_admin_docs)])
+    def admin_docs():
+        return get_swagger_ui_html(openapi_url="/admin/openapi.json", title="IACP Administration",
+            swagger_ui_parameters={"persistAuthorization": False, "docExpansion": "none"})
+
+    @application.get("/admin/openapi.json", include_in_schema=False, dependencies=[Depends(authorize_admin_docs)])
+    def admin_contract():
+        return JSONResponse(application.administrative_openapi())
+
     application.include_router(health.router)
     application.include_router(jobs.router)
     application.include_router(instances.router)
@@ -125,15 +139,44 @@ def create_app() -> FastAPI:
             {"loc": list(item['loc']), "type": item['type'], "msg": "Invalid request value"}
             for item in error.errors()]})
 
-    from .terraform.config import PlanError
+    from .services.provisioning import ProvisioningError
 
-    @application.exception_handler(PlanError)
+    @application.exception_handler(ProvisioningError)
     def executor_unavailable(request, error):
-        return JSONResponse(status_code=503, content={"detail": error.code})
+        from .api.presentation import public_code
+        return JSONResponse(status_code=503, content={"detail": public_code(error.code)})
+
+    from fastapi import HTTPException
+
+    @application.exception_handler(HTTPException)
+    def http_failure(request, error):
+        from .api.presentation import public_code
+        return JSONResponse(status_code=error.status_code,
+            content={"detail": public_code(error.detail) if isinstance(error.detail, str) else error.detail},
+            headers=error.headers)
 
     @application.exception_handler(SQLAlchemyError)
     def persistence_unavailable(request, error):
         return JSONResponse(status_code=503, content={"detail": "Persistence unavailable"})
+
+    def build_contract(administrative=False):
+        routes = []
+        for route in application.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            admin = ("/provisioning/" in route.path or (
+                route.path.startswith("/v1/lab/policies") and "POST" in route.methods))
+            if administrative or not admin:
+                routes.append(route)
+        tags = application.openapi_tags if administrative else [tag for tag in application.openapi_tags
+            if tag["name"] not in {"provisioning-administration", "provisioning-approvals", "lab-administration"}]
+        return get_openapi(title=application.title, version=application.version,
+            description=application.description, servers=application.servers, tags=tags, routes=routes)
+
+    # Separate schemas, same handlers. Authorization is enforced by dependencies,
+    # regardless of which documentation a caller has viewed.
+    application.openapi = lambda: build_contract()
+    application.administrative_openapi = lambda: build_contract(administrative=True)
 
     return application
 

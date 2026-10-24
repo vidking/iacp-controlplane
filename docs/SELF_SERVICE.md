@@ -88,10 +88,10 @@ El motor implementado continúa siendo Terraform 1.16.6 ([inventario y licencias
 | POST `/v1/instances/{id}/network/discover` | `{}` | 202 observación DHCP; operator + clave | Sí |
 | POST `/v1/instances/{id}/network/initialize` | `{}` | 202 inicialización fija aprobada; entrega automática tras start, misma clave para recuperar entrega; operator | No |
 | DELETE `/v1/instances/{id}` | `{}` bajo política; contrato antiguo conserva operation_id/plan_sha256 | 202; operator + clave; ausencia verificada antes de liberar cuota | Sí; cuerpo vacío/delegación nuevos |
-| POST `/v1/instances/{id}/terraform/deletion-plan` | `{}` | Solo plan; **no activa eliminación automática** | Sí |
-| POST `/v1/instances/{id}/terraform/deletion-approval` | operation_id, plan_sha256, valid_for_seconds | 201 aprobación individual independiente | Sí |
-| POST `/v1/instances/{id}/terraform/deletions/{op}/recover` | `{}` | 202 lectura tras consumo; operator original | Sí |
-| POST `/v1/instances/{id}/terraform/deletions/{op}/cancel` | `{}` | 200 cancela únicamente antes de started_at | Sí |
+| POST `/v1/instances/{id}/provisioning/deletion-plan` | `{}` | Solo plan; **no activa eliminación automática** | Sí |
+| POST `/v1/instances/{id}/provisioning/deletion-approval` | operation_id, plan_sha256, valid_for_seconds | 201 aprobación individual independiente | Sí |
+| POST `/v1/instances/{id}/provisioning/deletions/{op}/recover` | `{}` | 202 lectura tras consumo; operator original | Sí |
+| POST `/v1/instances/{id}/provisioning/deletions/{op}/cancel` | `{}` | 200 cancela únicamente antes de started_at | Sí |
 | POST `/v1/lab/policies` | propuesta siguiente | 201 propuesta; operator + clave | No |
 | GET `/v1/lab/policies`, `/{id}` | — | lista paginada / política, digest e historial; reader | No |
 | POST `/v1/lab/policies/{id}/approve` | `{"policy_sha256":"digest real"}` | 200; approver distinto del proponente | No |

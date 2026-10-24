@@ -273,7 +273,7 @@ def test_conflict_then_recovery_reobserves_instead_of_reusing_evidence(
         assert current.status == "uncertain" and current.error_code == "STATE_CHANGED_DURING_OBSERVATION"
     monkeypatch.setattr(runner, "read", original)
     before = len(runner.reads)
-    assert client.post(prepared[2] + "/applies/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
+    assert client.post(prepared[2] + "/executions/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
     assert len(runner.reads) == before + 2
     with sessions() as session:
@@ -308,7 +308,7 @@ def test_final_commit_cannot_override_a_changed_operation(
     def changed(*arguments):
         result = original(*arguments)
         if change == "cancel":
-            assert client.post(prepared[2] + "/applies/" + row["approval_id"] + "/cancel", headers=auth).status_code == 200
+            assert client.post(prepared[2] + "/executions/" + row["approval_id"] + "/cancel", headers=auth).status_code == 200
         if change == "artifacts": (root / "saved.tfplan").write_bytes(b"changed-fixture")
         if change == "binding":
             with sessions() as session:

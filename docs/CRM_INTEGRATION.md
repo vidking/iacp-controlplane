@@ -55,5 +55,26 @@ En producción, preservar el flujo estático/IPAM y sus asignaciones aprobadas;
 no extender automáticamente una política DHCP de laboratorio a perfiles de
 producción. La integración futura de IPAM debe conservar tenant, idempotencia,
 reservas, recuperación y propiedad, sin cambiar el contrato de UUID/operación.
-Los endpoints históricos del motor permanecen compatibles para administración;
-el CRM usa el contrato de IACP y el componente de aprovisionamiento **IaC Worker**.
+El CRM consume `/docs` y `/openapi.json`; la administración utiliza `/admin/docs`
+y `/admin/openapi.json` con permisos adicionales. Las rutas administrativas
+anteriores se retiraron tras migrar sus consumidores internos conocidos. El
+[contrato administrativo](PROVISIONING_CONTRACT.md) registra el mapeo y las decisiones.
+
+Desde 0.10.1 se conserva el campo histórico `executor`, con valores `simulated` o
+`provisioning`, y `provisioning_service=provisioning`. Desarrollo confirmó que no
+conoce dependencia del valor anterior. Crear, consultar, operar energía y eliminar
+conservan rutas, cuerpos, identificadores, respuestas HTTP e idempotencia de `/v1`.
+El cliente decide disponibilidad con status/infrastructure_kind/operaciones.
+Los detalles privados de ejecución se conservan en auditoría interna; las respuestas
+comerciales contienen evidencia de recursos y códigos neutrales.
+
+Las credenciales CRM son operator/reader sin el permiso servidor `administration`.
+Pueden usar políticas ya aprobadas; no proponerlas, aprobar planes, ejecutar planes
+manuales, cancelarlos ni resolver ausencias. El rol approver es exclusivamente
+administrativo. La identidad bootstrap es de plataforma y no debe entregarse al CRM.
+
+Los códigos publicados de provisioning usan el prefijo `PROVISIONING_`; los
+eventos de ese servicio usan `provisioning_` y actor `worker:provisioning`.
+Conservar event_id para deduplicar; el registro interno mantiene sus códigos
+históricos. `result` contiene la observación comercial de recursos, sin ubicación
+del almacén de estado ni manifiestos privados de ejecución.

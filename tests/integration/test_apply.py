@@ -44,12 +44,12 @@ def test_apply_survives_broker_redelivery_and_api_restart(pg_engine, runtime, mo
         registry.write_text(json.dumps([{"token_sha256": hashlib.sha256(token.encode()).hexdigest(),
                                         "tenant_id": tenant_id, "subject": "infra-test", "role": "approver"}]))
         monkeypatch.setenv("IACP_TENANT_CREDENTIALS_FILE", str(registry))
-        path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+        path = f'/v1/instances/{accepted["instance_id"]}/provisioning'
         approved = client.post(path + "/approvals", headers={"Authorization": "Bearer " + token, "Idempotency-Key": "approve"},
                                json={"attempt": 1, "plan_sha256": "a" * 64})
         assert approved.status_code == 201
         approval_id = approved.json()["approval_id"]
-        queued = client.post(path + "/apply", headers={**runtime, "Idempotency-Key": "apply"}, json={"approval_id": approval_id})
+        queued = client.post(path + "/executions", headers={**runtime, "Idempotency-Key": "apply"}, json={"approval_id": approval_id})
         assert queued.status_code == 202
         fake = ApplyingExecutor()
         with instance_lock(pg_engine, accepted["instance_id"]):
@@ -61,14 +61,14 @@ def test_apply_survives_broker_redelivery_and_api_restart(pg_engine, runtime, mo
         try:
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
-                response = client.get(path + "/applies", headers=runtime).json()[0]
+                response = client.get(path + "/executions", headers=runtime).json()[0]
                 if response["status"] in {"completed", "failed", "uncertain"}: break
                 time.sleep(.1)
             assert response["status"] == "completed", response
             execute_apply(approval_id, sessions, fake)
             assert not fake.calls
             with TestClient(create_app()) as restarted:
-                assert restarted.get(path + "/applies", headers=runtime).json()[0] == response
+                assert restarted.get(path + "/executions", headers=runtime).json()[0] == response
                 instance = restarted.get('/v1/instances/' + accepted["instance_id"], headers=runtime).json()
                 assert instance["status"] == "ready" and instance["vmid"] == 21001 and instance["result"]["simulated"] is False
             with sessions() as session:
@@ -112,12 +112,12 @@ def test_two_recovery_workers_use_the_existing_postgres_lock(pg_engine, runtime,
         registry.write_text(json.dumps([{"token_sha256": hashlib.sha256(token.encode()).hexdigest(),
                                         "tenant_id": tenant_id, "subject": "infra-test", "role": "approver"}]))
         monkeypatch.setenv("IACP_TENANT_CREDENTIALS_FILE", str(registry))
-        path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+        path = f'/v1/instances/{accepted["instance_id"]}/provisioning'
         approved = client.post(path + "/approvals", headers={"Authorization": "Bearer " + token, "Idempotency-Key": "approve"},
                                json={"attempt": 1, "plan_sha256": "a" * 64})
         assert approved.status_code == 201
         identifier = approved.json()["approval_id"]
-        assert client.post(path + "/apply", headers={**runtime, "Idempotency-Key": "apply"},
+        assert client.post(path + "/executions", headers={**runtime, "Idempotency-Key": "apply"},
                            json={"approval_id": identifier}).status_code == 202
         execute_apply(identifier, sessions, ApplyingExecutor("TERRAFORM_COMMAND_FAILED"))
         entered, release = Event(), Event()
@@ -140,7 +140,7 @@ def test_two_recovery_workers_use_the_existing_postgres_lock(pg_engine, runtime,
             second = Mock()
             execute_apply(identifier, sessions, second, reconcile=True)
             second.observe.assert_not_called()
-            assert client.post(path + "/applies/" + identifier + "/recover", headers=runtime).status_code == 409
+            assert client.post(path + "/executions/" + identifier + "/recover", headers=runtime).status_code == 409
         finally:
             release.set()
             worker.join(10)
@@ -148,7 +148,7 @@ def test_two_recovery_workers_use_the_existing_postgres_lock(pg_engine, runtime,
         execute_apply(identifier, sessions, second, reconcile=True)
         second.observe.assert_not_called()
         assert observer.calls == []
-        assert client.get(path + "/applies", headers=runtime).json()[0]["status"] == "completed"
+        assert client.get(path + "/executions", headers=runtime).json()[0]["status"] == "completed"
         with sessions() as session:
             completed = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == accepted["operation_id"],
                                                                     OperationEvent.code == "terraform_apply_completed")).all()

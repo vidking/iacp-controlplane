@@ -9,12 +9,12 @@ Los resultados reales del piloto se separan de las pruebas con fixtures en
 
 | Acción | Endpoint | Rol | Efecto |
 |---|---|---|---|
-| Preparar | POST /v1/instances/{instance_id}/terraform/deletion-plan | operator | Plan destroy guardado; sin Apply |
+| Preparar | POST /v1/instances/{instance_id}/provisioning/deletion-plan | operator | Plan destroy guardado; sin Apply |
 | Revisar | GET /v1/operations/{operation_id} | reader/operator/approver del tenant | deletion.phase, digest y auditoría |
-| Aprobar | POST /v1/instances/{instance_id}/terraform/deletion-approval | approver distinto del solicitante | Aprobación ligada a plan e instancia, 60–3600 s |
+| Aprobar | POST /v1/instances/{instance_id}/provisioning/deletion-approval | approver distinto del solicitante | Aprobación ligada a plan e instancia, 60–3600 s |
 | Ejecutar | DELETE /v1/instances/{instance_id} | operator original | Aplica exclusivamente el plan aprobado |
-| Reconciliar | Mismo DELETE o POST /terraform/deletions/{operation_id}/recover | operator original | Después de started_at, solo lectura |
-| Cancelar | POST /terraform/deletions/{operation_id}/cancel | operator original | Solo antes de started_at; conserva plan e historia |
+| Reconciliar | Mismo DELETE o POST /provisioning/deletions/{operation_id}/recover | operator original | Después de started_at, solo lectura |
+| Cancelar | POST /provisioning/deletions/{operation_id}/cancel | operator original | Solo antes de started_at; conserva plan e historia |
 
 DELETE está OFF por defecto y requiere Apply=1 más IACP_TERRAFORM_DELETE_ENABLED=1
 en API y Terraform worker. Requiere UUID exacto en IACP_DISPOSABLE_INSTANCE_IDS,

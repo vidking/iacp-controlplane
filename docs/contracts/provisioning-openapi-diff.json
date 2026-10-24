@@ -1,0 +1,770 @@
+{
+  "added_consumer_operations": [],
+  "administrative_operations": [
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/provisioning/executions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/provisioning/plan"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletion-approval"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletion-plan"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/resolve-absence"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/plan/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/plan/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/approve"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/renew"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/revoke"
+    }
+  ],
+  "after_version": "0.10.1",
+  "before_version": "0.10.0",
+  "changed_existing_operations": [],
+  "changed_shared_schemas": {
+    "InstanceAccepted": {
+      "after": {
+        "properties": {
+          "executor": {
+            "default": "simulated",
+            "description": "Modo de servicio de IACP; no permite seleccionar una implementación.",
+            "enum": [
+              "simulated",
+              "provisioning"
+            ],
+            "title": "Executor",
+            "type": "string"
+          },
+          "instance_id": {
+            "description": "UUID estable de la instancia IACP; nunca un VMID de Proxmox.",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "UUID de la intención asíncrona; consultar GET /v1/operations/{operation_id}.",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "provisioning_service": {
+            "const": "provisioning",
+            "default": "provisioning",
+            "title": "Provisioning Service",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "instance_id",
+          "operation_id"
+        ],
+        "title": "InstanceAccepted",
+        "type": "object"
+      },
+      "before": {
+        "properties": {
+          "executor": {
+            "default": "simulated",
+            "description": "Campo histórico de compatibilidad; el consumidor no selecciona ni invoca el motor IaC.",
+            "enum": [
+              "simulated",
+              "terraform"
+            ],
+            "title": "Executor",
+            "type": "string"
+          },
+          "instance_id": {
+            "description": "UUID estable de la instancia IACP; nunca un VMID de Proxmox.",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "UUID de la intención asíncrona; consultar GET /v1/operations/{operation_id}.",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "provisioning_service": {
+            "const": "IaC Worker",
+            "default": "IaC Worker",
+            "title": "Provisioning Service",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "instance_id",
+          "operation_id"
+        ],
+        "title": "InstanceAccepted",
+        "type": "object"
+      }
+    },
+    "InstanceResponse": {
+      "after": {
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commercial_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommercialContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "disk_gb": {
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "executor": {
+            "enum": [
+              "simulated",
+              "provisioning"
+            ],
+            "title": "Executor",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "infrastructure_kind": {
+            "enum": [
+              "simulated",
+              "unprovisioned",
+              "kvm"
+            ],
+            "title": "Infrastructure Kind",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "ip_addresses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ip Addresses",
+            "type": "array"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "network_mode": {
+            "default": "static",
+            "enum": [
+              "static",
+              "dhcp"
+            ],
+            "title": "Network Mode",
+            "type": "string"
+          },
+          "network_observation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Observation"
+          },
+          "network_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Profile"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "node_preference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Preference"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "provisioning_service": {
+            "const": "provisioning",
+            "default": "provisioning",
+            "title": "Provisioning Service",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "self_service_policy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Self Service Policy Id"
+          },
+          "start_on_create": {
+            "default": false,
+            "title": "Start On Create",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "provisioning",
+              "ready",
+              "failed",
+              "deleting",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "tenant_id",
+          "name",
+          "image",
+          "vcpus",
+          "memory_mb",
+          "disk_gb",
+          "status",
+          "executor",
+          "infrastructure_kind",
+          "vmid",
+          "node",
+          "result",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "InstanceResponse",
+        "type": "object"
+      },
+      "before": {
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commercial_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommercialContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "disk_gb": {
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "executor": {
+            "enum": [
+              "simulated",
+              "terraform"
+            ],
+            "title": "Executor",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "infrastructure_kind": {
+            "enum": [
+              "simulated",
+              "unprovisioned",
+              "kvm"
+            ],
+            "title": "Infrastructure Kind",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "ip_addresses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ip Addresses",
+            "type": "array"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "network_mode": {
+            "default": "static",
+            "enum": [
+              "static",
+              "dhcp"
+            ],
+            "title": "Network Mode",
+            "type": "string"
+          },
+          "network_observation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Observation"
+          },
+          "network_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Profile"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "node_preference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Preference"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "provisioning_service": {
+            "const": "IaC Worker",
+            "default": "IaC Worker",
+            "title": "Provisioning Service",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "self_service_policy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Self Service Policy Id"
+          },
+          "start_on_create": {
+            "default": false,
+            "title": "Start On Create",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "provisioning",
+              "ready",
+              "failed",
+              "deleting",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "tenant_id",
+          "name",
+          "image",
+          "vcpus",
+          "memory_mb",
+          "disk_gb",
+          "status",
+          "executor",
+          "infrastructure_kind",
+          "vmid",
+          "node",
+          "result",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "InstanceResponse",
+        "type": "object"
+      }
+    },
+    "PowerRequest": {
+      "after": {
+        "additionalProperties": false,
+        "description": "Transición autorizada sin parámetros adicionales del cliente.",
+        "properties": {},
+        "title": "PowerRequest",
+        "type": "object"
+      },
+      "before": {
+        "additionalProperties": false,
+        "description": "No client-controlled provider identifiers or force flags.",
+        "properties": {},
+        "title": "PowerRequest",
+        "type": "object"
+      }
+    }
+  },
+  "consumer_operations_after": 26,
+  "consumer_operations_before": 43,
+  "removed_from_consumer_documentation": [
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform/applies"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-approval"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-plan"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/approve"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/renew"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/revoke"
+    }
+  ],
+  "removed_legacy_runtime_routes": [
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform/applies"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-approval"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-plan"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/retry"
+    }
+  ]
+}

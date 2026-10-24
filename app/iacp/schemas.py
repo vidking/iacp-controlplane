@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from .api.presentation import public_code, public_executor, public_message, public_result
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
 OperationStatus = Literal["queued", "running", "completed", "failed", "uncertain"]
@@ -29,6 +30,8 @@ class JobResponse(BaseModel):
     message: str
     created_at: datetime
     updated_at: datetime
+
+    _message = field_validator("message")(public_message)
 
 
 class CommercialContext(BaseModel):
@@ -90,8 +93,10 @@ class InstanceCreate(BaseModel):
 class InstanceAccepted(JobAccepted):
     instance_id: str = Field(description="UUID estable de la instancia IACP; nunca un VMID de Proxmox.")
     operation_id: str = Field(description="UUID de la intención asíncrona; consultar GET /v1/operations/{operation_id}.")
-    executor: Literal["simulated", "terraform"] = Field(default="simulated", description="Campo histórico de compatibilidad; el consumidor no selecciona ni invoca el motor IaC.")
-    provisioning_service: Literal["IaC Worker"] = "IaC Worker"
+    executor: Literal["simulated", "provisioning"] = Field(default="simulated",
+        description="Modo de servicio de IACP; no permite seleccionar una implementación.")
+    provisioning_service: Literal["provisioning"] = "provisioning"
+    _executor = field_validator("executor", mode="before")(public_executor)
 
 
 class InstanceResponse(BaseModel):
@@ -115,14 +120,17 @@ class InstanceResponse(BaseModel):
     memory_mb: int
     disk_gb: int
     status: Literal["pending", "provisioning", "ready", "failed", "deleting", "deleted"]
-    executor: Literal["simulated", "terraform"]
-    provisioning_service: Literal["IaC Worker"] = "IaC Worker"
+    executor: Literal["simulated", "provisioning"]
+    provisioning_service: Literal["provisioning"] = "provisioning"
     infrastructure_kind: Literal["simulated", "unprovisioned", "kvm"]
     vmid: int | None
     node: str | None
     result: dict | None
     created_at: datetime
     updated_at: datetime
+
+    _result = field_validator("result", mode="before")(public_result)
+    _executor = field_validator("executor", mode="before")(public_executor)
 
 
 class EventResponse(BaseModel):
@@ -132,6 +140,8 @@ class EventResponse(BaseModel):
     code: str
     actor: str
     created_at: datetime
+
+    _neutral_code = field_validator("code", "actor")(public_code)
 
 
 class OperationResponse(BaseModel):
@@ -156,9 +166,11 @@ class OperationResponse(BaseModel):
     fulfillment: dict | None = Field(default=None,
         description="Para start_on_create: estado conjunto de aprovisionamiento, start e inicialización; completed exige sus comprobaciones, no readiness de una aplicación.")
 
+    _neutral_error = field_validator("error_code")(public_code)
+
 
 class PowerRequest(BaseModel):
-    """No client-controlled provider identifiers or force flags."""
+    """Transición autorizada sin parámetros adicionales del cliente."""
     model_config = ConfigDict(extra="forbid", strict=True)
 
 

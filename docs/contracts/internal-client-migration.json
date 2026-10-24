@@ -1,0 +1,51 @@
+{
+  "scope": "Local administrative support clients in /tmp; HTTP literal paths only, no commands executed or credentials changed",
+  "backup_directory": "/tmp/iacp-provisioning-client-migration",
+  "clients": [
+    {
+      "client": "iacp_identity_final_api_client.py",
+      "before_sha256": "a023ab1b69567b5d42dbffac1b33983653147e34de344d12c7346e17702d7d86",
+      "after_sha256": "f0b696f52cdeca29dba1e8bf428b189bcd4fca5ae89940fb39b456f999015a75"
+    },
+    {
+      "client": "iacp_identity_api_client.py",
+      "before_sha256": "9bcc07829984c9b53ef6779c889c987f92a866cd217bafd894b6ef6ba8fdc9f6",
+      "after_sha256": "7708dace9e071831ca6ee5b2770513b155cb11869203c9fc152dc0311a25797b"
+    },
+    {
+      "client": "iacp_multi_api_client.py",
+      "before_sha256": "3f3cfc17cab2f8bda21b26c0079d0bf4251743eaaf3db4506be232ca1bc77680",
+      "after_sha256": "d844807e57aeaf422c092df956daa1772ab61f244f0a2d0194b7a9d48983d927"
+    },
+    {
+      "client": "iacp_final_evidence.py",
+      "before_sha256": "1b21b46ea4b1740ff155738f97072d84fe2cd867c57012dc1ff240bbc0835da1",
+      "after_sha256": "337f288c32b11b36b108f86fc58de198efc9982c881093f58ac96d7fb4d01e76"
+    },
+    {
+      "client": "iacp_deletion_client.py",
+      "before_sha256": "aadee3c466b49b47fa768198c4b4ceddefb54bc3ed473a9f6b4588333322f08c",
+      "after_sha256": "de7798fee88d0b42e1422c8d737c1e5b7bd89dd3fa4649061b02c3fd004a1162"
+    },
+    {
+      "client": "iacp_operator_client.py",
+      "before_sha256": "8aba021abfd8def2293fcc709f57fad83520b4d68d5863695e0855c04727f578",
+      "after_sha256": "2859eede203475830256447c59c19d8485f0cdcf63c22cc9bd9174b81c2018e0"
+    },
+    {
+      "client": "iacp_continue_runtime.py",
+      "before_sha256": "aafbbf7956a3ae2c0c5c33a0ba042254405cd2d144e752c6236383462a72cbcf",
+      "after_sha256": "7f93b803edb0138f07ca29bd5de8e988066b62ace388d21c866b88a4979c9b2d"
+    },
+    {
+      "client": "iacp_continue_full.py",
+      "before_sha256": "211cfce21c252d95e86e6c1a4483768c595a9c45cbb2508c49b599545358d5fe",
+      "after_sha256": "aa4e91636b595b980a16fc1c08b5fe25377cc83531e15f22b853e34d47370743"
+    },
+    {
+      "client": "iacp_continue.py",
+      "before_sha256": "57cbf7de0e832b2f2c0e4b9a59c8a50524920094e3f814c88a753ac4101ce0b9",
+      "after_sha256": "bbc73ec06ac573797392fe3832ccadbcf75d32fd419f5106e49a671fe63ee667"
+    }
+  ]
+}

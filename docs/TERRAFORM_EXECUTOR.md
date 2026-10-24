@@ -89,9 +89,9 @@ No hay aprobación automática ni ejecución de un plan regenerado implícitamen
 
 ## Consulta, cancelación y recuperación
 
-- `GET /v1/instances/{id}/terraform`: estado, intento actual, SHA y trazabilidad.
-- `POST /v1/instances/{id}/terraform/cancel`: intención de cancelación; idempotente.
-- `POST /v1/instances/{id}/terraform/retry`: cuerpo `{"expected_attempt": N}` e
+- `GET /v1/instances/{id}/provisioning/plan`: estado, intento actual, SHA y trazabilidad.
+- `POST /v1/instances/{id}/provisioning/plan/cancel`: intención de cancelación; idempotente.
+- `POST /v1/instances/{id}/provisioning/plan/retry`: cuerpo `{"expected_attempt": N}` e
   `Idempotency-Key` nueva para esa recuperación. Una repetición devuelve el mismo
   intento y no vuelve a publicar. Reutilizar la clave con otro N produce 409.
 

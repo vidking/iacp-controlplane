@@ -57,7 +57,7 @@ verificar que no siga mutando y obtener autorización antes de cualquier desbloq
 | Plan/volumen perdido | Restaurar artefactos privados desde respaldo; no sustituirlos por un plan distinto bajo la aprobación anterior |
 | PostgreSQL perdido | Restaurar respaldo validado; conciliar cambios ocurridos después del respaldo antes de reanudar colas |
 
-`GET .../terraform/applies` expone status, error_code, started_at, finished_at y
+`GET .../provisioning/executions` expone status, error_code, started_at, finished_at y
 result. `POST .../applies/{approval_id}/recover` no concede permisos de apply.
 Durante conciliación se permite observar aunque apply y planificación estén
 deshabilitados; se necesitan credenciales de lectura vigentes con alcance sobre

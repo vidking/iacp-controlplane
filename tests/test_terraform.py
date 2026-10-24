@@ -63,12 +63,12 @@ def run_plan(accepted, sessions, executor=None, load=None, attempt=1):
 
 
 def execution(client, auth, accepted):
-    return client.get(f'/v1/instances/{accepted["instance_id"]}/terraform', headers=auth)
+    return client.get(f'/v1/instances/{accepted["instance_id"]}/provisioning/plan', headers=auth)
 
 
 def test_plan_is_persistent_and_waits_for_approval(client, auth, terraform_mode, sessions):
     accepted = create(client, auth).json()
-    assert accepted["executor"] == "terraform"
+    assert accepted["executor"] == "provisioning"
     executor = run_plan(accepted, sessions)
     result = execution(client, auth, accepted).json()
     assert result["status"] == "planned" and result["attempt"] == 1
@@ -95,7 +95,7 @@ def test_real_plan_is_disabled_without_credentials_or_files(client, auth, terraf
 
 def test_cancel_before_delivery_and_idempotent_retry_keep_identifiers(client, auth, terraform_mode, sessions, application):
     accepted = create(client, auth).json()
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan'
     cancelled = client.post(path + "/cancel", headers=auth).json()
     assert cancelled["status"] == "cancelled"
     assert client.post(path + "/cancel", headers=auth).json() == cancelled
@@ -122,7 +122,7 @@ def test_cancel_before_delivery_and_idempotent_retry_keep_identifiers(client, au
 
 def test_cancel_running_plan_and_reject_retry_while_worker_holds_lock(client, auth, terraform_mode, sessions):
     accepted = create(client, auth).json()
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan'
 
     def callback():
         retry = client.post(path + "/retry", headers={**auth, "Idempotency-Key": "active"}, json={"expected_attempt": 1})
@@ -140,7 +140,7 @@ def test_failed_plan_retries_with_frozen_allocation_and_same_state(client, auth,
     failed = execution(client, auth, accepted).json()
     assert failed["error_code"] == "TERRAFORM_EXECUTION_FAILED"
     assert "secret" not in json.dumps(failed)
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform/retry'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan/retry'
     assert client.post(path, headers={**auth, "Idempotency-Key": "recovery"}, json={"expected_attempt": 1}).status_code == 202
     loader = Mock(side_effect=AssertionError("A retry must not allocate another VM"))
     retried = run_plan(accepted, sessions, load=loader, attempt=2)
@@ -157,7 +157,7 @@ def test_recover_interrupted_attempt_after_lock_release(client, auth, terraform_
         attempt = session.scalar(select(TerraformAttempt))
         attempt.status = "running"
         session.commit()
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform/retry'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan/retry'
     result = client.post(path, headers={**auth, "Idempotency-Key": "recover-001"}, json={"expected_attempt": 1})
     assert result.status_code == 202
     assert execution(client, auth, accepted).json()["attempts"][0]["status"] == "interrupted"
@@ -179,11 +179,11 @@ def test_plan_actions_are_tenant_scoped_and_reader_cannot_mutate(client, auth, i
     reader = identities["tenant-a-reader"]["headers"]
     other = identities["tenant-b-operator"]["headers"]
     accepted = create(client, operator).json()
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform'
-    assert client.get(path, headers=reader).status_code == 200
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan'
+    assert client.get(path, headers=reader).status_code == 403
     for endpoint in (path, path + "/cancel", path + "/retry"):
         method = client.get if endpoint == path else client.post
-        assert method(endpoint, headers={**other, "Idempotency-Key": "other"}, **({} if endpoint == path else {"json": {"expected_attempt": 1}})).status_code == 404
+        assert method(endpoint, headers={**other, "Idempotency-Key": "other"}, **({} if endpoint == path else {"json": {"expected_attempt": 1}})).status_code == 403
     assert client.post(path + "/cancel", headers=reader).status_code == 403
     assert client.post(path + "/retry", headers=reader, json={"expected_attempt": 1}).status_code == 403
 
@@ -340,7 +340,7 @@ def test_runner_keeps_stderr_separate_from_structured_output(tmp_path):
 def test_retry_dispatch_failure_can_be_recovered_without_reallocating(client, auth, terraform_mode, sessions, application):
     accepted = create(client, auth).json()
     run_plan(accepted, sessions, FakeExecutor(fail=PlanError("TERRAFORM_COMMAND_FAILED")))
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform/retry'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan/retry'
     published = Mock(side_effect=TimeoutError("sensitive broker connection"))
     application.dependency_overrides[get_plan_publisher] = lambda: published
     headers = {**auth, "Idempotency-Key": "failed-publication"}
@@ -355,7 +355,7 @@ def test_retry_dispatch_failure_can_be_recovered_without_reallocating(client, au
 def test_cancel_prepared_plan_invalidates_current_hash(client, auth, terraform_mode, sessions):
     accepted = create(client, auth).json()
     run_plan(accepted, sessions)
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan'
     response = client.post(path + "/cancel", headers=auth).json()
     assert response["status"] == "cancelled" and response["plan_sha256"] is None
     assert client.get(f'/v1/instances/{accepted["instance_id"]}', headers=auth).json()["result"] is None
@@ -370,7 +370,7 @@ def test_wasabi_backend_cannot_disable_locking_or_encryption():
 
 def test_recover_unpublished_queued_attempt_fences_late_delivery(client, auth, terraform_mode, sessions):
     accepted = create(client, auth).json()
-    path = f'/v1/instances/{accepted["instance_id"]}/terraform/retry'
+    path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan/retry'
     response = client.post(path, headers={**auth, "Idempotency-Key": "recover-unpublished"}, json={"expected_attempt": 1})
     assert response.status_code == 202 and response.json()["attempt"] == 2
     fake = run_plan(accepted, sessions, attempt=1)

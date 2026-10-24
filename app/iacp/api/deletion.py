@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..schemas import DeletionAccepted, ErrorResponse, PowerRequest
-from ..security import Principal, authorize_approval, authorize_write
+from ..security import Principal, authorize_administration, authorize_approval, authorize_write
 from ..services.instances import Conflict
 from ..services.jobs import QueueUnavailable
-from ..terraform import deletion
+from ..services.provisioning import ProvisioningService
+
+deletion = ProvisioningService.deletion
 from .dependencies import get_deletion_publisher
 from .power import owned
 
@@ -42,8 +44,8 @@ def guarded(call):
         raise HTTPException(503, "DELETE_DISPATCH_UNCONFIRMED; repeat the SAME key") from None
 
 
-@router.post("/terraform/deletion-plan", response_model=DeletionAccepted, status_code=202,
-             operation_id="planDisposableDeletion", summary="Preparar plan de eliminación sin borrar",
+@router.post("/provisioning/deletion-plan", response_model=DeletionAccepted, status_code=202,
+             operation_id="planDisposableDeletion", dependencies=[Depends(authorize_administration)], summary="Preparar plan de eliminación sin borrar",
              description="Operator del tenant. Solo UUID en allowlist, VMID >=30000 y KVM propia con Apply completado. "
                          "Reserva la instancia frente a Lifecycle; genera un plan destroy guardado, sin Apply. "
                          "Consultar operation.deletion en GET /v1/operations/{operation_id}. Conservar esta misma Idempotency-Key para DELETE.")
@@ -53,10 +55,10 @@ def plan(instance_id: str, key: Key, session: Database, publish: Publisher,
     return guarded(lambda: deletion.plan_request(session, instance, principal, key, publish))
 
 
-@router.post("/terraform/deletion-approval", response_model=DeletionAccepted, status_code=201,
-             operation_id="approveDisposableDeletion", summary="Aprobar el plan DELETE revisado",
+@router.post("/provisioning/deletion-approval", response_model=DeletionAccepted, status_code=201,
+             operation_id="approveDisposableDeletion", dependencies=[Depends(authorize_administration)], summary="Aprobar el plan DELETE revisado",
              description="Approver del mismo tenant, sujeto distinto del solicitante. Liga aprobación de un uso "
-                         "al operation_id y SHA-256 del plan, con caducidad. No ejecuta Terraform.")
+                         "al operation_id y SHA-256 del plan, con caducidad. No ejecuta infraestructura.")
 def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Database,
             principal: Annotated[Principal, Depends(authorize_approval)]):
     instance = owned(session, principal, instance_id)
@@ -84,8 +86,8 @@ def delete(instance_id: str, key: Key, session: Database, publish: Publisher,
     return guarded(lambda: deletion.dispatch(session, instance, principal, body.model_dump(), key, publish))
 
 
-@router.post("/terraform/deletions/{operation_id}/cancel", response_model=DeletionAccepted,
-             operation_id="cancelDisposableDeletion", summary="Cancelar antes de consumir la autorización",
+@router.post("/provisioning/deletions/{operation_id}/cancel", response_model=DeletionAccepted,
+             operation_id="cancelDisposableDeletion", dependencies=[Depends(authorize_administration)], summary="Cancelar antes de consumir la autorización",
              description="Operator original. Cancela únicamente si started_at sigue vacío, con lock exclusivo. "
                          "No ejecuta infraestructura; disponible durante el drenado. No libera una mutación incierta.")
 def cancel(instance_id: str, operation_id: str, session: Database, publish: Publisher,
@@ -94,8 +96,8 @@ def cancel(instance_id: str, operation_id: str, session: Database, publish: Publ
     return guarded(lambda: deletion.recover_or_cancel(session, instance, principal, operation_id, publish, cancel=True))
 
 
-@router.post("/terraform/deletions/{operation_id}/recover", response_model=DeletionAccepted, status_code=202,
-             operation_id="recoverDisposableDeletion", summary="Reconciliar eliminación consumida solo por lectura",
+@router.post("/provisioning/deletions/{operation_id}/recover", response_model=DeletionAccepted, status_code=202,
+             operation_id="recoverDisposableDeletion", dependencies=[Depends(authorize_administration)], summary="Reconciliar eliminación consumida solo por lectura",
              description="Operator original. Exige started_at persistido y reserva running/uncertain. "
                          "Publica el mismo identificador exclusivamente en modo reconcile. Disponible con admisión/DELETE OFF; "
                          "nunca ejecuta init, plan ni Apply ni autoriza un segundo intento de borrado.")
