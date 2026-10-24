@@ -79,6 +79,14 @@ def test_self_service_can_be_introduced_only_disabled():
     assert not compare(old,new)['passed']
 
 
+def test_iac_worker_lifecycle_gate_can_be_introduced_only_closed():
+    old=fixture_config();old['services']['terraform-worker']['environment']={}
+    new=deepcopy(old);new['services']['terraform-worker']['environment']['IACP_KVM_LIFECYCLE_ENABLED']='0'
+    assert compare(old,new)['passed']
+    new['services']['terraform-worker']['environment']['IACP_KVM_LIFECYCLE_ENABLED']='1'
+    assert not compare(old,new)['passed']
+
+
 def test_comparison_allows_only_certifier_fix_and_declared_image_changes():
     old = fixture_config()
     old['services']['ownership-certifier'] = {'environment': {}, 'tmpfs': ['/tmp']}

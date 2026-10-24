@@ -96,9 +96,9 @@ def active(session, instance_id):
         GuestInitialization.status.in_(['queued','running','uncertain'])))
 
 
-def configured_mode(session, instance):
+def configured_mode(session, instance, *, current_profiles=True):
     from ..services.lab import member
-    row=member(session,instance,'start',current_profiles=True)
+    row=member(session,instance,'start',current_profiles=current_profiles)
     mode=row.profile_snapshots[instance.network_profile].get('guest_initialization')
     if mode!=MODE or row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=PROGRAM_SHA256:
         raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED')
@@ -121,7 +121,7 @@ def validate_binding(session, row, operation):
     return instance,target
 
 
-def request_initialization(session, instance, principal, key, publish):
+def request_initialization(session, instance, principal, key, publish, *, current_profiles=True):
     from .lab import authorize_operation
     from ..lifecycle.ownership import mutation_revision
     from ..lifecycle.service import response
@@ -140,7 +140,7 @@ def request_initialization(session, instance, principal, key, publish):
                 if not row:raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
                 validate_binding(session,row,operation)
                 if row.status=='failed' and not row.started_at:
-                    configured_mode(session,instance);mutation_revision()
+                    configured_mode(session,instance,current_profiles=current_profiles);mutation_revision()
                     authorize_operation(session,instance,'start')
                     row.status=operation.status='queued';operation.error_code=None
                     session.scalar(select(Job).where(Job.operation_id==operation.id)).status='queued'
@@ -148,7 +148,7 @@ def request_initialization(session, instance, principal, key, publish):
             else:
                 if session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id)):
                     raise Conflict('GUEST_INITIALIZATION_ALREADY_EXISTS; use its operation or reconcile')
-                mode=configured_mode(session,instance);mutation_revision()
+                mode=configured_mode(session,instance,current_profiles=current_profiles);mutation_revision()
                 authorize_operation(session,instance,'start')
                 from ..terraform.deletion import active_deletion
                 from ..models import PowerExecution
@@ -297,6 +297,7 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                     row.status=operation.status=('uncertain' if row.started_at and not isinstance(failure,GuestProgramFailed) else 'failed')
                     if isinstance(failure,GuestProgramFailed):row.finished_at=utcnow()
                     if job:job.status='failed'
-                    operation.error_code=str(failure)[:64] if isinstance(failure,Conflict) else 'GUEST_INITIALIZATION_OBSERVATION_FAILED'
+                    operation.error_code=(str(failure)[:64] if isinstance(failure,Conflict) else failure.code
+                        if isinstance(failure,PowerError) else 'GUEST_INITIALIZATION_OBSERVATION_FAILED')
                     event(s,operation,'guest_initialization_'+row.status,'worker:iac');s.commit()
     except ExecutionBusy:return

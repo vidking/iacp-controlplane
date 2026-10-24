@@ -178,7 +178,7 @@ ausencia y los controles históricos no se sustituyen por fixtures o SQL.
 
 | Cambio | Fuente |
 |---|---|
-| Perfil disponible por tenant | Host `/etc/iacp/terraform/profiles.json`, `profiles.<nombre>.allowed_tenants`; env host `IACP_TF_PROFILES_PATH`; mount API/IaC Worker `/run/config/profiles.json`; env del contenedor `IACP_TERRAFORM_PROFILES_FILE` |
+| Perfil disponible por tenant | Host activo `/etc/iacp/terraform/profiles-guest-identity-370ce98.json` (ruta seleccionada por env; no editar en caliente), `profiles.<nombre>.allowed_tenants`; env host `IACP_TF_PROFILES_PATH`; mount API/IaC Worker `/run/config/profiles.json`; env del contenedor `IACP_TERRAFORM_PROFILES_FILE` |
 | Plantilla / imagen | `profiles.<nombre>.settings.template_vm_id`, `.template_node_name`, `.image`; API `image` debe coincidir; otra imagen usa otro perfil |
 | CPU solicitada / techo por VM | API `vcpus`; perfil `.max_vcpus` |
 | RAM solicitada / techo por VM | API `memory_mb` (MiB, múltiplo de 256); `.max_memory_mb` |

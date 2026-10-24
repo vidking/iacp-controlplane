@@ -262,3 +262,12 @@ def test_policy_review_can_precede_activation_while_infrastructure_stays_drained
     assert r.status_code==200,r.text
     assert create(client,auth,lab).status_code==503
     assert client.post(path+'/revoke',headers=lab.reviewer,json={}).status_code==200
+
+
+def test_self_service_profile_cannot_bypass_tenant_policy_quotas_by_omitting_policy(client,auth,lab,sessions):
+    r=create(client,auth,lab,self_service_policy_id=None)
+    assert r.status_code==409 and r.json()['detail']=='LAB_POLICY_REQUIRED'
+    with sessions() as s:
+        assert not s.scalars(select(Instance)).all()
+        assert not s.scalars(select(TerraformExecution)).all()
+        assert not s.scalars(select(Operation)).all()

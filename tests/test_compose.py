@@ -78,3 +78,12 @@ def test_terraform_worker_is_opt_in_nonprivileged_and_real_plan_is_disabled():
     assert all(mount.get("read_only") for mount in worker["volumes"] if isinstance(mount, dict))
     assert "api_token" not in worker["secrets"]
     assert override["volumes"]["terraform_plans"]["external"] is True
+
+
+def test_canonical_guest_identity_worker_has_shared_gate_without_expanding_lifecycle_secrets():
+    services=yaml.safe_load((ROOT/'deploy/mng/compose.yaml').read_text())['services']
+    for role in ['api','terraform-worker','lifecycle-worker']:
+        assert '${IACP_KVM_LIFECYCLE_ENABLED:?' in services[role]['environment']['IACP_KVM_LIFECYCLE_ENABLED']
+    lifecycle=services['lifecycle-worker']
+    assert 'IACP_TERRAFORM_PROFILES_FILE' not in lifecycle['environment']
+    assert {v['source'] for v in lifecycle['secrets']}=={'db_password','kvm_credentials'}

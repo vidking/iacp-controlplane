@@ -89,6 +89,10 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
         old_env=a['services'][role].get('environment',{});new_env=b['services'][role].get('environment',{})
         if 'IACP_LAB_SELF_SERVICE_ENABLED' not in old_env and new_env.get('IACP_LAB_SELF_SERVICE_ENABLED')=='0':
             allowed.add('/services/'+role+'/environment/IACP_LAB_SELF_SERVICE_ENABLED')
+    old_tf=current['services'].get('terraform-worker',{}).get('environment',{})
+    new_tf=candidate['services'].get('terraform-worker',{}).get('environment',{})
+    if 'IACP_KVM_LIFECYCLE_ENABLED' not in old_tf and new_tf.get('IACP_KVM_LIFECYCLE_ENABLED')=='0':
+        allowed.add('/services/terraform-worker/environment/IACP_KVM_LIFECYCLE_ENABLED')
     old, new = a['services']['ownership-certifier'], b['services']['ownership-certifier']
     if new.get('environment', {}).get('TMPDIR') == '/run/iacp-certification':
         allowed.add('/services/ownership-certifier/environment/TMPDIR')

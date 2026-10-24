@@ -476,7 +476,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             if role in {'api','terraform-worker','lifecycle-worker'}:
                 require(values.get('IACP_LAB_SELF_SERVICE_ENABLED','0')==config['services'][role]['environment'].get('IACP_LAB_SELF_SERVICE_ENABLED','0'),
                         'Lab self-service flag differs from reviewed configuration')
-            if role in {"api", "lifecycle-worker"}:
+            if role in {"api", "lifecycle-worker", "terraform-worker"}:
                 require(values.get("IACP_KVM_LIFECYCLE_ENABLED", "0") == str(lifecycle), "Lifecycle flag mismatch")
                 require(values.get('IACP_LIFECYCLE_INSTANCE_IDS','')==config['services'][role]['environment'].get('IACP_LIFECYCLE_INSTANCE_IDS',''),
                         'Lifecycle instance scope mismatch')
