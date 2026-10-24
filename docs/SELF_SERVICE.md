@@ -3,6 +3,7 @@
 Contrato **0.9.1**, migración **0010_guest_identity**. Consultar
 [la evidencia](validation/SELF_SERVICE.json) para distinguir la revisión probada,
 la release ejecutada y las pruebas reales de los adaptadores simulados.
+[Resultado del piloto y release desplegada](SELF_SERVICE_VALIDATION.md).
 Entrada operativa única: `scripts/iacpctl`, Compose
 `deploy/mng/compose.yaml` y driver `scripts/go_live.py`.
 
@@ -46,11 +47,13 @@ Solicitud de creación, con tipos y límites válidos del perfil de ejemplo:
   "memory_mb": 2048,
   "disk_gb": 20,
   "network_profile": "lab-dhcp",
-  "self_service_policy_id": "00000000-0000-4000-8000-000000000001"
+  "self_service_policy_id": "ac558dfa-4c2b-4e2f-8886-67648e880dc8"
 }
 ```
 
-El UUID del ejemplo solo ilustra formato. No es una política operativa. Omitir
+El UUID anterior es la política real del piloto del tenant autorizado, vigente hasta
+2026-10-31 01:23:03 UTC (2026-10-30 19:23:03 Costa Rica). Verificarla por GET antes
+de usarla; otros tenants deben copiar su propio policy_id aprobado. Omitir
 `node_preference` distribuye reservas entre los destinos permitidos según la
 cantidad de instancias reservadas y desempate estable. Incluir por ejemplo
 `"node_preference":"mng01"` exige que el perfil autorice ese destino. El nodo de
@@ -157,10 +160,12 @@ las instancias históricas.
 |---|---|
 | 401 / 403 | Corregir credencial o rol, sin cambiar la intención comercial |
 | 404 | UUID ausente o ajeno; no revela otro tenant |
+| 409 INSTANCE_BUSY / operación activa | Esperar el trabajo de la misma VM y repetir la misma clave; no forzar ni crear otra VM |
 | 409 Idempotency conflict | Conservar el cuerpo original o abrir una intención distinta explícita |
 | 409 LAB_QUOTA_EXCEEDED:* | Consultar usage; esperar operaciones o limpiar recursos propios verificados; no cambiar de perfil para eludirlo |
 | 409 política no autorizada / perfil cambiado | Revisar vigencia, revocación, permisos y digest; requiere revisión independiente para renovar |
 | 422 | Corregir tipos/campos/límites; nunca enviar tenant_id, VMID, IP o force |
+| 503 `PROFILE_NODE_NOT_AUTHORIZED` / `AUTHORIZED_PROFILE_REQUIRED` | Corregir perfil/preferencia/autorización; códigos históricos compatibles, no un motivo para crear otra intención automáticamente |
 | 503 admisión cerrada | Respetar Retry-After; consultar operaciones; `/reconcile` sigue disponible |
 | entrega de creación no confirmada | Repetir la misma clave para recuperar IDs; `/retry-provision` solo si no hubo Apply consumido |
 | plan listo / entrega Apply pendiente | `/provision` continúa el mismo UUID y autorización; redelivery cercada |
@@ -198,7 +203,9 @@ ausencia y los controles históricos no se sustituyen por fixtures o SQL.
 Ejemplo completo de formato en [lab-profiles.example.json](deployment/lab-profiles.example.json).
 No es autorización ni configuración operativa. `deploy/profiles.json` continúa
 vacío por defecto. Cambiar un perfil invalida el digest vigente para admisión y
-mutaciones IaC: preparar otra política y revisión; no editar el snapshot en DB.
+mutaciones IaC: preparar otra política y revisión; no editar el snapshot en DB. Para cambiar plantilla o red, versionar un perfil
+nuevo y mantener el anterior hasta operar/eliminar sus miembros; después revocar
+la política anterior. La renovación exige perfiles intactos.
 
 ## Release, migración y piloto real
 
@@ -272,6 +279,11 @@ PID y resultado. El consumo se confirma antes del único POST al Guest Agent.
 Redelivery, misma clave y `/reconcile` después de ese instante solo leen el PID
 existente y la evidencia persistente, incluso si se perdió la respuesta con el PID.
 Una incertidumbre retiene cuota y bloquea energía/DELETE hasta conciliarla.
+Lifecycle agenda desde el snapshot aprobado, sin montar perfiles ni credenciales
+IaC; el IaC Worker revalida el perfil vigente y el gate Lifecycle compartido antes
+del único envío. Si un start/reboot posterior encuentra un fallo sin consumo,
+reencola la misma intención. Un programa consumido que terminó con exitcode no
+cero queda failed terminal y nunca se reenvía; permite apagar y limpiar su VM.
 Un fallo previo al consumo admite repetir **la misma clave**, tras corregir su
 causa, sin crear otro registro ni otra VM. La clave automática es
 `identity-<UUID de instancia>`.

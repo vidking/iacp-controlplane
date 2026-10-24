@@ -33,7 +33,10 @@ sobre el mismo UUID; si solo falló planificación sin Apply consumido, usar
 retry-provision con expected_attempt y clave estable. Ver [guía completa](SELF_SERVICE.md).
 
 Start, shutdown y reboot son operaciones asíncronas independientes con claves
-propias. Para una suspensión comercial, revocar acceso comercial en el CRM y
+propias. En Ubuntu DHCP el primer start agenda `instance.network.initialize`;
+consultar el historial por instance_id y esperar completed e IP conocida antes de
+publicar la dirección. Una inicialización incierta se observa con `/reconcile`,
+sin duplicar la VM ni ejecutar comandos del invitado desde el CRM. Para una suspensión comercial, revocar acceso comercial en el CRM y
 solicitar shutdown solo cuando el tenant/política lo autorice; IACP no implementa
 pause, suspensión de RAM ni facturación. Una política puede omitir start o delete.
 Eliminación bajo política aplica únicamente a recursos nuevos propios descartables,

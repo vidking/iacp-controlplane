@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     documents = sorted((ROOT / "docs" / "handbook").glob("*.md"))
-    documents.extend(ROOT / "docs" / name for name in ["OPERATIONS.md","SAFE_DELETE.md","DHCP_PILOT.md","DHCP_RECOVERY.md","SELF_SERVICE.md","CRM_INTEGRATION.md","ENGINE_INVENTORY.md"])
+    documents.extend(ROOT / "docs" / name for name in ["OPERATIONS.md","SAFE_DELETE.md","DHCP_PILOT.md","DHCP_RECOVERY.md","SELF_SERVICE.md","SELF_SERVICE_VALIDATION.md","CRM_INTEGRATION.md","ENGINE_INVENTORY.md"])
     if not documents:
         raise ValueError("Faltan los manuales")
     for document in documents:

@@ -5,8 +5,9 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
-Autoservicio multiinstancia candidato 0.9: [guía para Desarrollo y Swagger](docs/SELF_SERVICE.md),
+Autoservicio multiinstancia 0.9.1: [guía para Desarrollo y Swagger](docs/SELF_SERVICE.md),
 [contrato futuro CRM](docs/CRM_INTEGRATION.md) y [evidencia de validación](docs/validation/SELF_SERVICE.json).
+[Release desplegada, cuatro KVM reales y limpieza](docs/SELF_SERVICE_VALIDATION.md).
 
 Entrada operativa canónica: [scripts/iacpctl](scripts/iacpctl) y
 [docs/OPERATIONS.md](docs/OPERATIONS.md). `deploy/mng` es el primer entorno de
