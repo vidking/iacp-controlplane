@@ -1,0 +1,9 @@
+{
+  "preflight": "rejected 0010 before mutation",
+  "migration_performed": false,
+  "containers_changed": false,
+  "fix": "Explicitly admit the deployed 0010 predecessor while preserving the known-schema guard",
+  "focused_tests_passed": 48,
+  "additional_regression_tests": 1,
+  "junit_sha256": "9ac7ac151f6ba346ae85c42b5c217ee817690ba28434c5d438ddf47ef10917ba"
+}
