@@ -88,3 +88,18 @@ def test_client_assets_do_not_persist_credentials_or_use_online_validator(client
     assert not any('/provisioning/' in path for path in public['paths'])
     assert not any(method=='post' for path,methods in public['paths'].items()
                    if path.startswith('/v1/lab/policies') for method in methods)
+
+
+def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
+    page = client.get('/docs', headers=auth)
+    assert 'API privada · HTTPS/TLS' in page.text
+    assert '/docs?asset=ux-f1.css' in page.text
+    for operation in ('listAuthorizedProfiles', 'createInstance', 'listOperations', 'getInstancePower', 'deleteDisposableInstance'):
+        assert f'data-operation-id="{operation}"' in page.text
+    assert 'data-doc-target="guia-crm"' in page.text
+    assert 'data-doc-target="guia-operaciones"' in page.text
+    assert 'data-doc-target="guia-despliegue"' in page.text
+    script = client.get('/docs?asset=iacp-v1.js', headers=auth).text
+    assert 'window.scrollTo' in script and 'history.pushState' in script
+    assert 'deepLinking: true' in script and 'scrollIntoView' not in script
+    assert 'localStorage' not in script

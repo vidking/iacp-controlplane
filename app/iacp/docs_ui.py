@@ -11,6 +11,7 @@ ASSETS = {
     'swagger-5.34.0.js': (ROOT/'swagger/5.34.0/swagger-ui-bundle.js', 'text/javascript'),
     'swagger-5.34.0.css': (ROOT/'swagger/5.34.0/swagger-ui.css', 'text/css'),
     'iacp-v1.css': (ROOT/'docs/iacp.css', 'text/css'),
+    'ux-f1.css': (ROOT/'docs/ux-f1.css', 'text/css'),
     'iacp-v1.js': (ROOT/'docs/iacp.js', 'text/javascript'),
     'iacp-v1.svg': (ROOT/'docs/iacp.svg', 'image/svg+xml'),
 }

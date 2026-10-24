@@ -1,0 +1,22 @@
+{
+  "fecha_local": "2026-10-24T17:22:00-06:00",
+  "origen": "candidato local aislado; no es evidencia de VM 104",
+  "desktop": {
+    "eliminacion_autorizada": {
+      "hash": "#/disposable-deletion/deleteDisposableInstance",
+      "scroll_y": 1773,
+      "objetivo_visible_bajo_cabecera": true
+    },
+    "recarga_profunda": {
+      "hash": "#/disposable-deletion/deleteDisposableInstance",
+      "scroll_y": 1844,
+      "objetivo_visible_bajo_cabecera": true
+    }
+  },
+  "mobile": {
+    "menu_se_cierra_al_seleccionar": true,
+    "hash_crear_instancia": "#/instances/createInstance"
+  },
+  "errores_javascript": [],
+  "dependencias_externas": []
+}

@@ -1,0 +1,13 @@
+/* Ajustes F1.1–F1.2 sobre la identidad visual existente. */
+.workspace{width:min(95vw,1800px);max-width:none}
+.swagger-ui .opblock,.swagger-ui .opblock-tag-section{scroll-margin-top:105px}
+.menu-toggle{display:none;border:1px solid #37516b;background:transparent;color:#d9e8f2;border-radius:5px;padding:6px 9px;font-size:11px}
+.local-guides{display:grid;gap:12px;margin:0 0 36px}
+.local-guides details{border:1px solid #cee1de;border-radius:8px;background:#fff}
+.local-guides summary{cursor:pointer;display:flex;align-items:center;gap:13px;padding:17px 22px;list-style:none}
+@media(max-width:760px){
+  .workspace{display:block;width:100%}
+  .menu-toggle{display:block}
+  .navigation{display:none;position:fixed;z-index:40;top:74px;left:0;right:0;height:calc(100vh - 74px);box-shadow:0 12px 24px #10233b22}
+  .navigation.open{display:block}
+}
