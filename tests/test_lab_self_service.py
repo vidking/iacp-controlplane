@@ -229,7 +229,7 @@ def test_aggregate_quota_cannot_be_bypassed_by_another_profile(client,auth,lab,f
 
 def test_explicit_plan_endpoint_never_auto_deletes(client,auth,lab,sessions):
     a=create(client,auth,lab).json();provision(a,sessions,lab)
-    r=client.post('/v1/instances/'+a['instance_id']+'/terraform/deletion-plan',headers={**auth,'Idempotency-Key':'only-plan'},json={})
+    r=client.post('/v1/instances/'+a['instance_id']+'/provisioning/deletion-plan',headers={**auth,'Idempotency-Key':'only-plan'},json={})
     op=r.json()['operation_id'];fake=FakeDeletion();execute_deletion(op,'plan',sessions,fake)
     with sessions() as s:
         advance_deletion(s,s.get(Instance,a['instance_id']),op,lab.deletions)

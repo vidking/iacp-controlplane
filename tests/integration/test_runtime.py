@@ -86,7 +86,7 @@ def test_api_redis_real_celery_postgres_and_repeated_delivery(pg_engine, runtime
                     time.sleep(0.1)
                 else:
                     pytest.fail("Real worker did not complete the smoke job")
-                assert "Terraform NO fue ejecutado" in response.json()["message"]
+                assert response.json()["message"] == "Consulte la operación y sus eventos de provisioning."
                 finished = response.json()
                 headers = {**runtime, "Idempotency-Key": "integration-instance"}
                 spec = {"name": "integration-kvm", "image": "simulation-test"}

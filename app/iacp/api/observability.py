@@ -13,6 +13,7 @@ from ..db import get_session
 from ..models import Instance, Operation, OperationEvent, TerraformApply, TerraformExecution, utcnow
 from ..schemas import ErrorResponse
 from ..security import Principal, authorize
+from .presentation import public_code
 
 router = APIRouter(prefix='/v1', tags=['observability'], responses={
     401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 503: {'model': ErrorResponse}})
@@ -49,7 +50,7 @@ def events(principal: Annotated[Principal, Depends(authorize)], session: Annotat
         .order_by(OperationEvent.id).limit(limit)).all()
     result = [AuditEnvelope(event_id=e.id, correlation_id=o.correlation_id or o.id, tenant_id=o.tenant_id,
         operation_id=o.id, instance_id=o.instance_id, occurred_at=e.created_at, kind=o.kind,
-        status=e.status, code=e.code, actor=e.actor, service=('Lifecycle Worker' if o.kind.startswith('instance.power.')
+        status=e.status, code=public_code(e.code), actor=public_code(e.actor), service=('Lifecycle Worker' if o.kind.startswith('instance.power.')
             else 'IaC Worker' if e.actor.startswith('worker:') else 'IACP Orchestrator')) for e, o in rows]
     return EventPage(events=result, next_after=result[-1].event_id if result else after)
 

@@ -48,7 +48,7 @@ def test_recovery_preserves_s3_version_or_blocks_an_external_write(
                 store.external_write(json.dumps(changed).encode())
             return result
         monkeypatch.setattr(runner, "run", refreshed)
-        path = prepared[2] + "/applies/" + row["approval_id"]
+        path = prepared[2] + "/executions/" + row["approval_id"]
         assert client.post(path + "/recover", headers=auth).status_code == 202
         execute_apply(row["approval_id"], sessions, executor, reconcile=True)
         with sessions() as session:
@@ -143,7 +143,7 @@ def test_semantic_postconditions_recover_or_preserve_uncertain_without_state_wri
     with versioned_s3(before, args[4]["backend"]["bucket"], args[3]) as store:
         monkeypatch.setattr("iacp.terraform.executor.S3StateReader", lambda backend, env: S3StateReader(
             backend | {"endpoints": {"s3": store.endpoint}}, ENV))
-        path = prepared[2] + "/applies/" + row["approval_id"]
+        path = prepared[2] + "/executions/" + row["approval_id"]
         assert client.post(path + "/recover", headers=auth).status_code == 202
         execute_apply(row["approval_id"], sessions, executor, reconcile=True)
         # A duplicate delivery cannot create a contradictory terminal result.

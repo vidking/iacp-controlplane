@@ -49,7 +49,7 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
             approval=session.scalar(select(TerraformApply).where(TerraformApply.instance_id==row.instance_id,
                 TerraformApply.attempt==execution.attempt))
             phase=approval.status if approval else execution.status
-            provisioning={'service':'IaC Worker','phase':phase,'attempt':execution.attempt,
+            provisioning={'service':'provisioning','phase':phase,'attempt':execution.attempt,
                 'started_at':approval.started_at if approval else None,'finished_at':approval.finished_at if approval else None}
             if approval and approval.status=='uncertain':
                 normalized='uncertain'

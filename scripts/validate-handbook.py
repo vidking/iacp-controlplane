@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "app"))
 
 
 def main():
@@ -27,8 +29,9 @@ def main():
             else:
                 subprocess.run(["bash", "-n"], input=body, text=True, check=True)
     api = json.loads((ROOT / "docs" / "openapi.json").read_text())
-    if api["info"]["version"] != "0.10.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
+    if api["info"]["version"] != "0.10.1" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
         raise ValueError("Versión/servidor del contrato distintos de los documentados")
+    administrative = json.loads((ROOT / "docs/openapi-admin.json").read_text())
     required = [
         ('/v1/events', 'get'), ('/v1/observability', 'get'),
         ('/v1/instances/{instance_id}/access/verify', 'post'),
@@ -41,20 +44,20 @@ def main():
         ("/v1/instances/{instance_id}/network/initialize", "post"),
         ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),
         ("/v1/jobs/{job_id}", "get"), ("/v1/operations/{operation_id}", "get"),
-        ("/v1/instances/{instance_id}/terraform/approvals", "post"),
-        ("/v1/instances/{instance_id}/terraform/apply", "post"),
-        ("/v1/instances/{instance_id}/terraform/applies", "get"),
-        ("/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover", "post"),
+        ("/v1/instances/{instance_id}/provisioning/approvals", "post"),
+        ("/v1/instances/{instance_id}/provisioning/executions", "post"),
+        ("/v1/instances/{instance_id}/provisioning/executions", "get"),
+        ("/v1/instances/{instance_id}/provisioning/executions/{approval_id}/recover", "post"),
         ("/v1/instances/{instance_id}/power", "get"),
         ("/v1/instances/{instance_id}/power/start", "post"),
         ("/v1/instances/{instance_id}/power/shutdown", "post"),
         ("/v1/instances/{instance_id}/power/reboot", "post"),
         ("/v1/instances/{instance_id}", "delete"),
-        ("/v1/instances/{instance_id}/terraform/deletion-plan", "post"),
-        ("/v1/instances/{instance_id}/terraform/deletion-approval", "post"),
+        ("/v1/instances/{instance_id}/provisioning/deletion-plan", "post"),
+        ("/v1/instances/{instance_id}/provisioning/deletion-approval", "post"),
     ]
     for path, method in required:
-        operation = api["paths"][path][method]
+        operation = (administrative if "/provisioning/" in path or (path.startswith("/v1/lab/policies") and method == "post") else api)["paths"][path][method]
         if operation.get("security") != [{"HTTPBearer": []}]:
             raise ValueError(f"Contrato sin identidad de servicio: {path}")
     create = api["paths"]["/v1/instances"]["post"]

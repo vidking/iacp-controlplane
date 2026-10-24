@@ -7,9 +7,9 @@ el adaptador se simula con PostgreSQL 17, Redis 7 y Celery reales en Docker loca
 1. El operador crea la instancia; el worker prepara un plan con la asignación
    externa autorizada y el módulo fijado de `iac-proxmox`.
 2. Una identidad `approver` del mismo tenant, distinta del solicitante, revisa
-   el plan y llama a `POST /v1/instances/{id}/terraform/approvals` con
+   el plan y llama a `POST /v1/instances/{id}/provisioning/approvals` con
    `attempt`, `plan_sha256` y `valid_for_seconds` (60–3600; predeterminado 900).
-3. El operador solicita `POST .../terraform/apply` con `approval_id` e
+3. El operador solicita `POST .../provisioning/executions` con `approval_id` e
    `Idempotency-Key`. La API y el worker exigen la habilitación del entorno.
 4. El worker verifica intento, hash, source, backend, variables y caducidad;
    también exige la misma identidad de backend/provider, endpoint y CA que se
@@ -26,7 +26,7 @@ permiten cambiar el plan. El código conserva los jobs anteriores y agrega un jo
 `instance.apply`; los eventos permanecen ligados a la operación original.
 `infrastructure_kind` distingue `simulated`, `unprovisioned` y `kvm`.
 
-`GET .../terraform/applies` muestra la evidencia. `POST .../applies/{approval_id}/cancel`
+`GET .../provisioning/executions` muestra la evidencia. `POST .../applies/{approval_id}/cancel`
 cancela antes de mutar o exige conciliación si la mutación ya empezó.
 `POST .../applies/{approval_id}/recover` concilia `queued`, `running` y `uncertain`
 exclusivamente por observación; cerca entregas apply pendientes antes de publicar.

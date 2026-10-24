@@ -64,7 +64,7 @@ def prepared(client, auth, sessions, terraform_mode, application, monkeypatch, t
                                     "tenant_id": tenant, "subject": "infra-review", "role": "approver"}]))
     monkeypatch.setenv("IACP_TENANT_CREDENTIALS_FILE", str(registry))
     application.dependency_overrides[get_apply_publisher] = lambda: Mock()
-    return accepted, {"Authorization": "Bearer " + token}, f'/v1/instances/{accepted["instance_id"]}/terraform'
+    return accepted, {"Authorization": "Bearer " + token}, f'/v1/instances/{accepted["instance_id"]}/provisioning'
 
 
 def approval(client, prepared, headers=None, body=None, key="approve-1"):
@@ -74,7 +74,7 @@ def approval(client, prepared, headers=None, body=None, key="approve-1"):
 
 
 def dispatch(client, prepared, auth, row, key="apply-1"):
-    return client.post(prepared[2] + "/apply", headers={**auth, "Idempotency-Key": key},
+    return client.post(prepared[2] + "/executions", headers={**auth, "Idempotency-Key": key},
                        json={"approval_id": row["approval_id"]})
 
 
@@ -91,7 +91,7 @@ def test_double_gate_and_separation_of_duties(client, auth, prepared, sessions, 
     fake = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, fake)
     assert not fake.calls
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "failed" and current["started_at"] is None
 
 
@@ -118,8 +118,8 @@ def test_authorization_and_dispatch_are_idempotent(client, auth, prepared, appli
     assert instance["result"]["simulated"] is False and instance["result"]["power_state"] == "stopped"
     assert client.get('/v1/jobs/' + response.json()["job_id"], headers=auth).json()["status"] == "completed"
     assert client.get('/v1/operations/' + prepared[0]["operation_id"], headers=auth).json()["status"] == "completed"
-    assert client.post(prepared[2] + "/retry", headers={**auth, "Idempotency-Key": "bad-retry"}, json={"expected_attempt": 1}).status_code == 409
-    assert client.post(prepared[2] + "/cancel", headers=auth).status_code == 409
+    assert client.post(prepared[2] + "/plan/retry", headers={**auth, "Idempotency-Key": "bad-retry"}, json={"expected_attempt": 1}).status_code == 409
+    assert client.post(prepared[2] + "/plan/cancel", headers=auth).status_code == 409
 
 
 @pytest.mark.parametrize("failure", ["TERRAFORM_TIMEOUT", "TERRAFORM_COMMAND_FAILED", "RESOURCE_ABSENT", "TERRAFORM_EXECUTION_FAILED"])
@@ -129,14 +129,14 @@ def test_uncertain_apply_requires_observation_never_reapplication(client, auth, 
     dispatch(client, prepared, auth, row)
     fake = ApplyingExecutor(failure)
     execute_apply(row["approval_id"], sessions, fake)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "uncertain" and current["error_code"] == failure
     execute_apply(row["approval_id"], sessions, fake)
     assert len(fake.calls) == 1
     observer = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, observer, reconcile=True)
     assert not observer.calls
-    assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["status"] == "completed"
+    assert client.get(prepared[2] + "/executions", headers=auth).json()[0]["status"] == "completed"
 
 
 def test_expired_or_changed_plan_cannot_execute(client, auth, prepared, sessions, monkeypatch):
@@ -157,7 +157,7 @@ def test_cancel_and_concurrent_delivery_are_safe(client, auth, prepared, session
     with instance_lock(sessions.kw["bind"], prepared[0]["instance_id"]):
         execute_apply(row["approval_id"], sessions, fake)
     assert not fake.calls
-    path = prepared[2] + "/applies/" + row["approval_id"]
+    path = prepared[2] + "/executions/" + row["approval_id"]
     assert client.post(path + "/cancel", headers=auth).json()["status"] == "cancelled"
     execute_apply(row["approval_id"], sessions, fake)
     assert not fake.calls
@@ -167,9 +167,9 @@ def test_cancel_during_apply_is_uncertain(client, auth, prepared, sessions, monk
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     row = approval(client, prepared).json()
     dispatch(client, prepared, auth, row)
-    path = prepared[2] + "/applies/" + row["approval_id"] + "/cancel"
+    path = prepared[2] + "/executions/" + row["approval_id"] + "/cancel"
     execute_apply(row["approval_id"], sessions, ApplyingExecutor(callback=lambda: client.post(path, headers=auth)))
-    assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["status"] == "uncertain"
+    assert client.get(prepared[2] + "/executions", headers=auth).json()[0]["status"] == "uncertain"
     instance = client.get("/v1/instances/" + prepared[0]["instance_id"], headers=auth).json()
     assert instance["status"] == "failed" and instance["result"]["error_code"] == "RECONCILIATION_REQUIRED"
 
@@ -177,8 +177,8 @@ def test_cancel_during_apply_is_uncertain(client, auth, prepared, sessions, monk
 def test_tenant_and_reader_cannot_access_or_approve(client, auth, prepared, identities):
     other = identities["tenant-b-operator"]["headers"]
     reader = identities["tenant-a-reader"]["headers"]
-    for headers, status in ((other, 404), (reader, 404)):
-        assert client.get(prepared[2] + "/applies", headers=headers).status_code == status
+    for headers, status in ((other, 403), (reader, 403)):
+        assert client.get(prepared[2] + "/executions", headers=headers).status_code == status
         assert approval(client, prepared, headers).status_code == 403
 
 
@@ -262,7 +262,7 @@ def test_broker_uncertainty_recovery_fences_late_apply(client, auth, prepared, a
     replay = dispatch(client, prepared, auth, row)
     assert replay.status_code == 202 and replay.json()["status"] == "queued" and publisher.call_count == 1
     publisher.side_effect = None
-    response = client.post(prepared[2] + "/applies/" + row["approval_id"] + "/recover", headers=auth)
+    response = client.post(prepared[2] + "/executions/" + row["approval_id"] + "/recover", headers=auth)
     assert response.status_code == 202 and publisher.call_args.args == (row["approval_id"], "reconcile")
     assert response.json()["status"] == "uncertain"
     fake = ApplyingExecutor()
@@ -315,7 +315,7 @@ def test_changed_plan_after_dispatch_never_reaches_apply(client, auth, prepared,
     fake = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, fake)
     assert not fake.calls
-    assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["error_code"] == "PLAN_CHANGED"
+    assert client.get(prepared[2] + "/executions", headers=auth).json()[0]["error_code"] == "PLAN_CHANGED"
 
 
 def test_runner_limits_output_without_leaking_diagnostics(tmp_path):
@@ -328,7 +328,7 @@ def test_runner_limits_output_without_leaking_diagnostics(tmp_path):
 
 def test_cancel_before_mutation_keeps_operation_consistent(client, auth, prepared):
     row = approval(client, prepared).json()
-    cancelled = client.post(prepared[2] + "/applies/" + row["approval_id"] + "/cancel", headers=auth)
+    cancelled = client.post(prepared[2] + "/executions/" + row["approval_id"] + "/cancel", headers=auth)
     assert cancelled.json()["status"] == "cancelled"
     operation = client.get('/v1/operations/' + prepared[0]["operation_id"], headers=auth).json()
     assert operation["status"] == "failed" and operation["error_code"] == "CANCELLED"
@@ -350,7 +350,7 @@ def test_apply_persists_failure_phase_without_stderr(client, auth, prepared, mon
     dispatch(client, prepared, auth, row)
     failure = PlanError("TERRAFORM_COMMAND_FAILED", phase="apply", command="apply", exit_code=1)
     execute_apply(row["approval_id"], sessions, ApplyingExecutor(failure=failure))
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "uncertain"
     assert current["result"] == {"diagnostic": {"phase": "apply", "command": "apply", "exit_code": 1}}
 
@@ -361,6 +361,6 @@ def test_preflight_failure_is_failed_not_uncertain(client, auth, prepared, monke
     dispatch(client, prepared, auth, row)
     failure = PlanError("TERRAFORM_COMMAND_FAILED", phase="apply.init", command="init", exit_code=1)
     execute_apply(row["approval_id"], sessions, ApplyingExecutor(failure=failure, before_failure=True))
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "failed" and current["started_at"] is None
     assert current["result"]["diagnostic"]["phase"] == "apply.init"

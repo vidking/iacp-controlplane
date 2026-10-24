@@ -31,10 +31,10 @@ def test_two_source_matrix_is_persisted_and_never_reapplies(
     if not state_present:
         runner.state_override = {**runner.state(), "resources": []}
     runner.proxmox_override = {"present": proxmox_present, "power_state": "stopped"}
-    path = prepared[2] + "/applies/" + row["approval_id"]
+    path = prepared[2] + "/executions/" + row["approval_id"]
     assert client.post(path + "/recover", headers=auth).status_code == 202
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["error_code"] == error
     assert current["status"] == ("uncertain" if error else "completed")
     assert current["result"]["reconciliation"]["workspace"] == "default"
@@ -61,7 +61,7 @@ def test_backend_unreachable_is_observation_error(client, auth, prepared, histor
     row, executor, runner, _, _, _ = historical_run
     runner.outcome = "backend-error"
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "uncertain" and current["error_code"] == "STATE_BACKEND_READ_FAILED"
     assert current["result"]["diagnostic"] == {"phase": "observe.state"}
     assert not any(command[0] == "plan" for command in runner.commands)
@@ -180,7 +180,7 @@ def test_proxmox_failure_is_persisted_as_uncertain(client, auth, prepared, histo
     monkeypatch.setattr(executor, "environment", lambda *args: env)
     monkeypatch.setattr("iacp.terraform.executor.proxmox_resource", proxmox_resource)
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "uncertain" and current["error_code"] == "PROXMOX_OBSERVATION_FAILED"
     assert current["result"]["diagnostic"] == {"phase": "observe.proxmox", "http_status": status, "state_present": True}
     assert "secret" not in json.dumps(current)
@@ -229,7 +229,7 @@ def test_production_factory_observes_with_plan_and_apply_disabled(client, auth, 
     monkeypatch.setattr("iacp.terraform.executor.CommandRunner", lambda: runner)
     monkeypatch.setattr("iacp.terraform.executor.TerraformExecutor.environment", lambda *args: {})
     execute_apply(row["approval_id"], sessions, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "completed"
     with pytest.raises(PlanError, match="REAL_PLAN_DISABLED"):
         build_executor()
@@ -242,9 +242,9 @@ def test_recovery_rereads_state_after_interrupted_response(client, auth, prepare
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
     runner.outcome = "existing"
     previous = len(runner.commands)
-    assert client.post(prepared[2] + "/applies/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
+    assert client.post(prepared[2] + "/executions/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "completed" and current["error_code"] is None
     assert len(runner.commands) > previous
     runner.apply_saved.assert_not_called()
@@ -265,17 +265,17 @@ def test_crash_between_observation_and_database_commit_is_recoverable(client, au
         run = session.get(TerraformApply, row["approval_id"])
         assert run.status == "running" and run.started_at is not None
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "0")
-    assert client.post(prepared[2] + "/applies/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
+    assert client.post(prepared[2] + "/executions/" + row["approval_id"] + "/recover", headers=auth).status_code == 202
     observer = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, observer, reconcile=True)
-    assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["status"] == "completed"
+    assert client.get(prepared[2] + "/executions", headers=auth).json()[0]["status"] == "completed"
     assert len(interrupted.calls) == 1 and observer.calls == []
 
 
 def test_old_absence_result_cannot_close_without_new_two_source_observation(client, auth, prepared, historical_run, sessions):
     row, _, _, _, _, args = historical_run
     execute_apply(row["approval_id"], sessions, ApplyingExecutor("RESOURCE_ABSENT"), reconcile=True)
-    response = client.post(prepared[2] + "/applies/" + row["approval_id"] + "/resolve-absence",
+    response = client.post(prepared[2] + "/executions/" + row["approval_id"] + "/resolve-absence",
                            headers={**prepared[1], "Idempotency-Key": "old-absence"}, json=resolution_body(args))
     assert response.status_code == 409 and response.json()["detail"] == "ABSENCE_NOT_CONFIRMED"
 

@@ -71,7 +71,7 @@ def test_real_celery_queue_plan_then_apply(client,auth,integrated,application,tm
                 assert time.monotonic()<deadline and process.poll() is None
                 time.sleep(.1)
             payload={'operation_id':op['operation_id'],'plan_sha256':body['deletion']['plan_sha256']}
-            assert client.post(fixture.path+'/terraform/deletion-approval',headers={**fixture.reviewer,'Idempotency-Key':'actual-queue-review'},json=payload).status_code==201
+            assert client.post(fixture.path+'/provisioning/deletion-approval',headers={**fixture.reviewer,'Idempotency-Key':'actual-queue-review'},json=payload).status_code==201
             assert delete(client,auth,fixture,payload).status_code==202
             while True:
                 body=client.get('/v1/operations/'+op['operation_id'],headers=auth).json()

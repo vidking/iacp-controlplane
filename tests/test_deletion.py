@@ -74,14 +74,14 @@ def disposable(sessions, application, monkeypatch, tmp_path):
 
 
 def plan(client, auth, fixture, key=None):
-    return client.post(fixture.path+'/terraform/deletion-plan',headers={**auth,'Idempotency-Key':key or fixture.key})
+    return client.post(fixture.path+'/provisioning/deletion-plan',headers={**auth,'Idempotency-Key':key or fixture.key})
 
 
 def prepare(client, auth, fixture, sessions):
     response=plan(client,auth,fixture);assert response.status_code==202,response.text
     operation=response.json();execute_deletion(operation['operation_id'],'plan',sessions,FakeDeletion())
     body={'operation_id':operation['operation_id'],'plan_sha256':'b'*64}
-    r=client.post(fixture.path+'/terraform/deletion-approval',headers={**fixture.reviewer,'Idempotency-Key':'review-delete'},json=body)
+    r=client.post(fixture.path+'/provisioning/deletion-approval',headers={**fixture.reviewer,'Idempotency-Key':'review-delete'},json=body)
     assert r.status_code==201,r.text
     return operation,body
 
@@ -134,9 +134,9 @@ def test_plan_and_command_idempotency(client,auth,sessions,disposable):
 def test_approver_role_independence_and_exact_plan(client,auth,sessions,disposable):
     op=plan(client,auth,disposable).json();execute_deletion(op['operation_id'],'plan',sessions,FakeDeletion())
     body={'operation_id':op['operation_id'],'plan_sha256':'b'*64}
-    assert client.post(disposable.path+'/terraform/deletion-approval',headers={**auth,'Idempotency-Key':'bad'},json=body).status_code==403
+    assert client.post(disposable.path+'/provisioning/deletion-approval',headers={**auth,'Idempotency-Key':'bad'},json=body).status_code==403
     with sessions() as s:s.get(Operation,op['operation_id']).requested_by='deletion-reviewer';s.commit()
-    r=client.post(disposable.path+'/terraform/deletion-approval',headers={**disposable.reviewer,'Idempotency-Key':'review'},json=body)
+    r=client.post(disposable.path+'/provisioning/deletion-approval',headers={**disposable.reviewer,'Idempotency-Key':'review'},json=body)
     assert r.status_code==409 and r.json()['detail']=='INDEPENDENT_APPROVAL_REQUIRED'
 
 
@@ -149,15 +149,15 @@ def test_approval_expiry_and_changed_sha_never_publish(client,auth,sessions,disp
     disposable.publisher.assert_not_called()
 
 
-@pytest.mark.parametrize('path_method',[('','DELETE'),('/terraform/deletion-plan','POST'),('/terraform/deletion-approval','POST')])
+@pytest.mark.parametrize('path_method',[('','DELETE'),('/provisioning/deletion-plan','POST'),('/provisioning/deletion-approval','POST')])
 def test_auth_and_tenant_boundary(client,auth,sessions,disposable,identities,path_method):
     path,method=path_method
-    body={'operation_id':str(uuid4()),'plan_sha256':'a'*64} if path!=' /terraform/deletion-plan' and not path.endswith('deletion-plan') else {}
+    body={'operation_id':str(uuid4()),'plan_sha256':'a'*64} if path!=' /provisioning/deletion-plan' and not path.endswith('deletion-plan') else {}
     url=disposable.path+path
     assert client.request(method,url,headers={'Idempotency-Key':'boundary'},json=body).status_code==401
     who=identities['tenant-b-operator']['headers'] if not path.endswith('approval') else disposable.reviewer
     if not path.endswith('approval'):
-        assert client.request(method,url,headers={**who,'Idempotency-Key':'boundary'},json=body).status_code==404
+        assert client.request(method,url,headers={**who,'Idempotency-Key':'boundary'},json=body).status_code==(403 if path else 404)
     reader=identities['tenant-a-reader']['headers']
     assert client.request(method,url,headers={**reader,'Idempotency-Key':'boundary'},json=body).status_code==403
 
@@ -237,7 +237,7 @@ def test_approver_cannot_cross_tenant(client,auth,sessions,disposable,identities
     p=Path(os.environ['IACP_TENANT_CREDENTIALS_FILE']);registry=json.loads(p.read_text())
     registry.append({'token_sha256':hashlib.sha256(token.encode()).hexdigest(),'tenant_id':tenant,'subject':'other-reviewer','role':'approver'})
     p.write_text(json.dumps(registry))
-    response=client.post(disposable.path+'/terraform/deletion-approval',headers={'Authorization':'Bearer '+token,'Idempotency-Key':'other'},
+    response=client.post(disposable.path+'/provisioning/deletion-approval',headers={'Authorization':'Bearer '+token,'Idempotency-Key':'other'},
                          json={'operation_id':str(uuid4()),'plan_sha256':'b'*64})
     assert response.status_code==404
 
@@ -284,7 +284,7 @@ def test_expired_unconsumed_plan_can_be_cancelled_while_drained(client,auth,sess
     op,body=prepare(client,auth,disposable,sessions)
     with sessions() as s:s.get(DeletionExecution,op['operation_id']).expires_at=utcnow()-timedelta(seconds=1);s.commit()
     monkeypatch.setenv('IACP_ADMISSION_ENABLED','0')
-    path=disposable.path+'/terraform/deletions/'+op['operation_id']+'/cancel'
+    path=disposable.path+'/provisioning/deletions/'+op['operation_id']+'/cancel'
     assert client.post(path).status_code==401
     assert client.post(path,headers=auth).json()['status']=='failed'
     assert client.post(path,headers=auth).json()['status']=='failed'
@@ -296,7 +296,7 @@ def test_expired_unconsumed_plan_can_be_cancelled_while_drained(client,auth,sess
 
 def test_recovery_works_drained_but_cannot_start_or_repeat_deletion(client,auth,sessions,disposable,monkeypatch):
     op,body=prepare(client,auth,disposable,sessions)
-    path=disposable.path+'/terraform/deletions/'+op['operation_id']
+    path=disposable.path+'/provisioning/deletions/'+op['operation_id']
     assert client.post(path+'/recover',headers=auth).status_code==409
     delete(client,auth,disposable,body);fake=FakeDeletion();fake.interrupt=True
     with pytest.raises(KeyboardInterrupt):execute_deletion(op['operation_id'],'apply',sessions,fake)

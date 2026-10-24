@@ -109,7 +109,7 @@ def test_public_router_keeps_crm_away_from_docs_and_admin_paths():
     assert "corporate-identity" in admin["middlewares"]
     assert "corporate-identity" not in crm["middlewares"]
     assert "ClientIP(`198.51.100.1/32`)" in crm["rule"]
-    assert "/docs" not in crm["rule"] and "/terraform" not in crm["rule"]
+    assert "/docs" not in crm["rule"] and "/terraform" not in crm["rule"] and "/provisioning" not in crm["rule"]
     auth = config["middlewares"]["corporate-identity"]["forwardAuth"]
     assert auth["authRequestHeaders"] == ["Cookie"]
     assert auth["trustForwardHeader"] is False

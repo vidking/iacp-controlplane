@@ -140,7 +140,7 @@ def test_celery_terraform_queue_persists_a_simulated_plan_and_recovers_api(pg_en
                                        json={"name": "queue-plan", "image": "fixture"})
                 assert accepted.status_code == 202
                 body = accepted.json()
-                path = f'/v1/instances/{body["instance_id"]}/terraform'
+                path = f'/v1/instances/{body["instance_id"]}/provisioning/plan'
                 deadline = time.monotonic() + 25
                 while time.monotonic() < deadline:
                     response = client.get(path, headers=runtime)

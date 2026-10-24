@@ -35,7 +35,7 @@ una clave nueva puede crear otra intención.
 
 Validación de recursos: nombre DNS de 1–63 caracteres; imagen lógica de 1–63;
 CPU 1–64 (2 por defecto); memoria 512–262144 MiB, múltiplo de 256 (2048 por
-defecto); disco 8–4096 GiB (20 por defecto). En Terraform se exige además el mínimo
+defecto); disco 8–4096 GiB (20 por defecto). En provisioning se exige además el mínimo
 del disco de la plantilla autorizado. Estos defaults de recursos no seleccionan
 red, almacenamiento, plantilla, IP ni credenciales.
 
@@ -50,7 +50,7 @@ curl --fail-with-body -H "Authorization: Bearer $IACP_SERVICE_TOKEN" "$IACP_API_
 ```
 
 `GET /v1/jobs/{id}` conserva el contrato de seis campos: job_id, operation,
-status, message, created_at, updated_at. En Terraform, el job de plan puede estar
+status, message, created_at, updated_at. En provisioning, el job de plan puede estar
 completed mientras la operación permanece running y la instancia pending.
 No anunciar una KVM creada al CRM hasta observar `infrastructure_kind=kvm`,
 `status=ready` y la evidencia `result.simulated=false`.
@@ -58,7 +58,7 @@ No anunciar una KVM creada al CRM hasta observar `infrastructure_kind=kvm`,
 | Campo | Interpretación para el CRM |
 |---|---|
 | `executor=simulated`, `infrastructure_kind=simulated` | Flujo de prueba; no existe KVM creada por esta operación |
-| `executor=terraform`, `infrastructure_kind=unprovisioned` | Solicitud/plan pendientes; VMID y nodo reales aún no confirmados |
+| `executor=provisioning`, `infrastructure_kind=unprovisioned` | Solicitud/plan pendientes; VMID y nodo reales aún no confirmados |
 | `infrastructure_kind=kvm` | Identidad de KVM observada; revisar status y fecha de result, no asumir salud actual indefinida |
 | `result.power_state` | Snapshot de provisioning, derivado del started observado entonces; no es la energía vigente |
 | `result.observed_at` | Fecha de la observación; no es monitoreo continuo |
@@ -75,63 +75,7 @@ Consultar [contratos y activación de Lifecycle](../KVM_LIFECYCLE_API.md).
 La [certificación histórica](../KVM_POWER_PROMOTION.md) no cambia los IDs ni la
 revisión original de aprovisionamiento.
 
-Flujo Terraform, solo después de revisión y autorización operativa:
-
-```sh
-curl --fail-with-body -H "Authorization: Bearer $IACP_SERVICE_TOKEN" \
-  "$IACP_API_BASE/v1/instances/$INSTANCE_ID/terraform" > plan.json
-python3 - <<'PY'
-import json
-plan = json.load(open('plan.json'))
-assert plan['status'] == 'planned'
-json.dump({'attempt': plan['attempt'], 'plan_sha256': plan['plan_sha256'],
-           'valid_for_seconds': 900}, open('approval-request.json', 'w'))
-PY
-: "${IACP_APPROVER_TOKEN:?Falta la identidad revisora independiente}"
-: "${APPROVAL_KEY:?Define y conserva la clave de aprobación}"
-# El aprobador revisa el plan binario y la asignación antes de esta petición.
-curl --fail-with-body -H "Authorization: Bearer $IACP_APPROVER_TOKEN" \
-  -H 'Content-Type: application/json' -H "Idempotency-Key: $APPROVAL_KEY" \
-  --data-binary @approval-request.json \
-  "$IACP_API_BASE/v1/instances/$INSTANCE_ID/terraform/approvals" > approval.json
-```
-
-`apply_enabled` refleja el gate de la API; no concede autorización por operación ni confirma la configuración del worker.
-
-La identidad approver debe tener el mismo tenant y un sujeto distinto del creador
-y del operador que solicita apply. La API no permite al CRM asignarse permisos.
-El siguiente paso es una operación efectiva de infraestructura y requiere
-habilitación en API/worker y aprobación explícita del entorno de laboratorio:
-
-```sh
-python3 - <<'PY'
-import json
-row = json.load(open('approval.json'))
-json.dump({'approval_id': row['approval_id']}, open('apply-request.json', 'w'))
-PY
-: "${APPLY_KEY:?Define y conserva la clave de ejecución}"
-curl --fail-with-body -H "Authorization: Bearer $IACP_SERVICE_TOKEN" \
-  -H 'Content-Type: application/json' -H "Idempotency-Key: $APPLY_KEY" \
-  --data-binary @apply-request.json \
-  "$IACP_API_BASE/v1/instances/$INSTANCE_ID/terraform/apply"
-curl --fail-with-body -H "Authorization: Bearer $IACP_SERVICE_TOKEN" \
-  "$IACP_API_BASE/v1/instances/$INSTANCE_ID/terraform/applies"
-```
-
-La respuesta de apply incluye el nuevo job de aplicación; el job inicial sigue
-siendo el de planificación. Polling con backoff y jitter (por ejemplo, 1–10 s)
-es una decisión del consumidor; aún no existen webhooks ni SSE. Ante 503 de cola,
-repetir la misma solicitud para recuperar IDs y consultar antes de usar `/recover`.
-Nunca automatizar una aprobación nueva para resolver un resultado incierto.
-
-Cancelación y recuperación usan POST en
-`.../terraform/applies/{approval_id}/cancel` y `.../recover`. La recuperación de un
-run queued cerca entregas apply pendientes; todos los estados recuperables
-publican exclusivamente observación. El cierre `/resolve-absence` exige rol
-approver independiente, clave idempotente y evidencia de ambas fuentes; termina
-en failed. Véase el [procedimiento](../HISTORICAL_PLAN_RECOVERY.md).
-Lecturas de otro tenant devuelven 404. Un reader no puede escribir;
-un operator no puede aprobar; un approver no puede solicitar apply.
-
-El contrato nuevo de eliminación está en [DELETE seguro](../SAFE_DELETE.md).
-Permanece OFF y no está desplegado. No simularlo borrando registros del inventario.
+La revisión independiente de planes y su recuperación pertenecen al
+[contrato administrativo](../PROVISIONING_CONTRACT.md). El CRM conserva las
+rutas neutrales de negocio y no recibe permisos administrativos. DELETE bajo
+política sigue disponible; véase [DELETE seguro](../SAFE_DELETE.md).

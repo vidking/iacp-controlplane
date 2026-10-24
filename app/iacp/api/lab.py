@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..models import Instance, LabPolicy, Operation, TerraformExecution, utcnow
 from ..schemas import ErrorResponse, PowerAccepted, PowerRequest
-from ..security import Principal, authorize, authorize_approval, authorize_write
+from ..security import Principal, authorize, authorize_administration, authorize_approval, authorize_write
 from ..services import lab
 from ..services.instances import Conflict
 from ..services.jobs import QueueUnavailable
@@ -124,7 +124,7 @@ def usage(principal: Reader, session: Database):
     return UsageResponse(tenant_id=principal.tenant_id, usage=lab.usage(session, principal.tenant_id))
 
 
-@router.post("/v1/lab/policies", tags=["lab-administration"], response_model=PolicyResponse, status_code=201, operation_id="proposeLabPolicy",
+@router.post("/v1/lab/policies", tags=["lab-administration"], response_model=PolicyResponse, status_code=201, operation_id="proposeLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Operator propone límites dentro de los techos del servidor. No autoriza infraestructura. Un approver distinto revisa el digest una vez; la delegación solo cubre VMs nuevas.")
 def propose(body: lab.LabPolicySpec, key: Key, principal: Operator, session: Database):
     return guarded(lambda: lab.propose(session, principal, body, key))
@@ -142,19 +142,19 @@ def get_policy(policy_id: str, principal: Reader, session: Database):
     return owned(session, policy_id, principal)
 
 
-@router.post("/v1/lab/policies/{policy_id}/approve", tags=["lab-administration"], response_model=PolicyResponse, operation_id="approveLabPolicy",
+@router.post("/v1/lab/policies/{policy_id}/approve", tags=["lab-administration"], response_model=PolicyResponse, operation_id="approveLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Approver independiente del proponente. Aprueba el digest exacto y fija la caducidad; no elimina controles de Apply, Lifecycle, DELETE o propiedad.")
 def approve(policy_id: str, body: PolicyApproval, principal: Approver, session: Database):
     return guarded(lambda: lab.approve_policy(session, owned(session, policy_id, principal), principal, body.policy_sha256))
 
 
-@router.post("/v1/lab/policies/{policy_id}/renew", tags=["lab-administration"],response_model=PolicyResponse,operation_id="renewLabPolicy",
+@router.post("/v1/lab/policies/{policy_id}/renew", tags=["lab-administration"],response_model=PolicyResponse,operation_id="renewLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Nueva revisión independiente del mismo digest y perfiles. Extiende la ventana por la duración original, conserva aprobación inicial, membresía e historial. Una política revocada no se reactiva.")
 def renew(policy_id:str,body:PolicyApproval,principal:Approver,session:Database):
     return guarded(lambda:lab.renew_policy(session,owned(session,policy_id,principal),principal,body.policy_sha256))
 
 
-@router.post("/v1/lab/policies/{policy_id}/revoke", tags=["lab-administration"], response_model=PolicyResponse, operation_id="revokeLabPolicy",
+@router.post("/v1/lab/policies/{policy_id}/revoke", tags=["lab-administration"], response_model=PolicyResponse, operation_id="revokeLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Revocación irreversible del approver. Bloquea nuevos comandos antes de la mutación; la observación de operaciones ya consumidas sigue disponible.")
 def revoke(policy_id: str, principal: Approver, session: Database, body: PowerRequest | None = None):
     with admission_lock(session):

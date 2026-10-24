@@ -203,11 +203,11 @@ def test_recovery_with_apply_disabled_never_applies(client, auth, prepared, hist
     if outcome == "tampered": (root / "saved.tfplan").write_bytes(b"alterado")
     publisher = Mock()
     application.dependency_overrides[get_apply_publisher] = lambda: publisher
-    path = prepared[2] + "/applies/" + row["approval_id"]
+    path = prepared[2] + "/executions/" + row["approval_id"]
     assert client.post(path + "/recover", headers=auth).status_code == 202
     publisher.assert_called_once_with(row["approval_id"], "reconcile")
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert (current["status"], current["error_code"]) == (expected, error)
     if outcome != "tampered":
         assert current["result"]["reconciliation"]["legacy_manifest"] is True
@@ -243,7 +243,7 @@ def test_audited_absence_closes_as_failed_and_cannot_reuse_authorization(client,
     runner.outcome = "empty"
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
     body = resolution_body(args)
-    path = prepared[2] + "/applies/" + row["approval_id"]
+    path = prepared[2] + "/executions/" + row["approval_id"]
     headers = {**prepared[1], "Idempotency-Key": "resolve-1"}
     with instance_lock(sessions.kw["bind"], args[0]):
         assert client.post(path + "/resolve-absence", headers=headers, json=body).status_code == 409
@@ -277,8 +277,8 @@ def test_audited_absence_closes_as_failed_and_cannot_reuse_authorization(client,
     execute_apply(row["approval_id"], sessions, executor, reconcile=True)
     runner.apply_saved.assert_not_called()
     # Una decisión futura exige cancelación del plan y otro intento; conserva VMID/state.
-    assert client.post(prepared[2] + "/cancel", headers=auth).status_code == 200
-    retry = client.post(prepared[2] + "/retry", headers={**auth, "Idempotency-Key": "future-plan"}, json={"expected_attempt": args[1]})
+    assert client.post(prepared[2] + "/plan/cancel", headers=auth).status_code == 200
+    retry = client.post(prepared[2] + "/plan/retry", headers={**auth, "Idempotency-Key": "future-plan"}, json={"expected_attempt": args[1]})
     assert retry.status_code == 202 and retry.json()["attempt"] == args[1] + 1
     with sessions() as session:
         execution = session.get(TerraformExecution, args[0])
@@ -307,7 +307,7 @@ def test_absence_resolution_requires_both_evidence_and_verified_reconciliation(c
             session.get(TerraformApply, row["approval_id"]).requested_by = "infra-review"
             session.commit()
     headers = {**(auth if change == "operator" else prepared[1]), "Idempotency-Key": "resolve-1"}
-    response = client.post(prepared[2] + "/applies/" + row["approval_id"] + "/resolve-absence", headers=headers, json=body)
+    response = client.post(prepared[2] + "/executions/" + row["approval_id"] + "/resolve-absence", headers=headers, json=body)
     assert response.status_code == (403 if change == "operator" else 422 if change in {"resources", "present", "no-zone"} else 409), response.text
     runner.apply_saved.assert_not_called()
     with sessions() as session:
@@ -321,12 +321,12 @@ def test_queued_recovery_fences_apply_even_when_reconcile_publication_fails(clie
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "0")
     publisher = Mock(side_effect=TimeoutError("private broker endpoint"))
     application.dependency_overrides[get_apply_publisher] = lambda: publisher
-    path = prepared[2] + "/applies/" + row["approval_id"] + "/recover"
+    path = prepared[2] + "/executions/" + row["approval_id"] + "/recover"
     with instance_lock(sessions.kw["bind"], prepared[0]["instance_id"]):
         assert client.post(path, headers=auth).status_code == 409
     publisher.assert_not_called()
     assert client.post(path, headers=auth).status_code == 503
-    current = client.get(prepared[2] + "/applies", headers=auth).json()[0]
+    current = client.get(prepared[2] + "/executions", headers=auth).json()[0]
     assert current["status"] == "uncertain" and current["started_at"] is None
     late = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, late)
@@ -337,4 +337,4 @@ def test_queued_recovery_fences_apply_even_when_reconcile_publication_fails(clie
     observer = ApplyingExecutor("RESOURCE_ABSENT")
     execute_apply(row["approval_id"], sessions, observer, reconcile=True)
     assert observer.calls == []
-    assert client.get(prepared[2] + "/applies", headers=auth).json()[0]["error_code"] == "RESOURCE_ABSENT"
+    assert client.get(prepared[2] + "/executions", headers=auth).json()[0]["error_code"] == "RESOURCE_ABSENT"

@@ -51,11 +51,13 @@ def test_new_input_errors_never_echo_secrets(client, auth):
     assert plain_create(client, auth, spec={**SPEC, 'access': {'username': 'root', 'password': PASSWORD}}).json()['detail'] == 'ROOT_ACCESS_REQUIRES_HTTPS'
 
 
-def test_neutral_tags_and_legacy_routes(client, auth):
+def test_neutral_tags_and_separate_administrative_routes(client, auth):
     api = client.get('/openapi.json', headers=auth).json()
     assert api['info']['title'] == 'IACP Orchestrator'
     assert all('terraform' not in t['name'].lower() and 'opentofu' not in t['name'].lower() for t in api['tags'])
-    assert '/v1/instances/{instance_id}/terraform/approvals' in api['paths']
+    assert '/v1/instances/{instance_id}/provisioning/approvals' not in api['paths']
+    admin = client.get('/admin/openapi.json', headers=auth).json()
+    assert '/v1/instances/{instance_id}/provisioning/approvals' in admin['paths']
     assert api['components']['schemas']['RootAccess']['properties']['password']['writeOnly'] is True
     assert PASSWORD not in json.dumps(api)
 
