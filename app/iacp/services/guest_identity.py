@@ -95,11 +95,13 @@ PROGRAM_SHA256 = hashlib.sha256(PROGRAM.encode()).hexdigest()
 ROOT_SSH_CONFIG = 'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n'
 ROOT_POLICY_PROGRAM = r'''
 ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-root-lab.conf')
+# ssh.socket may be listening before ssh.service creates its RuntimeDirectory.
+Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)
 write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
 subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
 effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],check=True,capture_output=True,text=True,timeout=10).stdout
 assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
-subprocess.run(['/usr/bin/systemctl','reload','ssh'],check=True,capture_output=True,timeout=15)
+subprocess.run(['/usr/bin/systemctl','reload-or-restart','ssh'],check=True,capture_output=True,timeout=15)
 '''
 ROOT_PROGRAM = PROGRAM.replace("write(marker,json.dumps(result,sort_keys=True)+'\\n')",
     ROOT_POLICY_PROGRAM + "\nwrite(marker,json.dumps(result,sort_keys=True)+'\\n')")

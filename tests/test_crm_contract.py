@@ -240,3 +240,61 @@ def test_root_promotion_requires_exact_reviewed_key_and_proxy():
     assert compare(old,new,root_bootstrap=review)['passed']
     new['services']['api']['environment']['IACP_TLS_PROXY_IPS']='192.0.2.6'
     assert not compare(old,new,root_bootstrap=review)['passed']
+
+
+@pytest.mark.parametrize('service_active', [False, True])
+def test_root_policy_supports_socket_activation(tmp_path, service_active):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from iacp.services.guest_identity import ROOT_POLICY_PROGRAM, ROOT_SSH_CONFIG
+    calls = []
+    runtime = tmp_path / 'run/sshd'
+    runtime.parent.mkdir()
+
+    def guest_path(value):
+        return tmp_path / value.lstrip('/')
+
+    def write(path, content):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def run(command, **kwargs):
+        nonlocal service_active
+        calls.append(command)
+        if command[0] == '/usr/sbin/sshd':
+            assert runtime.is_dir(), 'sshd -t fails without the service RuntimeDirectory'
+        if command[1] == '-T':
+            return SimpleNamespace(stdout='permitrootlogin yes\npasswordauthentication yes\n')
+        if command[0] == '/usr/bin/systemctl':
+            # A plain reload cannot start an inactive socket-activated service.
+            assert service_active or command[1] == 'reload-or-restart'
+            service_active = True
+        return SimpleNamespace(stdout='')
+
+    exec(compile(ROOT_POLICY_PROGRAM, '<root-policy>', 'exec'),
+        {'Path': guest_path, 'write': write, 'subprocess': SimpleNamespace(run=run)})
+    assert service_active
+    assert guest_path('/etc/ssh/sshd_config.d/00-iacp-root-lab.conf').read_text() == ROOT_SSH_CONFIG
+    assert calls[-1] == ['/usr/bin/systemctl', 'reload-or-restart', 'ssh']
+
+
+def test_root_policy_does_not_reload_invalid_sshd_configuration(tmp_path):
+    import subprocess
+    from types import SimpleNamespace
+    from iacp.services.guest_identity import ROOT_POLICY_PROGRAM
+    calls = []
+    (tmp_path / 'run').mkdir()
+
+    def write(path, content):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def run(command, **kwargs):
+        calls.append(command)
+        raise subprocess.CalledProcessError(255, command)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        exec(compile(ROOT_POLICY_PROGRAM, '<root-policy>', 'exec'),
+            {'Path': lambda path: tmp_path / path.lstrip('/'), 'write': write,
+             'subprocess': SimpleNamespace(run=run)})
+    assert calls == [['/usr/sbin/sshd', '-t']]
