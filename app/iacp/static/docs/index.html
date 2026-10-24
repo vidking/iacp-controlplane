@@ -7,25 +7,28 @@
   <link rel="icon" type="image/svg+xml" href="{{base}}?asset=iacp-v1.svg">
   <link rel="stylesheet" href="{{base}}?asset=swagger-5.34.0.css">
   <link rel="stylesheet" href="{{base}}?asset=iacp-v1.css">
+  <link rel="stylesheet" href="{{base}}?asset=ux-f1.css">
 </head>
 <body data-schema="{{schema}}">
 <header class="masthead">
   <a class="brand" href="{{base}}"><img src="{{base}}?asset=iacp-v1.svg" alt="" width="40" height="40"><span>IACP <b>Orchestrator</b><small>CyberFuel · Plataforma de infraestructura</small></span></a>
-  <div class="release"><span class="pill">API v1</span><span class="pill version">{{version}}</span><span class="access-label">Acceso corporativo · LAN/VPN</span></div>
+  <div class="release"><span class="pill">API v1</span><span class="pill version">{{version}}</span><span class="access-label">API privada · HTTPS/TLS</span><button class="menu-toggle" type="button" aria-controls="doc-navigation" aria-expanded="false">Menú</button></div>
 </header>
 <div class="workspace">
-<aside class="navigation" aria-label="Navegación documental">
+<aside id="doc-navigation" class="navigation" aria-label="Navegación documental">
   <p class="eyebrow">CENTRO DE DESARROLLO</p><h2>Referencia de API</h2>
-  <a class="nav-link active" href="#inicio">Introducción <span>↗</span></a>
+  <a class="nav-link active" href="#inicio" data-doc-target="inicio">Introducción <span>↗</span></a>
   <p class="nav-label">RECORRIDO CRM</p>
-  <a class="nav-link" href="#/instances/listAuthorizedProfiles">01 <span>Catálogo de perfiles</span></a>
-  <a class="nav-link" href="#/instances/createInstance">02 <span>Crear una instancia</span></a>
-  <a class="nav-link" href="#/instances/listInstances">03 <span>Consultar instancias</span></a>
-  <a class="nav-link" href="#/operations/listOperations">04 <span>Seguir operaciones</span></a>
-  <a class="nav-link" href="#/kvm-lifecycle/getInstancePower">05 <span>Lifecycle</span></a>
-  <a class="nav-link" href="#/disposable-deletion/deleteDisposableInstance">06 <span>Eliminación autorizada</span></a>
+  <a class="nav-link" href="#/instances/listAuthorizedProfiles" data-operation-id="listAuthorizedProfiles">01 <span>Catálogo de perfiles</span></a>
+  <a class="nav-link" href="#/instances/createInstance" data-operation-id="createInstance">02 <span>Crear una instancia</span></a>
+  <a class="nav-link" href="#/instances/listInstances" data-operation-id="listInstances">03 <span>Consultar instancias</span></a>
+  <a class="nav-link" href="#/operations/listOperations" data-operation-id="listOperations">04 <span>Seguir operaciones</span></a>
+  <a class="nav-link" href="#/kvm-lifecycle/getInstancePower" data-operation-id="getInstancePower">05 <span>Lifecycle</span></a>
+  <a class="nav-link" href="#/disposable-deletion/deleteDisposableInstance" data-operation-id="deleteDisposableInstance">06 <span>Eliminación autorizada</span></a>
   <p class="nav-label">RECURSOS AUTORIZADOS</p>
-  <a class="nav-link" href="#guia">Guía rápida de integración</a>
+  <a class="nav-link" href="#guia-crm" data-doc-target="guia-crm">Guía CRM local</a>
+  <a class="nav-link" href="#guia-operaciones" data-doc-target="guia-operaciones">Operaciones y diagnóstico</a>
+  <a class="nav-link" href="#guia-despliegue" data-doc-target="guia-despliegue">Despliegue y rollback</a>
   <a class="nav-link" href="{{schema}}" target="_blank" rel="noopener noreferrer">Descargar OpenAPI <span>↗</span></a>
   <a class="nav-link" href="https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/branch/main/docs/handbook/API_INTEGRATION.md" target="_blank" rel="noopener noreferrer">Manual para Desarrollo <span>↗</span></a>
   <a class="nav-link" href="https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/branch/main/docs/handbook/OPERATIONS.md" target="_blank" rel="noopener noreferrer">Operación y recuperación <span>↗</span></a>
@@ -36,7 +39,7 @@
     <p class="lead">Crea y administra instancias mediante perfiles autorizados. Sigue cada solicitud hasta su resultado y conserva el control de su ciclo de vida.</p>
     <div class="features"><span>REST / JSON</span><span>Operaciones asíncronas</span><span>Idempotencia</span><span>OpenAPI 3.1</span></div>
   </section>
-  <section class="integration" id="guia" aria-label="Guía rápida CRM">
+  <section class="integration" id="guia-crm" aria-label="Guía local de integración CRM">
     <details><summary><span class="guide-icon">↳</span><span><b>De tu CRM a una instancia</b><small>Autenticación, flujo recomendado y respuestas que debes manejar</small></span><span class="guide-open">Ver guía</span></summary>
       <div class="guide-content">
         <div class="auth-note"><b>Dos credenciales, dos alcances.</b> HTTP Basic permite leer esta documentación. Para llamar a la API, pulsa <b>Authorize</b> e introduce solo el token Bearer del tenant, sin el prefijo. La clave de documentación no autoriza llamadas a <code>/v1</code>. La autorización no se conserva al recargar.</div>
@@ -46,6 +49,10 @@
         <p class="muted">Los códigos aplicables se indican en cada operación. Conserva <code>X-Request-ID</code> para soporte; la lista de instancias devuelve <code>X-Total-Count</code>. Los ejemplos son sintéticos: sustituye las referencias por recursos autorizados.</p>
       </div>
     </details>
+  </section>
+  <section class="local-guides" aria-label="Guías locales">
+    <details id="guia-operaciones"><summary><span class="guide-icon">◎</span><span><b>Operaciones y diagnóstico</b><small>Estados, trazabilidad y respuesta segura ante fallos</small></span><span class="guide-open">Abrir guía</span></summary><div class="guide-content"><p>IACP separa la API, la cola Redis/Celery, el IaC Worker y el Lifecycle Worker. La API registra la intención en PostgreSQL y devuelve un <code>operation_id</code>; los workers ejecutan fuera de la petición HTTP.</p><p>Una operación puede estar <code>pending</code>, <code>running</code>, <code>completed</code>, <code>failed</code> o <code>uncertain</code>. <code>uncertain</code> no significa éxito: conserva el identificador y requiere reconciliación por observación autorizada antes de reintentar.</p><p>Los eventos y <code>X-Request-ID</code> permiten seguir la trazabilidad. Ante colas detenidas, errores repetidos, locks no terminales o dudas sobre el estado de Proxmox, detén nuevos reintentos y escala a Infraestructura con los IDs y timestamps; no intentes desbloquear ni mutar state.</p><p class="muted">La guía completa versionada está disponible como referencia secundaria en Forgejo.</p></div></details>
+    <details id="guia-despliegue"><summary><span class="guide-icon">⇄</span><span><b>Despliegue y rollback</b><small>Resumen operativo seguro del Control Plane</small></span><span class="guide-open">Abrir guía</span></summary><div class="guide-content"><p>Una release identifica el commit exacto del Control Plane, sus imágenes por digest, el esquema vigente y el manifiesto privado de despliegue. El runtime verificado usa <code>0011_crm_contract</code>; las referencias históricas a 0004 no describen el estado actual.</p><ol><li>Comprobar versión desplegada, imágenes, salud, colas, locks y operaciones no terminales.</li><li>Usar únicamente <code>iacpctl</code> y <code>go_live.py</code> con manifiesto revisado, respaldo y evidencia nueva.</li><li>Después, verificar readiness, workers, PostgreSQL, Redis, contrato OpenAPI y autenticación.</li></ol><p>Un rollback cierra admisión y conserva PostgreSQL, Redis, state e historial; no borra trabajos ni fuerza locks. La recuperación de una operación incierta sigue su procedimiento específico y requiere Infraestructura.</p><p class="muted">El runbook administrativo completo está restringido; la versión fuente se enlaza en Forgejo.</p></div></details>
   </section>
   <section class="reference" aria-label="Referencia de endpoints">
     <div class="reference-toolbar"><div><p class="eyebrow">EXPLORA EL CONTRATO</p><h2>Endpoints</h2></div><label class="search"><span>⌕</span><input id="endpoint-search" type="search" placeholder="Buscar por ruta, método o descripción…" aria-label="Buscar endpoints"><kbd>/</kbd></label></div>
