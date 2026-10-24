@@ -117,3 +117,31 @@ def test_public_router_keeps_crm_away_from_docs_and_admin_paths():
     for url in ("http://identity.invalid", "https://iac.cyberfuel.com/auth", "https://user:secret@identity.invalid"):
         with pytest.raises(ValueError):
             tls.build_public({**policy, "admin_forward_auth_url": url})
+
+
+def test_root_transport_install_preserves_all_other_proxy_controls(tmp_path):
+    from copy import deepcopy
+    from unittest.mock import Mock
+    policy={'lan_cidrs':['192.0.2.0/24'],'crm_source_cidrs':['198.51.100.1/32'],
+        'crm_origins':['https://crm.fixture.invalid'],'admin_forward_auth_url':'https://identity.fixture.invalid/verify'}
+    desired=tls.build_public(policy)
+    original=deepcopy(desired)
+    for name in ('iacp-admin','iacp-crm'):
+        original['http']['routers'][name]['middlewares'].remove('root-tls-transport')
+    original['http']['routers']['diagnostic'].pop('middlewares')
+    for name in ('root-tls-transport','strip-root-transport'):
+        original['http']['middlewares'].pop(name)
+    active=tmp_path/'active.json';candidate=tmp_path/'candidate.json'
+    active.write_text(json.dumps(original));candidate.write_text(json.dumps(desired))
+    p=object.__new__(driver.Promotion);p.approve=Mock();p.proxy_exposure=Mock();p.compose=Mock(return_value='{}');p.evidence=Mock()
+    p.m={'tls_dynamic_file':{'path':str(active),'sha256':driver.digest(active)},
+        'root_transport_configuration':{'path':str(candidate),'sha256':driver.digest(candidate)}}
+    malicious=deepcopy(desired);malicious['http']['middlewares']['authorized-sources']['ipAllowList']['sourceRange']=['0.0.0.0/0']
+    candidate.write_text(json.dumps(malicious));p.m['root_transport_configuration']['sha256']=driver.digest(candidate)
+    with pytest.raises(RuntimeError,match='outside the assertion'):
+        p.attest_root_transport()
+    assert json.loads(active.read_text())==original
+    candidate.write_text(json.dumps(desired));p.m['root_transport_configuration']['sha256']=driver.digest(candidate)
+    p.attest_root_transport()
+    assert json.loads(active.read_text())==desired
+    assert tls.root_tls_transport(desired)==desired

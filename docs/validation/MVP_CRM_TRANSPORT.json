@@ -1,0 +1,12 @@
+{
+  "scope": "Isolated regression validation before MNG deployment",
+  "pytest": {"passed": 767, "failed": 0, "duration_seconds": 178.69},
+  "tls_fixture": {
+    "passed": true,
+    "https_overwrites_client_transport_header": true,
+    "http_diagnostic_strips_transport_header": true,
+    "existing_authentication_source_and_request_limits_preserved": true,
+    "production_or_wan_validation_claimed": false
+  },
+  "reason": "Existing proxy strips X-Forwarded-Proto. Root input now requires the exact proxy socket peer and a TLS-only proxy-owned assertion."
+}

@@ -68,8 +68,9 @@ En un perfil nuevo con `root_password_bootstrap=true`, enviar adicionalmente
 No se proporciona un valor de contraseña en ejemplos, Swagger, resultados ni
 evidencias. En las consultas `access` solo contiene estado y comprobaciones.
 La API rechaza HTTP; detrás del terminador TLS confía únicamente en las IPs de
-proxy declaradas y verificadas por el driver. No confía en un X-Forwarded-Proto
-de un cliente arbitrario ni cambia la política de proxy headers existente.
+proxy declaradas y verificadas por el driver, junto con `X-IACP-Transport=https`,
+sobrescrito por el proxy solo en sus rutas TLS. HTTP diagnóstico elimina esa
+cabecera. No confía en X-Forwarded-Proto y conserva su filtrado existente.
 
 La entrada queda cifrada Fernet en PostgreSQL con contexto de tenant/UUID y clave
 externa. Un HMAC separado comprueba unicidad y replay sin persistir un hash simple
@@ -142,6 +143,8 @@ Crear una clave Fernet privada fuera de Git, legible por UID/GID10001. Referenci
 `IACP_TLS_PROXY_IPS` con IPs exactas del proxy. El manifest declara
 `root_bootstrap_configuration` con `key_path`, `enabled` y `proxy_ips`. El driver
 solo permite esos cambios tipados y comprueba aislamiento, propiedad y permisos.
+`iacpctl attest-root-transport` instala únicamente la transformación determinista
+de esa señal TLS; rechaza cualquier cambio adicional de rutas, ACLs o autenticación.
 Publicar un perfil nuevo derivado del actual con usuario root/29000 y revisión
 independiente; no editar los snapshots de políticas ya aprobadas por SQL.
 

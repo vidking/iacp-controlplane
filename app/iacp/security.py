@@ -33,7 +33,7 @@ def request_uses_https(request) -> bool:
     try:
         peers = [ip_address(value.strip()) for value in os.environ.get('IACP_TLS_PROXY_IPS', '').split(',') if value.strip()]
         return bool(request.client and ip_address(request.client.host) in peers
-            and request.headers.get('x-forwarded-proto') == 'https')
+            and request.headers.get('x-iacp-transport') == 'https')
     except ValueError:
         return False
 

@@ -179,12 +179,21 @@ def test_https_termination_requires_the_exact_trusted_socket_peer(monkeypatch):
     def request(peer, scheme='http'):
         return Request({'type':'http', 'method':'POST', 'path':'/', 'scheme':scheme,
             'server':('iac.cyberfuel.com',443), 'client':(peer,1234),
-            'headers':[(b'x-forwarded-proto',b'https')]})
+            'headers':[(b'x-iacp-transport',b'https')]})
     assert not request_uses_https(request('192.0.2.4'))
     monkeypatch.setenv('IACP_TLS_PROXY_IPS','192.0.2.5')
     assert not request_uses_https(request('192.0.2.4'))
     assert request_uses_https(request('192.0.2.5'))
     assert request_uses_https(request('192.0.2.4', 'https'))
+
+
+def test_forwarded_proto_alone_cannot_attest_root_transport(monkeypatch):
+    from starlette.requests import Request
+    from iacp.security import request_uses_https
+    monkeypatch.setenv('IACP_TLS_PROXY_IPS','192.0.2.5')
+    request=Request({'type':'http','method':'POST','path':'/','scheme':'http','server':('iac.cyberfuel.com',443),
+        'client':('192.0.2.5',1234),'headers':[(b'x-forwarded-proto',b'https')]})
+    assert not request_uses_https(request)
 
 
 def test_autostart_worker_duplicate_delivery_submits_one_command(client, auth, lab, sessions):
