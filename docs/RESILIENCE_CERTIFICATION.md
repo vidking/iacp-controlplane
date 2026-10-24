@@ -1,4 +1,6 @@
-# Fase C — Resilience & Failure Certification
+# Fase C — Certificación de resiliencia y fallos
+
+Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
 Fecha: 24/10/2026. Dictamen actual: **NO-GO para certificar resiliencia integral del MVP KVM**.
 La operación normal individual/doble tiene evidencia previa; la recuperación ante muerte abrupta del worker requiere cerrar P0-C02 y verificarla en MNG. Este informe registra un avance de certificación, no una aprobación de los escenarios reales pendientes.
@@ -8,7 +10,7 @@ La operación normal individual/doble tiene evidencia previa; la recuperación a
 | Elemento | Evidencia y alcance |
 |---|---|
 | Repositorio IACP | `a4f63a9740a3b75bba3940e58a309285c43aaf63`, main limpio al inicio; main remoto contrastado por `ls-remote` |
-| Runtime MNG | `4f153e89826f8e8decc25bcd083e093db37668fd`, API 0.10.1; imágenes API `24572f9…` y Terraform Worker `3ce85fc…`; esquema `0011_crm_contract` |
+| IACP Control Plane (VM 104) | `4f153e89826f8e8decc25bcd083e093db37668fd`, API 0.10.1; imágenes API `24572f9…` y Terraform Worker `3ce85fc…`; esquema `0011_crm_contract` |
 | Locust externo | `927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b`, PR [#5](https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/pulls/5) integrado |
 | Pruebas previas | [857 IACP](validation/PROVISIONING_CONTRACT.junit.xml) y [36 del cliente](https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/src/commit/927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b/docs/evidence/runner-tests.txt); atribución histórica |
 | E2E autónomo | [Fase B](https://scm.cyberfuel.com/CyberFuel/iacp-load-testing/src/commit/927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b/docs/evidence/PHASE_B_RESULT.json): VM30012, VM30013/14, sin intervención en las corridas aprobadas |
@@ -17,7 +19,7 @@ La operación normal individual/doble tiene evidencia previa; la recuperación a
 | Carga histórica 1.104 / p95 520 ms | Comunicada por el solicitante. No se localizó el CSV/ventana correspondiente en ambos repositorios ni en las ubicaciones operativas inspeccionadas; no se atribuye como medición nueva |
 | Situación actual | Cero operaciones/jobs/applies pendientes, cero advisory locks, cero unacked y sin VMs descartables presentes |
 
-El host había reiniciado alrededor de 09:10 UTC antes de nuestra inspección. Sus siete contenedores arrancaron y no había trabajo pendiente cuando los observamos. Esto demuestra arranque en vacío; **no demuestra recuperación de trabajos en vuelo**. Las etiquetas de Compose aún reflejan tres procedencias históricas: aplicación, Traefik y DB/Redis. No se refactorizaron.
+El IACP Control Plane (VM 104), `iacp-controlplane-01`, había reiniciado alrededor de 09:10 UTC antes de nuestra inspección. Sus siete contenedores arrancaron y no había trabajo pendiente cuando los observamos. Esto demuestra arranque en vacío; **no demuestra recuperación de trabajos en vuelo**. Las etiquetas de Compose aún reflejan tres procedencias históricas: aplicación, Traefik y DB/Redis. No se refactorizaron.
 
 Evidencias actuales: [runtime inicial](validation/phase-c/RUNTIME_BASELINE.json), [host durante carga](validation/phase-c/HOST_DURING.json), [runtime de cierre 18:18 UTC](validation/phase-c/RUNTIME_CLOSURE.json), [host de cierre](validation/phase-c/HOST_CLOSURE.json). La comprobación de cierre conserva la misma revisión desplegada, sin pendientes ni locks anómalos en el alcance observado. [Retirada de fixtures locales](validation/phase-c/LOCAL_SANDBOX_CLOSURE.json).
 
@@ -38,7 +40,7 @@ Evidencias actuales: [runtime inicial](validation/phase-c/RUNTIME_BASELINE.json)
 | Dependencias/readiness | API readiness verifica DB/esquema/Redis; arranque condicionado por health/migración; restart unless-stopped | Runtime sano y workers con ping. Readiness no verifica cola progresando, Wasabi, Proxmox, Cloud-Init/SSH ni heartbeat de todos los workers. Una cola vacía no acredita liveness |
 | VM104 | API, DB, broker, proxy, workers y artefactos locales comparten VM | Fallo común de host/disco/energía; sin HA ni failover independiente demostrado. Redis everysec tiene ventana de durabilidad y PostgreSQL/planes dependen de respaldos/restauración vigentes. No se interrumpió VM104 |
 
-Fuentes principales: [worker](../app/iacp/worker.py), [creación](../app/iacp/services/instances.py), [locks](../app/iacp/terraform/locks.py), [apply](../app/iacp/terraform/apply.py), [runner](../app/iacp/terraform/runner.py), [supervisor candidato](../app/iacp/terraform/process_supervisor.py), [state](../app/iacp/terraform/state.py), [power](../app/iacp/lifecycle/execution.py), [guest](../app/iacp/services/guest_identity.py), [Compose MNG](../deploy/mng/compose.yaml).
+Fuentes principales: [worker](../app/iacp/worker.py), [creación](../app/iacp/services/instances.py), [locks](../app/iacp/terraform/locks.py), [apply](../app/iacp/terraform/apply.py), [runner](../app/iacp/terraform/runner.py), [supervisor candidato](../app/iacp/terraform/process_supervisor.py), [state](../app/iacp/terraform/state.py), [power](../app/iacp/lifecycle/execution.py), [guest](../app/iacp/services/guest_identity.py), [Compose del IACP Control Plane (VM 104)](../deploy/mng/compose.yaml).
 
 La [comprobación de la credencial dedicada Lifecycle](validation/phase-c/LIFECYCLE_PROTECTION.json) también confirma ausencia de privilegios en VM104. Sí tiene `VM.PowerMgmt` en VM106 y 29000: en Proxmox los flags efectivos 0 y 1 conceden el privilegio en la ruta exacta. La contención depende del scope/ownership de IACP y del rechazo de templates; no se declara protección únicamente por ACL. Revisar menor privilegio como P1, sin cambiar permisos durante el ensayo.
 
@@ -46,7 +48,7 @@ La [comprobación de la credencial dedicada Lifecycle](validation/phase-c/LIFECY
 
 Ver [matriz C-01…C-12](FAILURE_MATRIX.md), [runbook](RECOVERY_RUNBOOK.md), [rendimiento](PERFORMANCE_BASELINE.md) y [dictamen](MVP_GO_NO_GO.md). La [evidencia de pruebas](validation/phase-c/TEST_RESULTS.json) distingue el fallo inicial, la corrección candidata y las limitaciones de captura.
 
-Corrección aislada en [PR #44](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/44), commit `3d815d17cc1c2d83fb34e16c5a7e25f93577729a`. [Revisión independiente](validation/phase-c/P0_REVIEW.json). El remoto registra su integración en main como `bc93861d36142fad2c48d38d78ffc25a0b92e94d` a las 18:04:25 UTC; esta sesión no ejecutó ese merge. La comprobación de imágenes de 18:18 UTC confirma que **no está desplegada en MNG**. El [PR #45](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/45) contiene únicamente la mejora de lectura de operaciones. [Versiones y alcance de cambios](validation/phase-c/CHANGESET.json).
+Corrección aislada en [PR #44](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/44), commit `3d815d17cc1c2d83fb34e16c5a7e25f93577729a`. [Revisión independiente](validation/phase-c/P0_REVIEW.json). El remoto registra su integración en main como `bc93861d36142fad2c48d38d78ffc25a0b92e94d` a las 18:04:25 UTC; esta sesión no ejecutó ese merge. La comprobación de imágenes de 18:18 UTC confirma que **no está desplegada en el IACP Control Plane (VM 104)**. El [PR #45](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/45) contiene únicamente la mejora de lectura de operaciones. [Versiones y alcance de cambios](validation/phase-c/CHANGESET.json).
 
 Regresión conjunta final: **875 aprobadas**, cero fallos/skips, 234,62 s; cliente externo: **36 aprobadas** sin red. Se conserva el [JUnit completo](validation/phase-c/COMBINED.junit.xml), además del [JUnit dirigido](validation/phase-c/DIRECTED.junit.xml). El resultado previo de 873 casos del P0 no tenía XML retenido; no se confunde con esta captura completa. El árbol de aplicación probado equivale al main remoto `7379e840155e8a8b426c6d05a3683fa6a4a1229e`, que integra también el PR #45 a las 18:16:24 UTC; este merge tampoco fue ejecutado por esta sesión. Las inyecciones usaron PostgreSQL/Redis descartables, procesos sintéticos y S3/Proxmox de fixture. Se ejecutó carga HTTP readonly desde el cliente externo. La validación real de interrupción durante clonación permanece BLOCKED mientras el runtime conserve el defecto P0 y no haya una ejecución certificada de la corrección. No se creó ni destruyó ninguna VM durante esta Fase C.
 

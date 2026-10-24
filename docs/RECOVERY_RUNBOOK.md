@@ -1,6 +1,8 @@
 # Recuperación controlada del MVP KVM
 
-Aplicable a IACP 0.10.1 en MNG. [Estado de certificación y límites](RESILIENCE_CERTIFICATION.md). Nunca ejecutar este ensayo en producción ni sobre VM104, VM106 o Golden Image 29000.
+Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
+
+Aplicable al IACP Control Plane (VM 104), `iacp-controlplane-01`, con IACP 0.10.1, alojado en `mng01` del clúster MNG. [Estado de certificación y límites](RESILIENCE_CERTIFICATION.md). Nunca ejecutar este ensayo en producción ni sobre VM104, VM106 o Golden Image 29000.
 
 ## Reconocer y contener
 
@@ -56,10 +58,10 @@ PostgreSQL: restablecer el servicio por el procedimiento operativo; una conexió
 
 Wasabi/Proxmox: restablecer conectividad con cambios de alcance explícito. No relajar TLS, permisos o validación de versiones. Desconocido permanece desconocido.
 
-VM104: recuperar host/almacenamiento por el procedimiento de desastre, conservar proyecto/volúmenes/secretos/artefactos y revisar DB/Redis/planes como conjunto. No existe failover independiente certificado. El arranque sano observado el 24/10 no sustituye una restauración de backup ni un ensayo con trabajos en vuelo.
+IACP Control Plane (VM 104): recuperar la VM y su almacenamiento por el procedimiento de desastre, conservar proyecto/volúmenes/secretos/artefactos y revisar DB/Redis/planes como conjunto. No existe failover independiente certificado. El arranque sano observado el 24/10 no sustituye una restauración de backup ni un ensayo con trabajos en vuelo.
 
 ## Cierre obligatorio
 
-Exigir una intención y un recurso como máximo; todas las operaciones correlacionadas, sin mutaciones consumidas repetidas; postcondiciones DB/PVE/state concordantes o uncertain explícito. Para una VM descartable que ya no se necesita, shutdown ordenado y DELETE normal por IACP bajo la política vigente. Confirmar deleted, ausencia en todo MNG, state vacío versionado, ausencia de `.tflock`, colas/unacked y advisory locks sin anomalías. Conservar tombstones y eventos.
+Exigir una intención y un recurso como máximo; todas las operaciones correlacionadas, sin mutaciones consumidas repetidas; postcondiciones DB/PVE/state concordantes o uncertain explícito. Para una VM descartable que ya no se necesita, shutdown ordenado y DELETE normal por IACP bajo la política vigente. Confirmar deleted, ausencia en todo el clúster MNG, state vacío versionado, ausencia de `.tflock`, colas/unacked y advisory locks sin anomalías. Conservar tombstones y eventos.
 
 Marcar si la recuperación fue automática, solicitada por cliente o manual. Una limpieza o atestación humana no convierte una corrida fallida en automática aprobada.
