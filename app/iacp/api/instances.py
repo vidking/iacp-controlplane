@@ -21,7 +21,7 @@ router = APIRouter(
 @router.post(
     "", status_code=202, response_model=InstanceAccepted, operation_id="createInstance",
     responses={409: {"model": ErrorResponse}},
-    description=("Crea instancia, operación y job de forma atómica. El IaC Worker usa el perfil autorizado; una política aprobada permite completar el plan por delegación. Sin política se conserva la revisión individual y habilitación explícita. "
+    description=("Crea instancia, operación y job de forma atómica. El IaC Worker usa el perfil autorizado; un perfil de autoservicio exige política aprobada y completa el plan por delegación. Los perfiles históricos conservan revisión individual y habilitación explícita. "
                  "Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. "
                  "Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló."),
 )

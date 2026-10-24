@@ -29,7 +29,7 @@ def create_app() -> FastAPI:
             "energía; approver autoriza planes y debe ser distinto del solicitante.\n\n"
             "**Autoservicio:** consultar GET /v1/profiles y GET /v1/lab/policies. Crear con network_profile y "
             "self_service_policy_id aprobados admite una VM nueva y el IaC Worker procesa el plan verificado por delegación. "
-            "Sin política se conserva la revisión independiente de cada plan en los endpoints administrativos históricos. "
+            "Los perfiles de autoservicio exigen política; perfiles históricos conservan revisión independiente de cada plan. "
             "HTTP 202 acredita admisión, no una VM lista. "
             "Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n"
             "**Identificadores:** instance_id es el UUID estable de la instancia; VMID es un identificador interno asignado por IACP. "

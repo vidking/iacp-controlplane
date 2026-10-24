@@ -63,6 +63,10 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
             previous=session.scalar(query)
             if previous is not None:
                 return accepted(session,previous,digest)
+            if spec.network_profile and not spec.self_service_policy_id:
+                from ..terraform.profiles import load_profile
+                if load_profile(spec.network_profile,principal.tenant_id).self_service_enabled:
+                    raise Conflict('LAB_POLICY_REQUIRED')
             from .lab import admit, instance_digest
             policy=admit(session,instance) if spec.self_service_policy_id else None
             allocation=reserve_profile(session,instance) if spec.network_profile and mode=='terraform' else None

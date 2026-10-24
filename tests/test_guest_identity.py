@@ -120,6 +120,9 @@ def test_no_arbitrary_command_or_guest_parameters_and_no_reader_writes(client,au
 def test_profile_initialization_is_automatic_after_successful_start(client,auth,guest,sessions,monkeypatch):
     import iacp.api.dependencies as dependencies
     monkeypatch.setattr(dependencies,'get_guest_initialization_publisher',lambda:guest.publisher)
+    # The isolated Lifecycle worker has no profile/TF credentials mount. It may
+    # enqueue an intent from the approved snapshot; only IaC Worker may execute.
+    monkeypatch.delenv('IACP_TERRAFORM_PROFILES_FILE')
     with sessions() as s:
         op=Operation(id='power-completed',instance_id=guest.id,tenant_id=s.get(Instance,guest.id).tenant_id,
             kind='instance.power.start',status='completed',idempotency_key='started',request_hash='a'*64,requested_by='bootstrap')
@@ -168,3 +171,15 @@ def test_definitively_failed_guest_process_is_terminal_and_never_submitted_again
     assert len(fake.calls)==1
     assert accept(client,auth,guest).json()['status']=='failed'
     assert client.get('/v1/lab/usage',headers=auth).json()['usage']['concurrent_operations']==0
+
+
+def test_iac_worker_refuses_closed_lifecycle_gate_before_consumption_and_retry_preserves_intent(client,auth,guest,sessions,monkeypatch):
+    op=accept(client,auth,guest).json()['operation_id'];fake=FakeGuest()
+    monkeypatch.setenv('IACP_KVM_LIFECYCLE_ENABLED','0')
+    execute_initialization(op,sessions,lambda:fake)
+    assert fake.calls==[]
+    assert client.get('/v1/operations/'+op,headers=auth).json()['error_code']=='POWER_LIFECYCLE_DISABLED'
+    monkeypatch.setenv('IACP_KVM_LIFECYCLE_ENABLED','1')
+    assert accept(client,auth,guest).json()['operation_id']==op
+    execute_initialization(op,sessions,lambda:fake)
+    assert len(fake.calls)==1

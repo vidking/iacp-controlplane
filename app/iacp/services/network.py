@@ -167,14 +167,28 @@ def after_power(identifier,sessions):
                 initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
                 if initialization is None:
                     request_initialization(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
-                        'identity-'+instance.id,get_guest_initialization_publisher())
+                        'identity-'+instance.id,get_guest_initialization_publisher(),current_profiles=False)
                     return
                 if initialization.status!='completed':
-                    get_guest_initialization_publisher()(initialization.operation_id)
+                    if initialization.status=='failed' and not initialization.started_at:
+                        previous=s.get(Operation,initialization.operation_id)
+                        request_initialization(s,instance,Principal(instance.tenant_id,previous.requested_by,'operator'),
+                            previous.idempotency_key,get_guest_initialization_publisher(),current_profiles=False)
+                    elif initialization.status!='failed':
+                        get_guest_initialization_publisher()(initialization.operation_id)
                     return
             from ..api.dependencies import get_network_publisher
             request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                               'network-after-'+identifier,get_network_publisher())
     except Exception:
         # Caller can retry discovery via the authenticated API; never retry power.
+        with sessions() as s:
+            operation=s.get(Operation,identifier)
+            if operation:
+                event(s,operation,'network_followup_dispatch_unconfirmed','worker:lifecycle')
+                instance=s.get(Instance,operation.instance_id)
+                if instance and instance.self_service_policy_id:
+                    instance.ip_addresses=[]
+                    instance.network_observation={'status':'pending','ip_addresses':[],'reason':'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED'}
+                s.commit()
         return
