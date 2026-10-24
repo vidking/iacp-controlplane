@@ -1,5 +1,7 @@
 # Fase D — Promoción y certificación operativa
 
+Entrega y revisión: [PR #49](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/49). [Índice de versiones, resultados y alcance](validation/phase-d/ENTREGA.json).
+
 Fecha: 24/10/2026. Destino: **IACP Control Plane (VM 104)**, `iacp-controlplane-01`, alojado en `mng01`. Las VMs descartables se administraron únicamente en el **clúster MNG**, compuesto por `mng01` y `mng02`. **Platinum/PRX** quedó excluido. Se conservaron protegidas la **VM 104**, la **VM 106 histórica** y la **VM 29000 Golden Image Ubuntu 24.04**.
 
 ## Dictámenes diferenciados

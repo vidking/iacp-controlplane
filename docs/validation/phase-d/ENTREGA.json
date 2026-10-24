@@ -9,7 +9,7 @@
   "arbol_app_identico_entre_version_ejecutada_y_main_observado": true,
   "pr_tls": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/47",
   "pr_convenciones": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/48",
-  "pr_evidencias": null,
+  "pr_evidencias": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/49",
   "pruebas_iacp_aprobadas": 886,
   "pruebas_cliente_aprobadas": 36,
   "e2e_individual": "PASS automático",
