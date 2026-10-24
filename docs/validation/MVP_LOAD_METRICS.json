@@ -1,0 +1,13 @@
+{
+  "samples": 22,
+  "postgres_connections_max": 9,
+  "postgres_lock_waiters_max": 0,
+  "redis_clients_max": 31,
+  "redis_rejected_connections_max": 0,
+  "queue_depth_max": {
+    "celery": 0,
+    "terraform": 0,
+    "lifecycle": 1
+  },
+  "worker_liveness": "Not inferred from queue depth; no continuous heartbeat evidence claimed"
+}

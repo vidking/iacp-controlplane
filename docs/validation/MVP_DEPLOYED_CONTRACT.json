@@ -1,0 +1,10 @@
+{
+  "deployed_api_version": "0.10.0",
+  "canonical_openapi_sha256": "481289130f32a4893715fdccb570ffed064fe7d83c2ace7575c572a22e3ec24e",
+  "examples_validated_against_deployed_schema": [
+    "docs/examples/crm/dhcp-small.json",
+    "docs/examples/crm/dhcp-medium.json",
+    "docs/examples/crm/dhcp-autostart.json"
+  ],
+  "validation_scope": "Schema validation; execution limited to the documented single purchase smoke"
+}
