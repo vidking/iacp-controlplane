@@ -104,6 +104,15 @@ def test_pilot_without_functional_dhcp_evidence_never_enables_lifecycle(driver,p
     with pytest.raises(RuntimeError,match='Functional DHCP'):op.activate_pilot()
     assert env.read_bytes()==before;op.up.assert_not_called()
 
+def test_pilot_identity_review_generates_executable_python(promotion):
+    op,_,_=promotion
+    identifier=str(uuid4())
+    op.review_instances({identifier:{'vmid':30000,'node':'mng01','name':'iacp-mvp-dhcp-01'}})
+    role,code=op.exec_python.call_args.args
+    assert role=='api'
+    compile(code,'<pilot-identity-review>','exec')
+    assert "print('REVIEWED_DISPOSABLE_IDENTITIES')" in code
+
 def test_lifecycle_scope_excludes_historical_vm106(sessions,monkeypatch):
     from iacp.lifecycle.ownership import instance_ownership
     from iacp.lifecycle.proxmox import PowerError
