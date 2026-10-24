@@ -245,3 +245,14 @@ def test_independent_renewal_keeps_membership_and_records_review(client,auth,lab
     provision(a,sessions,lab)
     client.post(path+'/revoke',headers=lab.reviewer,json={})
     assert client.post(path+'/renew',headers=lab.reviewer,json=body).status_code==409
+
+
+def test_policy_review_can_precede_activation_while_infrastructure_stays_drained(client,auth,lab,monkeypatch):
+    monkeypatch.setenv('IACP_ADMISSION_ENABLED','0');monkeypatch.setenv('IACP_LAB_SELF_SERVICE_ENABLED','0')
+    r=client.post('/v1/lab/policies',headers={**auth,'Idempotency-Key':'pre-activation'},json=POLICY_SPEC)
+    assert r.status_code==201,r.text
+    proposal=r.json();path='/v1/lab/policies/'+proposal['policy_id']
+    r=client.post(path+'/approve',headers=lab.reviewer,json={'policy_sha256':proposal['policy_sha256']})
+    assert r.status_code==200,r.text
+    assert create(client,auth,lab).status_code==503
+    assert client.post(path+'/revoke',headers=lab.reviewer,json={}).status_code==200
