@@ -1,6 +1,6 @@
 {
   "fuente": "REVISION_CONTENIDO.json",
-  "revisor": "Revisión de ubicaciones por el agente principal",
+  "revisor": "Revisión principal y verificación independiente de las tres ubicaciones",
   "credenciales_reales_confirmadas": 0,
   "disposiciones": [
     {"archivo": "docs/FAILURE_MATRIX.md", "linea": 167, "tipo": "Identificadores de pruebas en un párrafo sobre permisos; no valores de credenciales"},
