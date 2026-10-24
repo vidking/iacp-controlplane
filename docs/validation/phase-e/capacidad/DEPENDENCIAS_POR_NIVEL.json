@@ -1,0 +1,197 @@
+{
+  "fecha_local": "2026-10-24T16:02:47.353652-06:00",
+  "fases": {
+    "rps-5": {
+      "muestras_en_ventana_activa": 21,
+      "cpu_host_media_pct": 6.1525799885640176,
+      "cpu_host_max_pct": 7.397191574724172,
+      "ram_disponible_min_pct": 89.28880331839335,
+      "collector_mediana_segundos": 5.082927583998753,
+      "postgres": {
+        "conexiones_min": 8,
+        "conexiones_max": 8,
+        "locks_en_espera_max": 0,
+        "advisory_locks_max": 0,
+        "delta_contadores_database": {
+          "xact_commit": 1072,
+          "xact_rollback": 1066,
+          "blks_read": 0,
+          "blks_hit": 100501,
+          "tup_returned": 732678,
+          "tup_fetched": 30252,
+          "temp_files": 0,
+          "temp_bytes": 0,
+          "deadlocks": 0,
+          "blk_read_time": 0.0,
+          "blk_write_time": 0.0
+        },
+        "delta_scans_tablas": 6287.0,
+        "consultas_sql_exactas": "no disponibles; sin pg_stat_statements",
+        "esperas_observadas": [
+          "Client:ClientRead",
+          "None:None"
+        ]
+      },
+      "redis": {
+        "memoria_min_bytes": 1859792,
+        "memoria_max_bytes": 1880760,
+        "clientes_max": 31,
+        "delta_comandos": 2177,
+        "delta_evictions": 0,
+        "delta_rechazos_conexion": 0
+      },
+      "celery": {
+        "cola_max": 0,
+        "unacked_max": 0,
+        "edad_unacked_max_segundos": 0,
+        "edad_operaciones_max_segundos": 0.0,
+        "workers_ping_min": 3
+      },
+      "nota": "Incluye observador; contadores muestreados no son consultas por request ni producción sintética de tareas"
+    },
+    "rps-10": {
+      "muestras_en_ventana_activa": 21,
+      "cpu_host_media_pct": 7.499836788704151,
+      "cpu_host_max_pct": 8.36059139081512,
+      "ram_disponible_min_pct": 89.42146279211872,
+      "collector_mediana_segundos": 5.000503666999066,
+      "postgres": {
+        "conexiones_min": 8,
+        "conexiones_max": 8,
+        "locks_en_espera_max": 0,
+        "advisory_locks_max": 0,
+        "delta_contadores_database": {
+          "xact_commit": 2083,
+          "xact_rollback": 2076,
+          "blks_read": 0,
+          "blks_hit": 160491,
+          "tup_returned": 1382366,
+          "tup_fetched": 36801,
+          "temp_files": 0,
+          "temp_bytes": 0,
+          "deadlocks": 0,
+          "blk_read_time": 0.0,
+          "blk_write_time": 0.0
+        },
+        "delta_scans_tablas": 12599.0,
+        "consultas_sql_exactas": "no disponibles; sin pg_stat_statements",
+        "esperas_observadas": [
+          "Client:ClientRead",
+          "None:None"
+        ]
+      },
+      "redis": {
+        "memoria_min_bytes": 1859000,
+        "memoria_max_bytes": 1881288,
+        "clientes_max": 31,
+        "delta_comandos": 2182,
+        "delta_evictions": 0,
+        "delta_rechazos_conexion": 0
+      },
+      "celery": {
+        "cola_max": 0,
+        "unacked_max": 0,
+        "edad_unacked_max_segundos": 0,
+        "edad_operaciones_max_segundos": 0.0,
+        "workers_ping_min": 3
+      },
+      "nota": "Incluye observador; contadores muestreados no son consultas por request ni producción sintética de tareas"
+    },
+    "rps-20": {
+      "muestras_en_ventana_activa": 5,
+      "cpu_host_media_pct": 9.497419511488852,
+      "cpu_host_max_pct": 11.658841940532083,
+      "ram_disponible_min_pct": 89.33033632808616,
+      "collector_mediana_segundos": 5.223680081000566,
+      "postgres": {
+        "conexiones_min": 9,
+        "conexiones_max": 9,
+        "locks_en_espera_max": 0,
+        "advisory_locks_max": 0,
+        "delta_contadores_database": {
+          "xact_commit": 693,
+          "xact_rollback": 691,
+          "blks_read": 0,
+          "blks_hit": 54021,
+          "tup_returned": 533088,
+          "tup_fetched": 9170,
+          "temp_files": 0,
+          "temp_bytes": 0,
+          "deadlocks": 0,
+          "blk_read_time": 0.0,
+          "blk_write_time": 0.0
+        },
+        "delta_scans_tablas": 4367.0,
+        "consultas_sql_exactas": "no disponibles; sin pg_stat_statements",
+        "esperas_observadas": [
+          "Client:ClientRead",
+          "None:None"
+        ]
+      },
+      "redis": {
+        "memoria_min_bytes": 1865152,
+        "memoria_max_bytes": 1866720,
+        "clientes_max": 31,
+        "delta_comandos": 443,
+        "delta_evictions": 0,
+        "delta_rechazos_conexion": 0
+      },
+      "celery": {
+        "cola_max": 0,
+        "unacked_max": 0,
+        "edad_unacked_max_segundos": 0,
+        "edad_operaciones_max_segundos": 0.0,
+        "workers_ping_min": 3
+      },
+      "nota": "Incluye observador; contadores muestreados no son consultas por request ni producción sintética de tareas"
+    },
+    "sostenida-30min": {
+      "muestras_en_ventana_activa": 184,
+      "cpu_host_media_pct": 7.707235985709443,
+      "cpu_host_max_pct": 10.177380802616687,
+      "ram_disponible_min_pct": 89.1529582797177,
+      "collector_mediana_segundos": 5.087285620998955,
+      "postgres": {
+        "conexiones_min": 9,
+        "conexiones_max": 10,
+        "locks_en_espera_max": 0,
+        "advisory_locks_max": 0,
+        "delta_contadores_database": {
+          "xact_commit": 18990,
+          "xact_rollback": 18929,
+          "blks_read": 0,
+          "blks_hit": 1475423,
+          "tup_returned": 12559245,
+          "tup_fetched": 346278,
+          "temp_files": 0,
+          "temp_bytes": 0,
+          "deadlocks": 0,
+          "blk_read_time": 0.0,
+          "blk_write_time": 0.0
+        },
+        "delta_scans_tablas": 113784.0,
+        "consultas_sql_exactas": "no disponibles; sin pg_stat_statements",
+        "esperas_observadas": [
+          "Client:ClientRead",
+          "None:None"
+        ]
+      },
+      "redis": {
+        "memoria_min_bytes": 1859000,
+        "memoria_max_bytes": 1889496,
+        "clientes_max": 31,
+        "delta_comandos": 19940,
+        "delta_evictions": 0,
+        "delta_rechazos_conexion": 0
+      },
+      "celery": {
+        "cola_max": 0,
+        "unacked_max": 0,
+        "edad_unacked_max_segundos": 0,
+        "edad_operaciones_max_segundos": 0.0,
+        "workers_ping_min": 3
+      },
+      "nota": "Incluye observador; contadores muestreados no son consultas por request ni producción sintética de tareas"
+    }
+  }
+}

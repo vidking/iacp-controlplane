@@ -1,0 +1,244 @@
+{
+  "at": "2026-10-24T21:03:04.061318+00:00",
+  "containers": [
+    {
+      "command": [
+        "celery",
+        "-A",
+        "iacp.terraform.worker:celery_app",
+        "worker",
+        "-Q",
+        "terraform",
+        "--loglevel=INFO",
+        "--concurrency=1",
+        "--without-gossip",
+        "--without-mingle"
+      ],
+      "compose_files": "/opt/iacp/releases/iacp-fase-d-7c0804d/deploy/mng/compose.yaml",
+      "flags": {
+        "IACP_DISPOSABLE_INSTANCE_IDS": "",
+        "IACP_KVM_LIFECYCLE_ENABLED": "1",
+        "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+        "IACP_TERRAFORM_APPLY_ENABLED": "1",
+        "IACP_TERRAFORM_DELETE_ENABLED": "1",
+        "IACP_TERRAFORM_PLAN_ENABLED": "1"
+      },
+      "image": "sha256:751dd7d24532ca1f257e027a411532bb01e196340ba75f6a2fb3bc1696e7b365",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+      "service": "terraform-worker",
+      "started_at": "2026-10-24T19:01:50.489842614Z"
+    },
+    {
+      "command": [
+        "uvicorn",
+        "iacp.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--no-proxy-headers",
+        "--no-access-log"
+      ],
+      "compose_files": "/opt/iacp/releases/iacp-fase-d-7c0804d/deploy/mng/compose.yaml",
+      "flags": {
+        "IACP_ADMISSION_ENABLED": "1",
+        "IACP_DISPOSABLE_INSTANCE_IDS": "",
+        "IACP_INSTANCE_EXECUTOR": "terraform",
+        "IACP_KVM_LIFECYCLE_ENABLED": "1",
+        "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+        "IACP_LIFECYCLE_INSTANCE_IDS": "",
+        "IACP_TERRAFORM_APPLY_ENABLED": "1",
+        "IACP_TERRAFORM_DELETE_ENABLED": "1"
+      },
+      "image": "sha256:23bdc4736b06310ef74ef49dbf9332a6ced54c16fe9aab193c6a0a2d770011c5",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+      "service": "api",
+      "started_at": "2026-10-24T19:01:49.904068515Z"
+    },
+    {
+      "command": [
+        "celery",
+        "-A",
+        "iacp.lifecycle.worker:celery_app",
+        "worker",
+        "-Q",
+        "lifecycle",
+        "--concurrency=1",
+        "--loglevel=WARNING",
+        "--without-gossip",
+        "--without-mingle"
+      ],
+      "compose_files": "/opt/iacp/releases/iacp-fase-d-7c0804d/deploy/mng/compose.yaml",
+      "flags": {
+        "IACP_KVM_LIFECYCLE_ENABLED": "1",
+        "IACP_LAB_SELF_SERVICE_ENABLED": "1",
+        "IACP_LIFECYCLE_INSTANCE_IDS": ""
+      },
+      "image": "sha256:23bdc4736b06310ef74ef49dbf9332a6ced54c16fe9aab193c6a0a2d770011c5",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+      "service": "lifecycle-worker",
+      "started_at": "2026-10-24T19:01:50.225847812Z"
+    },
+    {
+      "command": [
+        "celery",
+        "-A",
+        "iacp.worker:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=1",
+        "--without-gossip",
+        "--without-mingle"
+      ],
+      "compose_files": "/opt/iacp/releases/iacp-fase-d-7c0804d/deploy/mng/compose.yaml",
+      "flags": {},
+      "image": "sha256:23bdc4736b06310ef74ef49dbf9332a6ced54c16fe9aab193c6a0a2d770011c5",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+      "service": "worker",
+      "started_at": "2026-10-24T19:00:37.120596126Z"
+    },
+    {
+      "command": [
+        "--configFile=/etc/traefik/public.yml"
+      ],
+      "compose_files": "/opt/iacp/releases/controlplane-v1/compose.yaml,/opt/iacp/releases/controlplane-v1/compose.server.yaml,/opt/iacp/releases/controlplane-v1/compose.terraform.yaml,/opt/iacp/releases/controlplane-v1/compose.tenants.yaml,/opt/iacp/releases/controlplane-v1/compose.lifecycle.yaml,/opt/iacp/releases/controlplane-v1/compose.promotion.yaml,/opt/iacp/releases/controlplane-v1/compose.tls.yaml,/opt/iacp/releases/controlplane-v1/compose.public.yaml,/etc/iacp/changes/traefik-lan-ports.override.yaml",
+      "flags": {},
+      "image": "sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": null,
+      "service": "traefik",
+      "started_at": "2026-10-24T09:10:28.178849461Z"
+    },
+    {
+      "command": [
+        "postgres"
+      ],
+      "compose_files": "/opt/iacp/stacks/controlplane/compose.yaml",
+      "flags": {},
+      "image": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": null,
+      "service": "db",
+      "started_at": "2026-10-24T09:10:28.225705747Z"
+    },
+    {
+      "command": [
+        "redis-server",
+        "--appendonly",
+        "yes"
+      ],
+      "compose_files": "/opt/iacp/stacks/controlplane/compose.yaml",
+      "flags": {},
+      "image": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "oom_killed": false,
+      "restart_count": 0,
+      "revision": null,
+      "service": "redis",
+      "started_at": "2026-10-24T09:10:28.196187551Z"
+    }
+  ],
+  "cpus": 8,
+  "fecha_local": "2026-10-24T15:03:06.086868-06:00",
+  "host": "iacp-controlplane-01",
+  "loadavg": [
+    0.02490234375,
+    0.02294921875,
+    0.0
+  ],
+  "memory": {
+    "MemAvailable": "14923448 kB",
+    "MemTotal": "16574768 kB",
+    "SwapFree": "0 kB",
+    "SwapTotal": "0 kB"
+  },
+  "stats": [
+    {
+      "BlockIO": "10.9MB / 177MB",
+      "CPUPerc": "0.18%",
+      "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+      "ID": "ba666052a25e",
+      "MemPerc": "1.75%",
+      "MemUsage": "283MiB / 15.81GiB",
+      "Name": "iacp-controlplane-terraform-worker-1",
+      "NetIO": "91.9MB / 19MB",
+      "PIDs": "2"
+    },
+    {
+      "BlockIO": "860kB / 0B",
+      "CPUPerc": "0.14%",
+      "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+      "ID": "c9cdf9df7987",
+      "MemPerc": "0.65%",
+      "MemUsage": "104.4MiB / 15.81GiB",
+      "Name": "iacp-controlplane-api-1",
+      "NetIO": "78.2MB / 54.1MB",
+      "PIDs": "2"
+    },
+    {
+      "BlockIO": "0B / 0B",
+      "CPUPerc": "0.05%",
+      "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+      "ID": "1230d01af135",
+      "MemPerc": "0.78%",
+      "MemUsage": "126.7MiB / 15.81GiB",
+      "Name": "iacp-controlplane-lifecycle-worker-1",
+      "NetIO": "4.69MB / 5.99MB",
+      "PIDs": "2"
+    },
+    {
+      "BlockIO": "0B / 4.1kB",
+      "CPUPerc": "0.17%",
+      "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+      "ID": "fc8204e0875b",
+      "MemPerc": "0.58%",
+      "MemUsage": "93.59MiB / 15.81GiB",
+      "Name": "iacp-controlplane-worker-1",
+      "NetIO": "4.02MB / 4.78MB",
+      "PIDs": "2"
+    },
+    {
+      "BlockIO": "108MB / 0B",
+      "CPUPerc": "0.00%",
+      "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+      "ID": "bbc379adee59",
+      "MemPerc": "0.79%",
+      "MemUsage": "128MiB / 15.81GiB",
+      "Name": "iacp-controlplane-traefik-1",
+      "NetIO": "88.4MB / 89.4MB",
+      "PIDs": "13"
+    },
+    {
+      "BlockIO": "38.6MB / 6.16MB",
+      "CPUPerc": "0.00%",
+      "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+      "ID": "a7cc37508fa4",
+      "MemPerc": "0.46%",
+      "MemUsage": "74.36MiB / 15.81GiB",
+      "Name": "iacp-controlplane-db-1",
+      "NetIO": "78.4MB / 295MB",
+      "PIDs": "13"
+    },
+    {
+      "BlockIO": "18.6MB / 5.8MB",
+      "CPUPerc": "0.57%",
+      "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+      "ID": "8fa3f587bb6c",
+      "MemPerc": "0.09%",
+      "MemUsage": "14.36MiB / 15.81GiB",
+      "Name": "iacp-controlplane-redis-1",
+      "NetIO": "81.9MB / 25MB",
+      "PIDs": "6"
+    }
+  ],
+  "uptime_seconds": 42765.29
+}

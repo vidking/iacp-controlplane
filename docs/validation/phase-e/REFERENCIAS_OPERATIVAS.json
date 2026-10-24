@@ -1,0 +1,26 @@
+{
+  "fecha_local": "2026-10-24T15:18:23.694901-06:00",
+  "estado": "PASS para identificación de referencias; normalización diferida",
+  "host": "IACP Control Plane (VM 104), iacp-controlplane-01",
+  "referencias_verificadas": {
+    "directorio_de_configuracion_declarado": "/opt/iacp/config (existente, vacío)",
+    "checkout_app_ejecutado": "/opt/iacp/releases/iacp-fase-d-7c0804d",
+    "compose_app": "/opt/iacp/releases/iacp-fase-d-7c0804d/deploy/mng/compose.yaml",
+    "entorno_activo": "/etc/iacp/server.env",
+    "credencial_operador_origen_activo": "/opt/iacp/stacks/controlplane/secrets/api_token",
+    "credencial_operador_destino_contenedor": "/run/secrets/api_token",
+    "registro_identidades": "/etc/iacp/identity/tenant_credentials.json",
+    "manifiesto_preexistente_verificado": "/opt/iacp/evidence/fase-d-20261024T184048Z/manifest-promocion-tls-corregido.json",
+    "observador_e2e": "/opt/iacp/evidence/fase-d-20261024T184048Z/audit_mng.py",
+    "cliente_privado_laptop": "/home/despinoza/.local/state/iacp-fase-e/"
+  },
+  "referencias_historicas_no_vigentes": [
+    "/etc/iacp/identity/operator.token",
+    "alias SSH iacp-controlplane no incluido por ~/.ssh/config"
+  ],
+  "dependencias_compose": "DB/Redis/Traefik conservan etiquetas del checkout controlplane-v1 y overlays previos; no normalizados",
+  "metodo_reutilizado": "SSH con clave existente, sudo -n, mount activo de autenticación; copia operativa privada 0600 en la laptop, sin rotación ni nuevos privilegios",
+  "configuracion_credenciales_permisos_modificados": false,
+  "valores_sensibles_en_evidencia": false,
+  "riesgo_diferido": "Referencias dispersas e históricas pueden romper preparación futura; normalizar después del MVP mediante procedimiento de promoción. Rotación de tokens diferida sin declarar seguridad aprobada."
+}

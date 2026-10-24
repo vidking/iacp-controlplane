@@ -1,0 +1,20 @@
+{
+  "fecha_local": "2026-10-24T15:28:47.198538-06:00",
+  "alcance": "generador Locust externo; no aplicación ni servicios del IACP Control Plane (VM 104)",
+  "hallazgo": "runner.quit() retiró carga a los 40 s, pero no cerró servidor web hasta run-time; sin nuevas solicitudes tras el cierre de usuarios",
+  "correccion": "Cerrar web_ui después de runner.quit; solo cambia salida del generador",
+  "regresion_antes": "test_automatic_stop_closes_dashboard_once FAIL; stop llamado cero veces",
+  "regresion_despues": "PASS; 45 pruebas aprobadas, 0,575 s",
+  "sha_escalera": "ccb89c6",
+  "sha_sostenida": "a8a779107ccb11314befd0b3f942f6b9d78e2156",
+  "tasa_rutas_medicion_criterios_modificados": false,
+  "muestras_retirada_originales_preservadas": true,
+  "efecto_en_recuperacion": "La observación interna continúa cada 10 s; la primera sonda HTTPS externa quedó diferida hasta cerrar el dashboard. No atribuir ese retraso a recuperación de la API.",
+  "integracion_local_despues": {
+    "estado": "PASS",
+    "duracion_segundos": 2.474,
+    "run_time_original_segundos": 60,
+    "solicitudes_http": 0,
+    "retorno_esperado_y_obtenido": 2
+  }
+}

@@ -30,6 +30,10 @@ Go-live MVP: [operación y rollback](docs/GO_LIVE_MVP.md),
 Fase C de resiliencia (24/10/2026): [dictamen NO-GO y prioridades](docs/MVP_GO_NO_GO.md),
 [auditoría y alcance](docs/RESILIENCE_CERTIFICATION.md), [matriz C-01…C-12](docs/FAILURE_MATRIX.md),
 [recuperación controlada](docs/RECOVERY_RUNBOOK.md) y [rendimiento medido](docs/PERFORMANCE_BASELINE.md).
+
+Fase E (24/10/2026, Costa Rica): [capacidad, sostén, recuperación y regresión real](docs/FASE_E_CAPACIDAD.md),
+[evaluación del simulador aislado](docs/FASE_E_SIMULADOR.md) y
+[correcciones pequeñas propuestas](docs/FASE_E_CORRECCIONES_PROPUESTAS.md).
 Los PASS locales y las correcciones integradas no certifican los ensayos físicos pendientes en MNG.
 
 ## Clonar y probar

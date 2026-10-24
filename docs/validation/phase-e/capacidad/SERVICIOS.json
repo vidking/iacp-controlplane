@@ -1,0 +1,182 @@
+{
+  "fecha_local": "2026-10-24T16:02:47.353173-06:00",
+  "fases": {
+    "rps-5": {
+      "terraform-worker": {
+        "cpu_media_pct_un_core": 0.1261904761904762,
+        "cpu_max_pct_un_core": 0.77,
+        "memoria_max_mib": 300.0,
+        "pids_max": 2
+      },
+      "api": {
+        "cpu_media_pct_un_core": 8.823333333333334,
+        "cpu_max_pct_un_core": 14.13,
+        "memoria_max_mib": 107.8,
+        "pids_max": 3
+      },
+      "lifecycle-worker": {
+        "cpu_media_pct_un_core": 0.07761904761904762,
+        "cpu_max_pct_un_core": 0.27,
+        "memoria_max_mib": 128.5,
+        "pids_max": 2
+      },
+      "worker": {
+        "cpu_media_pct_un_core": 0.14809523809523809,
+        "cpu_max_pct_un_core": 0.21,
+        "memoria_max_mib": 93.6,
+        "pids_max": 2
+      },
+      "traefik": {
+        "cpu_media_pct_un_core": 0.8566666666666667,
+        "cpu_max_pct_un_core": 3.08,
+        "memoria_max_mib": 152.2,
+        "pids_max": 13
+      },
+      "db": {
+        "cpu_media_pct_un_core": 1.8152380952380953,
+        "cpu_max_pct_un_core": 2.56,
+        "memoria_max_mib": 75.92,
+        "pids_max": 13
+      },
+      "redis": {
+        "cpu_media_pct_un_core": 0.5785714285714285,
+        "cpu_max_pct_un_core": 0.7,
+        "memoria_max_mib": 14.19,
+        "pids_max": 6
+      }
+    },
+    "rps-10": {
+      "terraform-worker": {
+        "cpu_media_pct_un_core": 0.1319047619047619,
+        "cpu_max_pct_un_core": 0.19,
+        "memoria_max_mib": 300.0,
+        "pids_max": 2
+      },
+      "api": {
+        "cpu_media_pct_un_core": 18.463809523809523,
+        "cpu_max_pct_un_core": 32.18,
+        "memoria_max_mib": 109.6,
+        "pids_max": 4
+      },
+      "lifecycle-worker": {
+        "cpu_media_pct_un_core": 0.08714285714285715,
+        "cpu_max_pct_un_core": 0.2,
+        "memoria_max_mib": 128.5,
+        "pids_max": 2
+      },
+      "worker": {
+        "cpu_media_pct_un_core": 0.11761904761904762,
+        "cpu_max_pct_un_core": 0.25,
+        "memoria_max_mib": 93.61,
+        "pids_max": 2
+      },
+      "traefik": {
+        "cpu_media_pct_un_core": 1.3928571428571428,
+        "cpu_max_pct_un_core": 3.69,
+        "memoria_max_mib": 153.5,
+        "pids_max": 13
+      },
+      "db": {
+        "cpu_media_pct_un_core": 3.3623809523809522,
+        "cpu_max_pct_un_core": 4.51,
+        "memoria_max_mib": 75.93,
+        "pids_max": 13
+      },
+      "redis": {
+        "cpu_media_pct_un_core": 0.7961904761904762,
+        "cpu_max_pct_un_core": 4.66,
+        "memoria_max_mib": 14.44,
+        "pids_max": 6
+      }
+    },
+    "rps-20": {
+      "terraform-worker": {
+        "cpu_media_pct_un_core": 0.166,
+        "cpu_max_pct_un_core": 0.23,
+        "memoria_max_mib": 300.0,
+        "pids_max": 2
+      },
+      "api": {
+        "cpu_media_pct_un_core": 36.87,
+        "cpu_max_pct_un_core": 49.19,
+        "memoria_max_mib": 111.9,
+        "pids_max": 6
+      },
+      "lifecycle-worker": {
+        "cpu_media_pct_un_core": 0.07,
+        "cpu_max_pct_un_core": 0.16,
+        "memoria_max_mib": 128.5,
+        "pids_max": 2
+      },
+      "worker": {
+        "cpu_media_pct_un_core": 0.136,
+        "cpu_max_pct_un_core": 0.16,
+        "memoria_max_mib": 93.61,
+        "pids_max": 2
+      },
+      "traefik": {
+        "cpu_media_pct_un_core": 3.556,
+        "cpu_max_pct_un_core": 7.28,
+        "memoria_max_mib": 155.2,
+        "pids_max": 13
+      },
+      "db": {
+        "cpu_media_pct_un_core": 5.96,
+        "cpu_max_pct_un_core": 8.41,
+        "memoria_max_mib": 78.5,
+        "pids_max": 14
+      },
+      "redis": {
+        "cpu_media_pct_un_core": 3.056,
+        "cpu_max_pct_un_core": 4.79,
+        "memoria_max_mib": 14.2,
+        "pids_max": 6
+      }
+    },
+    "sostenida-30min": {
+      "terraform-worker": {
+        "cpu_media_pct_un_core": 0.10157608695652175,
+        "cpu_max_pct_un_core": 0.21,
+        "memoria_max_mib": 300.0,
+        "pids_max": 2
+      },
+      "api": {
+        "cpu_media_pct_un_core": 19.551684782608696,
+        "cpu_max_pct_un_core": 59.76,
+        "memoria_max_mib": 133.4,
+        "pids_max": 16
+      },
+      "lifecycle-worker": {
+        "cpu_media_pct_un_core": 0.09918478260869565,
+        "cpu_max_pct_un_core": 0.2,
+        "memoria_max_mib": 128.5,
+        "pids_max": 2
+      },
+      "worker": {
+        "cpu_media_pct_un_core": 0.10168478260869565,
+        "cpu_max_pct_un_core": 0.19,
+        "memoria_max_mib": 93.62,
+        "pids_max": 2
+      },
+      "traefik": {
+        "cpu_media_pct_un_core": 1.3818478260869564,
+        "cpu_max_pct_un_core": 4.07,
+        "memoria_max_mib": 156.4,
+        "pids_max": 14
+      },
+      "db": {
+        "cpu_media_pct_un_core": 3.694021739130435,
+        "cpu_max_pct_un_core": 9.42,
+        "memoria_max_mib": 83.14,
+        "pids_max": 21
+      },
+      "redis": {
+        "cpu_media_pct_un_core": 0.9597826086956521,
+        "cpu_max_pct_un_core": 4.85,
+        "memoria_max_mib": 14.49,
+        "pids_max": 6
+      }
+    }
+  },
+  "cpu_docker": "100% equivale a un core; host tiene ocho vCPU"
+}

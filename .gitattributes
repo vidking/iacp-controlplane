@@ -7,3 +7,4 @@
 Dockerfile text eol=lf
 # Conservar los bytes y el hash del CSV original de evidencia.
 docs/validation/phase-d/HTTP_5RPS_DESPUES.csv -text whitespace=cr-at-eol
+docs/validation/phase-e/**/*.csv -text whitespace=cr-at-eol

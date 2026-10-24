@@ -1,5 +1,17 @@
 # Dictamen MVP KVM — 24/10/2026
 
+## Dictamen específico de rendimiento de Fase E — 24/10/2026, Costa Rica
+
+**GO delimitado para lectura a 10 RPS:** 30 minutos, 18.000 solicitudes,
+cero errores y p95 de 190,6 ms en el IACP Control Plane (VM 104), IACP 0.10.1 /
+`7c0804d`. La primera degradación ensayada fue 20 RPS por respuestas 429 del
+limitador por router/fuente. No se determinó el máximo físico del backend.
+[Informe, métricas, recuperación y condiciones de demo](FASE_E_CAPACIDAD.md).
+
+Se mantienen separados el **GO técnico para piloto supervisado** y el
+**NO-GO de resiliencia integral**. La muerte física del worker sigue BLOCKED;
+normalización y rotación de tokens permanecen diferidas después del MVP.
+
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
 ## Dictamen actualizado de Fase D — 24/10/2026

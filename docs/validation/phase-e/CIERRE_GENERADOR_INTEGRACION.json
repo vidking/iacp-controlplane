@@ -1,0 +1,12 @@
+{
+  "fecha_local": "2026-10-24T15:49:15.543951-06:00",
+  "estado": "PASS",
+  "alcance": "Integración local de salida de Locust con UI; usuario SinHTTP sin cliente HTTP",
+  "solicitudes_http": 0,
+  "retorno_esperado": 2,
+  "retorno_obtenido": 2,
+  "duracion_segundos": 2.474,
+  "run_time_original_segundos": 60,
+  "vinculo_control_plane": "Solo validación DNS de origen; ninguna solicitud HTTP ni mutación al runtime",
+  "instrumento": "capacity_locust.py del PR #7"
+}

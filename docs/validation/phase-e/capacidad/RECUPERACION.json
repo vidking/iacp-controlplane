@@ -1,0 +1,62 @@
+{
+  "fecha_local": "2026-10-24T16:02:47.354069-06:00",
+  "baseline_cpu_p95_pct": 5.086444500125287,
+  "baseline_ram_disponible_min_pct": 89.50686971908144,
+  "readiness_umbral_ms": 100,
+  "muestras_consecutivas": 3,
+  "intervalo_objetivo_segundos": 10,
+  "fases": [
+    {
+      "fase": "rps-10",
+      "ultimo_http_local": "2026-10-24T15:23:32.137174-06:00",
+      "primera_muestra_interna_local": "2026-10-24T15:23:42.336124-06:00",
+      "confirmacion_interna_local": "2026-10-24T15:24:02.587231-06:00",
+      "primera_muestra_interna_segundos": 10.19895,
+      "confirmacion_interna_segundos": 30.450057,
+      "primera_muestra_sana_local": "2026-10-24T15:23:42.336124-06:00",
+      "confirmacion_tres_muestras_local": "2026-10-24T15:24:02.587231-06:00",
+      "primera_muestra_segundos": 10.19895,
+      "confirmacion_segundos": 30.450057,
+      "tipo": "retirada de carga sin intervención ni reinicio"
+    },
+    {
+      "fase": "rps-20",
+      "ultimo_http_local": "2026-10-24T15:25:16.818015-06:00",
+      "primera_muestra_interna_local": "2026-10-24T15:25:22.561540-06:00",
+      "confirmacion_interna_local": "2026-10-24T15:25:41.815003-06:00",
+      "primera_muestra_interna_segundos": 5.743525,
+      "confirmacion_interna_segundos": 24.996988,
+      "primera_muestra_sana_local": "2026-10-24T15:28:12.615679-06:00",
+      "confirmacion_tres_muestras_local": "2026-10-24T15:28:31.896613-06:00",
+      "primera_muestra_segundos": 175.797664,
+      "confirmacion_segundos": 195.078598,
+      "tipo": "retirada de carga sin intervención ni reinicio"
+    },
+    {
+      "fase": "rps-5",
+      "ultimo_http_local": "2026-10-24T15:18:57.638776-06:00",
+      "primera_muestra_interna_local": "2026-10-24T15:19:12.045208-06:00",
+      "confirmacion_interna_local": "2026-10-24T15:19:32.253289-06:00",
+      "primera_muestra_interna_segundos": 14.406432,
+      "confirmacion_interna_segundos": 34.614513,
+      "primera_muestra_sana_local": "2026-10-24T15:19:12.045208-06:00",
+      "confirmacion_tres_muestras_local": "2026-10-24T15:19:32.253289-06:00",
+      "primera_muestra_segundos": 14.406432,
+      "confirmacion_segundos": 34.614513,
+      "tipo": "retirada de carga sin intervención ni reinicio"
+    },
+    {
+      "fase": "sostenida-30min",
+      "ultimo_http_local": "2026-10-24T15:59:39.851927-06:00",
+      "primera_muestra_interna_local": "2026-10-24T15:59:52.017913-06:00",
+      "confirmacion_interna_local": "2026-10-24T16:00:12.361432-06:00",
+      "primera_muestra_interna_segundos": 12.165986,
+      "confirmacion_interna_segundos": 32.509505,
+      "primera_muestra_sana_local": "2026-10-24T15:59:52.017913-06:00",
+      "confirmacion_tres_muestras_local": "2026-10-24T16:00:12.361432-06:00",
+      "primera_muestra_segundos": 12.165986,
+      "confirmacion_segundos": 32.509505,
+      "tipo": "retirada de carga sin intervención ni reinicio"
+    }
+  ]
+}

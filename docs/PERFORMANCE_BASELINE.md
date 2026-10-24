@@ -4,6 +4,19 @@ Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVEN
 
 ## Medición desplegada de Fase D — 24/10/2026
 
+Actualización de Fase E, 24/10/2026, `America/Costa_Rica`:
+[escalera, sostén de treinta minutos y límites de admisión](FASE_E_CAPACIDAD.md).
+El nuevo perfil excluye lecturas físicas de `/power` y el historial cambió tras
+los E2E; sus percentiles no constituyen un antes/después causal de optimización
+frente a la mezcla histórica de esta página. Se conservan los resultados de
+Fase C/D con su alcance original.
+
+La medición sostenida de Fase E completó 30 minutos a 10 RPS reales: 18.000
+solicitudes, cero errores, p50/p95/p99 de 80,7/190,6/325,4 ms. En 20 RPS se
+activó la parada por 46 respuestas 429 entre 801 solicitudes; no se acreditó
+saturación física ni se modificó el limitador. Ver informe y métricas de cierre
+para el alcance exacto del dictamen.
+
 El **IACP Control Plane (VM 104)** ejecutaba `7c0804d`, con PR #45 confirmado por hash dentro del contenedor API. Corrida externa `20261024T190505Z-u10`, 10 usuarios, 5 RPS configurados, 240 s y máximo 1.600 requests; sin mutaciones ni E2E simultáneo. Se ejecutó antes de los E2E para conservar 167 operaciones y poder comparar payloads. [CSV original posterior](validation/phase-d/HTTP_5RPS_DESPUES.csv), [métricas completas](validation/phase-d/HTTP_5RPS_DESPUES.json), [comparación HTTP](validation/phase-d/COMPARACION_HTTP.json).
 
 | Métrica | Antes, `4f153e8` | Después, `7c0804d` |
