@@ -156,7 +156,13 @@ def test_uncertain_reconcile_survives_revocation_and_closed_admission(client,aut
     monkeypatch.setenv('IACP_ADMISSION_ENABLED','0');monkeypatch.setenv('IACP_LAB_SELF_SERVICE_ENABLED','0')
     r=client.post('/v1/instances/'+a['instance_id']+'/reconcile',headers=auth,json={});assert r.status_code==202,r.text
     lab.published.assert_called_with(approval_id,'reconcile')
-    observer=LabExecutor();execute_apply(approval_id,sessions,observer,reconcile=True)
+    class Observer(LabExecutor):
+        def observe(self,*args):
+            current=client.get('/v1/operations/'+a['operation_id'],headers=auth).json()
+            assert current['status']=='failed' and current['normalized_status']=='running'
+            assert current['provisioning']['phase']=='running' and 'Conciliación en curso' in current['error_message']
+            return super().observe(*args)
+    observer=Observer();execute_apply(approval_id,sessions,observer,reconcile=True)
     assert not observer.calls
     with sessions() as s:assert s.get(Instance,a['instance_id']).status=='ready'
 

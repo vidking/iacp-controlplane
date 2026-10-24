@@ -51,9 +51,14 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
                 'started_at':approval.started_at if approval else None,'finished_at':approval.finished_at if approval else None}
             if approval and approval.status=='uncertain':
                 normalized='uncertain'
+            elif approval and approval.status in {'queued','running','completed'}:
+                # The legacy operation remains failed while readonly recovery is
+                # executing. The public status must follow the current run.
+                normalized=approval.status
     error_message=None
     if row.error_code:
-        error_message=('Resultado incierto: reconcilie el mismo UUID; no solicite otra VM ni repita la mutación.' if normalized=='uncertain'
+        error_message=('Conciliación en curso; consulte la misma operación. El error_code conserva el fallo anterior.' if normalized=='running' and row.status=='failed'
+            else 'Resultado incierto: reconcilie el mismo UUID; no solicite otra VM ni repita la mutación.' if normalized=='uncertain'
             else 'No se confirmó la entrega; consulte esta operación y continúe con el mismo UUID.' if 'DISPATCH' in row.error_code
             else 'La operación no completó los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.')
     return OperationResponse(
