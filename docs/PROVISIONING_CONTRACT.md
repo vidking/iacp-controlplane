@@ -119,7 +119,9 @@ explícita de result forman parte del cambio contractual documentado.
 
 ## Resultado de la candidata MNG (24/10/2026)
 
-PR independiente [#42](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/42).
+PR independiente [#42](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/42),
+integrado en main mediante `7ea32d5`. Las evidencias posteriores se entregan en
+[PR #43](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/43), solo documentación.
 Implementación desplegada: `4f153e89826f8e8decc25bcd083e093db37668fd`, IACP
 0.10.1. Los commits posteriores de evidencia no cambian código de aplicación.
 

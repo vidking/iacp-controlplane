@@ -325,5 +325,8 @@
   "private_evidence_directory": "/opt/iacp/evidence/provisioning-contract-20261024",
   "compose_credentials_provider_backend_migrations_refactored": false,
   "protected_resources_mutated": false,
-  "rollback_procedure": "Unchanged iacpctl functional rollback; drains admission, Lifecycle and DELETE without deleting state/history"
+  "rollback_procedure": "Unchanged iacpctl functional rollback; drains admission, Lifecycle and DELETE without deleting state/history",
+  "integrated_main_revision": "7ea32d5a16a008fd3d3137d3257f5a8f0713e2af",
+  "application_and_operational_code_equals_integrated_main": true,
+  "evidence_pr": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/43"
 }
