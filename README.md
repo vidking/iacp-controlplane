@@ -5,6 +5,10 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
+La denominación operativa es **IACP Control Plane (VM 104)**. **MNG** designa
+exclusivamente el clúster de laboratorio `mng01`/`mng02`; **Platinum/PRX** es el
+clúster de producción excluido de estos ensayos. Consultar las [convenciones de idioma e infraestructura](docs/CONVENCIONES_INFRAESTRUCTURA.md).
+
 Contrato KVM/CRM 0.10.1 (frontera neutral; flujo de negocio de 0.10.0): [runbook](docs/MVP_CRM_RUNBOOK.md),
 [checklist de acreditación](docs/MVP_CHECKLIST.md), [contrato IaCoC](docs/IACOC_CONTRACT.md)
 y [auditoría Wasabi](docs/STATE_RETENTION_AUDIT.md). Locust vive en un proyecto

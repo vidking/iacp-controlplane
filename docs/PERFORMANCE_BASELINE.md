@@ -1,6 +1,8 @@
 # Baseline de rendimiento — Fase C
 
-Runtime IACP 0.10.1 / `4f153e8`, cliente externo Locust `927a5c5`, 24/10/2026. No se desplegó optimización en el runtime durante esta medición.
+Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
+
+IACP Control Plane (VM 104), IACP 0.10.1 / `4f153e8`, cliente externo Locust `927a5c5`, 24/10/2026. No se desplegó optimización en el runtime durante esta medición.
 
 ## Carga readonly supervisada
 
@@ -42,7 +44,7 @@ La ruta de listado selecciona la página y luego llama al handler individual por
 
 GET de energía física hizo tres GET Proxmox secuenciales por muestra: permisos, config y estado actual. Sumaron aproximadamente 173–192 ms; llamadas directas totales 177–198 ms. Se consultó VM106 únicamente por lectura; `mutations_available=false`, `POWER_INSTANCE_NOT_AUTHORIZED`. El endpoint sigue informando guest_ready desconocido.
 
-Middleware registra duración/route/status/request_id sin cuerpos. Esta instrumentación no separa por sí sola serialización, espera de pool, cada consulta y logging. Las muestras de host muestran 8 CPU, unos 15,8 GiB, carga baja y más de 14 GiB disponibles; no hay evidencia de saturación sostenida de CPU/RAM. Los snapshots puntuales no excluyen picos breves. [Durante](validation/phase-c/HOST_DURING.json), [después](validation/phase-c/HOST_AFTER.json), [actividad DB y Redis](validation/phase-c/RUNTIME_AFTER.json).
+Middleware registra duración/route/status/request_id sin cuerpos. Esta instrumentación no separa por sí sola serialización, espera de pool, cada consulta y logging. Las muestras de la VM 104 muestran 8 CPU, unos 15,8 GiB, carga baja y más de 14 GiB disponibles; no hay evidencia de saturación sostenida de CPU/RAM. Los snapshots puntuales no excluyen picos breves. [Durante](validation/phase-c/HOST_DURING.json), [después](validation/phase-c/HOST_AFTER.json), [actividad DB y Redis](validation/phase-c/RUNTIME_AFTER.json).
 
 ## Cambio puntual y comparación del candidato
 

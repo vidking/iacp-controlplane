@@ -1,10 +1,12 @@
 # Matriz de fallos — Fase C
 
+Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
+
 Revisión 24/10/2026. Baseline IACP `a4f63a9` / runtime `4f153e8`; candidato local descrito en [certificación](RESILIENCE_CERTIFICATION.md). PASS se refiere exclusivamente al alcance probado. Una prueba local aprobada no acredita su equivalente real MNG.
 
 La suite completa y pruebas dirigidas están en [TEST_RESULTS](validation/phase-c/TEST_RESULTS.json); las fuentes citadas permiten reproducir los escenarios con dependencias descartables. Las pruebas nuevas de resiliencia pertenecen al commit [3d815d1](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/commit/3d815d17cc1c2d83fb34e16c5a7e25f93577729a/tests/test_resilience.py) y su [integración](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/commit/3d815d17cc1c2d83fb34e16c5a7e25f93577729a/tests/integration/test_resilience.py). PostgreSQL/Redis reales de integración son locales, sin salida externa; Proxmox/Wasabi son fixtures salvo los snapshots explícitamente readonly de MNG.
 
-| Caso | Resultado local | Resultado MNG | Recuperación observada |
+| Caso | Resultado local | Ensayo real en IACP Control Plane (VM 104) / clúster MNG | Recuperación observada |
 |---|---|---|---|
 | C-01 worker antes de ejecución | PASS: intención y cerco de intento conservados | BLOCKED: sin inyección real | Manual/controlada para ventana commit→publish; automático solo si el mensaje sigue pendiente y es entregado |
 | C-02 después de clone antes de resultado | FAIL baseline; PASS candidato sintético | BLOCKED: P0 continúa abierto en runtime | Supervisor automático local; cierre de operación por reconciliación readonly controlada |
@@ -129,7 +131,7 @@ La suite completa y pruebas dirigidas están en [TEST_RESULTS](validation/phase-
 - Cola/locks: no nueva tarea; sin locks persistentes. Reintentos: 0. Duraciones: no medidas.
 - Recuperación: fail-closed. Evidencia: `tests/test_instances.py`, `tests/test_provisioning_contract.py`, `tests/test_lab_self_service.py::test_cross_tenant_inventory_policy_commands_and_catalog_are_isolated`, `tests/test_deletion.py::test_auth_and_tenant_boundary`.
 
-## C-11 — VM104, VM106 y Golden29000
+## C-11 — VM 104, VM 106 histórica y VM 29000 Golden Image Ubuntu 24.04
 
 - Hipótesis: el ensayo debe rechazar targets protegidos sin enviar una mutación física.
 - Precondiciones: recursos dummy protegidos; para MNG, credenciales actuales de auditoría y GET únicamente.
