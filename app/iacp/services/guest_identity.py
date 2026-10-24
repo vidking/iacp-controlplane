@@ -237,7 +237,10 @@ class GuestClient:
             raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
         from .network import agent_addresses
         network=agent_addresses(self.client._request('GET',target.path+'/agent/network-get-interfaces'),row.mac_address)
-        lease=dict(line.split('=',1) for line in read('/run/systemd/netif/leases/'+str(evidence['ifindex'])).splitlines() if '=' in line)
+        if not network['ip_addresses']:return None
+        try:lease_content=read('/run/systemd/netif/leases/'+str(evidence['ifindex']))
+        except PowerError:return None  # networkd replaces the lease while DHCP converges.
+        lease=dict(line.split('=',1) for line in lease_content.splitlines() if '=' in line)
         clientid=lease.get('CLIENTID','').lower().replace(':','')
         if clientid!='01'+row.mac_address.replace(':','') or lease.get('ADDRESS') not in network['ip_addresses']:return None
         return {**evidence,'network':network,'source':'qemu-guest-agent','guest_ready':None}
