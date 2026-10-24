@@ -1,7 +1,8 @@
+from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from ..db import get_session
@@ -27,7 +28,28 @@ def list_operations(principal: Annotated[Principal, Depends(authorize)], session
     if status is not None:
         query=query.where(Operation.status == status)
     rows=session.scalars(query.order_by(Operation.created_at,Operation.id).limit(limit).offset(offset)).all()
-    return [get_operation(row.id,principal,session) for row in rows]
+    if not rows:
+        return []
+    # Request-local batches are scoped by the already-authorized page. In
+    # particular, absent child records must not trigger one SELECT per row.
+    ids = [row.id for row in rows]
+    events = defaultdict(list)
+    for item in session.scalars(select(OperationEvent).where(OperationEvent.operation_id.in_(ids))
+                                .order_by(OperationEvent.id)):
+        events[item.operation_id].append(item)
+    related = {}
+    for model in (PowerExecution, DeletionExecution, NetworkDiscovery, GuestInitialization):
+        related[model] = {item.operation_id: item for item in session.scalars(
+            select(model).where(model.operation_id.in_(ids)))}
+    creation_ids = [row.instance_id for row in rows if row.kind == 'instance.create']
+    related[TerraformExecution] = {item.instance_id: item for item in session.scalars(
+        select(TerraformExecution).where(TerraformExecution.instance_id.in_(creation_ids)))} if creation_ids else {}
+    related[Instance] = {item.id: item for item in session.scalars(
+        select(Instance).where(Instance.id.in_(creation_ids)))} if creation_ids else {}
+    pairs = [(item.instance_id, item.attempt) for item in related[TerraformExecution].values()]
+    related[TerraformApply] = {(item.instance_id, item.attempt): item for item in session.scalars(
+        select(TerraformApply).where(tuple_(TerraformApply.instance_id, TerraformApply.attempt).in_(pairs)))} if pairs else {}
+    return [_operation_response(row, session, events[row.id], related) for row in rows]
 
 
 @router.get("/{operation_id}", response_model=OperationResponse, operation_id="getOperation")
@@ -36,18 +58,28 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
     row = session.scalar(select(Operation).where(Operation.id == operation_id, Operation.tenant_id == principal.tenant_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Operation not found")
-    events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == row.id).order_by(OperationEvent.id))
-    power = session.get(PowerExecution, row.id)
-    deletion = session.get(DeletionExecution, row.id)
-    network = session.get(NetworkDiscovery,row.id)
-    initialization=session.get(GuestInitialization,row.id)
+    return _operation_response(row, session)
+
+
+def _operation_response(row, session, events=None, related=None):
+    """One projection for authorized list rows and the tenant-filtered detail."""
+    def get(model, identifier):
+        return session.get(model, identifier) if related is None else related[model].get(identifier)
+
+    if events is None:
+        events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == row.id).order_by(OperationEvent.id))
+    power = get(PowerExecution, row.id)
+    deletion = get(DeletionExecution, row.id)
+    network = get(NetworkDiscovery,row.id)
+    initialization=get(GuestInitialization,row.id)
     provisioning=None
     normalized=row.status
     if row.kind=='instance.create':
-        execution=session.get(TerraformExecution,row.instance_id)
+        execution=get(TerraformExecution,row.instance_id)
         if execution:
-            approval=session.scalar(select(TerraformApply).where(TerraformApply.instance_id==row.instance_id,
-                TerraformApply.attempt==execution.attempt))
+            approval=(session.scalar(select(TerraformApply).where(TerraformApply.instance_id==row.instance_id,
+                TerraformApply.attempt==execution.attempt)) if related is None else
+                related[TerraformApply].get((row.instance_id, execution.attempt)))
             phase=approval.status if approval else execution.status
             provisioning={'service':'provisioning','phase':phase,'attempt':execution.attempt,
                 'started_at':approval.started_at if approval else None,'finished_at':approval.finished_at if approval else None}
@@ -69,7 +101,7 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
         error_message=error_message,normalized_status=normalized,recovery_required=normalized=='uncertain',provisioning=provisioning,
         events=[EventResponse.model_validate(item) for item in events],
         fulfillment=(progress(
-            session, session.get(Instance, row.instance_id), normalized) if row.kind == 'instance.create' else None),
+            session, get(Instance, row.instance_id), normalized) if row.kind == 'instance.create' else None),
         network=network.result if network else None,
         initialization=({'status':initialization.status,'mode':initialization.mode,'program_sha256':initialization.program_sha256,
             'started_at':initialization.started_at,'finished_at':initialization.finished_at,'pid':initialization.pid,
