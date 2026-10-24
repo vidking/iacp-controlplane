@@ -17,17 +17,22 @@ from .apply import fingerprint, not_expired
 from .config import Allocation, PlanError, SOURCE_REVISION
 from .deletion_executor import DeletionExecutor
 from .lifecycle import build_executor
-from .locks import ExecutionBusy, instance_lock
+from .locks import ExecutionBusy, instance_lock, admission_lock
 
 
-def gate(instance):
+def gate(instance, session=None):
     if os.environ.get('IACP_TERRAFORM_DELETE_ENABLED') != '1' or os.environ.get('IACP_TERRAFORM_APPLY_ENABLED') != '1':
         raise Conflict('DELETE_DISABLED')
     try:
         allowed = {str(UUID(x.strip())) for x in os.environ.get('IACP_DISPOSABLE_INSTANCE_IDS', '').split(',') if x.strip()}
     except ValueError:
         raise Conflict('DELETE_ALLOWLIST_INVALID') from None
-    if instance.id not in allowed or instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106}:
+    delegated = False
+    if session is not None and instance.self_service_policy_id:
+        from ..services.lab import member
+        member(session, instance, 'delete', current_profiles=True)
+        delegated = True
+    if (instance.id not in allowed and not delegated) or instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106}:
         raise Conflict('DELETE_DISPOSABLE_INSTANCE_REQUIRED')
 
 
@@ -82,11 +87,11 @@ def publish_task(session, operation, publish, mode):
         raise QueueUnavailable from None
 
 
-def plan_request(session, instance, principal, key, publish):
+def plan_request(session, instance, principal, key, publish, *, autonomous=False):
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
-    digest = fingerprint({'instance_id': instance.id, 'action': 'delete'})
+    digest = fingerprint({'instance_id': instance.id, 'action': 'delete', **({'autonomous': True} if autonomous else {})})
     try:
-        with instance_lock(session.get_bind(), instance.id) as heartbeat:
+        with admission_lock(session), instance_lock(session.get_bind(), instance.id) as heartbeat:
             instance = session.get(Instance, instance.id, with_for_update=True, populate_existing=True)
             previous = session.scalar(query)
             if previous:
@@ -96,7 +101,11 @@ def plan_request(session, instance, principal, key, publish):
                 resume = session.get(DeletionExecution, previous.id).phase == 'plan_queued'
                 identifier = previous.id
             else:
-                gate(instance)
+                gate(instance, session)
+                from ..services.lab import authorize_operation
+                authorize_operation(session, instance, 'delete')
+                if autonomous and not instance.self_service_policy_id:
+                    raise Conflict('LAB_POLICY_REQUIRED')
                 target, approval = managed_target(session, instance)
                 if active_deletion(session, instance.id):
                     raise Conflict('DELETE_OPERATION_ACTIVE')
@@ -113,6 +122,7 @@ def plan_request(session, instance, principal, key, publish):
                 session.add(Job(id=str(uuid4()), operation=operation.kind, tenant_id=principal.tenant_id,
                                 operation_id=operation.id, status='queued'))
                 row = DeletionExecution(operation_id=operation.id, instance_id=instance.id, status='queued', phase='plan_queued',
+                    autonomous=autonomous,
                     vmid=target.vmid, node=target.node, name=target.name,
                     provisioning_binding=binding_digest(instance, execution, approval))
                 session.add(row);session.flush();context(session, row)
@@ -126,6 +136,9 @@ def plan_request(session, instance, principal, key, publish):
         raise Conflict('DELETE_OPERATION_ACTIVE_OR_KEY_CONFLICT') from None
     if resume:
         publish_task(session, session.get(Operation, identifier), publish, 'plan')
+    elif autonomous:
+        from ..services.lab import advance_deletion
+        advance_deletion(session, instance, identifier, publish)
     return result
 
 
@@ -146,7 +159,7 @@ def approve(session, instance, principal, body, key):
                 if row.approval_key != key or row.approval_hash != digest or row.approved_by != principal.subject:
                     raise Conflict('IDEMPOTENCY_CONFLICT')
                 return accepted(session, operation)
-            gate(instance);context(session, row)
+            gate(instance, session);context(session, row)
             if principal.subject == operation.requested_by:
                 raise Conflict('INDEPENDENT_APPROVAL_REQUIRED')
             if row.status != 'planned' or row.plan_sha256 != body['plan_sha256'] or row.started_at:
@@ -174,7 +187,7 @@ def dispatch(session, instance, principal, body, key, publish):
             if row.started_at:
                 mode = 'reconcile'
             else:
-                gate(instance)
+                gate(instance, session)
                 if (row.status not in {'approved','queued'} or row.phase not in {'approved','delete_queued'}
                         or not row.approved_by or row.approved_by == principal.subject
                         or not row.expires_at or not not_expired(row.expires_at)):
@@ -273,7 +286,7 @@ def _execute(identifier, mode, sessions, executor, heartbeat):
                 raise PlanError('TENANT_INACTIVE')
             context(session, row)
             if mode != 'reconcile':
-                gate(session.get(Instance, row.instance_id))
+                gate(session.get(Instance, row.instance_id), session)
         return False
     def before_mutation():
         check()

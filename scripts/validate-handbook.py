@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     documents = sorted((ROOT / "docs" / "handbook").glob("*.md"))
-    documents.extend([ROOT / "docs" / "OPERATIONS.md", ROOT / "docs" / "SAFE_DELETE.md", ROOT / "docs" / "DHCP_PILOT.md", ROOT / "docs" / "DHCP_RECOVERY.md"])
+    documents.extend(ROOT / "docs" / name for name in ["OPERATIONS.md","SAFE_DELETE.md","DHCP_PILOT.md","DHCP_RECOVERY.md","SELF_SERVICE.md","CRM_INTEGRATION.md","ENGINE_INVENTORY.md"])
     if not documents:
         raise ValueError("Faltan los manuales")
     for document in documents:
@@ -26,9 +26,14 @@ def main():
             else:
                 subprocess.run(["bash", "-n"], input=body, text=True, check=True)
     api = json.loads((ROOT / "docs" / "openapi.json").read_text())
-    if api["info"]["version"] != "0.8.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
+    if api["info"]["version"] != "0.9.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
         raise ValueError("Versión/servidor del contrato distintos de los documentados")
     required = [
+        ("/v1/profiles","get"), ("/v1/lab/usage","get"), ("/v1/lab/policies","post"),
+        ("/v1/lab/policies/{policy_id}/approve","post"), ("/v1/lab/policies/{policy_id}/renew","post"),
+        ("/v1/lab/policies/{policy_id}/revoke","post"), ("/v1/operations","get"),
+        ("/v1/instances/{instance_id}/provision","post"), ("/v1/instances/{instance_id}/retry-provision","post"),
+        ("/v1/instances/{instance_id}/reconcile","post"),
         ("/v1/instances/{instance_id}/network/discover", "post"),
         ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),
         ("/v1/jobs/{job_id}", "get"), ("/v1/operations/{operation_id}", "get"),

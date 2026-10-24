@@ -9,40 +9,50 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs, operations, terraform, applies, power, deletion
+from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab
 from .security import authorize_docs
 
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Control Plane", version="0.8.0",
+        title="IACP Orchestrator", version="0.9.0",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
         description=(
-            "API corporativa privada por LAN/VPN.\n\n"
+            "IACP Orchestrator administra instancias KVM, operaciones asíncronas y Lifecycle por tenant. "
+            "El componente **IaC Worker** aprovisiona recursos con perfiles y cuotas autorizados. "
+            "El contrato de autoservicio no depende de Terraform u OpenTofu. API corporativa privada por LAN/VPN.\n\n"
             "**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. "
             "Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer "
             "del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n"
             "**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita "
             "energía; approver autoriza planes y debe ser distinto del solicitante.\n\n"
-            "**Flujo real:** crear prepara un plan; consultar la ejecución Terraform, revisar y aprobar "
-            "su SHA-256 y aplicar el plan autorizado. HTTP 202 acredita admisión, no una VM lista. "
+            "**Autoservicio:** consultar GET /v1/profiles y GET /v1/lab/policies. Crear con network_profile y "
+            "self_service_policy_id aprobados admite una VM nueva y el IaC Worker procesa el plan verificado por delegación. "
+            "Sin política se conserva la revisión independiente de cada plan en los endpoints administrativos históricos. "
+            "HTTP 202 acredita admisión, no una VM lista. "
             "Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n"
-            "VMID, nodo, plantilla y direccionamiento proceden de perfiles autorizados del servidor; no se aceptan en el payload. "
+            "**Identificadores:** instance_id es el UUID estable de la instancia; VMID es un identificador interno asignado por IACP. "
+            "operation_id identifica una intención asíncrona; X-Request-ID correlaciona cada petición HTTP. "
+            "Idempotency-Key identifica una intención dentro del tenant: misma clave y mismo cuerpo conservan IDs; otro cuerpo devuelve 409. "
+            "VMID, plantilla y direccionamiento proceden de perfiles autorizados; node_preference valida un destino admitido u omitir para selección automática. "
             "Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. "
             "Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. "
             "Con admisión cerrada los comandos devuelven 503; Lifecycle tiene "
             "su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. "
             "Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n"
             "**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, "
-            "plan destroy revisado y aprobación independiente. VM 104 y VM 106 están protegidas."
+            "plan destroy verificado y aprobación independiente o delegación vigente para una VM creada bajo esa política. "
+            "Con política, DELETE con cuerpo {} prepara y ejecuta el único plan autorizado; exige VM apagada y sin locks. "
+            "VM 104 y VM 106 están protegidas. Las operaciones inciertas solo se reconcilian por observación."
         ),
         openapi_tags=[
             {"name": "health", "description": "Liveness y readiness; no crean infraestructura."},
             {"name": "instances", "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa."},
             {"name": "operations", "description": "Seguimiento asíncrono y eventos auditados por operation_id."},
-            {"name": "terraform", "description": "Estado, intento y SHA del plan; cancelar/reintentar no ejecuta Apply."},
-            {"name": "terraform-apply", "description": "Revisión independiente y Apply de un único plan guardado."},
+            {"name": "lab-administration", "description": "Administración de políticas de laboratorio: propuesta, revisión independiente, vigencia, cuotas y revocación. No integra sistemas comerciales."},
+            {"name": "terraform", "description": "Administración del IaC Worker. Endpoints históricos compatibles del motor Terraform 1.16.6; implementación y licencias conservadas para auditoría."},
+            {"name": "terraform-apply", "description": "Administración del IaC Worker: revisión independiente y Apply de un único plan guardado, o autorización delegada auditable."},
             {"name": "kvm-lifecycle", "description": "Energía de KVM propias; exige contrato de propiedad y flag Lifecycle."},
             {"name": "disposable-deletion", "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos."},
         ],
@@ -55,7 +65,8 @@ def create_app() -> FastAPI:
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
-            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|terraform/applies/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover)', request.url.path)
+            r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|terraform/applies/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
+        bookkeeping = bookkeeping or (request.method == 'POST' and re.fullmatch(r'/v1/lab/policies/[a-f0-9-]{36}/revoke',request.url.path))
         if request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
             response = JSONResponse(status_code=503, content={"detail": "Admission drained"}, headers={"Retry-After": "60"})
         else:
@@ -95,6 +106,7 @@ def create_app() -> FastAPI:
     application.include_router(applies.router)
     application.include_router(power.router)
     application.include_router(deletion.router)
+    application.include_router(lab.router)
 
     from .terraform.config import PlanError
 

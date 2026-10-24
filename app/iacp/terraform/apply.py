@@ -251,6 +251,12 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             raise PlanError("CANCELLED")
         with sessions() as session:
             current = session.get(TerraformApply, identifier, with_for_update=True)
+            if instance.self_service_policy_id:
+                from ..services.lab import member
+                try:
+                    member(session, session.get(Instance, current.instance_id), "create", current_profiles=True)
+                except Conflict as failure:
+                    raise PlanError(str(failure)) from None
             check_binding(current, session.get(TerraformExecution, current.instance_id))
             if current.status != "running" or current.started_at or not not_expired(current.expires_at):
                 raise PlanError("APPROVAL_EXPIRED_OR_CONSUMED")

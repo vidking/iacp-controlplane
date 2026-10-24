@@ -3,6 +3,7 @@
 services:
   api:
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
       IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:-0}
@@ -14,6 +15,7 @@ services:
     image: iacp/controlplane-api:${IACP_RELEASE:?Define el commit aprobado}
     command: [celery, -A, 'iacp.lifecycle.worker:celery_app', worker, -Q, lifecycle, '--concurrency=1', '--loglevel=WARNING', '--without-gossip', '--without-mingle']
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       POSTGRES_DB: ${POSTGRES_DB:-iacp}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}

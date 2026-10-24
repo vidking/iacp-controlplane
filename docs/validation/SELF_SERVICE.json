@@ -1,0 +1,38 @@
+{
+  "status": "implementation under verification; not promoted yet",
+  "candidate_api_version": "0.9.0",
+  "candidate_schema": "0009_lab_self_service",
+  "verified_runtime": {
+    "revision": "2b1aea29cd207cb48f930c1c193acb0c0e699b61",
+    "api_version": "0.8.0",
+    "schema": "0008_dhcp_profiles"
+  },
+  "first_pilot_deletion": {
+    "instance_id": "084c83e5-8d44-41a9-a527-f496cd83168b",
+    "vmid": 30000,
+    "node": "mng01",
+    "operation_id": "6e415918-919b-47e7-ba28-5eeb5505d693",
+    "plan_sha256": "532d57db18c26acc7f3e2e64dfeeb275eef02b5430e10747ecd35d99f215051d",
+    "approved_by": "iacp-lab-approver",
+    "authority": "Explicit user correction to execute the reviewed laboratory plan in this session",
+    "finished_at": "2026-10-24T00:27:57.077183Z",
+    "status": "completed",
+    "proxmox_present": false,
+    "state_resources": 0,
+    "state_lineage": "988b3dd0-8538-fa59-ea9b-2d5f9b04f7de",
+    "state_serial_before": 2,
+    "state_serial_after": 3,
+    "state_version_after": "001792801675895994517-wGAc-rC1OY",
+    "state_sha256_after": "a1d2bd2eb99e7797a1561eb28964557dd370a2a458f13a37cea9de0e7c4e19fa",
+    "two_consistent_reads": true,
+    "delete_replay_same_key": "202, same operation, completed",
+    "audit_and_tombstone_preserved": true,
+    "private_evidence": "/opt/iacp/evidence/dhcp-continuation-20261023T233200Z/deletion-completed-verified.json"
+  },
+  "validation_boundaries": [
+    "Unit and provider fixtures do not certify real KVM operations",
+    "Integration uses real disposable PostgreSQL17/Redis7/Celery with simulated infrastructure",
+    "The first pilot deletion above is an actual API execution"
+  ],
+  "multi_vm_pilot": {"executed": false}
+}

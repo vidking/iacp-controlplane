@@ -43,6 +43,15 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
         if profile_file:
             old_mounts=old_service.get('volumes',[])
             additions=[m for m in new_service.get('volumes',[]) if m.get('target')=='/run/config/profiles.json']
+            old_profile=next((m for m in old_mounts if m.get('target')=='/run/config/profiles.json'),None)
+            if old_profile and len(additions)==1:
+                mount=additions[0]
+                if (mount.get('source')==profile_file and mount.get('source')!=old_profile.get('source')
+                        and mount.get('type')=='bind' and mount.get('read_only') is True
+                        and mount.get('bind',{}).get('create_host_path') is False
+                        and {k:v for k,v in mount.items() if k!='source'}=={k:v for k,v in old_profile.items() if k!='source'}):
+                    mount['source']=old_profile['source']
+                    promoted_paths.append('/services/'+role+'/volumes/profiles.json')
             if not any(m.get('target')=='/run/config/profiles.json' for m in old_mounts) and len(additions)==1:
                 mount=additions[0]
                 if (mount.get('type')=='bind' and mount.get('source')==profile_file and mount.get('read_only') is True
@@ -76,6 +85,10 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
         for key, safe in [('IACP_TERRAFORM_DELETE_ENABLED', '0'), ('IACP_DISPOSABLE_INSTANCE_IDS', '')]:
             if key not in old_env and new_env.get(key) == safe:
                 allowed.add('/services/' + role + '/environment/' + key)
+    for role in ('api','terraform-worker','lifecycle-worker'):
+        old_env=a['services'][role].get('environment',{});new_env=b['services'][role].get('environment',{})
+        if 'IACP_LAB_SELF_SERVICE_ENABLED' not in old_env and new_env.get('IACP_LAB_SELF_SERVICE_ENABLED')=='0':
+            allowed.add('/services/'+role+'/environment/IACP_LAB_SELF_SERVICE_ENABLED')
     old, new = a['services']['ownership-certifier'], b['services']['ownership-certifier']
     if new.get('environment', {}).get('TMPDIR') == '/run/iacp-certification':
         allowed.add('/services/ownership-certifier/environment/TMPDIR')

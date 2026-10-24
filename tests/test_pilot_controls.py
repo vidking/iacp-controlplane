@@ -36,11 +36,32 @@ def review(driver,promotion,key,**fields):
     return data
 
 
-@pytest.mark.parametrize('action',['admit','enable_delete'])
+@pytest.mark.parametrize('action',['admit','enable_delete','activate_lab'])
 def test_new_actions_require_their_own_authorization(promotion,action):
     op,env,_=promotion;before=env.read_bytes();op.approve.side_effect=RuntimeError('not approved')
     with pytest.raises(RuntimeError):getattr(op,action)()
     assert env.read_bytes()==before;op.up.assert_not_called()
+
+
+@pytest.mark.parametrize('capacity',[False,True])
+def test_lab_activation_requires_reviewed_capacity_and_separate_policy(driver,promotion,capacity):
+    op,env,path=promotion
+    op.m['profile_configuration']={'path':str(path),'sha256':driver.digest(path)}
+    review(driver,promotion,'lab_self_service_review',environment='lab',lab_network_authorized=True,
+        resource_capacity_verified=capacity,profile_file=op.m['profile_configuration'],
+        policies=[{'policy_id':str(uuid4()),'tenant_id':str(uuid4()),'policy_sha256':'b'*64}])
+    if not capacity:
+        before=env.read_bytes()
+        with pytest.raises(RuntimeError,match='capacity'):op.activate_lab()
+        assert env.read_bytes()==before;op.up.assert_not_called()
+    else:
+        op.activate_lab()
+        op.approve.assert_called_once_with('activate-lab')
+        ast.parse(op.exec_python.call_args.args[1])
+        text=env.read_text()
+        assert 'IACP_LAB_SELF_SERVICE_ENABLED=1' in text and 'IACP_TERRAFORM_APPLY_ENABLED=1' in text
+        assert 'IACP_DISPOSABLE_INSTANCE_IDS=\n' in text and 'IACP_LIFECYCLE_INSTANCE_IDS=\n' in text
+        op.verify.assert_called_with(admission=1,lifecycle=1)
 
 
 def test_admission_never_enables_lifecycle_and_requires_real_ipam(driver,promotion):

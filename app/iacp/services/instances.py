@@ -31,7 +31,8 @@ def accepted(session: Session, operation: Operation, digest: str) -> InstanceAcc
 
 def create_instance(session: Session, principal: Principal, spec: InstanceCreate,
                     key: str, publish: Publisher) -> InstanceAccepted:
-    values=spec.model_dump(exclude={"network_profile"} if spec.network_profile is None else set())
+    optional={"network_profile", "node_preference", "self_service_policy_id"}
+    values=spec.model_dump(exclude={name for name in optional if getattr(spec,name) is None})
     digest = hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
     previous = session.scalar(query)
@@ -39,6 +40,10 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
         return accepted(session, previous, digest)
     from ..terraform.config import instance_executor
     mode = instance_executor()
+    if spec.node_preference and not spec.network_profile:
+        raise Conflict("NODE_PREFERENCE_REQUIRES_PROFILE")
+    if spec.self_service_policy_id and (not spec.network_profile or mode != "terraform"):
+        raise Conflict("LAB_PROFILE_REQUIRED")
     if spec.network_profile and mode != "terraform":
         from ..terraform.config import PlanError
         raise PlanError("PROFILE_REQUIRES_TERRAFORM")
@@ -49,15 +54,17 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
     )
     job = Job(id=str(uuid4()), operation="instance.plan" if mode == "terraform" else "instance.create", status="queued",
               tenant_id=principal.tenant_id, operation_id=operation.id)
-    from ..terraform.locks import ExecutionBusy, instance_lock
+    from ..terraform.locks import ExecutionBusy, admission_lock
     from ..terraform.profiles import reserve_profile
     # Reuse the existing advisory lock utility; commit the VMID with the intent.
-    guard=instance_lock(session.get_bind(), 'machine-profile:vmid-reservations') if spec.network_profile and mode=='terraform' else nullcontext()
+    guard=admission_lock(session) if spec.network_profile and mode=='terraform' else nullcontext()
     try:
         with guard:
             previous=session.scalar(query)
             if previous is not None:
                 return accepted(session,previous,digest)
+            from .lab import admit, instance_digest
+            policy=admit(session,instance) if spec.self_service_policy_id else None
             allocation=reserve_profile(session,instance) if spec.network_profile and mode=='terraform' else None
             session.add(instance)
             session.flush()
@@ -68,6 +75,10 @@ def create_instance(session: Session, principal: Principal, spec: InstanceCreate
                 from ..terraform.lifecycle import initial_execution
                 session.flush()
                 initial_execution(session, instance, operation, job, allocation)
+                if policy:
+                    execution=session.get(TerraformExecution,instance.id)
+                    instance.policy_binding_sha256=instance_digest(instance,execution,policy)
+                    event(session,operation,"lab_policy_bound", "policy:"+policy.id)
             event(session, operation, "accepted", principal.subject)
             session.commit()
     except ExecutionBusy:

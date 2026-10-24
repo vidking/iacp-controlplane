@@ -10,6 +10,7 @@ services:
         bind:
           create_host_path: false
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       IACP_INSTANCE_EXECUTOR: terraform
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:-0}
@@ -22,6 +23,7 @@ services:
       target: terraform-worker
     image: ${IACP_TF_WORKER_IMAGE:?Indicar una imagen de release distinta del bootstrap}
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       POSTGRES_DB: ${POSTGRES_DB:-iacp}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}

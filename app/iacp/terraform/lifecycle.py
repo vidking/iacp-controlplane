@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ..models import Instance, Job, Operation, TerraformAttempt, TerraformExecution, Tenant, utcnow
-from ..services.instances import event
+from ..services.instances import event, Conflict
 from .config import Allocation, PlanError, SOURCE_REVISION, allocation_for
 from .executor import TerraformExecutor
 from .locks import ExecutionBusy, instance_lock
@@ -91,12 +91,15 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
                 raise PlanError("SOURCE_REVISION_CHANGED")
             allocation = Allocation.model_validate(execution.allocation) if execution.allocation else load_allocation(instance)
             if instance.network_profile:
-                from .profiles import load_profile
+                from .profiles import load_profile, settings_for
                 profile=load_profile(instance.network_profile,instance.tenant_id)
                 actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway'})
-                if actual != profile.settings.model_dump():
+                if actual != settings_for(profile, allocation.node_name).model_dump():
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
+            if instance.self_service_policy_id:
+                from ..services.lab import member
+                member(session,instance,"create",current_profiles=True)
             execution.allocation = allocation.model_dump()
             execution.vmid, execution.source_revision = allocation.vm_id, SOURCE_REVISION
             state_key = execution.state_key
@@ -108,6 +111,8 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
         executor.prepare_apply(instance_id, number, result.sha256, state_key, allocation.model_dump(), variables)
     except PlanError as error:
         error_code = error.code
+    except Conflict as error:
+        error_code = str(error)
     except Exception:
         error_code = "TERRAFORM_EXECUTION_FAILED"
     with sessions() as session:

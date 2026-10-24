@@ -33,7 +33,8 @@ class JobResponse(BaseModel):
 
 class InstanceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra={"examples": [
-        {"name":"iacp-mvp-dhcp-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp"}
+        {"name":"iacp-mvp-dhcp-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp"},
+        {"name":"desarrollo-kvm-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp", "self_service_policy_id":"00000000-0000-4000-8000-000000000001"}
     ]})
     name: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
                       examples=["iacp-mvp-demo-01"], description="Nombre único por tenant. El perfil DHCP omite IPAM; el modo estático conserva la asignación autorizada.")
@@ -44,12 +45,17 @@ class InstanceCreate(BaseModel):
     disk_gb: int = Field(default=20, ge=8, le=4096)
     network_profile: str | None = Field(default=None, min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$",
         examples=["lab-dhcp"], description="Perfil autorizado por tenant. DHCP omite IPAM; sin perfil se conserva el flujo estático existente.")
+    node_preference: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.-]*$",
+        description="Preferencia opcional entre los nodos de destino del perfil. Omitir para selección automática.")
+    self_service_policy_id: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$",
+        description="UUID de una política de laboratorio aprobada e independiente. Solo vincula VMs nuevas; nunca adopta recursos existentes.")
 
 
 class InstanceAccepted(JobAccepted):
-    instance_id: str
-    operation_id: str
-    executor: Literal["simulated", "terraform"] = "simulated"
+    instance_id: str = Field(description="UUID estable de la instancia IACP; nunca un VMID de Proxmox.")
+    operation_id: str = Field(description="UUID de la intención asíncrona; consultar GET /v1/operations/{operation_id}.")
+    executor: Literal["simulated", "terraform"] = Field(default="simulated", description="Campo histórico de compatibilidad; el consumidor no selecciona ni invoca el motor IaC.")
+    provisioning_service: Literal["IaC Worker"] = "IaC Worker"
 
 
 class InstanceResponse(BaseModel):
@@ -61,6 +67,8 @@ class InstanceResponse(BaseModel):
     name: str
     image: str
     network_profile: str | None = None
+    node_preference: str | None = None
+    self_service_policy_id: str | None = None
     network_mode: Literal["static", "dhcp"] = "static"
     ip_addresses: list[str] = Field(default_factory=list)
     network_observation: dict | None = None
@@ -69,6 +77,7 @@ class InstanceResponse(BaseModel):
     disk_gb: int
     status: Literal["pending", "provisioning", "ready", "failed", "deleting", "deleted"]
     executor: Literal["simulated", "terraform"]
+    provisioning_service: Literal["IaC Worker"] = "IaC Worker"
     infrastructure_kind: Literal["simulated", "unprovisioned", "kvm"]
     vmid: int | None
     node: str | None
@@ -94,6 +103,10 @@ class OperationResponse(BaseModel):
     status: OperationStatus
     requested_by: str
     error_code: str | None
+    error_message: str | None = None
+    normalized_status: OperationStatus
+    recovery_required: bool = False
+    provisioning: dict | None = None
     created_at: datetime
     updated_at: datetime
     events: list[EventResponse]

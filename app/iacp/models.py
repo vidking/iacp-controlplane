@@ -21,6 +21,29 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class LabPolicy(Base):
+    __tablename__ = "lab_policies"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_lab_policy_tenant_key"),
+        CheckConstraint("status IN ('proposed','approved','revoked')", name="ck_lab_policy_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    specification: Mapped[dict] = mapped_column(JSON, nullable=False)
+    profile_snapshots: Mapped[dict] = mapped_column(JSON, nullable=False)
+    policy_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_history: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list, server_default=text("'[]'"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(String(128))
+
+
 class Instance(Base):
     __tablename__ = "instances"
     __table_args__ = (
@@ -33,6 +56,9 @@ class Instance(Base):
     name: Mapped[str] = mapped_column(String(63), nullable=False)
     image: Mapped[str] = mapped_column(String(63), nullable=False)
     network_profile: Mapped[str | None] = mapped_column(String(63))
+    node_preference: Mapped[str | None] = mapped_column(String(128))
+    self_service_policy_id: Mapped[str | None] = mapped_column(ForeignKey("lab_policies.id"))
+    policy_binding_sha256: Mapped[str | None] = mapped_column(String(64))
     network_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="static", server_default="static")
     ip_addresses: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
     network_observation: Mapped[dict | None] = mapped_column(JSON)
@@ -232,6 +258,7 @@ class DeletionExecution(Base):
     operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"), primary_key=True)
     instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    autonomous: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     phase: Mapped[str] = mapped_column(String(30), nullable=False)
     vmid: Mapped[int] = mapped_column(Integer, nullable=False)
     node: Mapped[str] = mapped_column(String(128), nullable=False)

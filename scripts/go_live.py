@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0008_dhcp_profiles"
+HEAD = "0009_lab_self_service"
 SOURCE = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
 ARCHIVE = "05ed1d0d6f2b886df8072eb24cd764dc881f63e9f536baa9af3bafa0804d156b"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -69,6 +69,13 @@ def check_idle(report, allowed_uncertain=()):
 
 def compare_history(before, after):
     for name, evidence in before["tables"].items():
+        if name in {'instances','deletion_executions'} and before['schema']!=[HEAD]:
+            projected=after.get('compatibility',{}).get(name+'_before_0009',{})
+            if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
+                require(projected.get('new_fields_default') is True
+                        and {k:projected.get(k) for k in ('count','sha256')}==evidence,
+                        'Historical data changed during lab policy migration: '+name)
+                continue
         if name=='instances' and before['schema']!=[HEAD] and before['schema'] in [
                 ['0004_authorized_apply'],['0005_kvm_lifecycle'],['0006_power_ownership'],['0007_safe_deletion']]:
             projected=after.get('compatibility',{}).get('instances_before_0008',{})
@@ -185,12 +192,15 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.evidence("approval", {"action": action, "record_sha256": record["sha256"], "actor": change["actor"], "reference": change["reference"]})
         return change
 
-    def flags(self, *, admission, lifecycle, deletion=None, disposable_ids=None, lifecycle_ids=None):
+    def flags(self, *, admission, lifecycle, deletion=None, disposable_ids=None, lifecycle_ids=None, lab_self_service=None):
         path = Path(self.m["environment_file"])
         require(not path.is_symlink(), "Environment file must not be a symlink")
         original = path.read_text()
         values = {"IACP_ADMISSION_ENABLED": str(admission), "IACP_KVM_LIFECYCLE_ENABLED": str(lifecycle),
                   "IACP_TERRAFORM_APPLY_ENABLED": "1"}
+        if lab_self_service is not None:
+            require(lab_self_service in (0,1), 'Invalid lab self-service flag')
+            values['IACP_LAB_SELF_SERVICE_ENABLED']=str(lab_self_service)
         if lifecycle_ids is not None:
             from uuid import UUID
             values['IACP_LIFECYCLE_INSTANCE_IDS']=','.join(str(UUID(v)) for v in lifecycle_ids)
@@ -198,7 +208,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             from uuid import UUID
             require(deletion in (0, 1), "Invalid deletion flag")
             identifiers = [str(UUID(identifier)) for identifier in disposable_ids or []]
-            require(not deletion or bool(identifiers), "Deletion requires an explicit UUID allowlist")
+            require(not deletion or bool(identifiers) or lab_self_service==1, "Deletion requires an explicit UUID allowlist or reviewed lab activation")
             values.update(IACP_TERRAFORM_DELETE_ENABLED=str(deletion), IACP_DISPOSABLE_INSTANCE_IDS=','.join(identifiers))
         lines = [line for line in original.splitlines() if not re.match(
             r"^\s*(?:export\s+)?(?:" + "|".join(values) + r")\s*=", line)]
@@ -285,6 +295,11 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             old_mounts = {m["Destination"]: m["Source"] for m in self.container(role)["Mounts"] if m["Destination"].startswith("/run/")}
             planned = self.planned_mounts(cfg, role)
             for target, source in old_mounts.items():
+                profile=self.m.get('profile_configuration',{})
+                if (target=='/run/config/profiles.json' and profile
+                        and planned.get(target)==('bind',profile['path'],False)):
+                    require(digest(profile['path'])==profile['sha256'], 'Replacement profile checksum mismatch')
+                    continue
                 require(planned.get(target) == ("bind", source, False), "Existing secret/config mount changed")
         source_mount = next(m for m in services["terraform-worker"]["volumes"] if m["target"] == "/iac-source")
         require(source_mount["read_only"] is True, "IaC source must be readonly")
@@ -308,13 +323,13 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         restored = json.loads(Path(backup["restore_evidence"]).read_text())
         expected_backup_schema=backup.get('schema','0004_authorized_apply')
         minimum_tables={'0004_authorized_apply':9,'0005_kvm_lifecycle':10,'0006_power_ownership':11,
-                        '0007_safe_deletion':12,'0008_dhcp_profiles':13}
+                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,HEAD:14}
         require(restored["passed"] is True and restored["isolated"] is True
                 and restored["backup_sha256"] == backup["sha256"] and restored["schema"] == expected_backup_schema
                 and expected_backup_schema in minimum_tables
                 and restored["table_count"] >= minimum_tables[expected_backup_schema], "Restore attestation is incomplete")
         report = self.snapshot()
-        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], ["0007_safe_deletion"], [HEAD]], "Unsupported schema")
+        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], ["0007_safe_deletion"], ['0008_dhcp_profiles'], [HEAD]], "Unsupported schema")
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
         return report
 
@@ -458,6 +473,9 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0')
                         and values.get('IACP_DISPOSABLE_INSTANCE_IDS', '') == planned_env.get('IACP_DISPOSABLE_INSTANCE_IDS', ''),
                         "Deletion flag/allowlist differs from reviewed configuration")
+            if role in {'api','terraform-worker','lifecycle-worker'}:
+                require(values.get('IACP_LAB_SELF_SERVICE_ENABLED','0')==config['services'][role]['environment'].get('IACP_LAB_SELF_SERVICE_ENABLED','0'),
+                        'Lab self-service flag differs from reviewed configuration')
             if role in {"api", "lifecycle-worker"}:
                 require(values.get("IACP_KVM_LIFECYCLE_ENABLED", "0") == str(lifecycle), "Lifecycle flag mismatch")
                 require(values.get('IACP_LIFECYCLE_INSTANCE_IDS','')==config['services'][role]['environment'].get('IACP_LIFECYCLE_INSTANCE_IDS',''),
@@ -536,7 +554,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             return
         # Stop admission at the source, including internal clients. Never stop shared Traefik.
         self.compose("stop", "--timeout", "60", "api", timeout=75)
-        self.flags(admission=0, lifecycle=0)
+        self.flags(admission=0, lifecycle=0, lab_self_service=0)
         deadline = time.monotonic() + 300
         while True:
             try:
@@ -605,6 +623,44 @@ with get_session_factory()() as s:
         require(review.get('approved') is True and review.get('release') == self.m['release']
                 and review.get('change_reference') == change['reference'], "Operator review missing or for another change")
         return review
+
+    def activate_lab(self):
+        """Reviewed dynamic scope uses approved policies, never a global VM allowlist."""
+        change=self.approve('activate-lab')
+        self.preflight()
+        self.verify(admission=0,lifecycle=0)
+        review=self.operator_review('lab_self_service_review',change)
+        require(review.get('environment')=='lab' and review.get('lab_network_authorized') is True,
+                'Explicit laboratory network review required')
+        require(bool(review.get('policies')), 'Independently approved policies required')
+        ref=self.m['profile_configuration']
+        require(review.get('profile_file')==ref and digest(ref['path'])==ref['sha256'], 'Lab profiles differ from review')
+        require(review.get('resource_capacity_verified') is True, 'Lab resource capacity review required')
+        code='''import json
+from datetime import timezone
+from iacp.db import get_session_factory
+from iacp.models import LabPolicy,utcnow
+from iacp.services.lab import LabPolicySpec,snapshots,digest_policy
+with get_session_factory()() as s:
+ for expected in json.loads(__LAB_POLICIES__):
+  p=s.get(LabPolicy,expected['policy_id'])
+  assert p and p.tenant_id==expected['tenant_id'] and p.policy_sha256==expected['policy_sha256']
+  assert p.status=='approved' and p.approved_by and p.approved_by!=p.requested_by
+  assert p.expires_at.replace(tzinfo=timezone.utc)>utcnow()
+  assert snapshots(LabPolicySpec.model_validate(p.specification),p.tenant_id)==p.profile_snapshots
+  assert digest_policy(p.tenant_id,p.specification,p.profile_snapshots)==p.policy_sha256
+print('INDEPENDENT_LAB_POLICIES_VERIFIED')
+'''.replace('__LAB_POLICIES__',repr(json.dumps(review['policies'])))
+        self.exec_python('api',code)
+        try:
+            self.flags(admission=1,lifecycle=1,deletion=1,disposable_ids=[],lifecycle_ids=[],lab_self_service=1)
+            self.up('api','terraform-worker','lifecycle-worker')
+            self.verify(admission=1,lifecycle=1)
+        except Exception:
+            self.flags(admission=0,lifecycle=0,deletion=0,disposable_ids=[],lifecycle_ids=[],lab_self_service=0)
+            self.up('api','terraform-worker','lifecycle-worker')
+            raise
+        self.evidence('lab-self-service-activated',{'policies':review['policies'],'historical_instances_authorized':False})
 
     def admit(self):
         change = self.approve('enable-admission')
@@ -910,7 +966,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         self.approve("functional-rollback")
         # API closes admission first. Known UPIDs keep observing with lifecycle=0.
         # Do not stop a worker while it may still be observing a native task.
-        self.flags(admission=0, lifecycle=0, deletion=0, lifecycle_ids=[])
+        self.flags(admission=0, lifecycle=0, deletion=0, lifecycle_ids=[], lab_self_service=0)
         self.up("api")
         self.workers_idle(lifecycle=True)
         self.up("lifecycle-worker", "terraform-worker")
@@ -921,7 +977,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     args = parser.parse_args()

@@ -1,0 +1,53 @@
+{
+  "profiles": {
+    "lab-dhcp": {
+      "allowed_tenants": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "self_service_enabled": true,
+      "vmid_min": 30000,
+      "vmid_max": 30099,
+      "target_nodes": [
+        "mng01"
+      ],
+      "max_live_instances": 3,
+      "max_vcpus": 4,
+      "max_memory_mb": 4096,
+      "max_disk_gb": 40,
+      "max_total_vcpus": 8,
+      "max_total_memory_mb": 8192,
+      "max_total_disk_gb": 80,
+      "max_concurrent_operations": 2,
+      "settings": {
+        "image": "ubuntu-2404",
+        "environment": "lab",
+        "allowed_nodes": [
+          "mng01"
+        ],
+        "backend": {
+          "bucket": "example-iacp-lab",
+          "region": "us-east-1",
+          "endpoint": "https://s3.wasabisys.com"
+        },
+        "template_vm_id": 29000,
+        "template_node_name": "mng01",
+        "node_name": "mng01",
+        "network_bridge": "vmbr0",
+        "network_mode": "dhcp",
+        "vlan_id": null,
+        "cloudinit_datastore_id": "EXAMPLE-STORAGE",
+        "cloudinit_username": "ubuntu",
+        "ssh_public_keys": [
+          "ssh-ed25519 REPLACE_WITH_AUTHORIZED_PUBLIC_KEY"
+        ],
+        "guest_agent_enabled": true,
+        "started": false,
+        "boot_disk": {
+          "interface": "scsi0",
+          "datastore_id": "EXAMPLE-STORAGE",
+          "minimum_size_gb": 20
+        }
+      }
+    }
+  }
+}

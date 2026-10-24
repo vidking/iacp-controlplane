@@ -1,0 +1,19 @@
+{
+  "approved": false,
+  "release": "REPLACE_WITH_VERIFIED_40_CHARACTER_COMMIT",
+  "change_reference": "REPLACE_WITH_APPROVED_CHANGE",
+  "environment": "lab",
+  "lab_network_authorized": false,
+  "resource_capacity_verified": false,
+  "profile_file": {
+    "path": "/etc/iacp/terraform/profiles.json",
+    "sha256": "REPLACE_WITH_REVIEWED_SHA256"
+  },
+  "policies": [
+    {
+      "policy_id": "REPLACE_WITH_APPROVED_POLICY_UUID",
+      "tenant_id": "REPLACE_WITH_AUTHORIZED_TENANT_UUID",
+      "policy_sha256": "REPLACE_WITH_REAL_POLICY_DIGEST"
+    }
+  ]
+}

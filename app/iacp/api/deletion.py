@@ -1,7 +1,7 @@
 """A reviewed saved destroy plan precedes DELETE; provider identity stays server-side."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Body
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -66,13 +66,21 @@ def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Da
 @router.delete("", response_model=DeletionAccepted, status_code=202, operation_id="deleteDisposableInstance",
                summary="Eliminar una KVM descartable con plan aprobado",
                description="Operator original y MISMA Idempotency-Key de deletion-plan. Requiere habilitación explícita, "
-                           "allowlist y aprobación independiente vigente. Worker Terraform aplica únicamente el plan guardado. "
+                           "allowlist y aprobación independiente vigente. Para una VM nueva bajo política de autoservicio, "
+                           "enviar {} con una clave nueva: prepara, valida y ejecuta el plan por delegación auditada. "
+                           "IaC Worker aplica únicamente el plan guardado. "
                            "Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. "
                            "Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. "
                            "VM 104 y VM 106 quedan prohibidas. No invoca DELETE nativo ni borra volúmenes Docker.")
-def delete(instance_id: str, body: DeleteRequest, key: Key, session: Database, publish: Publisher,
-           principal: Annotated[Principal, Depends(authorize_write)]):
+def delete(instance_id: str, key: Key, session: Database, publish: Publisher,
+           principal: Annotated[Principal, Depends(authorize_write)],
+           body: Annotated[DeleteRequest | PowerRequest | None, Body(openapi_examples={
+               "self_service":{"summary":"VM nueva bajo política vigente; plan y delegación auditados","value":{}},
+               "reviewed_plan":{"summary":"Contrato histórico; sustituir por IDs/digest reales revisados","value":{
+                   "operation_id":"00000000-0000-4000-8000-000000000002","plan_sha256":"a"*64}}})] = None):
     instance = owned(session, principal, instance_id)
+    if not isinstance(body, DeleteRequest):
+        return guarded(lambda: deletion.plan_request(session, instance, principal, key, publish, autonomous=True))
     return guarded(lambda: deletion.dispatch(session, instance, principal, body.model_dump(), key, publish))
 
 

@@ -5,6 +5,9 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
+Autoservicio multiinstancia candidato 0.9: [guía para Desarrollo y Swagger](docs/SELF_SERVICE.md),
+[contrato futuro CRM](docs/CRM_INTEGRATION.md) y [evidencia de validación](docs/validation/SELF_SERVICE.json).
+
 Entrada operativa canónica: [scripts/iacpctl](scripts/iacpctl) y
 [docs/OPERATIONS.md](docs/OPERATIONS.md). `deploy/mng` es el primer entorno de
 validación; la normalización no depende del clúster. Las credenciales docs-only

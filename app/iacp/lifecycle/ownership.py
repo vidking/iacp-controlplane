@@ -39,7 +39,17 @@ def instance_ownership(session, instance, approval):
     if revision is None:
         raise PowerError("POWER_OWNERSHIP_UNAVAILABLE")
     scope = os.environ.get("IACP_LIFECYCLE_INSTANCE_IDS", "")
-    if scope and instance.id not in scope.split(","):
+    delegated = False
+    if instance.self_service_policy_id:
+        from ..services.lab import member
+        from ..services.instances import Conflict
+        try:
+            member(session, instance, "create")
+            delegated = True
+        except Conflict as failure:
+            raise PowerError(str(failure)) from None
+    restricted = bool(scope) or os.environ.get("IACP_LAB_SELF_SERVICE_ENABLED") == "1"
+    if restricted and instance.id not in scope.split(",") and not delegated:
         raise PowerError("POWER_INSTANCE_NOT_AUTHORIZED")
     if execution.source_revision in {revision, PREVIOUS_POWER_SOURCE_REVISION}:
         return None
