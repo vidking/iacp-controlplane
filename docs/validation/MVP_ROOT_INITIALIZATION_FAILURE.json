@@ -1,0 +1,50 @@
+{
+  "operation_id": "37c0a11a-41b2-417c-862b-e2771647a85b",
+  "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+  "kind": "instance.network.initialize",
+  "status": "failed",
+  "requested_by": "bootstrap",
+  "error_code": "GUEST_INITIALIZATION_PROGRAM_FAILED",
+  "error_message": "La operaci\u00f3n no complet\u00f3 los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.",
+  "normalized_status": "failed",
+  "recovery_required": false,
+  "provisioning": null,
+  "created_at": "2026-10-24T04:45:10.692431Z",
+  "updated_at": "2026-10-24T04:45:33.576491Z",
+  "events": [
+    {
+      "id": 432,
+      "status": "queued",
+      "code": "guest_initialization_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-24T04:45:10.700173Z"
+    },
+    {
+      "id": 433,
+      "status": "running",
+      "code": "guest_initialization_dispatch_consumed",
+      "actor": "worker:iac",
+      "created_at": "2026-10-24T04:45:28.604347Z"
+    },
+    {
+      "id": 434,
+      "status": "failed",
+      "code": "guest_initialization_failed",
+      "actor": "worker:iac",
+      "created_at": "2026-10-24T04:45:33.577183Z"
+    }
+  ],
+  "power": null,
+  "deletion": null,
+  "network": null,
+  "initialization": {
+    "status": "failed",
+    "mode": "ubuntu-2404-lab-identity-v1",
+    "program_sha256": "e5083da0fc91d4a4c8b219ed795813d4162a1e432b3454ba83477dad70b8d1ed",
+    "started_at": "2026-10-24T04:45:28.600386Z",
+    "finished_at": "2026-10-24T04:45:33.573736Z",
+    "pid": 956,
+    "result": null
+  },
+  "fulfillment": null
+}

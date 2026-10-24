@@ -1,0 +1,347 @@
+[
+  {
+    "operation_id": "c2b3c0ea-bd88-47d7-bffb-44876b35d81f",
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "kind": "instance.create",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": {
+      "service": "IaC Worker",
+      "phase": "completed",
+      "attempt": 1,
+      "started_at": "2026-10-24T04:44:52.379361Z",
+      "finished_at": "2026-10-24T04:45:07.164324Z"
+    },
+    "created_at": "2026-10-24T04:44:37.029138Z",
+    "updated_at": "2026-10-24T04:45:07.167683Z",
+    "events": [
+      {
+        "id": 418,
+        "status": "queued",
+        "code": "lab_policy_bound",
+        "actor": "policy:67e81062-661d-4edb-9ed2-051bfe73b974",
+        "created_at": "2026-10-24T04:44:37.044021Z"
+      },
+      {
+        "id": 419,
+        "status": "queued",
+        "code": "accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:44:37.044025Z"
+      },
+      {
+        "id": 420,
+        "status": "running",
+        "code": "terraform_plan_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T04:44:37.331456Z"
+      },
+      {
+        "id": 421,
+        "status": "running",
+        "code": "terraform_planned",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T04:44:49.506802Z"
+      },
+      {
+        "id": 422,
+        "status": "running",
+        "code": "terraform_apply_approved",
+        "actor": "policy:67e81062-661d-4edb-9ed2-051bfe73b974",
+        "created_at": "2026-10-24T04:44:49.533746Z"
+      },
+      {
+        "id": 423,
+        "status": "running",
+        "code": "terraform_apply_queued",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:44:49.551262Z"
+      },
+      {
+        "id": 424,
+        "status": "running",
+        "code": "terraform_apply_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T04:44:49.581216Z"
+      },
+      {
+        "id": 425,
+        "status": "running",
+        "code": "terraform_mutation_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T04:44:52.382569Z"
+      },
+      {
+        "id": 426,
+        "status": "completed",
+        "code": "terraform_apply_completed",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T04:45:07.168280Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": {
+      "status": "failed",
+      "phase": "guest_initialization",
+      "start_operation_id": "29c9835c-f240-4cc8-b448-7a267fe766ac",
+      "initialization_operation_id": "37c0a11a-41b2-417c-862b-e2771647a85b",
+      "guest_ready": null,
+      "resume_endpoint": "/v1/instances/35e62b0c-5d49-4e26-82bd-c802bce03bad/provision"
+    }
+  },
+  {
+    "operation_id": "29c9835c-f240-4cc8-b448-7a267fe766ac",
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "kind": "instance.power.start",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T04:45:07.765055Z",
+    "updated_at": "2026-10-24T04:45:10.636304Z",
+    "events": [
+      {
+        "id": 427,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:45:07.772833Z"
+      },
+      {
+        "id": 428,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:45:07.842468Z"
+      },
+      {
+        "id": 429,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:45:08.223241Z"
+      },
+      {
+        "id": 430,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:45:08.312312Z"
+      },
+      {
+        "id": 431,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:45:10.637177Z"
+      }
+    ],
+    "power": {
+      "action": "start",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T04:45:07.838933Z",
+      "submitted_at": "2026-10-24T04:45:08.222437Z",
+      "finished_at": "2026-10-24T04:45:10.635098Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "37c0a11a-41b2-417c-862b-e2771647a85b",
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "kind": "instance.network.initialize",
+    "status": "failed",
+    "requested_by": "bootstrap",
+    "error_code": "GUEST_INITIALIZATION_PROGRAM_FAILED",
+    "error_message": "La operaci\u00f3n no complet\u00f3 los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.",
+    "normalized_status": "failed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T04:45:10.692431Z",
+    "updated_at": "2026-10-24T04:45:33.576491Z",
+    "events": [
+      {
+        "id": 432,
+        "status": "queued",
+        "code": "guest_initialization_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:45:10.700173Z"
+      },
+      {
+        "id": 433,
+        "status": "running",
+        "code": "guest_initialization_dispatch_consumed",
+        "actor": "worker:iac",
+        "created_at": "2026-10-24T04:45:28.604347Z"
+      },
+      {
+        "id": 434,
+        "status": "failed",
+        "code": "guest_initialization_failed",
+        "actor": "worker:iac",
+        "created_at": "2026-10-24T04:45:33.577183Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": null,
+    "initialization": {
+      "status": "failed",
+      "mode": "ubuntu-2404-lab-identity-v1",
+      "program_sha256": "e5083da0fc91d4a4c8b219ed795813d4162a1e432b3454ba83477dad70b8d1ed",
+      "started_at": "2026-10-24T04:45:28.600386Z",
+      "finished_at": "2026-10-24T04:45:33.573736Z",
+      "pid": 956,
+      "result": null
+    },
+    "fulfillment": null
+  },
+  {
+    "operation_id": "8915db52-2ab6-4170-87aa-eeedc6dc75f4",
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "kind": "instance.power.reboot",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T04:49:05.721868Z",
+    "updated_at": "2026-10-24T04:49:10.599960Z",
+    "events": [
+      {
+        "id": 435,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:49:05.726084Z"
+      },
+      {
+        "id": 436,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:05.761895Z"
+      },
+      {
+        "id": 437,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:06.127693Z"
+      },
+      {
+        "id": 438,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:06.212901Z"
+      },
+      {
+        "id": 439,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:10.600768Z"
+      }
+    ],
+    "power": {
+      "action": "reboot",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T04:49:05.760373Z",
+      "submitted_at": "2026-10-24T04:49:06.126931Z",
+      "finished_at": "2026-10-24T04:49:10.599159Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "bd8b554c-7a7a-45be-8611-935cbf8237de",
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "kind": "instance.power.shutdown",
+    "status": "failed",
+    "requested_by": "bootstrap",
+    "error_code": "POWER_ACPI_TIMEOUT",
+    "error_message": "La operaci\u00f3n no complet\u00f3 los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.",
+    "normalized_status": "failed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T04:49:12.497312Z",
+    "updated_at": "2026-10-24T04:50:17.208712Z",
+    "events": [
+      {
+        "id": 440,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T04:49:12.499721Z"
+      },
+      {
+        "id": 441,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:12.530511Z"
+      },
+      {
+        "id": 442,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:12.887206Z"
+      },
+      {
+        "id": 443,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:49:12.985555Z"
+      },
+      {
+        "id": 444,
+        "status": "failed",
+        "code": "power_failed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T04:50:17.209539Z"
+      }
+    ],
+    "power": {
+      "action": "shutdown",
+      "status": "failed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T04:49:12.529060Z",
+      "submitted_at": "2026-10-24T04:49:12.886458Z",
+      "finished_at": "2026-10-24T04:50:17.207476Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  }
+]

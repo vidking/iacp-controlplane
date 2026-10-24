@@ -1,0 +1,9 @@
+{
+  "accepted": {
+    "instance_id": "35e62b0c-5d49-4e26-82bd-c802bce03bad",
+    "operation_id": "0b01cd8b-054f-4d3a-a7df-bc0af5644090",
+    "job_id": "cd9cb935-3b81-48da-9fba-807f0a1f9145",
+    "status": "queued"
+  },
+  "final_status": "deleted"
+}

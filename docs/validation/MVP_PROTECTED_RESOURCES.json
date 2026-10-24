@@ -1,0 +1,21 @@
+{
+  "before": {
+    "106": {
+      "config_sha256": "221a10b271d02ce2e71a1325694d611f530cf00e46d79be56640161d15fd61ae"
+    },
+    "29000": {
+      "config_sha256": "d5e8a8215df8d207553b06cbc00e19ac72f3d601e18bdcfe6b40107185e340bd"
+    },
+    "vm104_effective_permissions_empty": true
+  },
+  "after": {
+    "106": {
+      "config_sha256": "221a10b271d02ce2e71a1325694d611f530cf00e46d79be56640161d15fd61ae"
+    },
+    "29000": {
+      "config_sha256": "d5e8a8215df8d207553b06cbc00e19ac72f3d601e18bdcfe6b40107185e340bd"
+    },
+    "vm104_effective_permissions_empty": true
+  },
+  "unchanged": true
+}

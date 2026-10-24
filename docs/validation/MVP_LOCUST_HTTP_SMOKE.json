@@ -1,0 +1,49 @@
+{
+  "short_smoke_only": true,
+  "configured_stage_duration_seconds": 10,
+  "global_rps_cap": 5,
+  "includes_graceful_completion_after_timer": true,
+  "stages": [
+    {
+      "users": 10,
+      "requests": 50,
+      "failures": 0,
+      "rps": 5.009,
+      "p50_ms": 81,
+      "p95_ms": 590,
+      "p99_ms": 800
+    },
+    {
+      "users": 25,
+      "requests": 64,
+      "failures": 0,
+      "rps": 5.034,
+      "p50_ms": 93,
+      "p95_ms": 430,
+      "p99_ms": 480
+    },
+    {
+      "users": 50,
+      "requests": 90,
+      "failures": 0,
+      "rps": 5.047,
+      "p50_ms": 120,
+      "p95_ms": 440,
+      "p99_ms": 540
+    },
+    {
+      "users": 100,
+      "requests": 130,
+      "failures": 0,
+      "rps": 5.013,
+      "p50_ms": 140,
+      "p95_ms": 630,
+      "p99_ms": 860
+    }
+  ],
+  "total_requests": 334,
+  "total_failures": 0,
+  "sustained_capacity_claimed": false,
+  "p95_target_ms": 500,
+  "p95_threshold_exceeded": true
+}
