@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -48,12 +49,28 @@ class CommandRunner:
         if cancelled():
             raise Cancelled()
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
+            lease_read, lease_write = os.pipe()
             try:
-                process = subprocess.Popen([*self.binary, *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                           stdout=output, stderr=diagnostics, start_new_session=True)
-            except OSError:
-                raise PlanError("TERRAFORM_UNAVAILABLE", phase=phase, command=args[0]) from None
+                status_read, status_write = os.pipe()
+            except BaseException:
+                os.close(lease_read)
+                os.close(lease_write)
+                raise
+            process = None
             try:
+                try:
+                    # The helper detects worker SIGKILL through EOF. A file path
+                    # works with Terraform's intentionally minimal environment.
+                    helper = str(Path(__file__).with_name('process_supervisor.py'))
+                    process = subprocess.Popen([sys.executable, helper, str(lease_read), str(status_write), *self.binary, *args],
+                                               cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                               stdout=output, stderr=diagnostics, start_new_session=True,
+                                               pass_fds=(lease_read, status_write))
+                except OSError:
+                    raise PlanError("TERRAFORM_UNAVAILABLE", phase=phase, command=args[0]) from None
+                finally:
+                    os.close(lease_read)
+                    os.close(status_write)
                 deadline = time.monotonic() + self.timeout
                 while process.poll() is None:
                     if cancelled():
@@ -65,9 +82,19 @@ class CommandRunner:
                     time.sleep(0.1)
                 if cancelled():
                     raise Cancelled()
-                if process.returncode not in allowed:
+                status = os.read(status_read, 32)
+                if status == b'unavailable':
+                    raise PlanError("TERRAFORM_UNAVAILABLE", phase=phase, command=args[0])
+                digits = status[1:] if status.startswith(b'-') else status
+                if not digits.isdigit():
+                    # The helper's exit code is not Terraform's status. In
+                    # particular, helper exit=2 must not satisfy plan allowed=(0,2).
                     raise PlanError("TERRAFORM_COMMAND_FAILED", phase=phase,
                                     command=args[0], exit_code=process.returncode)
+                returncode = int(status)
+                if returncode not in allowed:
+                    raise PlanError("TERRAFORM_COMMAND_FAILED", phase=phase,
+                                    command=args[0], exit_code=returncode)
                 if os.fstat(output.fileno()).st_size + os.fstat(diagnostics.fileno()).st_size > 16 * 1024 * 1024:
                     raise PlanError("OUTPUT_LIMIT_EXCEEDED", phase=phase, command=args[0])
                 output.seek(0)
@@ -76,21 +103,30 @@ class CommandRunner:
                     raise PlanError("OUTPUT_LIMIT_EXCEEDED", phase=phase, command=args[0])
                 return data
             finally:
-                # Un worker interrumpido no debe dejar un proceso hijo planificando.
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                if process.poll() is None:
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        process.wait(timeout=5)
+                os.close(lease_write)
+                os.close(status_read)
+                # Also covers soft-timeout/BaseException during Popen startup,
+                # including a helper created before Popen returned to this frame.
+                if process is not None:
+                    self._stop_helper(process)
+
+    @staticmethod
+    def _stop_helper(process):
+        # The helper handles TERM and stops Terraform/provider descendants.
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if process.poll() is None:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                process.wait(timeout=5)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
