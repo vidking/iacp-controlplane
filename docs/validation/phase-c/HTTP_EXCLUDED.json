@@ -1,0 +1,95 @@
+{
+  "source_file": "20261024T092134Z-u10_stats.csv",
+  "source_sha256": "d7c19abd18aa15a4df1e2fbd0dbaab1576e2c6e397ff9b1d2906020ea61520c4",
+  "controlplane_revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "client_revision": "927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b",
+  "duration_seconds": 35,
+  "configured_rps": 10,
+  "accepted_as_phase_c_sample": false,
+  "users": 10,
+  "scenario": "readonly",
+  "vm_mutations": 0,
+  "rows": [
+    {
+      "endpoint": "GET /openapi.json (authorized)",
+      "requests": 12,
+      "failures": 0,
+      "rps": 0.34250269377748377,
+      "p50_ms": 150.0,
+      "p95_ms": 180.0,
+      "p99_ms": 180.0,
+      "max_ms": 181.46405399602372
+    },
+    {
+      "endpoint": "GET /v1/instances",
+      "requests": 72,
+      "failures": 0,
+      "rps": 2.0550161626649026,
+      "p50_ms": 60.0,
+      "p95_ms": 150.0,
+      "p99_ms": 180.0,
+      "max_ms": 181.25786099699326
+    },
+    {
+      "endpoint": "GET /v1/instances/{id}",
+      "requests": 42,
+      "failures": 0,
+      "rps": 1.198759428221193,
+      "p50_ms": 32.0,
+      "p95_ms": 55.0,
+      "p99_ms": 90.0,
+      "max_ms": 90.1474970014533
+    },
+    {
+      "endpoint": "GET /v1/operations",
+      "requests": 77,
+      "failures": 0,
+      "rps": 2.1977256184055207,
+      "p50_ms": 410.0,
+      "p95_ms": 1500.0,
+      "p99_ms": 1800.0,
+      "max_ms": 1818.1470870040357
+    },
+    {
+      "endpoint": "GET /v1/operations/{id}",
+      "requests": 25,
+      "failures": 0,
+      "rps": 0.7135472787030911,
+      "p50_ms": 33.0,
+      "p95_ms": 87.0,
+      "p99_ms": 130.0,
+      "max_ms": 129.7317410062533
+    },
+    {
+      "endpoint": "GET Swagger (authorized)",
+      "requests": 20,
+      "failures": 0,
+      "rps": 0.5708378229624729,
+      "p50_ms": 28.0,
+      "p95_ms": 65.0,
+      "p99_ms": 65.0,
+      "max_ms": 65.2371369942557
+    },
+    {
+      "endpoint": "GET physical power",
+      "requests": 15,
+      "failures": 0,
+      "rps": 0.42812836722185466,
+      "p50_ms": 270.0,
+      "p95_ms": 420.0,
+      "p99_ms": 420.0,
+      "max_ms": 424.58943600649945
+    },
+    {
+      "endpoint": "Aggregated",
+      "requests": 263,
+      "failures": 0,
+      "rps": 7.506517371956519,
+      "p50_ms": 70.0,
+      "p95_ms": 960.0,
+      "p99_ms": 1600.0,
+      "max_ms": 1818.1470870040357
+    }
+  ],
+  "percentile_method": "Locust 2.42.6 approximate histogram percentiles; aggregate is not an average of route percentiles"
+}

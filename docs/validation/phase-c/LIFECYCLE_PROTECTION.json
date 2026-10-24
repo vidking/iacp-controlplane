@@ -1,0 +1,22 @@
+{
+  "at": "2026-10-24T09:53:16.337257+00:00",
+  "identity": "dedicated-lifecycle-credential",
+  "mutations_submitted": 0,
+  "permissions": {
+    "104": {
+      "/vms/104": {}
+    },
+    "106": {
+      "/vms/106": {
+        "VM.Audit": 0,
+        "VM.PowerMgmt": 0
+      }
+    },
+    "29000": {
+      "/vms/29000": {
+        "VM.Audit": 1,
+        "VM.PowerMgmt": 1
+      }
+    }
+  }
+}

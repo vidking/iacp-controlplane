@@ -23,6 +23,11 @@ Go-live MVP: [operación y rollback](docs/GO_LIVE_MVP.md),
 [seguridad](docs/GO_LIVE_SECURITY.md), [consumo API](docs/GO_LIVE_API.md) y
 [evidencias/bloqueos](docs/GO_LIVE_VALIDATION.md).
 
+Fase C de resiliencia (24/10/2026): [dictamen NO-GO y prioridades](docs/MVP_GO_NO_GO.md),
+[auditoría y alcance](docs/RESILIENCE_CERTIFICATION.md), [matriz C-01…C-12](docs/FAILURE_MATRIX.md),
+[recuperación controlada](docs/RECOVERY_RUNBOOK.md) y [rendimiento medido](docs/PERFORMANCE_BASELINE.md).
+Los PASS locales y las correcciones integradas no certifican los ensayos físicos pendientes en MNG.
+
 ## Clonar y probar
 
 Se requieren Git, Docker con contenedores Linux y Docker Compose 2.24 o posterior.

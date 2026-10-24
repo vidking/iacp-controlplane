@@ -1,0 +1,32 @@
+{
+  "schema": "iacp.phase-c.tests.v1",
+  "baseline_commit": "a4f63a9740a3b75bba3940e58a309285c43aaf63",
+  "date": "2026-10-24",
+  "runtime_modified": false,
+  "execution": {
+    "image": "sha256:807571dfee55baace6a7462eb602c75e73d77d9010d14b9d0bb7c1b9c64c4f65",
+    "source": "current checkout mounted read-only over /workspace",
+    "network": "dedicated internal Docker network iacp-phase-c-20261024; no external connectivity",
+    "resources": "test runner 3 CPUs, 2 GiB RAM, 256 PIDs; scratch tmpfs 768 MiB; file-size cap 128 MiB; initial full-run wall timeout 300 seconds; final 360 seconds",
+    "environment": "env -i; PATH, HOME=/tmp, PYTHONPATH, PYTHONDONTWRITEBYTECODE, disposable IACP_INTEGRATION_DATABASE_URL and IACP_INTEGRATION_REDIS_URL only",
+    "dependencies": "existing local image; no dependency download or build",
+    "postgresql": "17; disposable tmpfs instance; unique iacp_test_* databases",
+    "redis": "7; disposable instance; DB 15"
+  },
+  "runs": [
+    {"name": "initial baseline unit run", "passed": 807, "failed": 1, "deselected": 49, "seconds": 146.51, "disposition": "invalid harness constraint: fsize=131072 bytes truncated output before the application's 16 MiB bound; corrected to 134217728 bytes; not a product regression"},
+    {"name": "C-02 regression before fix", "passed": 1, "failed": 1, "seconds": 6.65, "observed": "Synthetic Terraform and provider still active after worker SIGKILL; fixture cleanup killed them"},
+    {"name": "P0 directed regression after fix", "passed": 34, "failed": 0, "seconds": 6.23},
+    {"name": "full regression with first six Phase C cases", "passed": 863, "failed": 0, "skipped": 0, "warnings": 21, "seconds": 236.36},
+    {"name": "scanner semantic tests and C-01/C-02 regressions", "passed": 6, "failed": 0, "seconds": 2.04},
+    {"name": "C-04/C-05/C-06/C-12 integration and scanner semantic tests", "passed": 6, "failed": 0, "seconds": 13.50},
+    {"name": "directed runner/apply/process regression after independent review", "passed": 70, "failed": 0, "seconds": 17.22},
+    {"name": "P0 full regression", "candidate_commit": "3d815d17cc1c2d83fb34e16c5a7e25f93577729a", "passed": 873, "failed": 0, "skipped": 0, "warnings": 26, "seconds": 226.15},
+    {"name": "external client offline regression", "repository_commit": "927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b", "passed": 36, "failed": 0, "seconds": 0.572, "environment": "existing Python 3.12 test image, cached dependencies mounted readonly; no network, read-only repository; no dependency downloads; optional charset detector warning"},
+    {"name": "archived directed Phase C regressions", "passed": 16, "failed": 0, "warnings": 6, "seconds": 16.90, "artifact": "DIRECTED.junit.xml"},
+    {"name": "operations batching and public-contract regressions", "candidate_commit": "ba88083ed5a2622e2e83402ce6f1e49860c4b3f3", "passed": 108, "failed": 0, "seconds": 31.60, "before_fix": "count regression failed with 98 SQL statements for 12 rows; mixed-record projection test passed"},
+    {"name": "final combined full regression", "source_commit": "9b0f01213d64e7ed88eb7ec6a75cc24dbec45fca", "additional_source": ["tests/test_evidence_secrets.py", "scripts/audit_evidence_secrets.py"], "application_tree_equivalent_to_remote_main": "7379e840155e8a8b426c6d05a3683fa6a4a1229e", "passed": 875, "failed": 0, "errors": 0, "skipped": 0, "warnings": 26, "seconds": 234.62, "artifact": "COMBINED.junit.xml", "artifact_bytes": 174689, "artifact_sha256": "9f5b5944f35c78654c105d609e783747c73b8e345b1d75c3bc7c99321f2815be"}
+  ],
+  "evidence_limit": "Earlier 873-test full-suite JUnit was ephemeral and is not claimed archived. The final 875-test COMBINED.junit.xml is retained: trusted parent captured the bounded base64 XML from container stdout after pytest completed, checked size, XML counts and zero errors/failures, then created the artifact exclusively. No retained output directory was mounted writable into the test container. DIRECTED.junit.xml separately archives the bounded Phase C regressions. Historical 857-test JUnit remains versioned. Two intermediate archive attempts were stopped locally to incorporate independent-review corrections; they do not count as completed runs.",
+  "C02_recovery": "one simulated mutation; same VMID/state key/attempt; ordinary redelivery skipped; explicit readonly reconciliation completed; this is controlled recovery, not automatic infrastructure repair"
+}
