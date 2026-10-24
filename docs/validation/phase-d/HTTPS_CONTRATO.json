@@ -1,0 +1,57 @@
+{
+  "fecha_utc": "2026-10-24T19:23:14.196792+00:00",
+  "destino": "IACP Control Plane (VM 104)",
+  "sha_runtime": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+  "comprobaciones": [
+    {
+      "ruta": "/health/live",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/health/ready",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/docs",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/openapi.json",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/v1/operations?limit=1",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/v1/instances?limit=1",
+      "http_status": 200,
+      "request_id_presente": true
+    },
+    {
+      "ruta": "/docs",
+      "anonimo": true,
+      "http_status": 401
+    },
+    {
+      "ruta": "/openapi.json",
+      "anonimo": true,
+      "http_status": 401
+    },
+    {
+      "ruta": "/v1/instances",
+      "anonimo": true,
+      "http_status": 401
+    }
+  ],
+  "openapi_publico_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+  "contrato_identico_al_historico": "../PROVISIONING_CONTRACT_HTTPS.json",
+  "tls_verificado": true,
+  "redireccion_de_credenciales_permitida": false,
+  "mutaciones_realizadas": 0
+}

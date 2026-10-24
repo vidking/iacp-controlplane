@@ -1,0 +1,11 @@
+{
+  "estado": "PENDIENTE",
+  "prioridad": "P1",
+  "decision_usuario": "Revisi\u00f3n/rotaci\u00f3n de D6 diferidas para una etapa posterior al MVP, sin bloquear promoci\u00f3n ni dem\u00e1s pruebas autorizadas.",
+  "identidad_exacta_de_los_bearer_expuestos_confirmada": false,
+  "constancia_verificable_de_rotacion_revocacion_expiracion": false,
+  "credenciales_modificadas": false,
+  "seguridad_declarada_aprobada": false,
+  "accion_correctiva": "Identificar en canal privado cada sujeto/rol/tenant mediante referencias o huellas no reversibles, comprobar vigencia/revocaci\u00f3n y ejecutar rotaci\u00f3n por procedimiento autorizado. Conservar referencia de incidencia y pruebas de rechazo del token anterior sin registrar su valor.",
+  "limite": "Los escaneos de evidencia no identifican por s\u00ed solos los tokens vistos en capturas ni prueban su revocaci\u00f3n."
+}

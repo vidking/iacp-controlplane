@@ -2,6 +2,31 @@
 
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
+## Resultados nuevos de Fase D — 24/10/2026
+
+Versión del **IACP Control Plane (VM 104)**: `7c0804d`. Las observaciones de VMs reales corresponden al **clúster MNG**, nodo `mng01`. [Regresiones](validation/phase-d/REGRESIONES.json), [JUnit completo](validation/phase-d/REGRESION_IACP.junit.xml), [preparación del aislamiento](FASE_D_ENSAYO_AISLADO.md).
+
+| Escenario | Simulación/integración | Evidencia real nueva | Recuperación y alcance |
+|---|---|---|---|
+| C-01 / C-12, pendiente antes de ejecución y reinicio | PASS, PostgreSQL/Redis y prefork aislados | BLOCKED con trabajo físico pendiente; D2 solo reinició workers drenados | Entrega automática de cola pendiente en fixture; ventana DB→publish requiere recuperación controlada, sin outbox |
+| C-02, interrupción tras clonación | PASS del supervisor corregido y fences; código desplegado | BLOCKED: no hubo SIGKILL físico ni credenciales/broker exclusivos | No se certifica muerte de worker por una prueba normal de creación |
+| C-03 / C-04, Redis/PostgreSQL | PASS, errores de publicación y pérdida de conexión exclusiva del fixture | BLOCKED para inyección contra dependencias compartidas | Fail-closed; no cortes globales |
+| C-05 / C-06, Wasabi/lock | PASS, S3 503 y lock nativo ocupado conservado | PASS de cierre normal de tres states nuevos; BLOCKED inyección física | Sin borrado histórico ni force-unlock |
+| C-07, resultado incierto | PASS sintético; dos episodios reales contenidos | PASS para reconciliación readonly observada; BLOCKED timeout Proxmox inducido | Una y dos solicitudes del cliente; un Apply y una ejecución de reconciliación por VM. Causa inicial no determinada |
+| C-08, guest no disponible | PASS de controles sintéticos | PASS de SSH/QGA en tres VMs; BLOCKED indisponibilidad guest inducida | Running no equivale a guest listo |
+| C-09, idempotencia | PASS concurrente con PostgreSQL aislado | PASS de replays E2E con mismos IDs y una mutación por VM; concurrencia HTTP idéntica/distinta real no ensayada | No se amplían cuotas ni se generan sustitutos |
+| C-10, tenants | PASS con identidades dummy | BLOCKED para nueva prueba con dos identidades reales | No se crearon credenciales para aprobar este gate |
+| C-11, protegidas | PASS de guardas sintéticas | PASS de permisos/hashes readonly; no ensayo mutante real | VM 104 protegida de API; VM 106 histórica y VM 29000 Golden Image Ubuntu 24.04 sin cambios |
+
+[Detalle de episodios reales](validation/phase-d/RECUPERACION_OBSERVADA.json): VM 30016 y VM 30017 pasaron por `uncertain` y cerraron con el mismo UUID/VMID/Apply. No se retuvo un snapshot independiente de Proxmox/Wasabi durante el instante incierto; las postcondiciones sí se verificaron después. El intervalo entre eventos está medido; no se inventa una duración de fallo inducido porque no hubo inyección. El estado final fue DB `deleted`, Proxmox ausente, state vacío y lock ausente para las tres VMs.
+
+**FAIL P1 nuevo:** el éxito de reconciliación limpia el diagnóstico causal anterior. Plan: preservar el primer fallo sanitizado en `TerraformApply.result` sin migración ni cambio `/v1`; reprueba con fallo conocido tras fence, reconciliación exitosa, diagnóstico histórico conservado y cero Apply adicional. El registro de estados/IDs existe; la causa inicial de estos dos episodios sigue sin determinarse.
+
+Los escenarios físicos críticos BLOCKED impiden GO integral. Ninguna observación normal ni intervención humana se contabiliza como recuperación física automática del worker.
+
+## Matriz histórica de Fase C — resultados conservados
+
+
 Revisión 24/10/2026. Baseline IACP `a4f63a9` / runtime `4f153e8`; candidato local descrito en [certificación](RESILIENCE_CERTIFICATION.md). PASS se refiere exclusivamente al alcance probado. Una prueba local aprobada no acredita su equivalente real MNG.
 
 La suite completa y pruebas dirigidas están en [TEST_RESULTS](validation/phase-c/TEST_RESULTS.json); las fuentes citadas permiten reproducir los escenarios con dependencias descartables. Las pruebas nuevas de resiliencia pertenecen al commit [3d815d1](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/commit/3d815d17cc1c2d83fb34e16c5a7e25f93577729a/tests/test_resilience.py) y su [integración](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/commit/3d815d17cc1c2d83fb34e16c5a7e25f93577729a/tests/integration/test_resilience.py). PostgreSQL/Redis reales de integración son locales, sin salida externa; Proxmox/Wasabi son fixtures salvo los snapshots explícitamente readonly de MNG.

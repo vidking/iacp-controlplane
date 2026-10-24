@@ -1,0 +1,26 @@
+{
+  "alcance": "Contenido de documentaci\u00f3n modificada y evidencias nuevas de Fase D, incluidos JSON, JSONL, CSV y JUnit; reglas sem\u00e1nticas de campos sensibles, asignaciones, formatos, llaves y entrop\u00eda contextual",
+  "archivos": 38,
+  "ubicaciones": [
+    {
+      "archivo": "docs/FAILURE_MATRIX.md",
+      "linea": 167,
+      "regla": "entropy-in-credential-context",
+      "clasificacion": "review-required"
+    },
+    {
+      "archivo": "docs/RESILIENCE_CERTIFICATION.md",
+      "linea": 74,
+      "regla": "entropy-in-credential-context",
+      "clasificacion": "review-required"
+    },
+    {
+      "archivo": "docs/validation/phase-d/REGRESION_IACP.junit.xml",
+      "linea": 1,
+      "regla": "bearer-value",
+      "clasificacion": "review-required"
+    }
+  ],
+  "valores_de_secretos_emitidos": false,
+  "seguridad_integral_certificada": false
+}

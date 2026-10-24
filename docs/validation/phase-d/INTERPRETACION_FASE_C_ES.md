@@ -37,7 +37,7 @@ El padre capturó el XML final acotado desde stdout, validó tamaño/estructura/
 
 ## Cierre y seguridad de evidencias
 
-[LOCAL_SANDBOX_CLOSURE.json](../phase-c/LOCAL_SANDBOX_CLOSURE.json): regresión combinada completa y retirada exclusiva de contenedores/red propios con etiqueta `iacp.phase=c-local`. Bases en tmpfs; sin borrado de volúmenes de usuario, imágenes o recursos ajenos. `MNG_services_interrupted=0` expresa ausencia de interrupciones de servicios del **IACP Control Plane (VM 104)** y del **clúster MNG**. Se conservaron worktrees/evidencias; no hubo limpieza Docker indiscriminada.
+[LOCAL_SANDBOX_CLOSURE.json](../phase-c/LOCAL_SANDBOX_CLOSURE.json): regresión combinada completa y retirada exclusiva de contenedores/red propios con etiqueta `iacp.phase=c-local`. Bases en tmpfs; sin borrado de volúmenes de usuario, imágenes o recursos ajenos. `MNG_services_interrupted=0` registra ausencia de interrupciones por el ensayo en el alcance documentado del **IACP Control Plane (VM 104)**. El contador no acredita observación integral de todos los servicios del clúster MNG. Se conservaron worktrees/evidencias; no hubo limpieza Docker indiscriminada.
 
 [SECRET_SCAN.json](../phase-c/SECRET_SCAN.json): refs Git disponibles localmente y blobs de texto de hasta 16 MiB; refs no descargadas y capturas quedaron sin inspeccionar. `review-required` requiere revisión; `synthetic-or-reference` identifica fixture/referencia. No se emitieron valores.
 

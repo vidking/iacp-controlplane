@@ -2,6 +2,23 @@
 
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
+## Versión operativa comprobada en Fase D
+
+El **IACP Control Plane (VM 104)**, `iacp-controlplane-01` en `mng01`, ejecuta `7c0804d`, IACP 0.10.1 y esquema `0011_crm_contract`. [Promoción, imágenes, respaldo y rollback](FASE_D_PROMOCION.md). Las VMs de prueba se administran en el **clúster MNG**; nunca son objetivos mutantes la VM 104, la VM 106 histórica ni la VM 29000 Golden Image Ubuntu 24.04. Platinum/PRX está excluido.
+
+Antes de solicitar `POST /v1/instances/{UUID}/reconcile`, conservar `error_code` y únicamente el diagnóstico sanitizado permitido, con fecha/IDs. Existe un P1: al reconciliar con éxito se sobrescribe el diagnóstico anterior; no conservar solo la respuesta final. No guardar cuerpos, contraseñas, headers o salidas crudas del provider. Mantener key, UUID, VMID, intento y state key; un resultado ambiguo no autoriza otro Apply.
+
+El cliente externo demostró tres cierres normales y reconciliación readonly en dos incidencias naturales, con una y dos solicitudes acotadas. Esto no repara infraestructura ni certifica reinicio durante una mutación. [Evidencia](validation/phase-d/RECUPERACION_OBSERVADA.json). D3 físico requiere la [preparación aislada](FASE_D_ENSAYO_AISLADO.md); no interrumpir un worker compartido.
+
+Para promover software, usar el procedimiento oficial y manifiestos/ventana vigentes. La release anterior `4f153e8` y sus imágenes siguen conservadas. `iacpctl rollback` realiza cierre funcional de admisión/Lifecycle/DELETE/delegación, conserva Apply=1, esquema e historial y no devuelve binarios automáticamente. No hacer downgrade ni restaurar el dump sobre operaciones nuevas. El respaldo nuevo se restauró en aislamiento; no sustituye un ensayo de recuperación conjunta de la VM 104.
+
+Tras reiniciar la VM 104, comprobar la IP **actual** de Traefik antes de habilitar bootstrap HTTPS. En Fase D se corrigió `.3`→`.2` mediante controlador revisado `04a1bd3`, acción `update-tls-peer`, IPs exactas e ID observado del proxy; `env-promote` y recreación coordinada con imágenes anteriores y capacidades cerradas, seguidos de doctor/preflight ordinarios. No ampliar a un CIDR ni editar silenciosamente el entorno activo. El código integrado del PR #47 mantiene la comparación general estricta.
+
+D6 y la rotación de credenciales quedan diferidos por el usuario; este runbook no autoriza modificarlas como parte de una observación readonly.
+
+## Procedimientos y diagnóstico históricos de Fase C
+
+
 Aplicable al IACP Control Plane (VM 104), `iacp-controlplane-01`, con IACP 0.10.1, alojado en `mng01` del clúster MNG. [Estado de certificación y límites](RESILIENCE_CERTIFICATION.md). Nunca ejecutar este ensayo en producción ni sobre VM104, VM106 o Golden Image 29000.
 
 ## Reconocer y contener

@@ -1,0 +1,3750 @@
+{
+  "after": {
+    "cluster": "MNG",
+    "containers": [
+      {
+        "BlockIO": "10.9MB / 58.7MB",
+        "CPUPerc": "0.06%",
+        "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+        "ID": "ba666052a25e",
+        "MemPerc": "1.35%",
+        "MemUsage": "218.1MiB / 15.81GiB",
+        "Name": "iacp-controlplane-terraform-worker-1",
+        "NetIO": "30.9MB / 5.5MB",
+        "PIDs": "2"
+      },
+      {
+        "BlockIO": "860kB / 0B",
+        "CPUPerc": "0.19%",
+        "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+        "ID": "c9cdf9df7987",
+        "MemPerc": "0.62%",
+        "MemUsage": "100.4MiB / 15.81GiB",
+        "Name": "iacp-controlplane-api-1",
+        "NetIO": "73.8MB / 50.4MB",
+        "PIDs": "2"
+      },
+      {
+        "BlockIO": "0B / 0B",
+        "CPUPerc": "0.15%",
+        "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+        "ID": "1230d01af135",
+        "MemPerc": "0.78%",
+        "MemUsage": "125.8MiB / 15.81GiB",
+        "Name": "iacp-controlplane-lifecycle-worker-1",
+        "NetIO": "1.26MB / 953kB",
+        "PIDs": "2"
+      },
+      {
+        "BlockIO": "0B / 4.1kB",
+        "CPUPerc": "0.09%",
+        "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+        "ID": "fc8204e0875b",
+        "MemPerc": "0.58%",
+        "MemUsage": "93.58MiB / 15.81GiB",
+        "Name": "iacp-controlplane-worker-1",
+        "NetIO": "2.83MB / 794kB",
+        "PIDs": "2"
+      },
+      {
+        "BlockIO": "108MB / 0B",
+        "CPUPerc": "0.00%",
+        "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+        "ID": "bbc379adee59",
+        "MemPerc": "0.81%",
+        "MemUsage": "131MiB / 15.81GiB",
+        "Name": "iacp-controlplane-traefik-1",
+        "NetIO": "87.6MB / 88.5MB",
+        "PIDs": "13"
+      },
+      {
+        "BlockIO": "38.4MB / 1.65MB",
+        "CPUPerc": "4.66%",
+        "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+        "ID": "a7cc37508fa4",
+        "MemPerc": "0.44%",
+        "MemUsage": "70.84MiB / 15.81GiB",
+        "Name": "iacp-controlplane-db-1",
+        "NetIO": "67.5MB / 276MB",
+        "PIDs": "12"
+      },
+      {
+        "BlockIO": "17.1MB / 4.16MB",
+        "CPUPerc": "0.57%",
+        "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+        "ID": "8fa3f587bb6c",
+        "MemPerc": "0.09%",
+        "MemUsage": "14.19MiB / 15.81GiB",
+        "Name": "iacp-controlplane-redis-1",
+        "NetIO": "69.3MB / 21.2MB",
+        "PIDs": "6"
+      }
+    ],
+    "db_connections": [
+      {
+        "count": 1,
+        "state": "active",
+        "wait_event_type": null
+      },
+      {
+        "count": 6,
+        "state": "idle",
+        "wait_event_type": "Client"
+      }
+    ],
+    "policy_current_bindings": true,
+    "profile_limits": {
+      "lab-dhcp": {
+        "allowed_tenants": [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        "max_concurrent_operations": 2,
+        "max_live_instances": 4,
+        "max_total_disk_gb": 80,
+        "max_total_memory_mb": 8192,
+        "max_total_vcpus": 8,
+        "target_nodes": [
+          "mng01"
+        ]
+      },
+      "lab-root-dhcp": {
+        "allowed_tenants": [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        "max_concurrent_operations": 2,
+        "max_live_instances": 4,
+        "max_total_disk_gb": 80,
+        "max_total_memory_mb": 8192,
+        "max_total_vcpus": 8,
+        "target_nodes": [
+          "mng01"
+        ]
+      }
+    },
+    "protected_hashes": {
+      "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+      "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+    },
+    "queue_depth": {
+      "celery": 0,
+      "lifecycle": 0,
+      "terraform": 0
+    },
+    "redis": {
+      "blocked_clients": 3,
+      "connected_clients": 35,
+      "total_commands_processed": 188846,
+      "used_memory": 2080856
+    },
+    "runtime_revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+    "schema": "iacp.e2e.audit.v1",
+    "test_vmids_present": [],
+    "vm104_permissions": {
+      "/vms/104": {}
+    },
+    "worker_ping_names": [
+      "celery@1230d01af135",
+      "celery@ba666052a25e",
+      "celery@fc8204e0875b"
+    ]
+  },
+  "api_schema_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+  "at": "2026-10-24T19:14:29.599976+00:00",
+  "automatic": true,
+  "completed": true,
+  "concurrency": 1,
+  "failures": [],
+  "http": {
+    "all": {
+      "errors": 13,
+      "p50_ms": 34.463,
+      "p95_ms": 150.21,
+      "p99_ms": 254.298,
+      "requests": 123,
+      "status_counts": {
+        "200": 85,
+        "202": 25,
+        "409": 13
+      }
+    },
+    "endpoints": {
+      "DELETE /v1/instances/{id}": {
+        "errors": 11,
+        "p50_ms": 29.541,
+        "p95_ms": 132.985,
+        "p99_ms": 132.985,
+        "requests": 13,
+        "status_counts": {
+          "202": 2,
+          "409": 11
+        }
+      },
+      "GET /openapi.json": {
+        "errors": 0,
+        "p50_ms": 123.001,
+        "p95_ms": 167.456,
+        "p99_ms": 167.456,
+        "requests": 2,
+        "status_counts": {
+          "200": 2
+        }
+      },
+      "GET /v1/instances/{id}": {
+        "errors": 0,
+        "p50_ms": 27.856,
+        "p95_ms": 38.975,
+        "p99_ms": 38.975,
+        "requests": 12,
+        "status_counts": {
+          "200": 12
+        }
+      },
+      "GET /v1/instances/{id}/power": {
+        "errors": 0,
+        "p50_ms": 246.044,
+        "p95_ms": 254.298,
+        "p99_ms": 254.298,
+        "requests": 4,
+        "status_counts": {
+          "200": 4
+        }
+      },
+      "GET /v1/lab/policies/{id}": {
+        "errors": 0,
+        "p50_ms": 28.486,
+        "p95_ms": 28.486,
+        "p99_ms": 28.486,
+        "requests": 1,
+        "status_counts": {
+          "200": 1
+        }
+      },
+      "GET /v1/lab/usage": {
+        "errors": 0,
+        "p50_ms": 30.563,
+        "p95_ms": 30.563,
+        "p99_ms": 30.563,
+        "requests": 1,
+        "status_counts": {
+          "200": 1
+        }
+      },
+      "GET /v1/operations/{id}": {
+        "errors": 0,
+        "p50_ms": 35.303,
+        "p95_ms": 46.773,
+        "p99_ms": 56.275,
+        "requests": 64,
+        "status_counts": {
+          "200": 64
+        }
+      },
+      "GET /v1/profiles": {
+        "errors": 0,
+        "p50_ms": 30.051,
+        "p95_ms": 30.051,
+        "p99_ms": 30.051,
+        "requests": 1,
+        "status_counts": {
+          "200": 1
+        }
+      },
+      "POST /v1/instances": {
+        "errors": 0,
+        "p50_ms": 30.301,
+        "p95_ms": 486.774,
+        "p99_ms": 486.774,
+        "requests": 2,
+        "status_counts": {
+          "202": 2
+        }
+      },
+      "POST /v1/instances/{id}/network/discover": {
+        "errors": 2,
+        "p50_ms": 33.584,
+        "p95_ms": 57.292,
+        "p99_ms": 57.292,
+        "requests": 14,
+        "status_counts": {
+          "202": 12,
+          "409": 2
+        }
+      },
+      "POST /v1/instances/{id}/power/reboot": {
+        "errors": 0,
+        "p50_ms": 37.387,
+        "p95_ms": 147.746,
+        "p99_ms": 147.746,
+        "requests": 2,
+        "status_counts": {
+          "202": 2
+        }
+      },
+      "POST /v1/instances/{id}/power/shutdown": {
+        "errors": 0,
+        "p50_ms": 28.873,
+        "p95_ms": 136.013,
+        "p99_ms": 136.013,
+        "requests": 4,
+        "status_counts": {
+          "202": 4
+        }
+      },
+      "POST /v1/instances/{id}/power/start": {
+        "errors": 0,
+        "p50_ms": 29.513,
+        "p95_ms": 136.751,
+        "p99_ms": 136.751,
+        "requests": 2,
+        "status_counts": {
+          "202": 2
+        }
+      },
+      "POST /v1/instances/{id}/reconcile": {
+        "errors": 0,
+        "p50_ms": 150.21,
+        "p95_ms": 150.21,
+        "p99_ms": 150.21,
+        "requests": 1,
+        "status_counts": {
+          "202": 1
+        }
+      }
+    }
+  },
+  "instance_count": 1,
+  "instances": [
+    {
+      "audits": {
+        "final": {
+          "applies": [
+            {
+              "approval_id": "4cf69946-d33d-4110-8592-cd726d0247b4",
+              "attempt": 1,
+              "error_code": null,
+              "finished_at": "2026-10-24T19:11:51.009545+00:00",
+              "started_at": "2026-10-24T19:11:34.935136+00:00",
+              "status": "completed"
+            }
+          ],
+          "cluster": "MNG",
+          "containers": [
+            {
+              "BlockIO": "10.9MB / 58.7MB",
+              "CPUPerc": "0.15%",
+              "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+              "ID": "ba666052a25e",
+              "MemPerc": "1.35%",
+              "MemUsage": "218.1MiB / 15.81GiB",
+              "Name": "iacp-controlplane-terraform-worker-1",
+              "NetIO": "30.8MB / 5.47MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "860kB / 0B",
+              "CPUPerc": "0.17%",
+              "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+              "ID": "c9cdf9df7987",
+              "MemPerc": "0.62%",
+              "MemUsage": "100.4MiB / 15.81GiB",
+              "Name": "iacp-controlplane-api-1",
+              "NetIO": "73.7MB / 50.4MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 0B",
+              "CPUPerc": "0.16%",
+              "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+              "ID": "1230d01af135",
+              "MemPerc": "0.78%",
+              "MemUsage": "125.8MiB / 15.81GiB",
+              "Name": "iacp-controlplane-lifecycle-worker-1",
+              "NetIO": "1.26MB / 947kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 4.1kB",
+              "CPUPerc": "0.06%",
+              "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+              "ID": "fc8204e0875b",
+              "MemPerc": "0.58%",
+              "MemUsage": "93.58MiB / 15.81GiB",
+              "Name": "iacp-controlplane-worker-1",
+              "NetIO": "2.83MB / 788kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "108MB / 0B",
+              "CPUPerc": "0.03%",
+              "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+              "ID": "bbc379adee59",
+              "MemPerc": "0.81%",
+              "MemUsage": "131MiB / 15.81GiB",
+              "Name": "iacp-controlplane-traefik-1",
+              "NetIO": "87.6MB / 88.5MB",
+              "PIDs": "13"
+            },
+            {
+              "BlockIO": "38.4MB / 1.65MB",
+              "CPUPerc": "0.02%",
+              "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+              "ID": "a7cc37508fa4",
+              "MemPerc": "0.44%",
+              "MemUsage": "70.8MiB / 15.81GiB",
+              "Name": "iacp-controlplane-db-1",
+              "NetIO": "67.5MB / 276MB",
+              "PIDs": "12"
+            },
+            {
+              "BlockIO": "17.1MB / 4.15MB",
+              "CPUPerc": "0.57%",
+              "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+              "ID": "8fa3f587bb6c",
+              "MemPerc": "0.09%",
+              "MemUsage": "14.14MiB / 15.81GiB",
+              "Name": "iacp-controlplane-redis-1",
+              "NetIO": "69.3MB / 21.1MB",
+              "PIDs": "6"
+            }
+          ],
+          "db_connections": [
+            {
+              "count": 1,
+              "state": "active",
+              "wait_event_type": null
+            },
+            {
+              "count": 6,
+              "state": "idle",
+              "wait_event_type": "Client"
+            }
+          ],
+          "deletions": [
+            {
+              "finished_at": "2026-10-24T19:14:14.516149+00:00",
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "started_at": "2026-10-24T19:14:10.242445+00:00",
+              "status": "completed"
+            }
+          ],
+          "event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "delete_apply_started": 1,
+            "delete_completed": 1,
+            "delete_mutation_started": 1,
+            "delete_plan_accepted": 1,
+            "delete_plan_approved": 1,
+            "delete_plan_ready": 1,
+            "delete_plan_started": 1,
+            "delete_queued": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 8,
+            "network_observed": 2,
+            "network_pending": 6,
+            "power_accepted": 5,
+            "power_completed": 5,
+            "power_dispatching": 5,
+            "power_started": 5,
+            "power_task_recorded": 5,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          },
+          "events": [
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:23.658907+00:00",
+              "code": "lab_policy_bound",
+              "id": 853,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:23.658910+00:00",
+              "code": "accepted",
+              "id": 854,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:23.949065+00:00",
+              "code": "terraform_plan_started",
+              "id": 855,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:31.933676+00:00",
+              "code": "terraform_planned",
+              "id": 856,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:31.964184+00:00",
+              "code": "terraform_apply_approved",
+              "id": 857,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:31.984973+00:00",
+              "code": "terraform_apply_queued",
+              "id": 858,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:32.016660+00:00",
+              "code": "terraform_apply_started",
+              "id": 859,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:34.939186+00:00",
+              "code": "terraform_mutation_started",
+              "id": 860,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:43.247911+00:00",
+              "code": "terraform_apply_uncertain",
+              "id": 861,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:44.667658+00:00",
+              "code": "terraform_recovery_requested",
+              "id": 862,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:44.689336+00:00",
+              "code": "terraform_reconcile_started",
+              "id": 863,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:51.014913+00:00",
+              "code": "terraform_apply_completed",
+              "id": 864,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:51.609549+00:00",
+              "code": "power_accepted",
+              "id": 865,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.683002+00:00",
+              "code": "power_started",
+              "id": 866,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.972018+00:00",
+              "code": "power_dispatching",
+              "id": 867,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:52.054530+00:00",
+              "code": "power_task_recorded",
+              "id": 868,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:54.299682+00:00",
+              "code": "power_completed",
+              "id": 869,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:54.354718+00:00",
+              "code": "guest_initialization_accepted",
+              "id": 870,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:15.565518+00:00",
+              "code": "guest_initialization_dispatch_consumed",
+              "id": 871,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "running"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:23.705361+00:00",
+              "code": "guest_initialization_verified",
+              "id": 872,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:23.725550+00:00",
+              "code": "access_verification_accepted",
+              "id": 873,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:26.771942+00:00",
+              "code": "root_cloud_init_ssh_verified",
+              "id": 874,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:35.372930+00:00",
+              "code": "power_accepted",
+              "id": 875,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.409756+00:00",
+              "code": "power_started",
+              "id": 876,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.703180+00:00",
+              "code": "power_dispatching",
+              "id": 877,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.789942+00:00",
+              "code": "power_task_recorded",
+              "id": 878,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:40.672902+00:00",
+              "code": "power_completed",
+              "id": 879,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:40.694278+00:00",
+              "code": "network_discovery_accepted",
+              "id": 880,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:43.883994+00:00",
+              "code": "network_pending",
+              "id": 881,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:44.247528+00:00",
+              "code": "network_discovery_accepted",
+              "id": 882,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:47.421679+00:00",
+              "code": "network_pending",
+              "id": 883,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:50.952812+00:00",
+              "code": "network_discovery_accepted",
+              "id": 884,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:54.121778+00:00",
+              "code": "network_pending",
+              "id": 885,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:57.656327+00:00",
+              "code": "network_discovery_accepted",
+              "id": 886,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:58.606640+00:00",
+              "code": "network_observed",
+              "id": 887,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:07.791296+00:00",
+              "code": "power_accepted",
+              "id": 888,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:07.825260+00:00",
+              "code": "power_started",
+              "id": 889,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:08.094688+00:00",
+              "code": "power_dispatching",
+              "id": 890,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:08.181608+00:00",
+              "code": "power_task_recorded",
+              "id": 891,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:12.542610+00:00",
+              "code": "power_completed",
+              "id": 892,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:14.971722+00:00",
+              "code": "power_accepted",
+              "id": 893,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.001932+00:00",
+              "code": "power_started",
+              "id": 894,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.277972+00:00",
+              "code": "power_dispatching",
+              "id": 895,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.372459+00:00",
+              "code": "power_task_recorded",
+              "id": 896,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:17.678382+00:00",
+              "code": "power_completed",
+              "id": 897,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:17.703035+00:00",
+              "code": "network_discovery_accepted",
+              "id": 898,
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:20.891259+00:00",
+              "code": "network_pending",
+              "id": 899,
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:21.828980+00:00",
+              "code": "network_discovery_accepted",
+              "id": 900,
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:24.986506+00:00",
+              "code": "network_pending",
+              "id": 901,
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:28.522674+00:00",
+              "code": "network_discovery_accepted",
+              "id": 902,
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:31.694490+00:00",
+              "code": "network_pending",
+              "id": 903,
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:35.233851+00:00",
+              "code": "network_discovery_accepted",
+              "id": 904,
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:35.594172+00:00",
+              "code": "network_observed",
+              "id": 905,
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:46.282232+00:00",
+              "code": "power_accepted",
+              "id": 906,
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:46.319776+00:00",
+              "code": "power_started",
+              "id": 907,
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:46.620988+00:00",
+              "code": "power_dispatching",
+              "id": 908,
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:46.715112+00:00",
+              "code": "power_task_recorded",
+              "id": 909,
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:51.042569+00:00",
+              "code": "power_completed",
+              "id": 910,
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:53.373852+00:00",
+              "code": "delete_plan_accepted",
+              "id": 911,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:53.422758+00:00",
+              "code": "delete_plan_started",
+              "id": 912,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:14:05.348572+00:00",
+              "code": "delete_plan_ready",
+              "id": 913,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "running"
+            },
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:14:05.374781+00:00",
+              "code": "delete_plan_approved",
+              "id": 914,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "running"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:14:05.393278+00:00",
+              "code": "delete_queued",
+              "id": 915,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:14:05.412734+00:00",
+              "code": "delete_apply_started",
+              "id": 916,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:14:10.246983+00:00",
+              "code": "delete_mutation_started",
+              "id": 917,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:14:14.520018+00:00",
+              "code": "delete_completed",
+              "id": 918,
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "completed"
+            }
+          ],
+          "initializer": {
+            "finished_at": "2026-10-24T19:12:23.702059+00:00",
+            "started_at": "2026-10-24T19:12:15.561755+00:00",
+            "status": "completed"
+          },
+          "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+          "inventory_status": "deleted",
+          "jobs": [
+            {
+              "job_id": "c5e43313-0117-4e09-a762-dba25f6412f7",
+              "kind": "instance.plan",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "job_id": "cb2d27dc-0342-487b-9b79-49fc4bc4c3c3",
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "job_id": "9d32cf98-e82f-440b-9717-f02d7da81aae",
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "job_id": "f179925e-8052-4fc3-9ac1-ab5ecac7b649",
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "job_id": "b641f3a4-c230-4a11-847b-122cb98dc803",
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "job_id": "e12e6212-415d-4937-8088-1a111dba02f7",
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "job_id": "90e97530-f6b5-4948-b7f9-e7324521cde4",
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "job_id": "e69d6286-32c6-4612-bc0c-2a6458818fcb",
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "job_id": "63c2b4c1-a10b-4fc9-ac23-24123d75a639",
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            },
+            {
+              "job_id": "cbadfa36-e49d-479a-8152-5b04ba143094",
+              "kind": "instance.power.shutdown",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed"
+            },
+            {
+              "job_id": "6fc3eec0-bb73-4b1c-a1ec-95ecff2d28c3",
+              "kind": "instance.power.start",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed"
+            },
+            {
+              "job_id": "ce04450f-c2f5-4c5a-9e51-3574989d53f5",
+              "kind": "instance.network.discover",
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed"
+            },
+            {
+              "job_id": "e17352a5-cd3d-46ed-a3d7-63d3a2de0a50",
+              "kind": "instance.network.discover",
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed"
+            },
+            {
+              "job_id": "55074d3f-be8b-4921-a186-4d580eb085b4",
+              "kind": "instance.network.discover",
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed"
+            },
+            {
+              "job_id": "9cc0113e-7122-4b80-acf4-acf2c5cbbede",
+              "kind": "instance.network.discover",
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed"
+            },
+            {
+              "job_id": "fd43c9fe-ad91-4618-abba-9827f9cdd09a",
+              "kind": "instance.power.shutdown",
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "completed"
+            },
+            {
+              "job_id": "72a88589-c9aa-4650-bf74-a0dc5066ffc6",
+              "kind": "instance.delete",
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "completed"
+            }
+          ],
+          "name": "e2e-48febc55-0",
+          "node": "mng01",
+          "operations": [
+            {
+              "created_at": "2026-10-24T19:13:53.361797+00:00",
+              "error_code": null,
+              "kind": "instance.delete",
+              "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:14:14.519470+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:23.723434+00:00",
+              "error_code": null,
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:26.771317+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:44.242812+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:47.421073+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:57.653488+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:58.606046+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:35.231095+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:35.593562+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:28.520049+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:31.693925+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:23.639858+00:00",
+              "error_code": null,
+              "kind": "instance.create",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:51.014027+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:35.369478+00:00",
+              "error_code": null,
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:40.672195+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:50.949725+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:54.121116+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:21.826123+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:24.985889+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:51.601364+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:54.298999+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:40.689429+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:43.883415+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:46.279570+00:00",
+              "error_code": null,
+              "kind": "instance.power.shutdown",
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:51.041859+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:54.347984+00:00",
+              "error_code": null,
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:23.704821+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:07.788647+00:00",
+              "error_code": null,
+              "kind": "instance.power.shutdown",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:12.541820+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:14.969116+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:17.677382+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:17.699581+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:20.890431+00:00"
+            }
+          ],
+          "plan_attempts": 1,
+          "powers": [
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:13:17.676408+00:00",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "started_at": "2026-10-24T19:13:15.000350+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:11:54.297988+00:00",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "started_at": "2026-10-24T19:11:51.679228+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "reboot",
+              "finished_at": "2026-10-24T19:12:40.671310+00:00",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "started_at": "2026-10-24T19:12:35.407551+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "shutdown",
+              "finished_at": "2026-10-24T19:13:12.540967+00:00",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "started_at": "2026-10-24T19:13:07.823568+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "shutdown",
+              "finished_at": "2026-10-24T19:13:51.040988+00:00",
+              "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+              "started_at": "2026-10-24T19:13:46.318014+00:00",
+              "status": "completed"
+            }
+          ],
+          "protected_hashes": {
+            "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+            "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+          },
+          "proxmox_power_state": null,
+          "proxmox_present": false,
+          "queue_depth": {
+            "celery": 0,
+            "lifecycle": 0,
+            "terraform": 0
+          },
+          "redis": {
+            "blocked_clients": 3,
+            "connected_clients": 31,
+            "total_commands_processed": 188750,
+            "used_memory": 1866424
+          },
+          "schema": "iacp.e2e.audit.v1",
+          "state": {
+            "lock_present": false,
+            "managed_resources": 0,
+            "metadata": {
+              "content_sha256": "3bf3c75bc24dd2344b5ea3ccf52deb0bdfee6ec0fbde6cb89000440963ebd49f",
+              "lineage": "b5174930-a088-a890-29ff-b0067f0e7b48",
+              "serial": 2,
+              "sha256": "2c14caa3cd15d15e4c5394939eb6bdd8a0673fc464c1262e8133090794bc29c7",
+              "version_id": "001792869252970655069-oFQXvigIJE"
+            },
+            "present": true,
+            "reference_sha256": "9853182ef474f9bf7d9e6e1454ae5e689a6796daf6e0bfd6747b47ae3a813695"
+          },
+          "test_vmids_present": [],
+          "vm104_permissions": {
+            "/vms/104": {}
+          },
+          "vmid": 30016
+        },
+        "ready": {
+          "applies": [
+            {
+              "approval_id": "4cf69946-d33d-4110-8592-cd726d0247b4",
+              "attempt": 1,
+              "error_code": null,
+              "finished_at": "2026-10-24T19:11:51.009545+00:00",
+              "started_at": "2026-10-24T19:11:34.935136+00:00",
+              "status": "completed"
+            }
+          ],
+          "cluster": "MNG",
+          "containers": [
+            {
+              "BlockIO": "10.9MB / 29.4MB",
+              "CPUPerc": "0.15%",
+              "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+              "ID": "ba666052a25e",
+              "MemPerc": "1.06%",
+              "MemUsage": "171.2MiB / 15.81GiB",
+              "Name": "iacp-controlplane-terraform-worker-1",
+              "NetIO": "12.6MB / 1.65MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "860kB / 0B",
+              "CPUPerc": "0.14%",
+              "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+              "ID": "c9cdf9df7987",
+              "MemPerc": "0.62%",
+              "MemUsage": "100.2MiB / 15.81GiB",
+              "Name": "iacp-controlplane-api-1",
+              "NetIO": "72.7MB / 49.7MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 0B",
+              "CPUPerc": "0.06%",
+              "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+              "ID": "1230d01af135",
+              "MemPerc": "0.77%",
+              "MemUsage": "124.9MiB / 15.81GiB",
+              "Name": "iacp-controlplane-lifecycle-worker-1",
+              "NetIO": "407kB / 539kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 4.1kB",
+              "CPUPerc": "0.18%",
+              "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+              "ID": "fc8204e0875b",
+              "MemPerc": "0.58%",
+              "MemUsage": "93.58MiB / 15.81GiB",
+              "Name": "iacp-controlplane-worker-1",
+              "NetIO": "2.81MB / 723kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "108MB / 0B",
+              "CPUPerc": "0.00%",
+              "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+              "ID": "bbc379adee59",
+              "MemPerc": "0.86%",
+              "MemUsage": "139.9MiB / 15.81GiB",
+              "Name": "iacp-controlplane-traefik-1",
+              "NetIO": "87.4MB / 88.3MB",
+              "PIDs": "13"
+            },
+            {
+              "BlockIO": "38.3MB / 979kB",
+              "CPUPerc": "0.01%",
+              "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+              "ID": "a7cc37508fa4",
+              "MemPerc": "0.43%",
+              "MemUsage": "69.93MiB / 15.81GiB",
+              "Name": "iacp-controlplane-db-1",
+              "NetIO": "63.5MB / 268MB",
+              "PIDs": "12"
+            },
+            {
+              "BlockIO": "17MB / 3.92MB",
+              "CPUPerc": "0.62%",
+              "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+              "ID": "8fa3f587bb6c",
+              "MemPerc": "0.09%",
+              "MemUsage": "14.15MiB / 15.81GiB",
+              "Name": "iacp-controlplane-redis-1",
+              "NetIO": "69MB / 21MB",
+              "PIDs": "6"
+            }
+          ],
+          "db_connections": [
+            {
+              "count": 1,
+              "state": "active",
+              "wait_event_type": null
+            },
+            {
+              "count": 6,
+              "state": "idle",
+              "wait_event_type": "Client"
+            }
+          ],
+          "deletions": [],
+          "event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "power_accepted": 1,
+            "power_completed": 1,
+            "power_dispatching": 1,
+            "power_started": 1,
+            "power_task_recorded": 1,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          },
+          "events": [
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:23.658907+00:00",
+              "code": "lab_policy_bound",
+              "id": 853,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:23.658910+00:00",
+              "code": "accepted",
+              "id": 854,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:23.949065+00:00",
+              "code": "terraform_plan_started",
+              "id": 855,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:31.933676+00:00",
+              "code": "terraform_planned",
+              "id": 856,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:31.964184+00:00",
+              "code": "terraform_apply_approved",
+              "id": 857,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:31.984973+00:00",
+              "code": "terraform_apply_queued",
+              "id": 858,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:32.016660+00:00",
+              "code": "terraform_apply_started",
+              "id": 859,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:34.939186+00:00",
+              "code": "terraform_mutation_started",
+              "id": 860,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:43.247911+00:00",
+              "code": "terraform_apply_uncertain",
+              "id": 861,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:44.667658+00:00",
+              "code": "terraform_recovery_requested",
+              "id": 862,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:44.689336+00:00",
+              "code": "terraform_reconcile_started",
+              "id": 863,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:51.014913+00:00",
+              "code": "terraform_apply_completed",
+              "id": 864,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:51.609549+00:00",
+              "code": "power_accepted",
+              "id": 865,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.683002+00:00",
+              "code": "power_started",
+              "id": 866,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.972018+00:00",
+              "code": "power_dispatching",
+              "id": 867,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:52.054530+00:00",
+              "code": "power_task_recorded",
+              "id": 868,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:54.299682+00:00",
+              "code": "power_completed",
+              "id": 869,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:54.354718+00:00",
+              "code": "guest_initialization_accepted",
+              "id": 870,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:15.565518+00:00",
+              "code": "guest_initialization_dispatch_consumed",
+              "id": 871,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "running"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:23.705361+00:00",
+              "code": "guest_initialization_verified",
+              "id": 872,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:23.725550+00:00",
+              "code": "access_verification_accepted",
+              "id": 873,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:26.771942+00:00",
+              "code": "root_cloud_init_ssh_verified",
+              "id": 874,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            }
+          ],
+          "guest_agent_available": true,
+          "initializer": {
+            "finished_at": "2026-10-24T19:12:23.702059+00:00",
+            "started_at": "2026-10-24T19:12:15.561755+00:00",
+            "status": "completed"
+          },
+          "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+          "inventory_status": "ready",
+          "jobs": [
+            {
+              "job_id": "c5e43313-0117-4e09-a762-dba25f6412f7",
+              "kind": "instance.plan",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "job_id": "cb2d27dc-0342-487b-9b79-49fc4bc4c3c3",
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "job_id": "9d32cf98-e82f-440b-9717-f02d7da81aae",
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "job_id": "f179925e-8052-4fc3-9ac1-ab5ecac7b649",
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            }
+          ],
+          "name": "e2e-48febc55-0",
+          "node": "mng01",
+          "operations": [
+            {
+              "created_at": "2026-10-24T19:12:23.723434+00:00",
+              "error_code": null,
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:26.771317+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:23.639858+00:00",
+              "error_code": null,
+              "kind": "instance.create",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:51.014027+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:51.601364+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:54.298999+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:54.347984+00:00",
+              "error_code": null,
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:23.704821+00:00"
+            }
+          ],
+          "plan_attempts": 1,
+          "powers": [
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:11:54.297988+00:00",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "started_at": "2026-10-24T19:11:51.679228+00:00",
+              "status": "completed"
+            }
+          ],
+          "protected_hashes": {
+            "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+            "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+          },
+          "proxmox_power_state": "running",
+          "proxmox_present": true,
+          "queue_depth": {
+            "celery": 0,
+            "lifecycle": 0,
+            "terraform": 0
+          },
+          "redis": {
+            "blocked_clients": 3,
+            "connected_clients": 31,
+            "total_commands_processed": 188038,
+            "used_memory": 1865656
+          },
+          "schema": "iacp.e2e.audit.v1",
+          "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFfJDNcbARHsGx1HuVFn2aTaIbG70s6K+5DjoamiOg74 root@e2e-48febc55-0",
+          "state": {
+            "lock_present": false,
+            "managed_resources": 1,
+            "metadata": {
+              "content_sha256": "86313b4314a0f7dead489b47cae10bc0ca05b7807791dee87576cae601193a7a",
+              "lineage": "b5174930-a088-a890-29ff-b0067f0e7b48",
+              "serial": 1,
+              "sha256": "d8c264d18ce068994444bb4fe4dceb4284d3520f8405fe1330fda27d5c7ecb62",
+              "version_id": "001792869102241446422-GdhrXgzizX"
+            },
+            "present": true,
+            "reference_sha256": "9853182ef474f9bf7d9e6e1454ae5e689a6796daf6e0bfd6747b47ae3a813695"
+          },
+          "test_vmids_present": [
+            30016
+          ],
+          "vm104_permissions": {
+            "/vms/104": {}
+          },
+          "vmid": 30016
+        },
+        "reboot": {
+          "applies": [
+            {
+              "approval_id": "4cf69946-d33d-4110-8592-cd726d0247b4",
+              "attempt": 1,
+              "error_code": null,
+              "finished_at": "2026-10-24T19:11:51.009545+00:00",
+              "started_at": "2026-10-24T19:11:34.935136+00:00",
+              "status": "completed"
+            }
+          ],
+          "cluster": "MNG",
+          "containers": [
+            {
+              "BlockIO": "10.9MB / 29.4MB",
+              "CPUPerc": "0.19%",
+              "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+              "ID": "ba666052a25e",
+              "MemPerc": "1.06%",
+              "MemUsage": "171.3MiB / 15.81GiB",
+              "Name": "iacp-controlplane-terraform-worker-1",
+              "NetIO": "12.9MB / 1.79MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "860kB / 0B",
+              "CPUPerc": "0.15%",
+              "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+              "ID": "c9cdf9df7987",
+              "MemPerc": "0.62%",
+              "MemUsage": "100.4MiB / 15.81GiB",
+              "Name": "iacp-controlplane-api-1",
+              "NetIO": "73MB / 50MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 0B",
+              "CPUPerc": "0.03%",
+              "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+              "ID": "1230d01af135",
+              "MemPerc": "0.77%",
+              "MemUsage": "124.9MiB / 15.81GiB",
+              "Name": "iacp-controlplane-lifecycle-worker-1",
+              "NetIO": "646kB / 654kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 4.1kB",
+              "CPUPerc": "0.14%",
+              "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+              "ID": "fc8204e0875b",
+              "MemPerc": "0.58%",
+              "MemUsage": "93.58MiB / 15.81GiB",
+              "Name": "iacp-controlplane-worker-1",
+              "NetIO": "2.81MB / 743kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "108MB / 0B",
+              "CPUPerc": "0.00%",
+              "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+              "ID": "bbc379adee59",
+              "MemPerc": "0.81%",
+              "MemUsage": "131MiB / 15.81GiB",
+              "Name": "iacp-controlplane-traefik-1",
+              "NetIO": "87.5MB / 88.4MB",
+              "PIDs": "13"
+            },
+            {
+              "BlockIO": "38.4MB / 1.21MB",
+              "CPUPerc": "0.02%",
+              "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+              "ID": "a7cc37508fa4",
+              "MemPerc": "0.44%",
+              "MemUsage": "70.46MiB / 15.81GiB",
+              "Name": "iacp-controlplane-db-1",
+              "NetIO": "63.8MB / 269MB",
+              "PIDs": "12"
+            },
+            {
+              "BlockIO": "17MB / 3.99MB",
+              "CPUPerc": "0.61%",
+              "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+              "ID": "8fa3f587bb6c",
+              "MemPerc": "0.09%",
+              "MemUsage": "14.15MiB / 15.81GiB",
+              "Name": "iacp-controlplane-redis-1",
+              "NetIO": "69.1MB / 21.1MB",
+              "PIDs": "6"
+            }
+          ],
+          "db_connections": [
+            {
+              "count": 1,
+              "state": "active",
+              "wait_event_type": null
+            },
+            {
+              "count": 6,
+              "state": "idle",
+              "wait_event_type": "Client"
+            }
+          ],
+          "deletions": [],
+          "event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 4,
+            "network_observed": 1,
+            "network_pending": 3,
+            "power_accepted": 2,
+            "power_completed": 2,
+            "power_dispatching": 2,
+            "power_started": 2,
+            "power_task_recorded": 2,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          },
+          "events": [
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:23.658907+00:00",
+              "code": "lab_policy_bound",
+              "id": 853,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:23.658910+00:00",
+              "code": "accepted",
+              "id": 854,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:23.949065+00:00",
+              "code": "terraform_plan_started",
+              "id": 855,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:31.933676+00:00",
+              "code": "terraform_planned",
+              "id": 856,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:31.964184+00:00",
+              "code": "terraform_apply_approved",
+              "id": 857,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:31.984973+00:00",
+              "code": "terraform_apply_queued",
+              "id": 858,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:32.016660+00:00",
+              "code": "terraform_apply_started",
+              "id": 859,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:34.939186+00:00",
+              "code": "terraform_mutation_started",
+              "id": 860,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:43.247911+00:00",
+              "code": "terraform_apply_uncertain",
+              "id": 861,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:44.667658+00:00",
+              "code": "terraform_recovery_requested",
+              "id": 862,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:44.689336+00:00",
+              "code": "terraform_reconcile_started",
+              "id": 863,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:51.014913+00:00",
+              "code": "terraform_apply_completed",
+              "id": 864,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:51.609549+00:00",
+              "code": "power_accepted",
+              "id": 865,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.683002+00:00",
+              "code": "power_started",
+              "id": 866,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.972018+00:00",
+              "code": "power_dispatching",
+              "id": 867,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:52.054530+00:00",
+              "code": "power_task_recorded",
+              "id": 868,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:54.299682+00:00",
+              "code": "power_completed",
+              "id": 869,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:54.354718+00:00",
+              "code": "guest_initialization_accepted",
+              "id": 870,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:15.565518+00:00",
+              "code": "guest_initialization_dispatch_consumed",
+              "id": 871,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "running"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:23.705361+00:00",
+              "code": "guest_initialization_verified",
+              "id": 872,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:23.725550+00:00",
+              "code": "access_verification_accepted",
+              "id": 873,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:26.771942+00:00",
+              "code": "root_cloud_init_ssh_verified",
+              "id": 874,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:35.372930+00:00",
+              "code": "power_accepted",
+              "id": 875,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.409756+00:00",
+              "code": "power_started",
+              "id": 876,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.703180+00:00",
+              "code": "power_dispatching",
+              "id": 877,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.789942+00:00",
+              "code": "power_task_recorded",
+              "id": 878,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:40.672902+00:00",
+              "code": "power_completed",
+              "id": 879,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:40.694278+00:00",
+              "code": "network_discovery_accepted",
+              "id": 880,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:43.883994+00:00",
+              "code": "network_pending",
+              "id": 881,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:44.247528+00:00",
+              "code": "network_discovery_accepted",
+              "id": 882,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:47.421679+00:00",
+              "code": "network_pending",
+              "id": 883,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:50.952812+00:00",
+              "code": "network_discovery_accepted",
+              "id": 884,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:54.121778+00:00",
+              "code": "network_pending",
+              "id": 885,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:57.656327+00:00",
+              "code": "network_discovery_accepted",
+              "id": 886,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:58.606640+00:00",
+              "code": "network_observed",
+              "id": 887,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            }
+          ],
+          "guest_agent_available": true,
+          "initializer": {
+            "finished_at": "2026-10-24T19:12:23.702059+00:00",
+            "started_at": "2026-10-24T19:12:15.561755+00:00",
+            "status": "completed"
+          },
+          "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+          "inventory_status": "ready",
+          "jobs": [
+            {
+              "job_id": "c5e43313-0117-4e09-a762-dba25f6412f7",
+              "kind": "instance.plan",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "job_id": "cb2d27dc-0342-487b-9b79-49fc4bc4c3c3",
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "job_id": "9d32cf98-e82f-440b-9717-f02d7da81aae",
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "job_id": "f179925e-8052-4fc3-9ac1-ab5ecac7b649",
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "job_id": "b641f3a4-c230-4a11-847b-122cb98dc803",
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "job_id": "e12e6212-415d-4937-8088-1a111dba02f7",
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "job_id": "90e97530-f6b5-4948-b7f9-e7324521cde4",
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "job_id": "e69d6286-32c6-4612-bc0c-2a6458818fcb",
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "job_id": "63c2b4c1-a10b-4fc9-ac23-24123d75a639",
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            }
+          ],
+          "name": "e2e-48febc55-0",
+          "node": "mng01",
+          "operations": [
+            {
+              "created_at": "2026-10-24T19:12:23.723434+00:00",
+              "error_code": null,
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:26.771317+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:44.242812+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:47.421073+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:57.653488+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:58.606046+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:23.639858+00:00",
+              "error_code": null,
+              "kind": "instance.create",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:51.014027+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:35.369478+00:00",
+              "error_code": null,
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:40.672195+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:50.949725+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:54.121116+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:51.601364+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:54.298999+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:40.689429+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:43.883415+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:54.347984+00:00",
+              "error_code": null,
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:23.704821+00:00"
+            }
+          ],
+          "plan_attempts": 1,
+          "powers": [
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:11:54.297988+00:00",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "started_at": "2026-10-24T19:11:51.679228+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "reboot",
+              "finished_at": "2026-10-24T19:12:40.671310+00:00",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "started_at": "2026-10-24T19:12:35.407551+00:00",
+              "status": "completed"
+            }
+          ],
+          "protected_hashes": {
+            "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+            "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+          },
+          "proxmox_power_state": "running",
+          "proxmox_present": true,
+          "queue_depth": {
+            "celery": 0,
+            "lifecycle": 0,
+            "terraform": 0
+          },
+          "redis": {
+            "blocked_clients": 3,
+            "connected_clients": 31,
+            "total_commands_processed": 188265,
+            "used_memory": 1865656
+          },
+          "schema": "iacp.e2e.audit.v1",
+          "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFfJDNcbARHsGx1HuVFn2aTaIbG70s6K+5DjoamiOg74 root@e2e-48febc55-0",
+          "state": {
+            "lock_present": false,
+            "managed_resources": 1,
+            "metadata": {
+              "content_sha256": "86313b4314a0f7dead489b47cae10bc0ca05b7807791dee87576cae601193a7a",
+              "lineage": "b5174930-a088-a890-29ff-b0067f0e7b48",
+              "serial": 1,
+              "sha256": "d8c264d18ce068994444bb4fe4dceb4284d3520f8405fe1330fda27d5c7ecb62",
+              "version_id": "001792869102241446422-GdhrXgzizX"
+            },
+            "present": true,
+            "reference_sha256": "9853182ef474f9bf7d9e6e1454ae5e689a6796daf6e0bfd6747b47ae3a813695"
+          },
+          "test_vmids_present": [
+            30016
+          ],
+          "vm104_permissions": {
+            "/vms/104": {}
+          },
+          "vmid": 30016
+        },
+        "start": {
+          "applies": [
+            {
+              "approval_id": "4cf69946-d33d-4110-8592-cd726d0247b4",
+              "attempt": 1,
+              "error_code": null,
+              "finished_at": "2026-10-24T19:11:51.009545+00:00",
+              "started_at": "2026-10-24T19:11:34.935136+00:00",
+              "status": "completed"
+            }
+          ],
+          "cluster": "MNG",
+          "containers": [
+            {
+              "BlockIO": "10.9MB / 29.4MB",
+              "CPUPerc": "0.18%",
+              "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+              "ID": "ba666052a25e",
+              "MemPerc": "1.06%",
+              "MemUsage": "171.4MiB / 15.81GiB",
+              "Name": "iacp-controlplane-terraform-worker-1",
+              "NetIO": "13.2MB / 1.94MB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "860kB / 0B",
+              "CPUPerc": "3.26%",
+              "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+              "ID": "c9cdf9df7987",
+              "MemPerc": "0.64%",
+              "MemUsage": "104.2MiB / 15.81GiB",
+              "Name": "iacp-controlplane-api-1",
+              "NetIO": "73.5MB / 50.2MB",
+              "PIDs": "8"
+            },
+            {
+              "BlockIO": "0B / 0B",
+              "CPUPerc": "0.04%",
+              "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+              "ID": "1230d01af135",
+              "MemPerc": "0.78%",
+              "MemUsage": "125.8MiB / 15.81GiB",
+              "Name": "iacp-controlplane-lifecycle-worker-1",
+              "NetIO": "1.06MB / 848kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "0B / 4.1kB",
+              "CPUPerc": "0.22%",
+              "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+              "ID": "fc8204e0875b",
+              "MemPerc": "0.58%",
+              "MemUsage": "93.58MiB / 15.81GiB",
+              "Name": "iacp-controlplane-worker-1",
+              "NetIO": "2.82MB / 766kB",
+              "PIDs": "2"
+            },
+            {
+              "BlockIO": "108MB / 0B",
+              "CPUPerc": "0.00%",
+              "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+              "ID": "bbc379adee59",
+              "MemPerc": "0.81%",
+              "MemUsage": "131MiB / 15.81GiB",
+              "Name": "iacp-controlplane-traefik-1",
+              "NetIO": "87.5MB / 88.4MB",
+              "PIDs": "13"
+            },
+            {
+              "BlockIO": "38.4MB / 1.46MB",
+              "CPUPerc": "0.02%",
+              "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+              "ID": "a7cc37508fa4",
+              "MemPerc": "0.44%",
+              "MemUsage": "70.57MiB / 15.81GiB",
+              "Name": "iacp-controlplane-db-1",
+              "NetIO": "64.2MB / 269MB",
+              "PIDs": "12"
+            },
+            {
+              "BlockIO": "17.1MB / 4.09MB",
+              "CPUPerc": "0.64%",
+              "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+              "ID": "8fa3f587bb6c",
+              "MemPerc": "0.09%",
+              "MemUsage": "14.14MiB / 15.81GiB",
+              "Name": "iacp-controlplane-redis-1",
+              "NetIO": "69.2MB / 21.1MB",
+              "PIDs": "6"
+            }
+          ],
+          "db_connections": [
+            {
+              "count": 1,
+              "state": "active",
+              "wait_event_type": null
+            },
+            {
+              "count": 6,
+              "state": "idle",
+              "wait_event_type": "Client"
+            }
+          ],
+          "deletions": [],
+          "event_counts": {
+            "accepted": 1,
+            "access_verification_accepted": 1,
+            "guest_initialization_accepted": 1,
+            "guest_initialization_dispatch_consumed": 1,
+            "guest_initialization_verified": 1,
+            "lab_policy_bound": 1,
+            "network_discovery_accepted": 8,
+            "network_observed": 2,
+            "network_pending": 6,
+            "power_accepted": 4,
+            "power_completed": 4,
+            "power_dispatching": 4,
+            "power_started": 4,
+            "power_task_recorded": 4,
+            "root_cloud_init_ssh_verified": 1,
+            "terraform_apply_approved": 1,
+            "terraform_apply_completed": 1,
+            "terraform_apply_queued": 1,
+            "terraform_apply_started": 1,
+            "terraform_apply_uncertain": 1,
+            "terraform_mutation_started": 1,
+            "terraform_plan_started": 1,
+            "terraform_planned": 1,
+            "terraform_reconcile_started": 1,
+            "terraform_recovery_requested": 1
+          },
+          "events": [
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:23.658907+00:00",
+              "code": "lab_policy_bound",
+              "id": 853,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:23.658910+00:00",
+              "code": "accepted",
+              "id": 854,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:23.949065+00:00",
+              "code": "terraform_plan_started",
+              "id": 855,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:31.933676+00:00",
+              "code": "terraform_planned",
+              "id": 856,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "policy:179f58db-59ee-4da2-a676-30c1642441a8",
+              "at": "2026-10-24T19:11:31.964184+00:00",
+              "code": "terraform_apply_approved",
+              "id": 857,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:31.984973+00:00",
+              "code": "terraform_apply_queued",
+              "id": 858,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:32.016660+00:00",
+              "code": "terraform_apply_started",
+              "id": 859,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:34.939186+00:00",
+              "code": "terraform_mutation_started",
+              "id": 860,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "running"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:43.247911+00:00",
+              "code": "terraform_apply_uncertain",
+              "id": 861,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:44.667658+00:00",
+              "code": "terraform_recovery_requested",
+              "id": 862,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:44.689336+00:00",
+              "code": "terraform_reconcile_started",
+              "id": 863,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "failed"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:11:51.014913+00:00",
+              "code": "terraform_apply_completed",
+              "id": 864,
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:51.609549+00:00",
+              "code": "power_accepted",
+              "id": 865,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.683002+00:00",
+              "code": "power_started",
+              "id": 866,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:51.972018+00:00",
+              "code": "power_dispatching",
+              "id": 867,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:52.054530+00:00",
+              "code": "power_task_recorded",
+              "id": 868,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:11:54.299682+00:00",
+              "code": "power_completed",
+              "id": 869,
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:11:54.354718+00:00",
+              "code": "guest_initialization_accepted",
+              "id": 870,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:15.565518+00:00",
+              "code": "guest_initialization_dispatch_consumed",
+              "id": 871,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "running"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:23.705361+00:00",
+              "code": "guest_initialization_verified",
+              "id": 872,
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:23.725550+00:00",
+              "code": "access_verification_accepted",
+              "id": 873,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:iac",
+              "at": "2026-10-24T19:12:26.771942+00:00",
+              "code": "root_cloud_init_ssh_verified",
+              "id": 874,
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:35.372930+00:00",
+              "code": "power_accepted",
+              "id": 875,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.409756+00:00",
+              "code": "power_started",
+              "id": 876,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.703180+00:00",
+              "code": "power_dispatching",
+              "id": 877,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:35.789942+00:00",
+              "code": "power_task_recorded",
+              "id": 878,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:12:40.672902+00:00",
+              "code": "power_completed",
+              "id": 879,
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:40.694278+00:00",
+              "code": "network_discovery_accepted",
+              "id": 880,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:43.883994+00:00",
+              "code": "network_pending",
+              "id": 881,
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:44.247528+00:00",
+              "code": "network_discovery_accepted",
+              "id": 882,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:47.421679+00:00",
+              "code": "network_pending",
+              "id": 883,
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:50.952812+00:00",
+              "code": "network_discovery_accepted",
+              "id": 884,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:54.121778+00:00",
+              "code": "network_pending",
+              "id": 885,
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:12:57.656327+00:00",
+              "code": "network_discovery_accepted",
+              "id": 886,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:12:58.606640+00:00",
+              "code": "network_observed",
+              "id": 887,
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:07.791296+00:00",
+              "code": "power_accepted",
+              "id": 888,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:07.825260+00:00",
+              "code": "power_started",
+              "id": 889,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:08.094688+00:00",
+              "code": "power_dispatching",
+              "id": 890,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:08.181608+00:00",
+              "code": "power_task_recorded",
+              "id": 891,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:12.542610+00:00",
+              "code": "power_completed",
+              "id": 892,
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:14.971722+00:00",
+              "code": "power_accepted",
+              "id": 893,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.001932+00:00",
+              "code": "power_started",
+              "id": 894,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.277972+00:00",
+              "code": "power_dispatching",
+              "id": 895,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:15.372459+00:00",
+              "code": "power_task_recorded",
+              "id": 896,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "running"
+            },
+            {
+              "actor": "worker:lifecycle",
+              "at": "2026-10-24T19:13:17.678382+00:00",
+              "code": "power_completed",
+              "id": 897,
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:17.703035+00:00",
+              "code": "network_discovery_accepted",
+              "id": 898,
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:20.891259+00:00",
+              "code": "network_pending",
+              "id": 899,
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:21.828980+00:00",
+              "code": "network_discovery_accepted",
+              "id": 900,
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:24.986506+00:00",
+              "code": "network_pending",
+              "id": 901,
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:28.522674+00:00",
+              "code": "network_discovery_accepted",
+              "id": 902,
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:31.694490+00:00",
+              "code": "network_pending",
+              "id": 903,
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed"
+            },
+            {
+              "actor": "bootstrap",
+              "at": "2026-10-24T19:13:35.233851+00:00",
+              "code": "network_discovery_accepted",
+              "id": 904,
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "queued"
+            },
+            {
+              "actor": "worker:terraform",
+              "at": "2026-10-24T19:13:35.594172+00:00",
+              "code": "network_observed",
+              "id": 905,
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed"
+            }
+          ],
+          "guest_agent_available": true,
+          "initializer": {
+            "finished_at": "2026-10-24T19:12:23.702059+00:00",
+            "started_at": "2026-10-24T19:12:15.561755+00:00",
+            "status": "completed"
+          },
+          "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+          "inventory_status": "ready",
+          "jobs": [
+            {
+              "job_id": "c5e43313-0117-4e09-a762-dba25f6412f7",
+              "kind": "instance.plan",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed"
+            },
+            {
+              "job_id": "cb2d27dc-0342-487b-9b79-49fc4bc4c3c3",
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed"
+            },
+            {
+              "job_id": "9d32cf98-e82f-440b-9717-f02d7da81aae",
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed"
+            },
+            {
+              "job_id": "f179925e-8052-4fc3-9ac1-ab5ecac7b649",
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed"
+            },
+            {
+              "job_id": "b641f3a4-c230-4a11-847b-122cb98dc803",
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed"
+            },
+            {
+              "job_id": "e12e6212-415d-4937-8088-1a111dba02f7",
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed"
+            },
+            {
+              "job_id": "90e97530-f6b5-4948-b7f9-e7324521cde4",
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed"
+            },
+            {
+              "job_id": "e69d6286-32c6-4612-bc0c-2a6458818fcb",
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed"
+            },
+            {
+              "job_id": "63c2b4c1-a10b-4fc9-ac23-24123d75a639",
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed"
+            },
+            {
+              "job_id": "cbadfa36-e49d-479a-8152-5b04ba143094",
+              "kind": "instance.power.shutdown",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed"
+            },
+            {
+              "job_id": "6fc3eec0-bb73-4b1c-a1ec-95ecff2d28c3",
+              "kind": "instance.power.start",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed"
+            },
+            {
+              "job_id": "ce04450f-c2f5-4c5a-9e51-3574989d53f5",
+              "kind": "instance.network.discover",
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed"
+            },
+            {
+              "job_id": "e17352a5-cd3d-46ed-a3d7-63d3a2de0a50",
+              "kind": "instance.network.discover",
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed"
+            },
+            {
+              "job_id": "55074d3f-be8b-4921-a186-4d580eb085b4",
+              "kind": "instance.network.discover",
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed"
+            },
+            {
+              "job_id": "9cc0113e-7122-4b80-acf4-acf2c5cbbede",
+              "kind": "instance.network.discover",
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed"
+            }
+          ],
+          "name": "e2e-48febc55-0",
+          "node": "mng01",
+          "operations": [
+            {
+              "created_at": "2026-10-24T19:12:23.723434+00:00",
+              "error_code": null,
+              "kind": "instance.access.verify",
+              "operation_id": "ed49d970-f608-440f-8095-0a761ba2a866",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:26.771317+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:44.242812+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:47.421073+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:57.653488+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:58.606046+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:35.231095+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:35.593562+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:28.520049+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:31.693925+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:23.639858+00:00",
+              "error_code": null,
+              "kind": "instance.create",
+              "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:51.014027+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:35.369478+00:00",
+              "error_code": null,
+              "kind": "instance.power.reboot",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:40.672195+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:50.949725+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:54.121116+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:21.826123+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:24.985889+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:51.601364+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:11:54.298999+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:12:40.689429+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "129b0952-a1a5-4519-afdd-71dd5de70c49",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:43.883415+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:11:54.347984+00:00",
+              "error_code": null,
+              "kind": "instance.network.initialize",
+              "operation_id": "09b34dff-3b11-41be-b160-47eb25c0da55",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:12:23.704821+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:07.788647+00:00",
+              "error_code": null,
+              "kind": "instance.power.shutdown",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:12.541820+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:14.969116+00:00",
+              "error_code": null,
+              "kind": "instance.power.start",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:17.677382+00:00"
+            },
+            {
+              "created_at": "2026-10-24T19:13:17.699581+00:00",
+              "error_code": null,
+              "kind": "instance.network.discover",
+              "operation_id": "346e1d79-7b76-4227-9f19-d6e511d00acf",
+              "status": "completed",
+              "updated_at": "2026-10-24T19:13:20.890431+00:00"
+            }
+          ],
+          "plan_attempts": 1,
+          "powers": [
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:13:17.676408+00:00",
+              "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+              "started_at": "2026-10-24T19:13:15.000350+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "start",
+              "finished_at": "2026-10-24T19:11:54.297988+00:00",
+              "operation_id": "3678c08d-9492-4671-8fcb-b79afc006e78",
+              "started_at": "2026-10-24T19:11:51.679228+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "reboot",
+              "finished_at": "2026-10-24T19:12:40.671310+00:00",
+              "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+              "started_at": "2026-10-24T19:12:35.407551+00:00",
+              "status": "completed"
+            },
+            {
+              "action": "shutdown",
+              "finished_at": "2026-10-24T19:13:12.540967+00:00",
+              "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+              "started_at": "2026-10-24T19:13:07.823568+00:00",
+              "status": "completed"
+            }
+          ],
+          "protected_hashes": {
+            "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+            "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+          },
+          "proxmox_power_state": "running",
+          "proxmox_present": true,
+          "queue_depth": {
+            "celery": 0,
+            "lifecycle": 0,
+            "terraform": 0
+          },
+          "redis": {
+            "blocked_clients": 3,
+            "connected_clients": 31,
+            "total_commands_processed": 188540,
+            "used_memory": 1866136
+          },
+          "schema": "iacp.e2e.audit.v1",
+          "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFfJDNcbARHsGx1HuVFn2aTaIbG70s6K+5DjoamiOg74 root@e2e-48febc55-0",
+          "state": {
+            "lock_present": false,
+            "managed_resources": 1,
+            "metadata": {
+              "content_sha256": "86313b4314a0f7dead489b47cae10bc0ca05b7807791dee87576cae601193a7a",
+              "lineage": "b5174930-a088-a890-29ff-b0067f0e7b48",
+              "serial": 1,
+              "sha256": "d8c264d18ce068994444bb4fe4dceb4284d3520f8405fe1330fda27d5c7ecb62",
+              "version_id": "001792869102241446422-GdhrXgzizX"
+            },
+            "present": true,
+            "reference_sha256": "9853182ef474f9bf7d9e6e1454ae5e689a6796daf6e0bfd6747b47ae3a813695"
+          },
+          "test_vmids_present": [
+            30016
+          ],
+          "vm104_permissions": {
+            "/vms/104": {}
+          },
+          "vmid": 30016
+        }
+      },
+      "done": true,
+      "failure": null,
+      "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+      "milestones": {
+        "reboot": {
+          "at": "2026-10-24T19:13:07.486614+00:00",
+          "epoch": 1792869187.4866178,
+          "state": "running"
+        },
+        "shutdown-1": {
+          "at": "2026-10-24T19:13:14.646128+00:00",
+          "epoch": 1792869194.6461358,
+          "state": "stopped"
+        },
+        "shutdown-2": {
+          "at": "2026-10-24T19:13:53.109427+00:00",
+          "epoch": 1792869233.1094332,
+          "state": "stopped"
+        },
+        "ssh": {
+          "epoch": 1792869155.0452054,
+          "host_key_sha256": "48b2bf8434315dce143d5b2d37bae9225aa3e23463a8b5df79a53a0f2d560692",
+          "observed_at": "2026-10-24T19:12:35.045092+00:00",
+          "root_authenticated": true
+        },
+        "start": {
+          "at": "2026-10-24T19:13:45.958052+00:00",
+          "epoch": 1792869225.958061,
+          "state": "running"
+        }
+      },
+      "name": "e2e-48febc55-0",
+      "requests": {
+        "create": {
+          "completed": true,
+          "completed_epoch": 1792869147.5284781,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-create",
+          "receipt": {
+            "executor": "provisioning",
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "c5e43313-0117-4e09-a762-dba25f6412f7",
+            "operation_id": "87055554-ca60-4ada-9fa4-666a4799787b",
+            "provisioning_service": "provisioning",
+            "status": "queued"
+          },
+          "recoveries": [
+            1792869104.3828764
+          ],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869083.1719089
+        },
+        "delete": {
+          "completed": true,
+          "completed_epoch": 1792869256.1754012,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-delete",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "72a88589-c9aa-4650-bf74-a0dc5066ffc6",
+            "operation_id": "7cb9694a-7ffc-4eeb-8ca9-8ef4c560fd7f",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869233.1419947
+        },
+        "network-reboot-0": {
+          "completed": true,
+          "completed_epoch": 1792869168.5233254,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-reboot-0",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "90e97530-f6b5-4948-b7f9-e7324521cde4",
+            "operation_id": "13e7d3a1-36b6-466f-85ec-b52334ef09a9",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869162.1858327
+        },
+        "network-reboot-1": {
+          "completed": true,
+          "completed_epoch": 1792869175.2161458,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-reboot-1",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "e69d6286-32c6-4612-bc0c-2a6458818fcb",
+            "operation_id": "1b78919f-15fb-4a76-bfe7-3f5e54a77042",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869170.9217913
+        },
+        "network-reboot-2": {
+          "completed": true,
+          "completed_epoch": 1792869179.8920271,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-reboot-2",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "63c2b4c1-a10b-4fc9-ac23-24123d75a639",
+            "operation_id": "2f0d7bf3-e0a3-4363-992d-0d5901c8ca70",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869177.6177223
+        },
+        "network-start-0": {
+          "completed": true,
+          "completed_epoch": 1792869206.0960557,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-start-0",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "e17352a5-cd3d-46ed-a3d7-63d3a2de0a50",
+            "operation_id": "ffe3e5b4-e813-4b2d-98d2-0c250186d787",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869199.7687933
+        },
+        "network-start-1": {
+          "completed": true,
+          "completed_epoch": 1792869212.7899914,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-start-1",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "55074d3f-be8b-4921-a186-4d580eb085b4",
+            "operation_id": "d98e44ae-f87d-468e-b418-7a1c03e7016f",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869208.4895418
+        },
+        "network-start-2": {
+          "completed": true,
+          "completed_epoch": 1792869217.4682193,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-network-start-2",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "9cc0113e-7122-4b80-acf4-acf2c5cbbede",
+            "operation_id": "24fd2230-2ec2-4ca4-80fa-eaec69b01a7c",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869215.1899972
+        },
+        "reboot": {
+          "completed": true,
+          "completed_epoch": 1792869161.7688963,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-reboot",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "b641f3a4-c230-4a11-847b-122cb98dc803",
+            "operation_id": "af1c2934-bb4d-461b-9798-2afd66b10e52",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869155.0836585
+        },
+        "shutdown-1": {
+          "completed": true,
+          "completed_epoch": 1792869194.227751,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-shutdown-1",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "cbadfa36-e49d-479a-8152-5b04ba143094",
+            "operation_id": "fcb72099-0522-4835-80f1-b3cde1692488",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869187.5170465
+        },
+        "shutdown-2": {
+          "completed": true,
+          "completed_epoch": 1792869232.7007687,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-shutdown-2",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "fd43c9fe-ad91-4618-abba-9827f9cdd09a",
+            "operation_id": "dab7e55d-4356-46d5-b15e-49ff4747fb6e",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869225.9934862
+        },
+        "start": {
+          "completed": true,
+          "completed_epoch": 1792869199.349069,
+          "key": "48febc55-7125-4038-974a-6228eb168745-0-start",
+          "receipt": {
+            "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+            "job_id": "6fc3eec0-bb73-4b1c-a1ec-95ecff2d28c3",
+            "operation_id": "1a553688-0e39-407a-9def-f5cf7e9a4ed2",
+            "status": "queued"
+          },
+          "recoveries": [],
+          "rejection": null,
+          "replayed": true,
+          "started_epoch": 1792869194.679469
+        }
+      }
+    }
+  ],
+  "passed": true,
+  "preflight": {
+    "api_version": "0.10.1",
+    "at": "2026-10-24T19:11:23.042774+00:00",
+    "audit": {
+      "cluster": "MNG",
+      "containers": [
+        {
+          "BlockIO": "6.01MB / 0B",
+          "CPUPerc": "0.05%",
+          "Container": "ba666052a25eb6a6a8cc173c77590870813fb1b5c8fb7281120d8fd65bdd1a83",
+          "ID": "ba666052a25e",
+          "MemPerc": "0.63%",
+          "MemUsage": "102.2MiB / 15.81GiB",
+          "Name": "iacp-controlplane-terraform-worker-1",
+          "NetIO": "330kB / 442kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "225kB / 0B",
+          "CPUPerc": "9.36%",
+          "Container": "c9cdf9df7987159c4b2c5a0b75bdd8bb47309812d9e186fb68143bda70db259e",
+          "ID": "c9cdf9df7987",
+          "MemPerc": "0.58%",
+          "MemUsage": "94.32MiB / 15.81GiB",
+          "Name": "iacp-controlplane-api-1",
+          "NetIO": "72MB / 49.2MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.10%",
+          "Container": "1230d01af13525e2becab13fe023c2ebca84009eede7d14c5300e2e3d1452197",
+          "ID": "1230d01af135",
+          "MemPerc": "0.56%",
+          "MemUsage": "91.31MiB / 15.81GiB",
+          "Name": "iacp-controlplane-lifecycle-worker-1",
+          "NetIO": "120kB / 372kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.15%",
+          "Container": "fc8204e0875bf7f481acccccebd0029e930a779200fcee41c8e894e5bfa2214a",
+          "ID": "fc8204e0875b",
+          "MemPerc": "0.58%",
+          "MemUsage": "93.58MiB / 15.81GiB",
+          "Name": "iacp-controlplane-worker-1",
+          "NetIO": "2.79MB / 679kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "108MB / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+          "ID": "bbc379adee59",
+          "MemPerc": "0.86%",
+          "MemUsage": "139.9MiB / 15.81GiB",
+          "Name": "iacp-controlplane-traefik-1",
+          "NetIO": "87.2MB / 88.1MB",
+          "PIDs": "13"
+        },
+        {
+          "BlockIO": "38.1MB / 520kB",
+          "CPUPerc": "0.15%",
+          "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+          "ID": "a7cc37508fa4",
+          "MemPerc": "0.36%",
+          "MemUsage": "58.62MiB / 15.81GiB",
+          "Name": "iacp-controlplane-db-1",
+          "NetIO": "62.3MB / 266MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "16.9MB / 3.83MB",
+          "CPUPerc": "0.63%",
+          "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+          "ID": "8fa3f587bb6c",
+          "MemPerc": "0.09%",
+          "MemUsage": "14.1MiB / 15.81GiB",
+          "Name": "iacp-controlplane-redis-1",
+          "NetIO": "68.9MB / 21MB",
+          "PIDs": "6"
+        }
+      ],
+      "db_connections": [
+        {
+          "count": 1,
+          "state": "active",
+          "wait_event_type": null
+        },
+        {
+          "count": 2,
+          "state": "idle",
+          "wait_event_type": "Client"
+        }
+      ],
+      "policy_current_bindings": true,
+      "profile_limits": {
+        "lab-dhcp": {
+          "allowed_tenants": [
+            "00000000-0000-0000-0000-000000000001"
+          ],
+          "max_concurrent_operations": 2,
+          "max_live_instances": 4,
+          "max_total_disk_gb": 80,
+          "max_total_memory_mb": 8192,
+          "max_total_vcpus": 8,
+          "target_nodes": [
+            "mng01"
+          ]
+        },
+        "lab-root-dhcp": {
+          "allowed_tenants": [
+            "00000000-0000-0000-0000-000000000001"
+          ],
+          "max_concurrent_operations": 2,
+          "max_live_instances": 4,
+          "max_total_disk_gb": 80,
+          "max_total_memory_mb": 8192,
+          "max_total_vcpus": 8,
+          "target_nodes": [
+            "mng01"
+          ]
+        }
+      },
+      "protected_hashes": {
+        "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+        "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+      },
+      "queue_depth": {
+        "celery": 0,
+        "lifecycle": 0,
+        "terraform": 0
+      },
+      "redis": {
+        "blocked_clients": 3,
+        "connected_clients": 29,
+        "total_commands_processed": 187597,
+        "used_memory": 1904640
+      },
+      "runtime_revision": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+      "schema": "iacp.e2e.audit.v1",
+      "test_vmids_present": [],
+      "vm104_permissions": {
+        "/vms/104": {}
+      },
+      "worker_ping_names": [
+        "celery@1230d01af135",
+        "celery@ba666052a25e",
+        "celery@fc8204e0875b"
+      ]
+    },
+    "policy": {
+      "approved_at": "2026-10-24T07:57:12.502309Z",
+      "approved_by": "iacp-lab-approver",
+      "created_at": "2026-10-24T07:57:12.336873Z",
+      "expires_at": "2026-10-24T22:46:00.405873Z",
+      "policy_id": "179f58db-59ee-4da2-a676-30c1642441a8",
+      "policy_sha256": "9876bba1e68b805050cb5a70b2f037ad7e5d4a4dadf019f8ae29c685b622827c",
+      "requested_by": "bootstrap",
+      "review_history": [
+        {
+          "action": "proposed",
+          "actor": "bootstrap",
+          "at": "2026-10-24T07:57:12.335616+00:00",
+          "expires_at": null,
+          "policy_sha256": "9876bba1e68b805050cb5a70b2f037ad7e5d4a4dadf019f8ae29c685b622827c"
+        },
+        {
+          "action": "approved",
+          "actor": "iacp-lab-approver",
+          "at": "2026-10-24T07:57:12.502353+00:00",
+          "expires_at": "2026-10-24T11:57:12.502339+00:00",
+          "policy_sha256": "9876bba1e68b805050cb5a70b2f037ad7e5d4a4dadf019f8ae29c685b622827c"
+        },
+        {
+          "action": "renewed",
+          "actor": "iacp-lab-approver",
+          "at": "2026-10-24T18:46:00.405918+00:00",
+          "expires_at": "2026-10-24T22:46:00.405873+00:00",
+          "policy_sha256": "9876bba1e68b805050cb5a70b2f037ad7e5d4a4dadf019f8ae29c685b622827c"
+        }
+      ],
+      "revoked_at": null,
+      "revoked_by": null,
+      "specification": {
+        "actions": [
+          "create",
+          "start",
+          "shutdown",
+          "reboot",
+          "delete"
+        ],
+        "change_reference": "IACP-MNG-AUTONOMOUS-PHASE-B-20261024",
+        "environment": "lab",
+        "max_concurrent_operations": 2,
+        "max_disk_gb": 80,
+        "max_instances": 4,
+        "max_memory_mb": 8192,
+        "max_vcpus": 8,
+        "profiles": [
+          "lab-root-dhcp"
+        ],
+        "valid_for_seconds": 14400
+      },
+      "status": "approved",
+      "tenant_id": "00000000-0000-0000-0000-000000000001"
+    },
+    "profile": {
+      "bridge": "vmbr0",
+      "guest_initialization": "ubuntu-2404-lab-identity-v1",
+      "image": "ubuntu-2404",
+      "max_disk_gb_per_instance": 40,
+      "max_memory_mb_per_instance": 4096,
+      "max_vcpus_per_instance": 4,
+      "minimum_disk_gb": 20,
+      "network_mode": "dhcp",
+      "nodes": [
+        "mng01"
+      ],
+      "profile": "lab-root-dhcp",
+      "quotas": {
+        "concurrent_operations": 2,
+        "disk_gb": 80,
+        "instances": 4,
+        "memory_mb": 8192,
+        "vcpus": 8
+      },
+      "root_password_bootstrap": true,
+      "self_service_enabled": true,
+      "vlan_tag": null
+    },
+    "schema_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+    "usage": {
+      "description": "Incluye reservas fallidas e inciertas y todos los perfiles del tenant; se libera capacidad solo con deleted verificado.",
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "usage": {
+        "concurrent_operations": 0,
+        "disk_gb": 20,
+        "instances": 1,
+        "memory_mb": 2048,
+        "vcpus": 2
+      }
+    }
+  },
+  "run_id": "48febc55-7125-4038-974a-6228eb168745",
+  "schema": "iacp.e2e.result.v1",
+  "timings": [
+    {
+      "actions": {
+        "delete": {
+          "including_readiness_seconds": null,
+          "operation_seconds": 23.033
+        },
+        "reboot": {
+          "including_readiness_seconds": 32.403,
+          "operation_seconds": 6.685
+        },
+        "shutdown-1": {
+          "including_readiness_seconds": 7.129,
+          "operation_seconds": 6.711
+        },
+        "shutdown-2": {
+          "including_readiness_seconds": 7.116,
+          "operation_seconds": 6.707
+        },
+        "start": {
+          "including_readiness_seconds": 31.279,
+          "operation_seconds": 4.67
+        }
+      },
+      "final_lock": false,
+      "final_postgresql": "deleted",
+      "final_proxmox_present": false,
+      "final_state_resources": 0,
+      "instance_id": "470d7a05-37a2-4fe3-81a5-1a5a8881671f",
+      "node": "mng01",
+      "provisioning_seconds": 27.838,
+      "queue_wait_seconds": 0.309,
+      "time_to_first_started_seconds": 31.126,
+      "time_to_ssh_seconds": 71.873,
+      "vmid": 30016,
+      "worker_event_counts": {
+        "accepted": 1,
+        "access_verification_accepted": 1,
+        "delete_apply_started": 1,
+        "delete_completed": 1,
+        "delete_mutation_started": 1,
+        "delete_plan_accepted": 1,
+        "delete_plan_approved": 1,
+        "delete_plan_ready": 1,
+        "delete_plan_started": 1,
+        "delete_queued": 1,
+        "guest_initialization_accepted": 1,
+        "guest_initialization_dispatch_consumed": 1,
+        "guest_initialization_verified": 1,
+        "lab_policy_bound": 1,
+        "network_discovery_accepted": 8,
+        "network_observed": 2,
+        "network_pending": 6,
+        "power_accepted": 5,
+        "power_completed": 5,
+        "power_dispatching": 5,
+        "power_started": 5,
+        "power_task_recorded": 5,
+        "root_cloud_init_ssh_verified": 1,
+        "terraform_apply_approved": 1,
+        "terraform_apply_completed": 1,
+        "terraform_apply_queued": 1,
+        "terraform_apply_started": 1,
+        "terraform_apply_uncertain": 1,
+        "terraform_mutation_started": 1,
+        "terraform_plan_started": 1,
+        "terraform_planned": 1,
+        "terraform_reconcile_started": 1,
+        "terraform_recovery_requested": 1
+      }
+    }
+  ]
+}

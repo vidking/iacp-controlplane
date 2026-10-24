@@ -1,0 +1,8 @@
+{
+  "resultado": "BLOCKED de preparaci\u00f3n, corregido antes de aceptar intenci\u00f3n",
+  "causa": "La referencia privada de token heredada de un ensayo anterior ya no exist\u00eda. Se sustituy\u00f3 por la referencia al archivo privado existente usado por el benchmark aprobado; no se copiaron ni rotaron credenciales.",
+  "sin_estado_de_corrida": true,
+  "sin_reserva_presupuestaria": true,
+  "sin_solicitud_aceptada": true,
+  "alcance": "No es un fallo del Control Plane ni una recuperaci\u00f3n manual de una operaci\u00f3n aceptada."
+}

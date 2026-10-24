@@ -1,0 +1,11 @@
+{
+  "schema": "0011_crm_contract",
+  "table_count": 15,
+  "passed": true,
+  "isolated": true,
+  "backup_sha256": "3ba4f8c9cd49206667c4ba84cc12eaf644296f67aac0dae9ead622b4f195b42e",
+  "metodo": "pg_restore completo con comprobación del esquema en PostgreSQL descartable sin red ni puertos; datos en tmpfs",
+  "destino": "IACP Control Plane (VM 104)",
+  "evidencia_original_privada": "/opt/iacp/evidence/fase-d-20261024T184048Z/restauracion.json",
+  "dump_copiado_a_git": false
+}

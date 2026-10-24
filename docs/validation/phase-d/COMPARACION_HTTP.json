@@ -1,0 +1,52 @@
+{
+  "fuente_antes": "../phase-c/HTTP_5RPS.json",
+  "fuente_despues": "HTTP_5RPS_DESPUES.json",
+  "sha_antes": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "sha_despues": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+  "rps_configurados": 5,
+  "duracion_configurada_segundos": 240,
+  "usuarios": 10,
+  "mezcla": "Mismo cliente y configuraci\u00f3n de tareas readonly; frecuencias realizadas aleatorias, sin E2E simult\u00e1neo. Se conservaron 167 operaciones y hashes directos id\u00e9nticos antes/despu\u00e9s.",
+  "agregado_antes": {
+    "endpoint": "Aggregated",
+    "requests": 1204,
+    "failures": 0,
+    "rps": 5.0034348836159594,
+    "p50_ms": 71.0,
+    "p95_ms": 450.0,
+    "p99_ms": 530.0,
+    "max_ms": 874.2708030040376
+  },
+  "agregado_despues": {
+    "ruta": "Aggregated",
+    "peticiones": 1198,
+    "fallos": 0,
+    "rps": 5.002682450282902,
+    "p50_ms": 74.0,
+    "p95_ms": 260.0,
+    "p99_ms": 410.0,
+    "maximo_ms": 1408.4771320049185
+  },
+  "operaciones_antes": {
+    "endpoint": "GET /v1/operations",
+    "requests": 288,
+    "failures": 0,
+    "rps": 1.1968349223267412,
+    "p50_ms": 380.0,
+    "p95_ms": 530.0,
+    "p99_ms": 640.0,
+    "max_ms": 874.2708030040376
+  },
+  "operaciones_despues": {
+    "ruta": "GET /v1/operations",
+    "peticiones": 272,
+    "fallos": 0,
+    "rps": 1.1358344127520446,
+    "p50_ms": 150.0,
+    "p95_ms": 360.0,
+    "p99_ms": 740.0,
+    "maximo_ms": 796.4947950094938
+  },
+  "nota_conteo": "CSV posterior: 1198 solicitudes; consola final: 1199. Se usa el CSV archivado y su hash como fuente de m\u00e9tricas; diferencia de una completaci\u00f3n al cierre.",
+  "limites": "Cuatro minutos por ventana y distribuciones aleatorias; no constituye capacidad productiva sostenida. El p99 de operaciones pas\u00f3 de 640 a 740 ms y el p99 de energ\u00eda f\u00edsica posterior fue 1400 ms: no se atribuye mejora uniforme de las colas de latencia."
+}

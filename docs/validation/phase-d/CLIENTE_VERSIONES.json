@@ -1,0 +1,13 @@
+{
+  "commit": "927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b",
+  "hashes_fuente": {
+    "e2e.py": "dda08f18e338f1deccaf119aeb4a0ffbaee356965137355f87021c22a06dee4e",
+    "core.py": "6d8d6a1f24fc0b90819e64cec9187de607c56073fddab7ad3cec57a803cc1301",
+    "run.py": "eced0a942b8e5a4a8cd47ad2a304651280a4e6f394223ceba5b13ec8a3824943",
+    "locustfile.py": "9c66b1a281685c4e1b495fb398a48dafdba7b86aec368e638f213ce18df27a59",
+    "audit_mng.py": "4058626beb6b84f6b0361a33d10f5b09f54307cc719c9dd7de759bf2b0e17cf7"
+  },
+  "fuentes_iguales_al_commit": true,
+  "entorno": "Python 3.12.15, Locust 2.42.6, Paramiko 4.0.0, jsonschema 4.25.1; venv privado preparado desde cach\u00e9 local sin descargas",
+  "configuraciones_y_tokens_copiados_a_git": false
+}

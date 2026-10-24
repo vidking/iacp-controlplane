@@ -1,0 +1,98 @@
+{
+  "ejecucion": "20261024T190505Z-u10",
+  "sha_aplicacion": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+  "sha_cliente": "927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b",
+  "destino": "IACP Control Plane (VM 104), iacp-controlplane-01, en mng01 del cl\u00faster MNG",
+  "duracion_configurada_segundos": 240,
+  "usuarios": 10,
+  "rps_configurados": 5,
+  "presupuesto_peticiones": 1600,
+  "escenario": "readonly",
+  "mutaciones_vms": 0,
+  "origen_csv": "20261024T190505Z-u10_stats.csv",
+  "sha256_csv": "3df30067945565ab5e0243f079e84a5a85225cfa817144da9cdce5b89368876a",
+  "rutas": [
+    {
+      "ruta": "GET /openapi.json (authorized)",
+      "peticiones": 79,
+      "fallos": 0,
+      "rps": 0.32989308311548354,
+      "p50_ms": 150.0,
+      "p95_ms": 310.0,
+      "p99_ms": 540.0,
+      "maximo_ms": 544.1711219900753
+    },
+    {
+      "ruta": "GET /v1/instances",
+      "peticiones": 369,
+      "fallos": 0,
+      "rps": 1.5408930084761192,
+      "p50_ms": 71.0,
+      "p95_ms": 150.0,
+      "p99_ms": 300.0,
+      "maximo_ms": 386.4440589968581
+    },
+    {
+      "ruta": "GET /v1/instances/{id}",
+      "peticiones": 185,
+      "fallos": 0,
+      "rps": 0.7725344351438538,
+      "p50_ms": 30.0,
+      "p95_ms": 61.0,
+      "p99_ms": 370.0,
+      "maximo_ms": 370.096963015385
+    },
+    {
+      "ruta": "GET /v1/operations",
+      "peticiones": 272,
+      "fallos": 0,
+      "rps": 1.1358344127520446,
+      "p50_ms": 150.0,
+      "p95_ms": 360.0,
+      "p99_ms": 740.0,
+      "maximo_ms": 796.4947950094938
+    },
+    {
+      "ruta": "GET /v1/operations/{id}",
+      "peticiones": 150,
+      "fallos": 0,
+      "rps": 0.6263792717382598,
+      "p50_ms": 32.0,
+      "p95_ms": 99.0,
+      "p99_ms": 240.0,
+      "maximo_ms": 310.49926398554817
+    },
+    {
+      "ruta": "GET Swagger (authorized)",
+      "peticiones": 73,
+      "fallos": 0,
+      "rps": 0.30483791224595314,
+      "p50_ms": 25.0,
+      "p95_ms": 69.0,
+      "p99_ms": 360.0,
+      "maximo_ms": 363.15159298828803
+    },
+    {
+      "ruta": "GET physical power",
+      "peticiones": 70,
+      "fallos": 0,
+      "rps": 0.29231032681118796,
+      "p50_ms": 250.0,
+      "p95_ms": 350.0,
+      "p99_ms": 1400.0,
+      "maximo_ms": 1408.4771320049185
+    },
+    {
+      "ruta": "Aggregated",
+      "peticiones": 1198,
+      "fallos": 0,
+      "rps": 5.002682450282902,
+      "p50_ms": 74.0,
+      "p95_ms": 260.0,
+      "p99_ms": 410.0,
+      "maximo_ms": 1408.4771320049185
+    }
+  ],
+  "percentiles": "Histograma aproximado Locust 2.42.6; agregado calculado sobre solicitudes, no promedio de percentiles por ruta.",
+  "condiciones": "Sin E2E ni mutaciones concurrentes durante la carga; datos de 167 operaciones, mismos 12 payloads directos antes/despu\u00e9s. Regresi\u00f3n local aislada parcialmente coincidente en la laptop; host remoto supervisado."
+}

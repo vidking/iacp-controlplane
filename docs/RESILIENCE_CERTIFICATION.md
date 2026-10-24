@@ -2,6 +2,19 @@
 
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
+## Actualización verificada de Fase D — 24/10/2026, 19:22 UTC
+
+El **IACP Control Plane (VM 104)** ejecuta **`7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa`**, IACP 0.10.1, con los PR #44/#45/#46 incluidos. Se verificaron imágenes y hashes del runner, supervisor y listado de operaciones dentro de los contenedores; no se deduce el despliegue de Git. El esquema sigue en `0011_crm_contract`, DB/Redis/Traefik e historial previo se preservaron y HTTPS/Swagger/readiness aprobaron. [Informe de promoción](FASE_D_PROMOCION.md), [evidencia de versión/código](validation/phase-d/PROMOCION_VERIFICADA.json), [contrato HTTPS sin cambios](validation/phase-d/HTTPS_CONTRATO.json).
+
+La regresión posterior aprobó **886 pruebas IACP** y **36 del cliente externo**. Los E2E individual y doble cerraron automáticamente las VM **30016, 30017 y 30018** del **clúster MNG**, nodo `mng01`, mediante DELETE normal, state vacío y sin locks. Cada una tuvo un solo Apply consumido. Dos episodios de incertidumbre requirieron reconciliación readonly solicitada por el cliente; no hubo reparación de infraestructura ni interrupción de worker. [Resultados reales y límites](validation/phase-d/RECUPERACION_OBSERVADA.json).
+
+El p95 HTTP global fue **260 ms** y el de operaciones **360 ms**, a 5 RPS/240 s y cero errores. El dictamen actual distingue **GO técnico para piloto supervisado** y **NO-GO integral**: D3 físico permanece BLOCKED y D6 diferido. Se confirmó un P1 de pérdida del diagnóstico inicial tras reconciliar; la causa de las incidencias observadas no está determinada. [Dictámenes y riesgos](MVP_GO_NO_GO.md).
+
+El [cierre](validation/phase-d/DEPENDENCIAS_CIERRE.json) no tiene operaciones/jobs/applies pendientes, mensajes unacked, advisory locks ni VMs descartables. Los hashes de las protegidas se conservan. Estas nuevas observaciones no sustituyen los resultados históricos siguientes.
+
+## Registro histórico de Fase C — previo a la promoción
+
+
 Fecha: 24/10/2026. Dictamen actual: **NO-GO para certificar resiliencia integral del MVP KVM**.
 La operación normal individual/doble tiene evidencia previa; la recuperación ante muerte abrupta del worker requiere cerrar P0-C02 y verificarla en MNG. Este informe registra un avance de certificación, no una aprobación de los escenarios reales pendientes.
 

@@ -2,6 +2,28 @@
 
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
+## Medición desplegada de Fase D — 24/10/2026
+
+El **IACP Control Plane (VM 104)** ejecutaba `7c0804d`, con PR #45 confirmado por hash dentro del contenedor API. Corrida externa `20261024T190505Z-u10`, 10 usuarios, 5 RPS configurados, 240 s y máximo 1.600 requests; sin mutaciones ni E2E simultáneo. Se ejecutó antes de los E2E para conservar 167 operaciones y poder comparar payloads. [CSV original posterior](validation/phase-d/HTTP_5RPS_DESPUES.csv), [métricas completas](validation/phase-d/HTTP_5RPS_DESPUES.json), [comparación HTTP](validation/phase-d/COMPARACION_HTTP.json).
+
+| Métrica | Antes, `4f153e8` | Después, `7c0804d` |
+|---|---:|---:|
+| Requests / errores | 1.204 / 0 | 1.198 / 0 |
+| RPS medido | 5,0034 | 5,0027 |
+| p50 / p95 / p99 global, ms | 71 / 450 / 530 | 74 / 260 / 410 |
+| p50 / p95 / p99 operaciones, ms | 380 / 530 / 640 | 150 / 360 / 740 |
+| SQL por página de 50 | 325 | 9 |
+| Mediana directa para 50, ms | 215,253 | 22,556 |
+
+La comparación directa **antes/después del despliegue real** conservó doce pares de hashes idénticos sobre las mismas 167 operaciones, con SQL readonly. [Muestras previas](validation/phase-d/CONSULTAS_ANTES.json), [posteriores](validation/phase-d/CONSULTAS_DESPUES.json), [comparación](validation/phase-d/COMPARACION_SQL.json). No se cargó un módulo candidato en esta medición posterior.
+
+El p95 global y el de operaciones cumplen <500 ms en estas ventanas. No se afirma mejora uniforme: el p99 de operaciones pasó de 640 a 740 ms y el de energía física posterior fue 1.400 ms; máximo global 1.408,48 ms. La mezcla de tareas es la misma, pero sus frecuencias realizadas son aleatorias. Cuatro minutos no acreditan capacidad productiva sostenida. La consola final mostró 1.199 solicitudes; el CSV archivado conserva 1.198 y es la fuente de métricas.
+
+Las condiciones del **IACP Control Plane (VM 104)** se conservan [durante la carga](validation/phase-d/IACP_CONTROL_PLANE_DURANTE_CARGA.json) y [al cierre](validation/phase-d/IACP_CONTROL_PLANE_CIERRE.json). Sus 8 CPU y aproximadamente 15,8 GiB son recursos de la VM, no del nodo físico ni del clúster MNG. La regresión local estuvo parcialmente solapada en la laptop; no se ejecutó carga de aprovisionamiento durante el benchmark.
+
+## Mediciones históricas de Fase C — conservadas
+
+
 IACP Control Plane (VM 104), IACP 0.10.1 / `4f153e8`, cliente externo Locust `927a5c5`, 24/10/2026. No se desplegó optimización en el runtime durante esta medición.
 
 ## Carga readonly supervisada
