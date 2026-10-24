@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import DeletionExecution, NetworkDiscovery, Operation, OperationEvent, PowerExecution, TerraformApply, TerraformExecution
+from ..models import DeletionExecution, GuestInitialization, NetworkDiscovery, Operation, OperationEvent, PowerExecution, TerraformApply, TerraformExecution
 from ..schemas import DeletionProgress, ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
 
@@ -39,6 +39,7 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
     power = session.get(PowerExecution, row.id)
     deletion = session.get(DeletionExecution, row.id)
     network = session.get(NetworkDiscovery,row.id)
+    initialization=session.get(GuestInitialization,row.id)
     provisioning=None
     normalized=row.status
     if row.kind=='instance.create':
@@ -67,6 +68,9 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
         error_message=error_message,normalized_status=normalized,recovery_required=normalized=='uncertain',provisioning=provisioning,
         events=[EventResponse.model_validate(item) for item in events],
         network=network.result if network else None,
+        initialization=({'status':initialization.status,'mode':initialization.mode,'program_sha256':initialization.program_sha256,
+            'started_at':initialization.started_at,'finished_at':initialization.finished_at,'pid':initialization.pid,
+            'result':initialization.result} if initialization else None),
         deletion=(DeletionProgress(**{key: getattr(deletion, key) for key in (
             "status", "phase", "plan_sha256", "approved_by", "expires_at", "started_at", "finished_at")},
             recovery_required=deletion.status == "uncertain") if deletion else None),

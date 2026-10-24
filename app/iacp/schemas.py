@@ -113,6 +113,7 @@ class OperationResponse(BaseModel):
     power: "PowerProgress | None" = None
     deletion: "DeletionProgress | None" = None
     network: dict | None = None
+    initialization: dict | None = None
 
 
 class PowerRequest(BaseModel):

@@ -113,4 +113,4 @@ def test_upgrade_from_0006_preserves_real_postgres_provisioning(pg_engine,runtim
     with pg_engine.connect() as c:
         for name,rows in before.items():assert list(c.execute(select(metadata.tables[name])).mappings())==rows
         assert c.scalar(text('SELECT count(*) FROM deletion_executions'))==0
-        assert c.scalar(text('SELECT version_num FROM alembic_version'))=='0009_lab_self_service'
+        assert c.scalar(text('SELECT version_num FROM alembic_version'))=='0010_guest_identity'

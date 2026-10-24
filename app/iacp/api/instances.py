@@ -10,7 +10,7 @@ from ..schemas import ErrorResponse, InstanceAccepted, InstanceCreate, InstanceR
 from ..security import Principal, authorize, authorize_write
 from ..services.instances import Conflict, create_instance
 from ..services.jobs import Publisher, QueueUnavailable
-from .dependencies import get_instance_publisher
+from .dependencies import get_guest_initialization_publisher, get_instance_publisher
 
 router = APIRouter(
     prefix="/v1/instances", tags=["instances"],
@@ -86,3 +86,19 @@ def discover_network(instance_id: str,principal: Annotated[Principal,Depends(aut
     try:return request_discovery(session,row,principal,key,get_network_publisher())
     except Conflict as error:raise HTTPException(409,str(error)) from None
     except QueueUnavailable:raise HTTPException(503,'NETWORK_DISPATCH_UNCONFIRMED') from None
+
+
+@router.post('/{instance_id}/network/initialize',status_code=202,response_model=NetworkAccepted,operation_id='initializeInstanceNetwork',
+    responses={404:{'model':ErrorResponse},409:{'model':ErrorResponse}},
+    description='Inicialización fija y única de identidad Ubuntu 24.04 para una clon nueva de laboratorio. Requiere perfil/política revisados, propiedad y Lifecycle habilitado. '
+    'Sin comandos, archivos ni parámetros del cliente. Tras consumir el envío solo observa evidencia. Start la solicita automáticamente; esta ruta recupera una entrega no confirmada con la misma clave.')
+def initialize_network(instance_id: str,principal: Annotated[Principal,Depends(authorize_write)],
+    key: Annotated[str,Header(alias='Idempotency-Key',min_length=1,max_length=128,pattern=r'^[A-Za-z0-9._:-]+$')],
+    session: Annotated[Session,Depends(get_session)],publish=Depends(get_guest_initialization_publisher),
+    body: PowerRequest | None = None):
+    from .power import owned
+    from ..services.guest_identity import request_initialization
+    row=owned(session,principal,instance_id)
+    try:return request_initialization(session,row,principal,key,publish)
+    except Conflict as error:raise HTTPException(409,str(error)) from None
+    except QueueUnavailable:raise HTTPException(503,'GUEST_INITIALIZATION_DISPATCH_UNCONFIRMED; repeat the same key') from None

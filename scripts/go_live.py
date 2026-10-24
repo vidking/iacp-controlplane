@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0009_lab_self_service"
+HEAD = "0010_guest_identity"
 SOURCE = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
 ARCHIVE = "05ed1d0d6f2b886df8072eb24cd764dc881f63e9f536baa9af3bafa0804d156b"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -69,7 +69,7 @@ def check_idle(report, allowed_uncertain=()):
 
 def compare_history(before, after):
     for name, evidence in before["tables"].items():
-        if name in {'instances','deletion_executions'} and before['schema']!=[HEAD]:
+        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],[HEAD]]:
             projected=after.get('compatibility',{}).get(name+'_before_0009',{})
             if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
                 require(projected.get('new_fields_default') is True
@@ -323,13 +323,13 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         restored = json.loads(Path(backup["restore_evidence"]).read_text())
         expected_backup_schema=backup.get('schema','0004_authorized_apply')
         minimum_tables={'0004_authorized_apply':9,'0005_kvm_lifecycle':10,'0006_power_ownership':11,
-                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,HEAD:14}
+                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,'0009_lab_self_service':14,HEAD:15}
         require(restored["passed"] is True and restored["isolated"] is True
                 and restored["backup_sha256"] == backup["sha256"] and restored["schema"] == expected_backup_schema
                 and expected_backup_schema in minimum_tables
                 and restored["table_count"] >= minimum_tables[expected_backup_schema], "Restore attestation is incomplete")
         report = self.snapshot()
-        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], ["0007_safe_deletion"], ['0008_dhcp_profiles'], [HEAD]], "Unsupported schema")
+        require(report["schema"] in [["0004_authorized_apply"], ["0005_kvm_lifecycle"], ["0006_power_ownership"], ["0007_safe_deletion"], ['0008_dhcp_profiles'], ['0009_lab_self_service'], [HEAD]], "Unsupported schema")
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
         return report
 

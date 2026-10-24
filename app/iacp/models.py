@@ -280,3 +280,19 @@ class NetworkDiscovery(Base):
     instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), nullable=False, index=True)
     provisioning_binding: Mapped[str] = mapped_column(String(64), nullable=False)
     result: Mapped[dict | None] = mapped_column(JSON)
+
+
+class GuestInitialization(Base):
+    __tablename__ = 'guest_initializations'
+    __table_args__ = (CheckConstraint("status IN ('queued','running','uncertain','completed','failed')", name='ck_guest_initialization_status'),)
+    operation_id: Mapped[str] = mapped_column(ForeignKey('operations.id'), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(ForeignKey('instances.id'), nullable=False, unique=True)
+    provisioning_binding: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    program_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    mac_address: Mapped[str] = mapped_column(String(17), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pid: Mapped[int | None] = mapped_column(Integer)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict | None] = mapped_column(JSON)

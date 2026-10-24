@@ -26,7 +26,7 @@ def main():
             else:
                 subprocess.run(["bash", "-n"], input=body, text=True, check=True)
     api = json.loads((ROOT / "docs" / "openapi.json").read_text())
-    if api["info"]["version"] != "0.9.0" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
+    if api["info"]["version"] != "0.9.1" or api["servers"][0]["url"] != "https://iac.cyberfuel.com":
         raise ValueError("Versión/servidor del contrato distintos de los documentados")
     required = [
         ("/v1/profiles","get"), ("/v1/lab/usage","get"), ("/v1/lab/policies","post"),
@@ -35,6 +35,7 @@ def main():
         ("/v1/instances/{instance_id}/provision","post"), ("/v1/instances/{instance_id}/retry-provision","post"),
         ("/v1/instances/{instance_id}/reconcile","post"),
         ("/v1/instances/{instance_id}/network/discover", "post"),
+        ("/v1/instances/{instance_id}/network/initialize", "post"),
         ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),
         ("/v1/jobs/{job_id}", "get"), ("/v1/operations/{operation_id}", "get"),
         ("/v1/instances/{instance_id}/terraform/approvals", "post"),

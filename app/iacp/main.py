@@ -15,7 +15,7 @@ from .security import authorize_docs
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Orchestrator", version="0.9.0",
+        title="IACP Orchestrator", version="0.9.1",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
         description=(

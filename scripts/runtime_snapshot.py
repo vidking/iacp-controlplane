@@ -45,7 +45,7 @@ def snapshot():
                     'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
                     'new_fields_default':all(all(row[k] is None for k in added) if name=='instances'
                         else row['autonomous'] is False for row in rows)}
-            if name in {"operations", "terraform_applies", "power_executions", "deletion_executions", "jobs"}:
+            if name in {"operations", "terraform_applies", "power_executions", "deletion_executions", "guest_initializations", "jobs"}:
                 terminal = {"completed", "failed", "cancelled"}
                 report["nonterminal"][name] = [{"id": row.get("id", row.get("operation_id")), "status": row["status"]}
                     for row in rows if row["status"] not in terminal]
