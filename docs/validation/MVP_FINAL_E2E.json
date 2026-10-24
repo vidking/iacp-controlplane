@@ -1,0 +1,879 @@
+{
+  "instance-observed": {
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "operation_id": "04cb6e60-9e08-4636-a888-0567cf35471b",
+    "job_id": "d3bce9f0-e740-4350-a583-c5b8463e9440",
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "name": "iacp-mvp-e2e-20261024",
+    "image": "ubuntu-2404",
+    "network_profile": "lab-root-dhcp",
+    "node_preference": null,
+    "self_service_policy_id": "1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+    "commercial_context": {
+      "customer_id": "mvp-lab",
+      "order_id": "mvp-final-20261024",
+      "product_id": "kvm-e2e"
+    },
+    "start_on_create": true,
+    "access": {
+      "username": "root",
+      "status": "completed",
+      "cloud_init_complete": true,
+      "ssh_authenticated": true,
+      "observed_at": "2026-10-24T05:34:20.602996+00:00",
+      "error_code": null
+    },
+    "network_mode": "dhcp",
+    "ip_addresses": [
+      "192.168.3.73"
+    ],
+    "network_observation": {
+      "status": "observed",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [
+        "192.168.3.73"
+      ],
+      "mac_address": "bc:24:11:41:6f:7b",
+      "observed_at": "2026-10-24T05:34:17.710638+00:00",
+      "identity_initialization": "completed",
+      "initialization_operation_id": "2b906add-1149-4772-9339-97e87f40a7c5"
+    },
+    "vcpus": 2,
+    "memory_mb": 2048,
+    "disk_gb": 24,
+    "status": "ready",
+    "executor": "terraform",
+    "provisioning_service": "IaC Worker",
+    "infrastructure_kind": "kvm",
+    "vmid": 30009,
+    "node": "mng01",
+    "result": {
+      "network": {
+        "mode": "dhcp",
+        "bridge": "vmbr0",
+        "model": "virtio",
+        "vlan_id": null,
+        "mac_address": "BC:24:11:41:6F:7B",
+        "ip_addresses": []
+      },
+      "simulated": false,
+      "infrastructure_kind": "kvm",
+      "vmid": 30009,
+      "node": "mng01",
+      "name": "iacp-mvp-e2e-20261024",
+      "vcpus": 2,
+      "memory_mb": 2048,
+      "disk_gb": 24,
+      "datastore": "DS_CYBERFUEL",
+      "power_state": "stopped",
+      "observation": {
+        "state_present": true,
+        "proxmox_present": true,
+        "state_serial": 1,
+        "values_source": "prior_state.values",
+        "state_consistency": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792819930713503310-eiSvYTLpvu",
+            "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+            "serial": 1,
+            "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+            "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+          },
+          "after": {
+            "version_id": "001792819930713503310-eiSvYTLpvu",
+            "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+            "serial": 1,
+            "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+            "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+          }
+        },
+        "postconditions_verified": true,
+        "backend": {
+          "bucket": "cyberfuel-iacp-tfstate-lab",
+          "encrypt": true,
+          "endpoints": {
+            "s3": "https://s3.wasabisys.com"
+          },
+          "key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/93899a50-f9e4-48c1-987b-5a05ae79a670/terraform.tfstate",
+          "region": "us-east-1",
+          "skip_credentials_validation": true,
+          "skip_metadata_api_check": true,
+          "skip_requesting_account_id": true,
+          "use_lockfile": true,
+          "use_path_style": true
+        },
+        "workspace": "default",
+        "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+        "attempt": 1,
+        "plan_sha256": "25bd6f275e06ba43bdb3ba53cc49623a2b155d8904a0e36b945b053dd2b58538",
+        "approved_state": {
+          "lineage": "",
+          "serial": 0
+        },
+        "resource_address": "module.kvm.proxmox_virtual_environment_vm.this",
+        "resource_id": "30009"
+      },
+      "phase": "observed",
+      "observed_at": "2026-10-24T05:33:46.393262+00:00",
+      "apply_id": "a16e5e47-2003-4780-9c90-69bc7d2c5902"
+    },
+    "created_at": "2026-10-24T05:31:51.157866Z",
+    "updated_at": "2026-10-24T05:34:20.605335Z"
+  },
+  "policy-approved": {
+    "policy_id": "1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "status": "approved",
+    "specification": {
+      "environment": "lab",
+      "profiles": [
+        "lab-root-dhcp"
+      ],
+      "actions": [
+        "create",
+        "start",
+        "shutdown",
+        "reboot",
+        "delete"
+      ],
+      "max_instances": 2,
+      "max_vcpus": 4,
+      "max_memory_mb": 4096,
+      "max_disk_gb": 44,
+      "max_concurrent_operations": 1,
+      "valid_for_seconds": 14400,
+      "change_reference": "IACP-MVP-LAST-BLOCKERS-20261024"
+    },
+    "policy_sha256": "d97f246bd2448a422e63f050a3764e504626bba9c8c3713a9c40811133f42813",
+    "requested_by": "bootstrap",
+    "approved_by": "iacp-lab-approver",
+    "created_at": "2026-10-24T05:31:42.112049Z",
+    "approved_at": "2026-10-24T05:31:42.202232Z",
+    "expires_at": "2026-10-24T09:31:42.202266Z",
+    "revoked_at": null,
+    "revoked_by": null,
+    "review_history": [
+      {
+        "at": "2026-10-24T05:31:42.110231+00:00",
+        "actor": "bootstrap",
+        "action": "proposed",
+        "expires_at": null,
+        "policy_sha256": "d97f246bd2448a422e63f050a3764e504626bba9c8c3713a9c40811133f42813"
+      },
+      {
+        "action": "approved",
+        "actor": "iacp-lab-approver",
+        "at": "2026-10-24T05:31:42.202280+00:00",
+        "policy_sha256": "d97f246bd2448a422e63f050a3764e504626bba9c8c3713a9c40811133f42813",
+        "expires_at": "2026-10-24T09:31:42.202266+00:00"
+      }
+    ]
+  },
+  "create-parameters": {
+    "name": "iacp-mvp-e2e-20261024",
+    "image": "ubuntu-2404",
+    "vcpus": 2,
+    "memory_mb": 2048,
+    "disk_gb": 24,
+    "network_profile": "lab-root-dhcp",
+    "self_service_policy_id": "1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+    "start_on_create": true,
+    "commercial_context": {
+      "customer_id": "mvp-lab",
+      "order_id": "mvp-final-20261024",
+      "product_id": "kvm-e2e"
+    },
+    "access": {
+      "username": "root"
+    }
+  },
+  "creation-admission": {
+    "at": "2026-10-24T05:31:51.321260+00:00",
+    "receipt": {
+      "job_id": "d3bce9f0-e740-4350-a583-c5b8463e9440",
+      "status": "queued",
+      "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+      "operation_id": "04cb6e60-9e08-4636-a888-0567cf35471b",
+      "executor": "terraform",
+      "provisioning_service": "IaC Worker"
+    },
+    "identical_replay": true,
+    "secret_values_emitted": false
+  },
+  "password-rotation": {
+    "initial_ssh_authenticated": true,
+    "client_password_changed_via_ssh_passwd": true,
+    "new_password_authenticated": true,
+    "initial_password_rejected": true,
+    "host_key_pinned_from_qga": true,
+    "vmid": 30009,
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "secret_values_emitted": false
+  },
+  "post-rotation-reconcile-api": {
+    "detail": "RECONCILIATION_NOT_REQUIRED"
+  },
+  "post-rotation-readonly-reconciliation": {
+    "postconditions_verified": true,
+    "state_consistency": {
+      "change": "unchanged",
+      "before": {
+        "version_id": "001792819930713503310-eiSvYTLpvu",
+        "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+        "serial": 1,
+        "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+        "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+      },
+      "after": {
+        "version_id": "001792819930713503310-eiSvYTLpvu",
+        "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+        "serial": 1,
+        "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+        "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+      }
+    },
+    "execution_enabled": false
+  },
+  "rotated-password-3-start": {
+    "new_password_authenticated": true,
+    "initial_password_rejected": true,
+    "host_key_pinned_from_qga": true,
+    "vmid": 30009,
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "secret_values_emitted": false
+  },
+  "rotated-password-1-reboot": {
+    "new_password_authenticated": true,
+    "initial_password_rejected": true,
+    "host_key_pinned_from_qga": true,
+    "vmid": 30009,
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "secret_values_emitted": false
+  },
+  "0-shutdown-operation": {
+    "operation_id": "8ea7f460-ed0c-45c5-93c8-56a6e096e7c0",
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "kind": "instance.power.shutdown",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T05:37:11.901769Z",
+    "updated_at": "2026-10-24T05:37:16.676884Z",
+    "events": [
+      {
+        "id": 475,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:37:11.905135Z"
+      },
+      {
+        "id": 476,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:11.942544Z"
+      },
+      {
+        "id": 477,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:12.213610Z"
+      },
+      {
+        "id": 478,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:12.310069Z"
+      },
+      {
+        "id": 479,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:16.677571Z"
+      }
+    ],
+    "power": {
+      "action": "shutdown",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "stopped",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T05:37:11.940810Z",
+      "submitted_at": "2026-10-24T05:37:12.212834Z",
+      "finished_at": "2026-10-24T05:37:16.676120Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  "3-start-operation": {
+    "operation_id": "92691ceb-479c-40f6-bfa3-3003421af145",
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "kind": "instance.power.start",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T05:37:54.488681Z",
+    "updated_at": "2026-10-24T05:37:57.176282Z",
+    "events": [
+      {
+        "id": 480,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:37:54.491431Z"
+      },
+      {
+        "id": 481,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:54.523583Z"
+      },
+      {
+        "id": 482,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:54.799823Z"
+      },
+      {
+        "id": 483,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:54.880717Z"
+      },
+      {
+        "id": 484,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:37:57.176935Z"
+      }
+    ],
+    "power": {
+      "action": "start",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T05:37:54.522070Z",
+      "submitted_at": "2026-10-24T05:37:54.799079Z",
+      "finished_at": "2026-10-24T05:37:57.175484Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  "1-reboot-operation": {
+    "operation_id": "a25ee5f4-0f13-477d-ad63-1cd0a48b3d35",
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "kind": "instance.power.reboot",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T05:38:55.294389Z",
+    "updated_at": "2026-10-24T05:39:00.098783Z",
+    "events": [
+      {
+        "id": 489,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:38:55.296828Z"
+      },
+      {
+        "id": 490,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:38:55.327700Z"
+      },
+      {
+        "id": 491,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:38:55.674236Z"
+      },
+      {
+        "id": 492,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:38:55.760111Z"
+      },
+      {
+        "id": 493,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:39:00.099402Z"
+      }
+    ],
+    "power": {
+      "action": "reboot",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T05:38:55.326229Z",
+      "submitted_at": "2026-10-24T05:38:55.673483Z",
+      "finished_at": "2026-10-24T05:39:00.098048Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  "4-shutdown-operation": {
+    "operation_id": "78d2f786-715a-4fd9-a22a-7c253964bc5b",
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "kind": "instance.power.shutdown",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T05:39:24.500080Z",
+    "updated_at": "2026-10-24T05:39:29.254261Z",
+    "events": [
+      {
+        "id": 502,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:39:24.502656Z"
+      },
+      {
+        "id": 503,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:39:24.535662Z"
+      },
+      {
+        "id": 504,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:39:24.833320Z"
+      },
+      {
+        "id": 505,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:39:24.930789Z"
+      },
+      {
+        "id": 506,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-24T05:39:29.254910Z"
+      }
+    ],
+    "power": {
+      "action": "shutdown",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "stopped",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-24T05:39:24.533945Z",
+      "submitted_at": "2026-10-24T05:39:24.832365Z",
+      "finished_at": "2026-10-24T05:39:29.253480Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  "delete-operation": {
+    "operation_id": "7e955839-b3c4-482d-bbbd-5802f1a0d849",
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "kind": "instance.delete",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-24T05:39:30.923968Z",
+    "updated_at": "2026-10-24T05:39:48.574642Z",
+    "events": [
+      {
+        "id": 507,
+        "status": "queued",
+        "code": "delete_plan_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:39:30.934773Z"
+      },
+      {
+        "id": 508,
+        "status": "running",
+        "code": "delete_plan_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T05:39:30.970604Z"
+      },
+      {
+        "id": 509,
+        "status": "running",
+        "code": "delete_plan_ready",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T05:39:39.698338Z"
+      },
+      {
+        "id": 510,
+        "status": "running",
+        "code": "delete_plan_approved",
+        "actor": "policy:1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+        "created_at": "2026-10-24T05:39:39.724100Z"
+      },
+      {
+        "id": 511,
+        "status": "queued",
+        "code": "delete_queued",
+        "actor": "bootstrap",
+        "created_at": "2026-10-24T05:39:39.742817Z"
+      },
+      {
+        "id": 512,
+        "status": "running",
+        "code": "delete_apply_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T05:39:39.761250Z"
+      },
+      {
+        "id": 513,
+        "status": "running",
+        "code": "delete_mutation_started",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T05:39:44.076853Z"
+      },
+      {
+        "id": 514,
+        "status": "completed",
+        "code": "delete_completed",
+        "actor": "worker:terraform",
+        "created_at": "2026-10-24T05:39:48.575200Z"
+      }
+    ],
+    "power": null,
+    "deletion": {
+      "status": "completed",
+      "phase": "deleted",
+      "plan_sha256": "328c54217fc2f407500afe3fb0ed71e8c225aba060eb411366fd13724b0ffe57",
+      "approved_by": "policy:1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+      "expires_at": "2026-10-24T05:44:39.722515Z",
+      "started_at": "2026-10-24T05:39:44.073197Z",
+      "finished_at": "2026-10-24T05:39:48.571436Z",
+      "recovery_required": false
+    },
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  "instance-deleted": {
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "operation_id": "04cb6e60-9e08-4636-a888-0567cf35471b",
+    "job_id": "d3bce9f0-e740-4350-a583-c5b8463e9440",
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "name": "iacp-mvp-e2e-20261024",
+    "image": "ubuntu-2404",
+    "network_profile": "lab-root-dhcp",
+    "node_preference": null,
+    "self_service_policy_id": "1ef8d3bf-2978-43fb-8a8a-40a4044a5537",
+    "commercial_context": {
+      "customer_id": "mvp-lab",
+      "order_id": "mvp-final-20261024",
+      "product_id": "kvm-e2e"
+    },
+    "start_on_create": true,
+    "access": {
+      "username": "root",
+      "status": "completed",
+      "cloud_init_complete": true,
+      "ssh_authenticated": true,
+      "observed_at": "2026-10-24T05:34:20.602996+00:00",
+      "error_code": null
+    },
+    "network_mode": "dhcp",
+    "ip_addresses": [
+      "192.168.3.73"
+    ],
+    "network_observation": {
+      "status": "observed",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [
+        "192.168.3.73"
+      ],
+      "mac_address": "BC:24:11:41:6F:7B",
+      "observed_at": "2026-10-24T05:39:16.819109+00:00"
+    },
+    "vcpus": 2,
+    "memory_mb": 2048,
+    "disk_gb": 24,
+    "status": "deleted",
+    "executor": "terraform",
+    "provisioning_service": "IaC Worker",
+    "infrastructure_kind": "kvm",
+    "vmid": 30009,
+    "node": "mng01",
+    "result": {
+      "network": {
+        "mode": "dhcp",
+        "bridge": "vmbr0",
+        "model": "virtio",
+        "vlan_id": null,
+        "mac_address": "BC:24:11:41:6F:7B",
+        "ip_addresses": []
+      },
+      "simulated": false,
+      "infrastructure_kind": "kvm",
+      "vmid": 30009,
+      "node": "mng01",
+      "name": "iacp-mvp-e2e-20261024",
+      "vcpus": 2,
+      "memory_mb": 2048,
+      "disk_gb": 24,
+      "datastore": "DS_CYBERFUEL",
+      "power_state": "stopped",
+      "observation": {
+        "state_present": true,
+        "proxmox_present": true,
+        "state_serial": 1,
+        "values_source": "prior_state.values",
+        "state_consistency": {
+          "change": "unchanged",
+          "before": {
+            "version_id": "001792819930713503310-eiSvYTLpvu",
+            "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+            "serial": 1,
+            "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+            "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+          },
+          "after": {
+            "version_id": "001792819930713503310-eiSvYTLpvu",
+            "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+            "serial": 1,
+            "sha256": "0017d98a2efbcd29a20b617415f8a27bb3086f141faf4e0fbc132a8a1e553d43",
+            "content_sha256": "01aae876c57839d3c16775bce736527920f346e061c2da800ee97e78d8252d3d"
+          }
+        },
+        "postconditions_verified": true,
+        "backend": {
+          "bucket": "cyberfuel-iacp-tfstate-lab",
+          "encrypt": true,
+          "endpoints": {
+            "s3": "https://s3.wasabisys.com"
+          },
+          "key": "iacp/lab/tenants/00000000-0000-0000-0000-000000000001/instances/93899a50-f9e4-48c1-987b-5a05ae79a670/terraform.tfstate",
+          "region": "us-east-1",
+          "skip_credentials_validation": true,
+          "skip_metadata_api_check": true,
+          "skip_requesting_account_id": true,
+          "use_lockfile": true,
+          "use_path_style": true
+        },
+        "workspace": "default",
+        "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+        "attempt": 1,
+        "plan_sha256": "25bd6f275e06ba43bdb3ba53cc49623a2b155d8904a0e36b945b053dd2b58538",
+        "approved_state": {
+          "lineage": "",
+          "serial": 0
+        },
+        "resource_address": "module.kvm.proxmox_virtual_environment_vm.this",
+        "resource_id": "30009"
+      },
+      "phase": "observed",
+      "observed_at": "2026-10-24T05:33:46.393262+00:00",
+      "apply_id": "a16e5e47-2003-4780-9c90-69bc7d2c5902"
+    },
+    "created_at": "2026-10-24T05:31:51.157866Z",
+    "updated_at": "2026-10-24T05:39:48.574068Z"
+  },
+  "final-cleanup-audit": {
+    "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+    "vmid": 30009,
+    "inventory_status": "deleted",
+    "proxmox_absent": true,
+    "state": {
+      "metadata": {
+        "version_id": "001792820387271411877-o2SN-EJ_Hs",
+        "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+        "serial": 2,
+        "sha256": "231bea93c27c537f50afefb22501b93edfbb6c475502cbba110cd39c27943e5f",
+        "content_sha256": "f69d08dcaab0626e115fb9c9ea8d6b7b58f3fab0e5da02eba5a389ed1fdc655c"
+      },
+      "resource_count": 0,
+      "lock_present": false,
+      "historical_versions_removed": false
+    },
+    "protected_config_hashes": {
+      "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+      "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+    },
+    "lab_vmids_after": [],
+    "apply_dispatches": 1,
+    "initializer_dispatches": 1,
+    "power_tasks": [
+      {
+        "type": "qmdestroy",
+        "status": "OK",
+        "upid": "UPID:mng01:002EFBF1:04D3E652:6ADC44A1:qmdestroy:30009:iacp-provision@pve!terraform-lab:",
+        "starttime": 1792820385,
+        "endtime": 1792820386
+      },
+      {
+        "type": "qmshutdown",
+        "status": "OK",
+        "upid": "UPID:mng01:002EFA54:04D3DE59:6ADC448C:qmshutdown:30009:iacp-lifecycle@pve!power-lab:",
+        "starttime": 1792820364,
+        "endtime": 1792820367
+      },
+      {
+        "type": "qmstart",
+        "status": "OK",
+        "upid": "UPID:mng01:002EF832:04D3D40A:6ADC4472:qmstart:30009:root@pam:",
+        "starttime": 1792820338,
+        "endtime": 1792820340
+      },
+      {
+        "type": "qmreboot",
+        "status": "OK",
+        "upid": "UPID:mng01:002EF827:04D3D2F4:6ADC446F:qmreboot:30009:iacp-lifecycle@pve!power-lab:",
+        "starttime": 1792820335,
+        "endtime": 1792820338
+      },
+      {
+        "type": "qmstart",
+        "status": "OK",
+        "upid": "UPID:mng01:002EF427:04D3BB2C:6ADC4432:qmstart:30009:iacp-lifecycle@pve!power-lab:",
+        "starttime": 1792820274,
+        "endtime": 1792820276
+      },
+      {
+        "type": "qmshutdown",
+        "status": "OK",
+        "upid": "UPID:mng01:002EF0C4:04D3AA8B:6ADC4408:qmshutdown:30009:iacp-lifecycle@pve!power-lab:",
+        "starttime": 1792820232,
+        "endtime": 1792820235
+      },
+      {
+        "type": "qmstart",
+        "status": "OK",
+        "upid": "UPID:mng01:002EE4BA:04D35A86:6ADC433B:qmstart:30009:iacp-lifecycle@pve!power-lab:",
+        "starttime": 1792820027,
+        "endtime": 1792820028
+      },
+      {
+        "type": "resize",
+        "status": "OK",
+        "upid": "UPID:mng01:002EDE50:04D33401:6ADC42D8:resize:30009:iacp-provision@pve!terraform-lab:",
+        "starttime": 1792819928,
+        "endtime": 1792819928
+      }
+    ],
+    "forced_stop_used": false,
+    "secret_values_emitted": false,
+    "protected_configs_unchanged": true
+  },
+  "guest": {
+    "packages": {
+      "returncode": 0,
+      "stdout": "cloud-init 26.2-0ubuntu1~24.04.1\nopenssh-server 1:9.6p1-3ubuntu13.20\nqemu-guest-agent 1:8.2.2+ds-0ubuntu1.18\nsystemd 255.4-1ubuntu8.18\n",
+      "stderr": ""
+    },
+    "cloud_init": {
+      "returncode": 2,
+      "stdout": "{\n  \"boot_status_code\": \"enabled-by-generator\",\n  \"datasource\": \"nocloud\",\n  \"detail\": \"DataSourceNoCloud [seed=/dev/sr0]\",\n  \"errors\": [],\n  \"extended_status\": \"degraded done\",\n  \"init\": {\n    \"errors\": [],\n    \"finished\": 10.99,\n    \"recoverable_errors\": {\n      \"DEPRECATED\": [\n        \"'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.\"\n      ]\n    },\n    \"start\": 8.99\n  },\n  \"init-local\": {\n    \"errors\": [],\n    \"finished\": 7.05,\n    \"recoverable_errors\": {},\n    \"start\": 6.22\n  },\n  \"last_update\": \"Thu, 01 Jan 1970 00:00:13 +0000\",\n  \"modules-config\": {\n    \"errors\": [],\n    \"finished\": 12.63,\n    \"recoverable_errors\": {},\n    \"start\": 12.06\n  },\n  \"modules-final\": {\n    \"errors\": [],\n    \"finished\": 13.22,\n    \"recoverable_errors\": {\n      \"DEPRECATED\": [\n        \"'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.\"\n      ]\n    },\n    \"start\": 13.04\n  },\n  \"recoverable_errors\": {\n    \"DEPRECATED\": [\n      \"'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.\",\n      \"'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.\"\n    ]\n  },\n  \"stage\": null,\n  \"status\": \"done\"\n}\n",
+      "stderr": ""
+    },
+    "agent_active": {
+      "returncode": 0,
+      "stdout": "active\n",
+      "stderr": ""
+    },
+    "agent_enabled": {
+      "returncode": 0,
+      "stdout": "static\n",
+      "stderr": ""
+    },
+    "agent_unit": {
+      "returncode": 0,
+      "stdout": "# /usr/lib/systemd/system/qemu-guest-agent.service\n[Unit]\nDescription=QEMU Guest Agent\nBindsTo=dev-virtio\\x2dports-org.qemu.guest_agent.0.device\nAfter=dev-virtio\\x2dports-org.qemu.guest_agent.0.device\n\n[Service]\nExecStart=-/usr/sbin/qemu-ga\nRestart=always\nRestartSec=0\n\n[Install]\n",
+      "stderr": ""
+    },
+    "ssh_active": {
+      "returncode": 0,
+      "stdout": "active\n",
+      "stderr": ""
+    },
+    "ssh_socket_active": {
+      "returncode": 0,
+      "stdout": "active\n",
+      "stderr": ""
+    },
+    "logind_active": {
+      "returncode": 0,
+      "stdout": "active\n",
+      "stderr": ""
+    },
+    "effective_ssh": {
+      "returncode": 0,
+      "stdout": "permitrootlogin yes\npasswordauthentication yes\nkbdinteractiveauthentication no",
+      "stderr": ""
+    },
+    "boot_finished": true,
+    "cloud_result": {
+      "v1": {
+        "datasource": "DataSourceNoCloud [seed=/dev/sr0]",
+        "errors": []
+      }
+    },
+    "acpi_tables": [
+      "SSDT",
+      "MCFG",
+      "APIC",
+      "WAET",
+      "DSDT",
+      "WSMT",
+      "FACP",
+      "FACS",
+      "BGRT"
+    ],
+    "power_button_devices": [],
+    "ssh_runtime_directory_exists": true,
+    "marker_exists": true
+  },
+  "private_evidence_directory": "/opt/iacp/evidence/mvp-final-20261024"
+}

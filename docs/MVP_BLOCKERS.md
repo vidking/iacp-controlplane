@@ -37,3 +37,23 @@ versionada. La carga original conserva 334 solicitudes sin errores y p95 de
 590/430/440/630 ms para 10/25/50/100 usuarios: **dos etapas incumplieron 500 ms**.
 El plan sostenido del repositorio externo separa HTTP de provisión con cuotas y
 mide acciones hasta su finalización, además de la admisión HTTP.
+
+
+## Resultado de la nueva validación
+
+Candidata `dff8052`: VM30009/UUID `93899a50-f9e4-48c1-987b-5a05ae79a670`,
+2 vCPU/2048 MiB/24 GiB, raíz por API HTTPS y arranque automático. Cloud-Init
+sin errores, QGA activo (unidad static activada por dispositivo), DHCP
+192.168.3.73 y SSH root autenticado. Rotación por `passwd` sobre SSH con host key
+fijada desde QGA; nueva contraseña válida e inicial rechazada después de start y
+reboot. Reconciliación readonly con la VM apagada: postcondiciones verificadas y
+state sin cambios. La API de reconciliación respondió correctamente
+`RECONCILIATION_NOT_REQUIRED` una vez recuperada la creación; no se fabricó una
+incertidumbre para probarla.
+
+Dos Shutdown por API finalizaron, seguidos de DELETE de la misma VM. La Golden
+Image se verificó por configuración/procedencia de clon y paquetes heredados;
+permaneció apagada. Se observaron tablas ACPI y logind; el apagado acreditado usa
+QGA, no una prueba independiente de señal ACPI. No se recuperó stderr histórico
+de VM30008 y no se atribuye una causa retrospectiva definitiva a su inicializador.
+La carga sostenida permanece preparada, sin resultado de capacidad declarado.
