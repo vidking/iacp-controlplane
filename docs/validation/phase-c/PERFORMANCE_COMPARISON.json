@@ -1,0 +1,19 @@
+{
+  "baseline_runtime_revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "candidate_commit": "ba88083ed5a2622e2e83402ce6f1e49860c4b3f3",
+  "candidate_source_sha256": "fc37e16c1977812d5b05d2727e5aa3d7cf3d80faf882a720575b79082aec114e",
+  "pull_request": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/45",
+  "deployed": false,
+  "method": "Sequential one-shot observer processes in existing API container; explicit readonly SQL; no application files, routes or service processes replaced. Three samples per page/version over the same 167 tenant operations. Direct handler excludes HTTP, middleware and external client network.",
+  "before_artifact": "QUERY_PROFILE_SEQUENTIAL_BEFORE.json",
+  "after_artifact": "QUERY_PROFILE_SEQUENTIAL_AFTER.json",
+  "matched_payload_hash_pairs": 12,
+  "rows": [
+    {"limit": 1, "before_queries": 10, "candidate_queries": 9, "before_median_ms": 12.324, "candidate_median_ms": 9.131},
+    {"limit": 10, "before_queries": 67, "candidate_queries": 9, "before_median_ms": 50.910, "candidate_median_ms": 11.537},
+    {"limit": 50, "before_queries": 325, "candidate_queries": 9, "before_median_ms": 211.388, "candidate_median_ms": 20.946},
+    {"limit": 100, "before_queries": 648, "candidate_queries": 20, "before_median_ms": 413.829, "candidate_median_ms": 50.173}
+  ],
+  "regression": {"directed_passed": 108, "failed": 0, "seconds": 31.60, "paths": ["tests/test_operation_batching.py", "tests/test_provisioning_contract.py", "tests/test_crm_contract.py"], "before_fix": "One count regression failed: 98 statements for 12 rows; mixed child projection regression passed."},
+  "limits": ["Small sample, not an HTTP percentile or sustained capacity result", "Some creation fulfillment queries remain per creation", "Post-deployment HTTP comparison pending", "Earlier concurrent profiling artifacts are exploratory and excluded from this timing comparison"]
+}

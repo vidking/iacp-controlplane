@@ -1,0 +1,17 @@
+{
+  "profile": "quick, scoped security support for Phase C",
+  "status": "incomplete",
+  "reason": "platform_agent_usage_limit_interrupted_two_hunters_and_prevented_final_coverage_critic",
+  "source_baseline": "a4f63a9740a3b75bba3940e58a309285c43aaf63",
+  "candidate_commit": "3d815d17cc1c2d83fb34e16c5a7e25f93577729a",
+  "covered_units": 1,
+  "deferred_units": 2,
+  "deferred_scopes": ["tenant/resource authorization hunter completion", "evidence confidentiality hunter completion"],
+  "confirmed_security_findings": 0,
+  "unvalidated_candidates_promoted": 0,
+  "independent_p0_source_review_completed": true,
+  "independent_secret_candidate_dispositions_completed": true,
+  "formal_security_coverage_certified": false,
+  "external_local_run": "/home/despinoza/security-audit-skill/iacp-controlplane/run-1",
+  "note": "Prior reconnaissance, source reviews and operational tests remain valid for their stated scope. No complete security-audit claim is made."
+}

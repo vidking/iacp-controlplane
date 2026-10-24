@@ -1,0 +1,10 @@
+{
+  "scope": ["app/iacp/terraform/runner.py", "app/iacp/terraform/process_supervisor.py", "tests/test_resilience.py"],
+  "method": "independent source review; no runtime writes or secret-file reads",
+  "final_decision": "approve_source_review",
+  "issues_remaining": [],
+  "corrections_from_review": ["Close the lease writer on exceptions throughout Popen startup", "Preserve unavailable-binary and signed exit-code diagnostics", "Close both initial descriptors if second pipe acquisition fails", "Reject absent/malformed supervisor status before accepting Terraform detailed exit code 2", "Wait for a complete PID marker in the regression"],
+  "directed_regression": {"passed": 70, "failed": 0, "seconds": 17.22},
+  "runtime_validation_pending": ["helper survival under actual OOM/termination policy", "actual provider process-group membership", "one discarded MNG VM interrupted/reconciled/cleaned without duplicate mutation"],
+  "note": "Source approval and local tests do not close P0 on deployed runtime 4f153e8."
+}

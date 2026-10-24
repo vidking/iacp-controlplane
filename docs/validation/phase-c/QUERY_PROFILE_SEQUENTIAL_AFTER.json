@@ -1,0 +1,314 @@
+{
+  "at": "2026-10-24T18:10:31.654776+00:00",
+  "candidate_source_sha256": "fc37e16c1977812d5b05d2727e5aa3d7cf3d80faf882a720575b79082aec114e",
+  "indexes": [
+    {
+      "indexdef": "CREATE INDEX ix_operations_tenant_id ON public.operations USING btree (tenant_id)",
+      "indexname": "ix_operations_tenant_id",
+      "tablename": "operations"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX operations_pkey ON public.operations USING btree (id)",
+      "indexname": "operations_pkey",
+      "tablename": "operations"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX uq_operations_tenant_key ON public.operations USING btree (tenant_id, idempotency_key)",
+      "indexname": "uq_operations_tenant_key",
+      "tablename": "operations"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX uq_operations_creation ON public.operations USING btree (instance_id) WHERE ((kind)::text = 'instance.create'::text)",
+      "indexname": "uq_operations_creation",
+      "tablename": "operations"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX operation_events_pkey ON public.operation_events USING btree (id)",
+      "indexname": "operation_events_pkey",
+      "tablename": "operation_events"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_operation_events_operation_id ON public.operation_events USING btree (operation_id)",
+      "indexname": "ix_operation_events_operation_id",
+      "tablename": "operation_events"
+    }
+  ],
+  "operation_count": 167,
+  "operations": [
+    {
+      "limit": 1,
+      "payload_sha256": "1ef833d41338a16e86de6a50bde65556ff87a4fc01c2f20487140d80835cbb49",
+      "queries": 9,
+      "repeat": 0,
+      "rows": 1,
+      "sql_ms": 19.713,
+      "total_ms": 57.697
+    },
+    {
+      "limit": 1,
+      "payload_sha256": "1ef833d41338a16e86de6a50bde65556ff87a4fc01c2f20487140d80835cbb49",
+      "queries": 9,
+      "repeat": 1,
+      "rows": 1,
+      "sql_ms": 3.594,
+      "total_ms": 9.131
+    },
+    {
+      "limit": 1,
+      "payload_sha256": "1ef833d41338a16e86de6a50bde65556ff87a4fc01c2f20487140d80835cbb49",
+      "queries": 9,
+      "repeat": 2,
+      "rows": 1,
+      "sql_ms": 3.37,
+      "total_ms": 8.511
+    },
+    {
+      "limit": 10,
+      "payload_sha256": "7bf303dc201361c89bc16a3edbe327228e884df55f24831d7e8d274c2c3d2077",
+      "queries": 9,
+      "repeat": 0,
+      "rows": 10,
+      "sql_ms": 5.409,
+      "total_ms": 13.84
+    },
+    {
+      "limit": 10,
+      "payload_sha256": "7bf303dc201361c89bc16a3edbe327228e884df55f24831d7e8d274c2c3d2077",
+      "queries": 9,
+      "repeat": 1,
+      "rows": 10,
+      "sql_ms": 4.082,
+      "total_ms": 11.537
+    },
+    {
+      "limit": 10,
+      "payload_sha256": "7bf303dc201361c89bc16a3edbe327228e884df55f24831d7e8d274c2c3d2077",
+      "queries": 9,
+      "repeat": 2,
+      "rows": 10,
+      "sql_ms": 4.045,
+      "total_ms": 11.171
+    },
+    {
+      "limit": 50,
+      "payload_sha256": "b614e1c9916c86848066ceaf9af629c154c5e5fe3e374521e2f920f662814883",
+      "queries": 9,
+      "repeat": 0,
+      "rows": 50,
+      "sql_ms": 7.223,
+      "total_ms": 23.455
+    },
+    {
+      "limit": 50,
+      "payload_sha256": "b614e1c9916c86848066ceaf9af629c154c5e5fe3e374521e2f920f662814883",
+      "queries": 9,
+      "repeat": 1,
+      "rows": 50,
+      "sql_ms": 5.916,
+      "total_ms": 20.946
+    },
+    {
+      "limit": 50,
+      "payload_sha256": "b614e1c9916c86848066ceaf9af629c154c5e5fe3e374521e2f920f662814883",
+      "queries": 9,
+      "repeat": 2,
+      "rows": 50,
+      "sql_ms": 5.804,
+      "total_ms": 20.586
+    },
+    {
+      "limit": 100,
+      "payload_sha256": "b8ce963217e1b1c3998f9e2e5e01b5b037cd8849c1b640d8745a57253b778abf",
+      "queries": 20,
+      "repeat": 0,
+      "rows": 100,
+      "sql_ms": 15.896,
+      "total_ms": 50.173
+    },
+    {
+      "limit": 100,
+      "payload_sha256": "b8ce963217e1b1c3998f9e2e5e01b5b037cd8849c1b640d8745a57253b778abf",
+      "queries": 20,
+      "repeat": 1,
+      "rows": 100,
+      "sql_ms": 16.572,
+      "total_ms": 46.224
+    },
+    {
+      "limit": 100,
+      "payload_sha256": "b8ce963217e1b1c3998f9e2e5e01b5b037cd8849c1b640d8745a57253b778abf",
+      "queries": 20,
+      "repeat": 2,
+      "rows": 100,
+      "sql_ms": 14.823,
+      "total_ms": 89.808
+    }
+  ],
+  "power_samples": [
+    {
+      "blocked_reason": "POWER_INSTANCE_NOT_AUTHORIZED",
+      "mutations_available": false,
+      "provider_calls": [
+        {
+          "milliseconds": 73.075,
+          "route": "/access/permissions"
+        },
+        {
+          "milliseconds": 71.107,
+          "route": "/nodes/mng01/qemu/106/config"
+        },
+        {
+          "milliseconds": 65.684,
+          "route": "/nodes/mng01/qemu/106/status/current"
+        }
+      ],
+      "repeat": 0,
+      "total_ms": 218.489
+    },
+    {
+      "blocked_reason": "POWER_INSTANCE_NOT_AUTHORIZED",
+      "mutations_available": false,
+      "provider_calls": [
+        {
+          "milliseconds": 59.007,
+          "route": "/access/permissions"
+        },
+        {
+          "milliseconds": 123.091,
+          "route": "/nodes/mng01/qemu/106/config"
+        },
+        {
+          "milliseconds": 62.792,
+          "route": "/nodes/mng01/qemu/106/status/current"
+        }
+      ],
+      "repeat": 1,
+      "total_ms": 250.155
+    },
+    {
+      "blocked_reason": "POWER_INSTANCE_NOT_AUTHORIZED",
+      "mutations_available": false,
+      "provider_calls": [
+        {
+          "milliseconds": 112.347,
+          "route": "/access/permissions"
+        },
+        {
+          "milliseconds": 60.7,
+          "route": "/nodes/mng01/qemu/106/config"
+        },
+        {
+          "milliseconds": 65.8,
+          "route": "/nodes/mng01/qemu/106/status/current"
+        }
+      ],
+      "repeat": 2,
+      "total_ms": 243.955
+    }
+  ],
+  "query_plan": [
+    {
+      "Execution Time": 0.208,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 50,
+        "Actual Startup Time": 0.14,
+        "Actual Total Time": 0.148,
+        "Async Capable": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 50,
+        "Plan Width": 341,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 50,
+            "Actual Startup Time": 0.139,
+            "Actual Total Time": 0.142,
+            "Async Capable": false,
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Sort",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 163,
+            "Plan Width": 341,
+            "Plans": [
+              {
+                "Actual Loops": 1,
+                "Actual Rows": 167,
+                "Actual Startup Time": 0.007,
+                "Actual Total Time": 0.048,
+                "Alias": "operations",
+                "Async Capable": false,
+                "Filter": "((tenant_id)::text = '00000000-0000-0000-0000-000000000001'::text)",
+                "Local Dirtied Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Written Blocks": 0,
+                "Node Type": "Seq Scan",
+                "Parallel Aware": false,
+                "Parent Relationship": "Outer",
+                "Plan Rows": 163,
+                "Plan Width": 341,
+                "Relation Name": "operations",
+                "Rows Removed by Filter": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Hit Blocks": 13,
+                "Shared Read Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Startup Cost": 0.0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Total Cost": 15.04
+              }
+            ],
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 13,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Sort Key": [
+              "created_at",
+              "id"
+            ],
+            "Sort Method": "top-N heapsort",
+            "Sort Space Type": "Memory",
+            "Sort Space Used": 52,
+            "Startup Cost": 20.45,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 20.86
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 13,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 20.45,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 20.58
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 0,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.091,
+      "Triggers": []
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "combined_regression_completed": true,
+  "combined_junit": "COMBINED.junit.xml",
+  "runner_container": "iacp-phase-c-combined",
+  "runner_auto_removed_after_exit": true,
+  "removed_explicit_containers": ["iacp-phase-c-final-v3", "iacp-phase-c-final-v2", "iacp-phase-c-final", "iacp-phase-c-db", "iacp-phase-c-redis"],
+  "pre_cleanup_statuses": ["exited", "exited", "exited", "running", "running"],
+  "ownership_check": "All five explicit containers and internal network carried iacp.phase=c-local; network members were restricted to these owned fixtures before removal.",
+  "removed_network": "iacp-phase-c-20261024",
+  "network_was_internal": true,
+  "database_storage": "disposable tmpfs; no persistent user volume removed",
+  "images_removed": 0,
+  "MNG_services_interrupted": 0,
+  "scope": "Local disposable test resources only; no broad Docker prune, image or volume deletion. Retained source worktrees and evidence remain available."
+}
