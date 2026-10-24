@@ -28,6 +28,9 @@ def gate(instance, session=None):
     except ValueError:
         raise Conflict('DELETE_ALLOWLIST_INVALID') from None
     delegated = False
+    if session is not None:
+        from ..services.guest_identity import active as active_initialization
+        if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
     if session is not None and instance.self_service_policy_id:
         from ..services.lab import member
         member(session, instance, 'delete', current_profiles=True)

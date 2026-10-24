@@ -43,6 +43,11 @@ def get_network_publisher():
     return lambda identifier: discover_network.apply_async(args=[identifier],queue='terraform')
 
 
+def get_guest_initialization_publisher():
+    from ..terraform.worker import initialize_guest
+    return lambda identifier: initialize_guest.apply_async(args=[identifier],queue='terraform')
+
+
 def get_power_client():
     from ..lifecycle.proxmox import ProxmoxPower
     return ProxmoxPower.configured

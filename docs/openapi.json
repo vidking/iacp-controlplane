@@ -1346,6 +1346,18 @@
             "title": "Events",
             "type": "array"
           },
+          "initialization": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initialization"
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -1828,6 +1840,17 @@
             "title": "Bridge",
             "type": "string"
           },
+          "guest_initialization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Initialization"
+          },
           "image": {
             "title": "Image",
             "type": "string"
@@ -2036,7 +2059,7 @@
   "info": {
     "description": "IACP Orchestrator administra instancias KVM, operaciones asíncronas y Lifecycle por tenant. El componente **IaC Worker** aprovisiona recursos con perfiles y cuotas autorizados. El contrato de autoservicio no depende de Terraform u OpenTofu. API corporativa privada por LAN/VPN.\n\n**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita energía; approver autoriza planes y debe ser distinto del solicitante.\n\n**Autoservicio:** consultar GET /v1/profiles y GET /v1/lab/policies. Crear con network_profile y self_service_policy_id aprobados admite una VM nueva y el IaC Worker procesa el plan verificado por delegación. Sin política se conserva la revisión independiente de cada plan en los endpoints administrativos históricos. HTTP 202 acredita admisión, no una VM lista. Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n**Identificadores:** instance_id es el UUID estable de la instancia; VMID es un identificador interno asignado por IACP. operation_id identifica una intención asíncrona; X-Request-ID correlaciona cada petición HTTP. Idempotency-Key identifica una intención dentro del tenant: misma clave y mismo cuerpo conservan IDs; otro cuerpo devuelve 409. VMID, plantilla y direccionamiento proceden de perfiles autorizados; node_preference valida un destino admitido u omitir para selección automática. Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, plan destroy verificado y aprobación independiente o delegación vigente para una VM creada bajo esa política. Con política, DELETE con cuerpo {} prepara y ejecuta el único plan autorizado; exige VM apagada y sin locks. VM 104 y VM 106 están protegidas. Las operaciones inciertas solo se reconcilian por observación.",
     "title": "IACP Orchestrator",
-    "version": "0.9.0"
+    "version": "0.9.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2713,6 +2736,133 @@
           }
         ],
         "summary": "Discover Network",
+        "tags": [
+          "instances"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/network/initialize": {
+      "post": {
+        "description": "Inicialización fija y única de identidad Ubuntu 24.04 para una clon nueva de laboratorio. Requiere perfil/política revisados, propiedad y Lifecycle habilitado. Sin comandos, archivos ni parámetros del cliente. Tras consumir el envío solo observa evidencia. Start la solicita automáticamente; esta ruta recupera una entrega no confirmada con la misma clave.",
+        "operationId": "initializeInstanceNetwork",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PowerRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Initialize Network",
         "tags": [
           "instances"
         ]

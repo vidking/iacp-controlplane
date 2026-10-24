@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -21,6 +22,7 @@ class Profile(StrictModel):
     max_disk_gb: int = Field(default=100, ge=8)
     target_nodes: list[str] | None = Field(default=None, min_length=1)
     self_service_enabled: bool = False
+    guest_initialization: Literal['ubuntu-2404-lab-identity-v1'] | None = None
     max_total_vcpus: int = Field(default=8, ge=1, le=4096)
     max_total_memory_mb: int = Field(default=8192, ge=512, le=1048576)
     max_total_disk_gb: int = Field(default=100, ge=8, le=1048576)
@@ -35,6 +37,10 @@ class Profile(StrictModel):
         if self.target_nodes and (len(set(self.target_nodes)) != len(self.target_nodes)
                 or not set(self.target_nodes) <= set(self.settings.allowed_nodes)):
             raise ValueError('Explicit authorized target nodes required')
+        if self.guest_initialization and (not self.self_service_enabled or self.settings.network_mode!='dhcp'
+                or self.settings.network_bridge!='vmbr0' or self.settings.vlan_id is not None
+                or self.settings.image!='ubuntu-2404' or not self.settings.guest_agent_enabled):
+            raise ValueError('Guest identity initialization requires the bounded Ubuntu DHCP lab profile')
         return self
 
 

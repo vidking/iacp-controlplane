@@ -18,7 +18,7 @@ from ..services import lab
 from ..services.instances import Conflict
 from ..services.jobs import QueueUnavailable
 from ..terraform.locks import admission_lock
-from .dependencies import get_apply_publisher, get_plan_publisher
+from .dependencies import get_apply_publisher, get_guest_initialization_publisher, get_plan_publisher
 
 router = APIRouter(responses={
     401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
@@ -64,6 +64,7 @@ class ProfileResponse(BaseModel):
     max_memory_mb_per_instance: int
     max_disk_gb_per_instance: int
     self_service_enabled: bool
+    guest_initialization: str | None = None
     quotas: dict[str, int]
 
 
@@ -108,7 +109,7 @@ def profiles(principal: Reader):
                 bridge=p.settings.network_bridge, vlan_tag=p.settings.vlan_id, nodes=p.target_nodes or [p.settings.node_name],
                 minimum_disk_gb=p.settings.boot_disk.minimum_size_gb, max_vcpus_per_instance=p.max_vcpus,
                 max_memory_mb_per_instance=p.max_memory_mb, max_disk_gb_per_instance=p.max_disk_gb,
-                self_service_enabled=p.self_service_enabled, quotas={"instances":p.max_live_instances,
+                self_service_enabled=p.self_service_enabled,guest_initialization=p.guest_initialization, quotas={"instances":p.max_live_instances,
                     "vcpus":p.max_total_vcpus, "memory_mb":p.max_total_memory_mb, "disk_gb":p.max_total_disk_gb,
                     "concurrent_operations":p.max_concurrent_operations}))
         return result
@@ -217,7 +218,7 @@ def retry_provision(instance_id: str, body: RetryRequest, key: Key, principal: O
     description="Consulta state/Proxmox o monitorea el UPID ya consumido. Nunca repite aprovisionamiento, energía ni DELETE. "
     "Disponible con admisión o política cerradas. Conserva UUID, VMID y auditoría; 409 si no existe mutación recuperable.")
 def reconcile(instance_id: str, principal: Operator, session: Database, body: PowerRequest | None = None,
-    publish=Depends(get_apply_publisher)):
+    publish=Depends(get_apply_publisher),guest_publish=Depends(get_guest_initialization_publisher)):
     from .power import owned as own_instance
     from .dependencies import get_deletion_publisher, get_power_publisher
     from ..models import DeletionExecution, PowerExecution, TerraformApply
@@ -226,6 +227,12 @@ def reconcile(instance_id: str, principal: Operator, session: Database, body: Po
     from ..lifecycle.service import response
     instance=own_instance(session,principal,instance_id)
     def request():
+        from ..models import GuestInitialization
+        initialization=session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id,
+            GuestInitialization.status.in_(['running','uncertain']),GuestInitialization.started_at.is_not(None)))
+        if initialization:
+            guest_publish(initialization.operation_id)
+            return response(session,session.get(Operation,initialization.operation_id))
         deletion=session.scalar(select(DeletionExecution).where(DeletionExecution.instance_id==instance.id,
             DeletionExecution.status.in_(['running','uncertain']),DeletionExecution.started_at.is_not(None)))
         if deletion:

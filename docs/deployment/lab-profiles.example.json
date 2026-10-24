@@ -5,6 +5,7 @@
         "00000000-0000-0000-0000-000000000001"
       ],
       "self_service_enabled": true,
+      "guest_initialization": "ubuntu-2404-lab-identity-v1",
       "vmid_min": 30000,
       "vmid_max": 30099,
       "target_nodes": [

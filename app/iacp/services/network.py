@@ -122,7 +122,19 @@ def execute_discovery(identifier,sessions,observer=observe_guest):
                         raise Conflict('TENANT_OR_NETWORK_BINDING_CHANGED')
                     target,approval=managed_target(s,instance);execution=s.get(TerraformExecution,instance.id)
                     if row.provisioning_binding!=binding_digest(instance,execution,approval):raise Conflict('NETWORK_BINDING_CHANGED')
-                    result=observer(execution,instance);heartbeat()
+                    from ..models import GuestInitialization,LabPolicy
+                    policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+                    requires_identity=bool(policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'))
+                    initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
+                    if requires_identity and (not initialization or initialization.status!='completed'):
+                        result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],'reason':'GUEST_INITIALIZATION_REQUIRED'}
+                    else:result=observer(execution,instance)
+                    if result.get('ip_addresses'):
+                        others=s.scalars(select(Instance).where(Instance.id!=instance.id,Instance.status!='deleted',
+                            Instance.network_mode=='dhcp')).all()
+                        if any(set(result['ip_addresses']) & set(other.ip_addresses or []) for other in others):
+                            result={**result,'status':'pending','ip_addresses':[],'reason':'DHCP_ADDRESS_CONFLICT'}
+                    heartbeat()
                     s.refresh(instance)
                     if instance.status!='ready':raise Conflict('NETWORK_BINDING_CHANGED')
                     result={**result,'observed_at':utcnow().isoformat()}
@@ -146,6 +158,20 @@ def after_power(identifier,sessions):
             if not operation or operation.status!='completed' or operation.kind not in {'instance.power.start','instance.power.reboot'}:return
             instance=s.get(Instance,operation.instance_id)
             if instance.network_mode!='dhcp':return
+            from ..models import LabPolicy
+            policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+            if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
+                from .guest_identity import request_initialization
+                from ..api.dependencies import get_guest_initialization_publisher
+                from ..models import GuestInitialization
+                initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
+                if initialization is None:
+                    request_initialization(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
+                        'identity-'+instance.id,get_guest_initialization_publisher())
+                    return
+                if initialization.status!='completed':
+                    get_guest_initialization_publisher()(initialization.operation_id)
+                    return
             from ..api.dependencies import get_network_publisher
             request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                               'network-after-'+identifier,get_network_publisher())

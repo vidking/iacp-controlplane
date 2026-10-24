@@ -59,6 +59,9 @@ def snapshots(spec, tenant_id):
             if requested > ceiling:
                 raise Conflict("LAB_POLICY_EXCEEDS_SERVER_LIMIT")
         result[name] = p.model_dump()
+        if p.guest_initialization:
+            from .guest_identity import PROGRAM_SHA256
+            result[name]['guest_initialization_program_sha256']=PROGRAM_SHA256
     return result
 
 

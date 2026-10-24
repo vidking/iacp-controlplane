@@ -97,6 +97,8 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                 from ..terraform.deletion import active_deletion
                 if active_deletion(session, instance.id):
                     raise Conflict("DELETE_OPERATION_ACTIVE")
+                from ..services.guest_identity import active as active_initialization
+                if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
                 from ..services.lab import authorize_operation
                 authorize_operation(session, instance, action)
                 try:

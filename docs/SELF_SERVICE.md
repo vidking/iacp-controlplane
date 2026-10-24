@@ -1,10 +1,9 @@
 # IACP Orchestrator: autoservicio de Desarrollo
 
-Contrato candidato **0.9.0**, migración **0009_lab_self_service**. Consultar
+Contrato **0.9.1**, migración **0010_guest_identity**. Consultar
 [la evidencia](validation/SELF_SERVICE.json) para distinguir la revisión probada,
-la release ejecutada y las pruebas reales de los adaptadores simulados. La API
-observada durante este desarrollo sigue en 0.8.0; no asumir que estas rutas nuevas
-ya están publicadas. Entrada operativa única: `scripts/iacpctl`, Compose
+la release ejecutada y las pruebas reales de los adaptadores simulados.
+Entrada operativa única: `scripts/iacpctl`, Compose
 `deploy/mng/compose.yaml` y driver `scripts/go_live.py`.
 
 ## Consumo desde Swagger, sin Proxmox
@@ -29,6 +28,9 @@ no necesita credenciales, VMIDs, shell ni acceso directo a Proxmox.
    un `force`, `/stop`, pausa de memoria ni suspensión de hipervisor pública.
 5. Consultar `ip_addresses` y `network_observation`; `/network/discover` repite
    observación Guest Agent con MAC verificada. Una lista vacía es IP pendiente.
+   El perfil Ubuntu del laboratorio inicializa automáticamente la identidad tras
+   el primer start: consultar el historial de la instancia para la operación
+   `instance.network.initialize`. Esperar `completed` antes de utilizar la IP.
 6. Apagar la VM antes de `DELETE /v1/instances/{instance_id}`, cuerpo `{}` y clave
    nueva. En una VM creada bajo la política, el IaC Worker prepara el plan,
    verifica su único recurso, registra delegación y ejecuta el plan guardado.
@@ -81,6 +83,7 @@ El motor implementado continúa siendo Terraform 1.16.6 ([inventario y licencias
 | POST `/v1/instances/{id}/power/reboot` | `{}` | 202, operator + clave | Sí |
 | POST `/v1/instances/{id}/power/shutdown` | `{}` | 202, operator + clave | Sí |
 | POST `/v1/instances/{id}/network/discover` | `{}` | 202 observación DHCP; operator + clave | Sí |
+| POST `/v1/instances/{id}/network/initialize` | `{}` | 202 inicialización fija aprobada; entrega automática tras start, misma clave para recuperar entrega; operator | No |
 | DELETE `/v1/instances/{id}` | `{}` bajo política; contrato antiguo conserva operation_id/plan_sha256 | 202; operator + clave; ausencia verificada antes de liberar cuota | Sí; cuerpo vacío/delegación nuevos |
 | POST `/v1/instances/{id}/terraform/deletion-plan` | `{}` | Solo plan; **no activa eliminación automática** | Sí |
 | POST `/v1/instances/{id}/terraform/deletion-approval` | operation_id, plan_sha256, valid_for_seconds | 201 aprobación individual independiente | Sí |
@@ -185,6 +188,7 @@ ausencia y los controles históricos no se sustituyen por fixtures o SQL.
 | Red de laboratorio | `.settings.network_bridge="vmbr0"`, `.network_mode="dhcp"`, `.vlan_id=null`; omite gateway/IP estáticos y VLAN tag; nunca usa IPAM |
 | IPAM estático existente | Host `IACP_TF_ALLOCATIONS_PATH`, contenedor `IACP_TERRAFORM_ALLOCATIONS_FILE`, asignación por tenant/nombre con `network_mode=static`, ipv4_cidr/gateway y VLAN explícitos; no modificar para laboratorio |
 | Cloud-Init / Guest Agent | `.settings.cloudinit_username`, `.ssh_public_keys`, `.guest_agent_enabled`; plantilla debe soportarlos; `guest_ready` sigue desconocido |
+| Identidad de la clon Ubuntu DHCP | Perfil `.guest_initialization="ubuntu-2404-lab-identity-v1"`; programa fijo y digest en `app/iacp/services/guest_identity.py`, incluidos en la revisión de política; no es una variable Terraform ni un comando del consumidor |
 | Backend y propiedad | `.settings.backend.bucket/region/endpoint`; state key la genera IACP por tenant/UUID, nunca el cliente |
 | Habilitar propuesta autoservicio | Perfil `.self_service_enabled=true`; no equivale a abrir admisión |
 | Activación | `/etc/iacp/server.env`: `IACP_LAB_SELF_SERVICE_ENABLED`, `IACP_ADMISSION_ENABLED`, `IACP_TERRAFORM_APPLY_ENABLED`, `IACP_TERRAFORM_DELETE_ENABLED`, `IACP_KVM_LIFECYCLE_ENABLED`; driver revisado, nunca editar flags para evadirlo |
@@ -205,7 +209,8 @@ restore acreditados, manifest con IDs y ventana reales, y config canónica.
 Ejecutar `iacpctl ... doctor`, luego `iacpctl ... deploy`. La migración 0009 crea
 políticas y campos nulos para todas las instancias previas, y marca
 `deletion_executions.autonomous=false`; no atribuye propiedad histórica. El driver
-compara hashes de filas proyectados a 0008. Rollback cierra flags y conserva el
+compara hashes de filas proyectados a 0008. La migración 0010 añade únicamente
+`guest_initializations`, sin adoptar ni inicializar instancias previas. Rollback cierra flags y conserva el
 esquema y la historia; nunca ejecuta downgrade.
 
 Una operación DELETE awaiting_approval impide el drenado normal. Resolverla por
@@ -240,3 +245,41 @@ Guardar solicitudes/respuestas sin tokens, eventos, UPIDs, planes, versión/line
 serial/hash de state, dos lecturas coherentes, ausencia nativa e idempotencia.
 Usar exclusivamente la API para mutaciones. Los adaptadores de pruebas nunca
 constituyen evidencia de varias KVM reales.
+
+## Identidad DHCP de clones Ubuntu
+
+El piloto de tres clones detectó MAC y SMBIOS diferentes con el mismo machine-id
+heredado y el mismo CLIENTID DHCP: las tres recibieron 192.168.3.59. Esa ejecución
+no acredita red multiinstancia. Se eliminaron por API antes de repetir el piloto.
+
+El perfil opt-in `ubuntu-2404-lab-identity-v1` agrega una inicialización fija en el
+IaC Worker después de start. Su código y SHA forman parte del snapshot/digest
+revisado de la política. Requiere una VM nueva ligada a esa política, Apply real
+completado, VMID >=30000, nombre/nodo/MAC/Cloud-Init coherentes, Ubuntu 24.04,
+netplan/networkd y Guest Agent con el permiso preexistente
+`VM.GuestAgent.Unrestricted`. No se conceden permisos por petición.
+
+El programa espera Cloud-Init, conserva `50-cloud-init.yaml`, crea un override
+`/etc/netplan/99-iacp-identity.yaml` con `dhcp-identifier: mac`, genera machine-id
+aleatorio y conserva el vínculo en `/var/lib/iacp/guest-identity.json`. El nuevo
+machine-id persistente se usa por todos los servicios después del siguiente
+reboot. No modifica la plantilla 29000, usuarios, claves, paquetes, IPAM ni state.
+El contrato HTTP solo admite `{}`: no permite ejecutar programas ni escribir
+archivos elegidos por el cliente.
+
+El registro DB conserva binding de propiedad, modo, SHA, MAC, instante de consumo,
+PID y resultado. El consumo se confirma antes del único POST al Guest Agent.
+Redelivery, misma clave y `/reconcile` después de ese instante solo leen el PID
+existente y la evidencia persistente, incluso si se perdió la respuesta con el PID.
+Una incertidumbre retiene cuota y bloquea energía/DELETE hasta conciliarla.
+Un fallo previo al consumo admite repetir **la misma clave**, tras corregir su
+causa, sin crear otro registro ni otra VM. La clave automática es
+`identity-<UUID de instancia>`.
+
+La verificación exige hashes de los archivos, MAC propia, concesión con CLIENTID
+`01<MAC sin separadores>` e IP reportada por el agente. No publica IPs hasta ese
+momento y rechaza una dirección ya conocida de otra KVM DHCP viva. Después de
+reboot se repite descubrimiento readonly. `guest_ready` sigue null: esta validación
+no certifica una aplicación. Para otras distribuciones utilizar una plantilla
+correctamente preparada o un adaptador versionado y revisado; no habilitar este
+modo en perfiles estáticos/producción.

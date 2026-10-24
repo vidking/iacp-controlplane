@@ -44,3 +44,10 @@ def delete_instance(identifier: str, mode: str) -> None:
 def discover_network(identifier: str) -> None:
     from ..services.network import execute_discovery
     execute_discovery(identifier,get_session_factory())
+
+
+@celery_app.task(name='iacp.guest.initialize',autoretry_for=(),acks_late=True,reject_on_worker_lost=True,
+                 soft_time_limit=250,time_limit=270)
+def initialize_guest(identifier: str) -> None:
+    from ..services.guest_identity import execute_initialization
+    execute_initialization(identifier,get_session_factory())
