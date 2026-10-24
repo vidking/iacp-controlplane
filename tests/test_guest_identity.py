@@ -159,6 +159,13 @@ def test_consumed_pid_loss_requires_matching_durable_marker_and_mac_lease():
     assert client.observe(target,row)['network']['ip_addresses']==['192.0.2.10']
     files['/run/systemd/netif/leases/2']='ADDRESS=192.0.2.10\nCLIENTID=ff-duplicate-duid\n'
     assert client.observe(target,row) is None
+    del files['/run/systemd/netif/leases/2']
+    original=client.client._request
+    def lease_not_ready(method,path,*args):
+        if 'file=%2Frun%2Fsystemd%2Fnetif%2Fleases' in path:raise PowerError('POWER_PROXMOX_UNAVAILABLE')
+        return original(method,path,*args)
+    client.client._request=lease_not_ready
+    assert client.observe(target,row) is None
     ast.parse(PROGRAM)
 
 
