@@ -12,6 +12,7 @@ class VersionedObject:
         self.version = 1
         self.requests = []
         self.lock = None
+        self.state_available = True
         self.guard = RLock()
 
     @property
@@ -55,7 +56,9 @@ def versioned_s3(data, bucket="fixture-state", key="terraform.tfstate"):
                                        '<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>').encode(),
                                  {"Content-Type": "application/xml"})
                 elif path == store.state_path:
-                    if self.command in {"GET", "HEAD"}:
+                    if not store.state_available:
+                        self.error(503, "ServiceUnavailable")
+                    elif self.command in {"GET", "HEAD"}:
                         self.respond(200, store.data, {"Content-Type": "application/json",
                                      "x-amz-version-id": f"fixture-version-{store.version}",
                                      "ETag": '"' + hashlib.md5(store.data).hexdigest() + '"'})
