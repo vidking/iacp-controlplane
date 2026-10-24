@@ -205,6 +205,26 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         self.evidence("approval", {"action": action, "record_sha256": record["sha256"], "actor": change["actor"], "reference": change["reference"]})
         return change
 
+    def attest_root_transport(self):
+        """Install only the deterministic TLS assertion; preserve routing/RBAC."""
+        self.approve('attest-root-transport')
+        reference=self.m['tls_dynamic_file'];candidate=self.m['root_transport_configuration']
+        require(digest(reference['path'])==reference['sha256'], 'Active TLS routing changed')
+        require(digest(candidate['path'])==candidate['sha256'], 'Transport candidate checksum mismatch')
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('root_transport_renderer', ROOT/'scripts/render-tls.py')
+        renderer=importlib.util.module_from_spec(spec);spec.loader.exec_module(renderer)
+        current=json.loads(Path(reference['path']).read_text())
+        expected=renderer.root_tls_transport(current)
+        require(json.loads(Path(candidate['path']).read_text())==expected, 'Transport change alters controls outside the assertion')
+        self.proxy_exposure(json.loads(self.compose('config','--format','json')),current)
+        path=Path(reference['path']);st=path.stat();temporary=path.with_name(path.name+'.installing')
+        with temporary.open('x') as stream:
+            os.chmod(temporary, st.st_mode & 0o777);os.chown(temporary,st.st_uid,st.st_gid)
+            stream.write(Path(candidate['path']).read_text());stream.flush();os.fsync(stream.fileno())
+        temporary.replace(path)
+        self.evidence('root-transport-installed',{'path':str(path),'sha256':digest(path),'existing_controls_preserved':True})
+
     def flags(self, *, admission, lifecycle, deletion=None, disposable_ids=None, lifecycle_ids=None, lab_self_service=None):
         path = Path(self.m["environment_file"])
         require(not path.is_symlink(), "Environment file must not be a symlink")
@@ -302,6 +322,13 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             require(volume.get("external") is True and volume["name"] == current["Name"], "Storage adoption mismatch")
         root_review = self.m.get('root_bootstrap_configuration', {})
         if root_review.get('enabled') is True:
+            dynamic=self.m['tls_dynamic_file']
+            require(digest(dynamic['path'])==dynamic['sha256'], 'Reviewed TLS routing changed')
+            import importlib.util
+            spec=importlib.util.spec_from_file_location('root_transport_preflight', ROOT/'scripts/render-tls.py')
+            renderer=importlib.util.module_from_spec(spec);spec.loader.exec_module(renderer)
+            routing=json.loads(Path(dynamic['path']).read_text())
+            require(renderer.root_tls_transport(routing)==routing, 'TLS-only transport assertion is not installed')
             proxy_ips = root_review.get('proxy_ips', '').split(',')
             actual_proxy_ips = {n['IPAddress'] for n in self.container('traefik')['NetworkSettings']['Networks'].values()}
             require(bool(proxy_ips) and all(ip and ip in actual_proxy_ips for ip in proxy_ips), 'TLS peer differs from the existing proxy')
@@ -1007,7 +1034,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab", "attest-root-transport"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     args = parser.parse_args()

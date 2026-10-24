@@ -59,6 +59,33 @@ def build(policy):
                             "default": {"minVersion": "VersionTLS12", "sniStrict": True}}}}
 
 
+def root_tls_transport(config):
+    """Add a proxy-owned TLS assertion without relaxing existing controls."""
+    import copy
+    result=copy.deepcopy(config)
+    http=result['http'];middlewares=http['middlewares'];routers=http['routers']
+    owned={'headers':{'customRequestHeaders':{'X-IACP-Transport':'https'}}}
+    stripped={'headers':{'customRequestHeaders':{'X-IACP-Transport':''}}}
+    for name,value in [('root-tls-transport',owned),('strip-root-transport',stripped)]:
+        if name in middlewares and middlewares[name]!=value:
+            raise ValueError('Conflicting root transport middleware')
+        middlewares[name]=value
+    for name in ('iacp-admin','iacp-crm'):
+        route=routers[name]
+        if route.get('entryPoints')!=['websecure'] or not route.get('tls'):
+            raise ValueError('Only existing TLS routes may attest transport')
+        chain=route['middlewares']
+        if 'root-tls-transport' not in chain:
+            chain.insert(chain.index('strip-identity')+1,'root-tls-transport')
+    diagnostic=routers['diagnostic']
+    if diagnostic.get('entryPoints')!=['web'] or diagnostic.get('tls'):
+        raise ValueError('Expected diagnostic HTTP entrypoint')
+    chain=diagnostic.setdefault('middlewares',[])
+    if 'strip-root-transport' not in chain:
+        chain.append('strip-root-transport')
+    return result
+
+
 def build_public(policy, *, internal=False):
     """Shared proxy: public gateway or explicitly selected internal access policy.
 
@@ -128,7 +155,7 @@ def build_public(policy, *, internal=False):
         middleware["internal-sources"] = {"ipAllowList": {"sourceRange": allowed}}
         for name in ("iacp-admin", "iacp-crm", "iacp-http"):
             http["routers"][name]["middlewares"] = ["internal-sources"] + http["routers"][name]["middlewares"]
-    return config
+    return root_tls_transport(config)
 
 
 def check_certificate(certificates, ca_file=None, min_validity_days=14):

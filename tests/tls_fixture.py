@@ -41,7 +41,8 @@ def api():
             self.send_response(401 if protected and self.headers.get("Authorization") != "Bearer fixture-token" else 200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"fixture": true}')
+            self.wfile.write(json.dumps({'fixture':True,'transport':self.headers.get('X-IACP-Transport'),
+                'forwarded_proto':self.headers.get('X-Forwarded-Proto')}).encode())
         def log_message(self, *args):
             pass
     class Gateway(BaseHTTPRequestHandler):
@@ -94,6 +95,10 @@ def client():
         identity = {"Cookie": "fixture-session=approved", "Authorization": "Bearer fixture-token"}
         assert client.get("https://iac.cyberfuel.com/docs", headers=identity).status_code == 200
         assert client.get("https://iac.cyberfuel.com/openapi.json", headers=identity).status_code == 200
+        attested=client.get('https://iac.cyberfuel.com/health/live',headers={**identity,'X-IACP-Transport':'http'}).json()
+        assert attested['transport']=='https' and attested['forwarded_proto'] is None
+        diagnostic=client.get('http://traefik:8080/health/live',headers={'X-IACP-Transport':'https'}).json()
+        assert diagnostic['transport'] is None
         assert client.get("https://iac.cyberfuel.com/docs", headers={"X-Forwarded-Prefix": "/verify", "Authorization": "Bearer fixture-token"}).status_code == 401
         assert client.post("https://iac.cyberfuel.com/v1/instances", headers=identity, content=b"x" * 65537).status_code == 413
         statuses = [client.get("https://iac.cyberfuel.com/docs").status_code for _ in range(30)]
