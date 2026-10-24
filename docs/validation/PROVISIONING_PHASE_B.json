@@ -1,0 +1,568 @@
+{
+  "manual_continuation_passed": true,
+  "locust_run_passed": false,
+  "locust_stop_reason": "Conservative client stopped while readonly recovery was still uncertain; one admitted UUID retained",
+  "instance_id": "e89c3132-81e7-4b7b-9f34-bbe535ef06d8",
+  "vmid": 30010,
+  "creation_operation_id": "3c209609-5273-4bf2-a629-c0cd09246ba9",
+  "approval_id": "8c55c30a-3a40-41de-a530-ec22d5a92fba",
+  "lifecycle": [
+    {
+      "action": "reboot",
+      "operation_id": "463536de-086c-487c-9762-f5b5f0628275",
+      "replay_same_ids": true,
+      "observation_elapsed_seconds": 2.674,
+      "server_operation_seconds": 5.209
+    },
+    {
+      "action": "shutdown",
+      "operation_id": "db6d55b2-4d77-4507-b0f2-a714ce074b87",
+      "replay_same_ids": true,
+      "observation_elapsed_seconds": 6.629,
+      "server_operation_seconds": 4.72
+    },
+    {
+      "action": "start",
+      "operation_id": "74cbf296-358c-41fc-805d-73f367bf9691",
+      "replay_same_ids": true,
+      "observation_elapsed_seconds": 22.183,
+      "server_operation_seconds": 2.656
+    },
+    {
+      "action": "shutdown",
+      "operation_id": "c0bbdc20-9a62-4b1b-b77b-1161910230ba",
+      "replay_same_ids": true,
+      "observation_elapsed_seconds": 8.78,
+      "server_operation_seconds": 6.849
+    }
+  ],
+  "delete_operation_id": "8e00f1f5-9840-4b7e-a84b-f01c7e826304",
+  "delete_elapsed_seconds": 17.321,
+  "manual_continuation_elapsed_seconds": 57.828,
+  "inventory_status": "deleted",
+  "forced_stop_used": false,
+  "new_instances": 1,
+  "at": "2026-10-24T07:01:48.423813+00:00",
+  "controlplane_revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "load_client_revision": "2ab04bfe624e8c4e6525dd4558650ee5b60fc40c",
+  "locust_original_journal_sha256": "3d95b4ca7578f6ed5f760f5aa42eb6337eebc097ba79b6ec19cc38222cd01b93",
+  "locust_original_summary": "15 HTTP requests; 0 HTTP failures; workflow stopped after one readonly recovery request while the result remained uncertain. No second VM created.",
+  "automatic_phase_b_certified": false,
+  "initial_access": {
+    "username": "root",
+    "status": "completed",
+    "cloud_init_complete": true,
+    "ssh_authenticated": true,
+    "observed_at": "2026-10-24T06:58:11.494516+00:00",
+    "error_code": null
+  },
+  "cleanup_audit": {
+    "deletions": 1,
+    "initializer_completed": true,
+    "lab_vmids_after": [],
+    "new_vm_apply_dispatches": 1,
+    "power_operations": [
+      {
+        "action": "start",
+        "id": "0c130c77-f686-426e-b9d1-865067f180c5",
+        "status": "completed"
+      },
+      {
+        "action": "start",
+        "id": "74cbf296-358c-41fc-805d-73f367bf9691",
+        "status": "completed"
+      },
+      {
+        "action": "shutdown",
+        "id": "db6d55b2-4d77-4507-b0f2-a714ce074b87",
+        "status": "completed"
+      },
+      {
+        "action": "reboot",
+        "id": "463536de-086c-487c-9762-f5b5f0628275",
+        "status": "completed"
+      },
+      {
+        "action": "shutdown",
+        "id": "c0bbdc20-9a62-4b1b-b77b-1161910230ba",
+        "status": "completed"
+      }
+    ],
+    "previous_vm30009_state_unchanged": true,
+    "protected_config_hashes": {
+      "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+      "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+    },
+    "protected_configs_unchanged": true,
+    "states": [
+      {
+        "historical_versions_removed": false,
+        "instance_id": "e89c3132-81e7-4b7b-9f34-bbe535ef06d8",
+        "lock_present": false,
+        "resource_count": 0,
+        "state_metadata": {
+          "content_sha256": "66a2b0fead4d12c68c08ed049a66213205798b8f79650699339939c23b232d4c",
+          "lineage": "19493249-6342-d4eb-9ae4-f673008b44a2",
+          "serial": 2,
+          "sha256": "3f5c16b9a98aa1e166b32027b79fbe96f3a8d551268c41249007600862393a80",
+          "version_id": "001792825306728060468-s6WwosL6Gs"
+        },
+        "status": "deleted",
+        "vmid": 30010
+      },
+      {
+        "historical_versions_removed": false,
+        "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+        "lock_present": false,
+        "resource_count": 0,
+        "state_metadata": {
+          "content_sha256": "f69d08dcaab0626e115fb9c9ea8d6b7b58f3fab0e5da02eba5a389ed1fdc655c",
+          "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+          "serial": 2,
+          "sha256": "231bea93c27c537f50afefb22501b93edfbb6c475502cbba110cd39c27943e5f",
+          "version_id": "001792820387271411877-o2SN-EJ_Hs"
+        },
+        "status": "deleted",
+        "vmid": 30009
+      }
+    ],
+    "vm104_permissions_unchanged": true
+  },
+  "metrics": {
+    "before": {
+      "at": "2026-10-24T06:55:57.392642+00:00",
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.12%",
+          "Container": "f8539b9bbc03bd62c6cbcf39ff27777d0dc6ac36bd544a2472b91baa5ab7a0e3",
+          "ID": "f8539b9bbc03",
+          "MemPerc": "0.61%",
+          "MemUsage": "97.78MiB / 15.62GiB",
+          "Name": "iacp-controlplane-terraform-worker-1",
+          "NetIO": "111kB / 123kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.15%",
+          "Container": "cd0ad78f53749ce6292e2f98e1037ea99eff017d15e338514424716cdf296376",
+          "ID": "cd0ad78f5374",
+          "MemPerc": "0.56%",
+          "MemUsage": "89.43MiB / 15.62GiB",
+          "Name": "iacp-controlplane-api-1",
+          "NetIO": "329kB / 987kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.04%",
+          "Container": "d442a5aa828ede1160b800a39d7b0bf18dea551fe863da7d44eed62fe61471ec",
+          "ID": "d442a5aa828e",
+          "MemPerc": "0.57%",
+          "MemUsage": "91.8MiB / 15.62GiB",
+          "Name": "iacp-controlplane-lifecycle-worker-1",
+          "NetIO": "41.9kB / 110kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.03%",
+          "Container": "aae4d430db3becff8331b20c93c3238ebdcbcdad5a080eb6fa75f39f4978f0cc",
+          "ID": "aae4d430db3b",
+          "MemPerc": "0.58%",
+          "MemUsage": "93.36MiB / 15.62GiB",
+          "Name": "iacp-controlplane-worker-1",
+          "NetIO": "1.78MB / 419kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+          "ID": "bbc379adee59",
+          "MemPerc": "0.20%",
+          "MemUsage": "32.61MiB / 15.62GiB",
+          "Name": "iacp-controlplane-traefik-1",
+          "NetIO": "24.5MB / 31.8MB",
+          "PIDs": "13"
+        },
+        {
+          "BlockIO": "594kB / 111MB",
+          "CPUPerc": "0.01%",
+          "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+          "ID": "a7cc37508fa4",
+          "MemPerc": "0.23%",
+          "MemUsage": "36.43MiB / 15.62GiB",
+          "Name": "iacp-controlplane-db-1",
+          "NetIO": "63.1MB / 146MB",
+          "PIDs": "7"
+        },
+        {
+          "BlockIO": "42.3MB / 44.9MB",
+          "CPUPerc": "4.42%",
+          "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+          "ID": "8fa3f587bb6c",
+          "MemPerc": "0.03%",
+          "MemUsage": "4.023MiB / 15.62GiB",
+          "Name": "iacp-controlplane-redis-1",
+          "NetIO": "327MB / 99.1MB",
+          "PIDs": "6"
+        }
+      ],
+      "database_connections": [
+        {
+          "count": 1,
+          "state": "active",
+          "wait_event_type": null
+        },
+        {
+          "count": 1,
+          "state": "idle",
+          "wait_event_type": "Client"
+        }
+      ],
+      "queue_depth": {
+        "celery": 0,
+        "lifecycle": 0,
+        "terraform": 0
+      },
+      "redis": {
+        "blocked_clients": 3,
+        "connected_clients": 25,
+        "total_commands_processed": 897401,
+        "used_memory": 1986464
+      }
+    },
+    "during": {
+      "at": "2026-10-24T06:57:02.095001+00:00",
+      "containers": [
+        {
+          "BlockIO": "0B / 29.3MB",
+          "CPUPerc": "0.15%",
+          "Container": "f8539b9bbc03bd62c6cbcf39ff27777d0dc6ac36bd544a2472b91baa5ab7a0e3",
+          "ID": "f8539b9bbc03",
+          "MemPerc": "0.97%",
+          "MemUsage": "155.6MiB / 15.62GiB",
+          "Name": "iacp-controlplane-terraform-worker-1",
+          "NetIO": "11.4MB / 900kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.18%",
+          "Container": "cd0ad78f53749ce6292e2f98e1037ea99eff017d15e338514424716cdf296376",
+          "ID": "cd0ad78f5374",
+          "MemPerc": "0.61%",
+          "MemUsage": "97.09MiB / 15.62GiB",
+          "Name": "iacp-controlplane-api-1",
+          "NetIO": "623kB / 1.36MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.15%",
+          "Container": "d442a5aa828ede1160b800a39d7b0bf18dea551fe863da7d44eed62fe61471ec",
+          "ID": "d442a5aa828e",
+          "MemPerc": "0.57%",
+          "MemUsage": "91.8MiB / 15.62GiB",
+          "Name": "iacp-controlplane-lifecycle-worker-1",
+          "NetIO": "53.7kB / 151kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.15%",
+          "Container": "aae4d430db3becff8331b20c93c3238ebdcbcdad5a080eb6fa75f39f4978f0cc",
+          "ID": "aae4d430db3b",
+          "MemPerc": "0.58%",
+          "MemUsage": "93.36MiB / 15.62GiB",
+          "Name": "iacp-controlplane-worker-1",
+          "NetIO": "1.8MB / 462kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+          "ID": "bbc379adee59",
+          "MemPerc": "0.20%",
+          "MemUsage": "32.68MiB / 15.62GiB",
+          "Name": "iacp-controlplane-traefik-1",
+          "NetIO": "24.7MB / 32MB",
+          "PIDs": "13"
+        },
+        {
+          "BlockIO": "594kB / 111MB",
+          "CPUPerc": "0.00%",
+          "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+          "ID": "a7cc37508fa4",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.89MiB / 15.62GiB",
+          "Name": "iacp-controlplane-db-1",
+          "NetIO": "63.7MB / 147MB",
+          "PIDs": "10"
+        },
+        {
+          "BlockIO": "42.3MB / 45MB",
+          "CPUPerc": "0.62%",
+          "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+          "ID": "8fa3f587bb6c",
+          "MemPerc": "0.02%",
+          "MemUsage": "3.941MiB / 15.62GiB",
+          "Name": "iacp-controlplane-redis-1",
+          "NetIO": "327MB / 99.1MB",
+          "PIDs": "6"
+        }
+      ],
+      "database_connections": [
+        {
+          "count": 1,
+          "state": "active",
+          "wait_event_type": null
+        },
+        {
+          "count": 4,
+          "state": "idle",
+          "wait_event_type": "Client"
+        }
+      ],
+      "queue_depth": {
+        "celery": 0,
+        "lifecycle": 0,
+        "terraform": 0
+      },
+      "redis": {
+        "blocked_clients": 3,
+        "connected_clients": 29,
+        "total_commands_processed": 897775,
+        "used_memory": 1937496
+      }
+    },
+    "lifecycle": {
+      "at": "2026-10-24T07:01:31.559756+00:00",
+      "containers": [
+        {
+          "BlockIO": "0B / 29.4MB",
+          "CPUPerc": "21.53%",
+          "Container": "f8539b9bbc03bd62c6cbcf39ff27777d0dc6ac36bd544a2472b91baa5ab7a0e3",
+          "ID": "f8539b9bbc03",
+          "MemPerc": "1.11%",
+          "MemUsage": "178.1MiB / 15.62GiB",
+          "Name": "iacp-controlplane-terraform-worker-1",
+          "NetIO": "12.8MB / 1.64MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "44.92%",
+          "Container": "cd0ad78f53749ce6292e2f98e1037ea99eff017d15e338514424716cdf296376",
+          "ID": "cd0ad78f5374",
+          "MemPerc": "0.61%",
+          "MemUsage": "97.64MiB / 15.62GiB",
+          "Name": "iacp-controlplane-api-1",
+          "NetIO": "1.41MB / 1.96MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.04%",
+          "Container": "d442a5aa828ede1160b800a39d7b0bf18dea551fe863da7d44eed62fe61471ec",
+          "ID": "d442a5aa828e",
+          "MemPerc": "0.79%",
+          "MemUsage": "126MiB / 15.62GiB",
+          "Name": "iacp-controlplane-lifecycle-worker-1",
+          "NetIO": "1.21MB / 782kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.04%",
+          "Container": "aae4d430db3becff8331b20c93c3238ebdcbcdad5a080eb6fa75f39f4978f0cc",
+          "ID": "aae4d430db3b",
+          "MemPerc": "0.58%",
+          "MemUsage": "93.36MiB / 15.62GiB",
+          "Name": "iacp-controlplane-worker-1",
+          "NetIO": "1.86MB / 630kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.51%",
+          "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+          "ID": "bbc379adee59",
+          "MemPerc": "0.17%",
+          "MemUsage": "27.35MiB / 15.62GiB",
+          "Name": "iacp-controlplane-traefik-1",
+          "NetIO": "24.9MB / 32.6MB",
+          "PIDs": "13"
+        },
+        {
+          "BlockIO": "594kB / 113MB",
+          "CPUPerc": "3.27%",
+          "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+          "ID": "a7cc37508fa4",
+          "MemPerc": "0.32%",
+          "MemUsage": "50.47MiB / 15.62GiB",
+          "Name": "iacp-controlplane-db-1",
+          "NetIO": "64.9MB / 149MB",
+          "PIDs": "12"
+        },
+        {
+          "BlockIO": "42.5MB / 45.2MB",
+          "CPUPerc": "0.56%",
+          "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+          "ID": "8fa3f587bb6c",
+          "MemPerc": "0.02%",
+          "MemUsage": "3.945MiB / 15.62GiB",
+          "Name": "iacp-controlplane-redis-1",
+          "NetIO": "328MB / 99.3MB",
+          "PIDs": "6"
+        }
+      ],
+      "database_connections": [
+        {
+          "count": 2,
+          "state": "active",
+          "wait_event_type": null
+        },
+        {
+          "count": 4,
+          "state": "idle",
+          "wait_event_type": "Client"
+        },
+        {
+          "count": 1,
+          "state": "idle in transaction",
+          "wait_event_type": "Client"
+        }
+      ],
+      "queue_depth": {
+        "celery": 0,
+        "lifecycle": 1,
+        "terraform": 0
+      },
+      "redis": {
+        "blocked_clients": 2,
+        "connected_clients": 31,
+        "total_commands_processed": 899314,
+        "used_memory": 1925792
+      }
+    },
+    "after": {
+      "at": "2026-10-24T07:02:58.634234+00:00",
+      "containers": [
+        {
+          "BlockIO": "0B / 58.7MB",
+          "CPUPerc": "0.13%",
+          "Container": "f8539b9bbc03bd62c6cbcf39ff27777d0dc6ac36bd544a2472b91baa5ab7a0e3",
+          "ID": "f8539b9bbc03",
+          "MemPerc": "1.28%",
+          "MemUsage": "204MiB / 15.62GiB",
+          "Name": "iacp-controlplane-terraform-worker-1",
+          "NetIO": "28.9MB / 4.45MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.14%",
+          "Container": "cd0ad78f53749ce6292e2f98e1037ea99eff017d15e338514424716cdf296376",
+          "ID": "cd0ad78f5374",
+          "MemPerc": "0.61%",
+          "MemUsage": "97.76MiB / 15.62GiB",
+          "Name": "iacp-controlplane-api-1",
+          "NetIO": "1.49MB / 2.01MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.24%",
+          "Container": "d442a5aa828ede1160b800a39d7b0bf18dea551fe863da7d44eed62fe61471ec",
+          "ID": "d442a5aa828e",
+          "MemPerc": "0.79%",
+          "MemUsage": "126MiB / 15.62GiB",
+          "Name": "iacp-controlplane-lifecycle-worker-1",
+          "NetIO": "1.22MB / 837kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.15%",
+          "Container": "aae4d430db3becff8331b20c93c3238ebdcbcdad5a080eb6fa75f39f4978f0cc",
+          "ID": "aae4d430db3b",
+          "MemPerc": "0.58%",
+          "MemUsage": "93.36MiB / 15.62GiB",
+          "Name": "iacp-controlplane-worker-1",
+          "NetIO": "1.88MB / 688kB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "bbc379adee59f66db4d6af56b8b6c7766324e9dcea58fac518bb6b10119934df",
+          "ID": "bbc379adee59",
+          "MemPerc": "0.17%",
+          "MemUsage": "27.82MiB / 15.62GiB",
+          "Name": "iacp-controlplane-traefik-1",
+          "NetIO": "25MB / 32.7MB",
+          "PIDs": "13"
+        },
+        {
+          "BlockIO": "594kB / 113MB",
+          "CPUPerc": "0.02%",
+          "Container": "a7cc37508fa4666eccc5bed4a4edf1a29ebad93688416ea2fdd6f9ed2c17cae2",
+          "ID": "a7cc37508fa4",
+          "MemPerc": "0.32%",
+          "MemUsage": "50.52MiB / 15.62GiB",
+          "Name": "iacp-controlplane-db-1",
+          "NetIO": "67.4MB / 154MB",
+          "PIDs": "12"
+        },
+        {
+          "BlockIO": "42.5MB / 45.3MB",
+          "CPUPerc": "0.61%",
+          "Container": "8fa3f587bb6cf4fbc5de10956eed8c88bf2b87975c37d1fb3309da0ce3a547fb",
+          "ID": "8fa3f587bb6c",
+          "MemPerc": "0.02%",
+          "MemUsage": "3.945MiB / 15.62GiB",
+          "Name": "iacp-controlplane-redis-1",
+          "NetIO": "328MB / 99.3MB",
+          "PIDs": "6"
+        }
+      ],
+      "database_connections": [
+        {
+          "count": 1,
+          "state": "active",
+          "wait_event_type": null
+        },
+        {
+          "count": 6,
+          "state": "idle",
+          "wait_event_type": "Client"
+        }
+      ],
+      "queue_depth": {
+        "celery": 0,
+        "lifecycle": 0,
+        "terraform": 0
+      },
+      "redis": {
+        "blocked_clients": 3,
+        "connected_clients": 31,
+        "total_commands_processed": 899784,
+        "used_memory": 1932016
+      }
+    }
+  },
+  "remaining": "Automatic Phase B client must tolerate asynchronous recovery observation and INSTANCE_BUSY without issuing a new mutation. Separate load-client work; no second provisioning attempt authorized or run here.",
+  "timing": {
+    "created_at": "2026-10-24T06:56:03.198633Z",
+    "initial_access_observed_at": "2026-10-24T06:58:11.494516+00:00",
+    "deleted_at": "2026-10-24T07:01:47.844625Z",
+    "creation_to_initial_access_wall_seconds": 128.296,
+    "created_to_deleted_wall_seconds": 344.646,
+    "configured_locust_max_duration_seconds": 1800,
+    "note": "Wall times include operator-led readonly recovery and pauses. The stopped automated run and manual continuation are separate evidence; no throughput or capacity percentile claim."
+  }
+}

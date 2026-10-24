@@ -1,0 +1,332 @@
+{
+  "passed": true,
+  "environment": "MNG only; no production",
+  "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "pr": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/42",
+  "api_version": "0.10.1",
+  "runtime_images": [
+    {
+      "role": "terraform-worker",
+      "image": "sha256:3ce85fcbfe86119c1f221858e263a9b180473316bdc5ca795e33658978ce3fa2",
+      "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+      "running": true,
+      "health": null
+    },
+    {
+      "role": "api",
+      "image": "sha256:24572f9abfca5a7be8071869b25f4f3dccc9b26ea03c401d3a4e2d812917d6bc",
+      "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+      "running": true,
+      "health": "healthy"
+    },
+    {
+      "role": "lifecycle-worker",
+      "image": "sha256:24572f9abfca5a7be8071869b25f4f3dccc9b26ea03c401d3a4e2d812917d6bc",
+      "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+      "running": true,
+      "health": null
+    },
+    {
+      "role": "worker",
+      "image": "sha256:24572f9abfca5a7be8071869b25f4f3dccc9b26ea03c401d3a4e2d812917d6bc",
+      "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+      "running": true,
+      "health": null
+    }
+  ],
+  "runtime_implementation_invariants": {
+    "verified_files": 17,
+    "worker_state_implementation_unchanged": true
+  },
+  "promotion_steps": {
+    "drain": {
+      "action": "rollback",
+      "at": "2026-10-24T06:51:26.022348+00:00",
+      "passed": true
+    },
+    "deploy": {
+      "action": "promote",
+      "at": "2026-10-24T06:52:39.184902+00:00",
+      "passed": true
+    },
+    "activate-lab": {
+      "action": "activate-lab",
+      "at": "2026-10-24T06:53:52.334489+00:00",
+      "passed": true
+    },
+    "env-promote": {
+      "passed": true,
+      "containers_changed": false
+    }
+  },
+  "doctor_passed": true,
+  "promotion_preservation": {
+    "at": "2026-10-24T06:52:39.184678+00:00",
+    "data": {
+      "admission": 0,
+      "history_unchanged": true,
+      "lifecycle": 0,
+      "schema": "0011_crm_contract"
+    }
+  },
+  "isolated_restore": {
+    "at": "2026-10-24T06:50:51.389182+00:00",
+    "backup_sha256": "59fd0ca3d80dd11d83a95b2c93afdcd9c3a6360459aca06df365934920ccf456",
+    "isolated": true,
+    "passed": true,
+    "schema": "0011_crm_contract",
+    "table_count": 15
+  },
+  "swagger_and_openapi": {
+    "passed": true,
+    "at": "2026-10-24T07:07:01.415190+00:00",
+    "vantage": "Authorized development workstation over HTTPS; certificate verification enabled; no proxy or TLS bypass",
+    "base_url": "https://iac.cyberfuel.com",
+    "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+    "api_version": "0.10.1",
+    "public_contract_matches_checkout": true,
+    "administrative_contract_matches_checkout": true,
+    "canonical_public_openapi_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+    "consumer_paths": 24,
+    "consumer_operations": 26,
+    "administrative_checks": [
+      {
+        "method": "GET",
+        "path": "/v1/instances/{instance_id}/provisioning/plan",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/plan/cancel",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/plan/retry",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/approvals",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/executions",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "GET",
+        "path": "/v1/instances/{instance_id}/provisioning/executions",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/cancel",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/recover",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/resolve-absence",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/deletion-plan",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/deletion-approval",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/cancel",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/recover",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/lab/policies",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/lab/policies/{policy_id}/approve",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/lab/policies/{policy_id}/renew",
+        "crm_reader_status": 403
+      },
+      {
+        "method": "POST",
+        "path": "/v1/lab/policies/{policy_id}/revoke",
+        "crm_reader_status": 403
+      }
+    ],
+    "legacy_checks": [
+      {
+        "method": "GET",
+        "path": "/v1/instances/{instance_id}/terraform",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "path": "/v1/instances/{instance_id}/terraform/applies",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/cancel",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/apply",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/approvals",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/cancel",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/deletion-approval",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/deletion-plan",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/v1/instances/{instance_id}/terraform/retry",
+        "status": 404
+      }
+    ],
+    "anonymous_docs_rejected": true,
+    "crm_reader_cannot_open_administration": true,
+    "administrative_plan_and_execution_history_accessible": true,
+    "commercial_responses_engine_and_backend_free": true,
+    "crm_operator_rejection": "Covered by automated HTTP tests with a server-configured operator credential without administration grant",
+    "credentials_rotated_or_refactored": false
+  },
+  "phase_b_final_audit": {
+    "deletions": 1,
+    "initializer_completed": true,
+    "lab_vmids_after": [],
+    "new_vm_apply_dispatches": 1,
+    "power_operations": [
+      {
+        "action": "start",
+        "id": "0c130c77-f686-426e-b9d1-865067f180c5",
+        "status": "completed"
+      },
+      {
+        "action": "start",
+        "id": "74cbf296-358c-41fc-805d-73f367bf9691",
+        "status": "completed"
+      },
+      {
+        "action": "shutdown",
+        "id": "db6d55b2-4d77-4507-b0f2-a714ce074b87",
+        "status": "completed"
+      },
+      {
+        "action": "reboot",
+        "id": "463536de-086c-487c-9762-f5b5f0628275",
+        "status": "completed"
+      },
+      {
+        "action": "shutdown",
+        "id": "c0bbdc20-9a62-4b1b-b77b-1161910230ba",
+        "status": "completed"
+      }
+    ],
+    "previous_vm30009_state_unchanged": true,
+    "protected_config_hashes": {
+      "106": "c2b19bc1dc35eabb3cb0d22bf9a993625a5bf9e981b32e82af6f139a17fef1a1",
+      "29000": "b1bf173917d04995286bffe0efb77220f4d854fa4506979daf04b7045c83eb45"
+    },
+    "protected_configs_unchanged": true,
+    "states": [
+      {
+        "historical_versions_removed": false,
+        "instance_id": "e89c3132-81e7-4b7b-9f34-bbe535ef06d8",
+        "lock_present": false,
+        "resource_count": 0,
+        "state_metadata": {
+          "content_sha256": "66a2b0fead4d12c68c08ed049a66213205798b8f79650699339939c23b232d4c",
+          "lineage": "19493249-6342-d4eb-9ae4-f673008b44a2",
+          "serial": 2,
+          "sha256": "3f5c16b9a98aa1e166b32027b79fbe96f3a8d551268c41249007600862393a80",
+          "version_id": "001792825306728060468-s6WwosL6Gs"
+        },
+        "status": "deleted",
+        "vmid": 30010
+      },
+      {
+        "historical_versions_removed": false,
+        "instance_id": "93899a50-f9e4-48c1-987b-5a05ae79a670",
+        "lock_present": false,
+        "resource_count": 0,
+        "state_metadata": {
+          "content_sha256": "f69d08dcaab0626e115fb9c9ea8d6b7b58f3fab0e5da02eba5a389ed1fdc655c",
+          "lineage": "ed08b332-a3a7-3c37-e823-e8bd17a4c1ac",
+          "serial": 2,
+          "sha256": "231bea93c27c537f50afefb22501b93edfbb6c475502cbba110cd39c27943e5f",
+          "version_id": "001792820387271411877-o2SN-EJ_Hs"
+        },
+        "status": "deleted",
+        "vmid": 30009
+      }
+    ],
+    "vm104_permissions_unchanged": true
+  },
+  "private_evidence_directory": "/opt/iacp/evidence/provisioning-contract-20261024",
+  "compose_credentials_provider_backend_migrations_refactored": false,
+  "protected_resources_mutated": false,
+  "rollback_procedure": "Unchanged iacpctl functional rollback; drains admission, Lifecycle and DELETE without deleting state/history",
+  "integrated_main_revision": "7ea32d5a16a008fd3d3137d3257f5a8f0713e2af",
+  "application_and_operational_code_equals_integrated_main": true,
+  "evidence_pr": "https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/43"
+}

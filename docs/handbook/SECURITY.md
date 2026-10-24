@@ -8,12 +8,13 @@ operator; no puede convertirse en approver mediante remapeo.
 
 | Acción | reader | operator | approver | Infraestructura fuera de API |
 |---|---|---|---|---|
-| Consultar inventario, jobs, operaciones y planes propios | Sí | Sí | Sí | Según identidad |
+| Consultar inventario, jobs y operaciones propios | Sí | Sí | Sí | Según identidad |
+| Consultar planes y ejecuciones administrativos | Solo con administration | Solo con administration | Sí | Según identidad |
 | Crear instancia / solicitar plan | No | Sí | No | No necesita acceso directo a DB |
-| Cancelar/reintentar plan | No | Sí | No | Inspección de incidentes |
+| Cancelar/reintentar plan | No | Solo con administration | No | Inspección de incidentes |
 | Aprobar hash e intento | No | No | Sí, sujeto independiente | Revisar binario y asignación |
-| Solicitar apply autorizado | No | Sí, sujeto distinto del aprobador | No | Habilitar entorno después de aprobación |
-| Cancelar/recuperar run | No | Sí | No | Conciliar sin duplicar recursos |
+| Solicitar ejecución autorizada | No | Con administration y distinto del aprobador | No | Habilitar entorno después de aprobación |
+| Cancelar/recuperar ejecución administrativa | No | Solo con administration | No | Conciliar sin duplicar recursos |
 | Crear tenant/emitir o rotar credencial | No | No | No | Administración explícita y registro externo |
 | Seleccionar VMID, plantilla, redes y backend | No | No | No | Asignación autorizada externa |
 | Eliminar KVM descartable | No | Sí, con plan aprobado | Solo aprobar plan, otro sujeto | Feature OFF, allowlist y propiedad; VM 104/106 protegidas |
@@ -33,7 +34,8 @@ inactivo detiene nuevas peticiones y la ejecución en curso al siguiente control
 Aislamiento multi-tenant:
 
 - Los filtros de API utilizan el tenant del Principal autenticado; otro tenant
-  recibe 404 en objetos, jobs, operaciones y ejecución.
+  recibe 404 en objetos, jobs y operaciones; un administrador autorizado recibe
+  404 al consultar una ejecución ajena. CRM recibe 403 en controles administrativos.
 - Restricciones únicas por tenant protegen nombres e idempotencia; reservas VMID
   y claves state evitan colisiones entre instancias.
 - Un job histórico sin tenant solo es visible para bootstrap. Los jobs nuevos
@@ -69,3 +71,9 @@ instancia, operación, job y autorización. X-Request-ID identifica la petición
 No hay todavía un ledger inmutable externo ni exportación SIEM automática. El
 provider puede producir diagnósticos sensibles: no devolver stdout/state completo
 al CRM. Los errores persistidos son códigos controlados, no credenciales o trazas.
+
+Desde IACP 0.10.1, operator/reader de consumidores no acceden a controles
+administrativos. Los operadores y lectores administrativos necesitan el atributo
+servidor administration=true; approver conserva revisión independiente. Bootstrap
+es de plataforma y nunca se entrega como identidad CRM. Los detalles y rutas de
+documentación separadas están en [el contrato administrativo](../PROVISIONING_CONTRACT.md).

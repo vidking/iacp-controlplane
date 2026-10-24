@@ -1,6 +1,7 @@
 # Integración de Desarrollo/CRM con IACP
 
-El [runbook MVP 0.10.0](MVP_CRM_RUNBOOK.md) documenta el contrato candidato,
+El contrato vigente es [IACP 0.10.1](openapi.json). El
+[runbook MVP 0.10.0](MVP_CRM_RUNBOOK.md) conserva el flujo de negocio,
 referencias comerciales, arranque y entrada root. La evidencia de 0.9.1 mantiene
 su alcance histórico; comprobar la versión OpenAPI desplegada antes de enviar
 campos nuevos.
