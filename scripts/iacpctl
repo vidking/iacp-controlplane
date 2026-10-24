@@ -106,7 +106,15 @@ def main():
         current_ids = run(docker + ['ps', '-aq', '--filter', 'label=com.docker.compose.project=iacp-controlplane']).split()
         actual = json.loads(run(docker + ['inspect', *current_ids]))
         current_cfg = json.loads(run(runtime_command(actual, docker)))
+        peer_change = None
+        if 'tls_peer_update' in m:
+            from operations import review_tls_proxy_peer
+            operation.approve('update-tls-peer')
+            current_cfg, peer_change = review_tls_proxy_peer(current_cfg, candidate_cfg, actual, m['tls_peer_update'])
+            operation.evidence('tls-peer-reviewed', peer_change)
         comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []), profile_file=m.get('profile_configuration',{}).get('path'), source_directory=m.get('source_promotion',{}).get('path'), root_bootstrap=m.get('root_bootstrap_configuration'))
+        if peer_change:
+            comparison['changed_paths'].append(peer_change['changed_path'])
         operation.evidence('candidate-environment-comparison', comparison)
         if not comparison['passed']:
             raise ValueError('Candidate environment changes unapproved operating settings')

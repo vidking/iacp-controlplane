@@ -6,6 +6,40 @@ EXEC_TMPFS = '/run/iacp-certification:rw,exec,nosuid,nodev,size=536870912,mode=0
 IMAGE_CHANGES = {f'/services/{role}/image' for role in SERVICES - {'db', 'redis', 'traefik'}}
 
 
+def review_tls_proxy_peer(current, candidate, containers, review):
+    """Autorizar un único peer TLS exacto, ligado al proxy Docker observado."""
+    import ipaddress
+    if set(review) != {'previous_proxy_ip', 'proxy_ip', 'proxy_container_id'}:
+        raise ValueError('La revisión del peer TLS debe ser explícita y acotada')
+    old, new = review['previous_proxy_ip'], review['proxy_ip']
+    if any(not isinstance(v, str) or str(ipaddress.ip_address(v)) != v for v in (old, new)) or old == new:
+        raise ValueError('Se requieren IP exactas distintas, sin rangos de confianza')
+    selected = {}
+    for role in ('api', 'traefik'):
+        matches = [c for c in containers if c['Config']['Labels'].get('com.docker.compose.service') == role
+                   and c['Config']['Labels'].get('com.docker.compose.oneoff', 'false').lower() != 'true']
+        if len(matches) != 1 or not matches[0]['State']['Running']:
+            raise ValueError('API y proxy deben estar identificados y activos')
+        selected[role] = matches[0]
+    api, proxy = selected['api'], selected['traefik']
+    shared = set(api['NetworkSettings']['Networks']) & set(proxy['NetworkSettings']['Networks'])
+    if len(shared) != 1 or proxy['Id'] != review['proxy_container_id']:
+        raise ValueError('La revisión no coincide con el proxy o su única red compartida')
+    network = next(iter(shared))
+    actual = proxy['NetworkSettings']['Networks'][network]['IPAddress']
+    environment = dict(v.split('=', 1) for v in api['Config']['Env'] if '=' in v)
+    key = 'IACP_TLS_PROXY_IPS'
+    if (actual != new or environment.get(key) != old
+            or current['services']['api']['environment'].get(key) != old
+            or candidate['services']['api']['environment'].get(key) != new):
+        raise ValueError('El peer TLS solicitado no coincide con el runtime y la revisión')
+    checked = copy.deepcopy(current)
+    checked['services']['api']['environment'][key] = new
+    return checked, {'proxy_container_id': proxy['Id'], 'network': network,
+                     'previous_proxy_ip': old, 'proxy_ip': new,
+                     'changed_path': '/services/api/environment/' + key}
+
+
 def normalized(config):
     data = copy.deepcopy(config)
     for service in data.get('services', {}).values():
