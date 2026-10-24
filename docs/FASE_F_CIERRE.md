@@ -34,4 +34,20 @@ La documentación actualmente servida aún referencia Swagger UI desde CDN y el 
 - **GO:** MVP KVM y piloto supervisado de integración CRM, dentro del alcance ya certificado y con las limitaciones documentadas.
 - **NO-GO:** resiliencia integral; la certificación física de muerte y recuperación de worker continúa bloqueada por aislamiento insuficiente.
 
+## Promoción verificada — 24 de octubre de 2026
+
+Con autorización explícita de promoción inmediata en laboratorio se ejecutó el procedimiento existente, sin omitir validadores:
+
+- SHA anterior: `7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa`.
+- SHA de Swagger promovido: `e01c27a219471bf32cfac14d3b89df14d0bb0a34` (PR #51 integrado en merge `1f0708f`; el merge documental posterior no se desplegó).
+- Imagen API/worker/Lifecycle/migrate: `sha256:8bdc140ed5ae786d17d40c554fce9acaa8b81057d455d81bb6536504520677bd`.
+- Imagen Terraform worker: `sha256:458076fc6ee07eb19edc2f49a5141829e25b42cfb65ce7265339e8283d7da281`.
+- `iacpctl env-promote`, `go_live.py inventory`, `preflight`, `promote` y `verify`: PASS.
+- Evidencia privada: `/opt/iacp/evidence/fase-f-20261024T1715CR/`; respaldo de configuración creado antes de recrear servicios.
+- PostgreSQL y Redis conservaron sus volúmenes; Traefik no fue recreado. No se modificaron VMs protegidas, state, providers ni credenciales.
+- HTTPS posterior: readiness 200; `/docs` carga exclusivamente assets locales y cada asset responde 200; `/openapi.json` OpenAPI 3.1.0, versión 0.10.1; Bearer en `/v1/profiles` responde 200.
+- Snapshots antes/después: esquema `0011_crm_contract`, cero colas, cero `unacked` y cero operaciones no terminales.
+
+La publicación OCI continúa **BLOCKED** de forma independiente por falta de autenticación autorizada del registro Forgejo. Las imágenes activas son locales, construidas desde el commit fijado y verificadas por digest; no se afirma publicación OCI.
+
 Quedan explícitamente fuera de este cierre la normalización de `/opt/iacp`, Compose, centralización/rotación planificada de credenciales, Garbage Collector de Wasabi, alta disponibilidad del Control Plane, IaCoC, LXD y extensiones comerciales avanzadas.
