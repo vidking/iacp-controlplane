@@ -1,0 +1,26 @@
+{
+  "fecha_local": "2026-10-24T16:31:48.686337-06:00",
+  "origen": "laptop LAN/VPN autorizada",
+  "rutas": [
+    {
+      "ruta": "/docs",
+      "status": 200,
+      "sha256": "9c268ab304427f6807270f61d9860a666f1e0b8465634aba35a267d78b69d4bb"
+    },
+    {
+      "ruta": "/openapi.json",
+      "status": 200,
+      "sha256": "39d972a848d4c7caeef097133fdabfb3a35376c91e8c3999d48951904bab53d0"
+    },
+    {
+      "ruta": "/admin/openapi.json",
+      "status": 200,
+      "sha256": "6c88eaef17702c71f4cc42f7687d00acc3e58eda50d3421fc4a32050efc5faac"
+    },
+    {
+      "ruta": "/health/ready",
+      "status": 200,
+      "sha256": "31bf75f4c0a97cc1f7b60df824fa390b3be9ba014f29b63c87c698ba63d9a9fd"
+    }
+  ]
+}

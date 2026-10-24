@@ -1,0 +1,16 @@
+{
+  "fecha_local": "2026-10-24T16:43:19.526137-06:00",
+  "paquete": "swagger-ui-dist",
+  "version": "5.34.0",
+  "licencia": "Apache-2.0",
+  "origen": "https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.34.0.tgz",
+  "integridad_tarball_sha512": "H6tAIjr3XqE31PbkZl0OFya1ziRLDfTwh3J6OHdumPtPCLfjTnyLeagl/55kFNZcTOz9a9QI9WP0FXldwiGJag==",
+  "archivos_sha256": {
+    "swagger-ui-bundle.js": "3f6abf70480db7e07914df4c98a77385f22ea585eaf457a3e6415ba0eae2d167",
+    "swagger-ui.css": "c3cfe8248c4b0b89673600fb829924eafbac6de4bc4b2b06f5f5243483074d0a",
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "NOTICE": "0d20d1adef18aee3f40dd258172155521ce702ac445cb5f7b7d60ed32dad2fb2"
+  },
+  "recursos_propios": "SVG y presentación IACP creados para este repositorio; no copiados de WAHA",
+  "modo_visual": "Marco corporativo oscuro y panel Swagger claro para conservar compatibilidad y contraste"
+}

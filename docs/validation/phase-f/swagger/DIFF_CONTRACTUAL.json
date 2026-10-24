@@ -1,0 +1,19 @@
+{
+  "fecha_local": "2026-10-24T16:53:23.358649-06:00",
+  "resultado": "PASS",
+  "contrato_http_identico": true,
+  "schemas_y_validacion_exactos": true,
+  "metodos_rutas_y_operationIds_exactos": true,
+  "antes_sha256_canonico": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+  "candidato_sha256_canonico": "d9917137d38f264d054c58e78aaee82170bbb2a6e7e891eb59586678a2f993c9",
+  "operaciones": 26,
+  "cambios_editoriales_permitidos": [
+    "info.description",
+    "descripciones y orden de grupos",
+    "summary/description de operación",
+    "description de parámetros y respuestas",
+    "examples en media type"
+  ],
+  "datos_excluidos_de_la_comparacion": "Solo anotaciones anteriores; no excluye schemas, defaults, required, tipos, campos, seguridad, códigos ni nombres de cabeceras",
+  "runtime_previo": "IACP 0.10.1, SHA 7c0804d; candidato aún no desplegado"
+}

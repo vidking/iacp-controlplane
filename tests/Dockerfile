@@ -1,6 +1,6 @@
 FROM hashicorp/terraform:1.16.6 AS terraform-cli
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/workspace/app
 WORKDIR /workspace
 COPY --from=terraform-cli /bin/terraform /usr/local/bin/terraform
 COPY app/requirements*.txt ./app/

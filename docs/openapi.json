@@ -1883,7 +1883,7 @@
     }
   },
   "info": {
-    "description": "IACP Orchestrator administra instancias KVM, operaciones asíncronas y Lifecycle por tenant. El componente **IaC Worker** aprovisiona recursos con perfiles y cuotas autorizados. API corporativa privada por LAN/VPN. El backend CRM consume el contrato neutral de instancias y operaciones.\n\n**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita energía; approver autoriza planes y debe ser distinto del solicitante.\n\n**Autoservicio:** consultar GET /v1/profiles y GET /v1/lab/policies. Crear con network_profile y self_service_policy_id aprobados admite una VM nueva y el IaC Worker procesa el plan verificado por delegación. Los perfiles de autoservicio exigen política; perfiles históricos conservan revisión independiente de cada plan. HTTP 202 acredita admisión, no una VM lista. Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n**Identificadores:** instance_id es el UUID estable de la instancia; VMID es un identificador interno asignado por IACP. operation_id identifica una intención asíncrona; X-Request-ID correlaciona cada petición HTTP. Idempotency-Key identifica una intención dentro del tenant: misma clave y mismo cuerpo conservan IDs; otro cuerpo devuelve 409. VMID, plantilla y direccionamiento proceden de perfiles autorizados; node_preference valida un destino admitido u omitir para selección automática. Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. Con admisión cerrada los comandos devuelven 503; Lifecycle tiene su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, plan destroy verificado y aprobación independiente o delegación vigente para una VM creada bajo esa política. Con política, DELETE con cuerpo {} prepara y ejecuta el único plan autorizado; exige VM apagada y sin locks. VM 104 y VM 106 están protegidas. Las operaciones inciertas solo se reconcilian por observación.",
+    "description": "API corporativa de IACP para integrar el ciclo de vida de instancias KVM con un CRM. Selecciona perfiles autorizados, conserva las intenciones idempotentes y sigue cada operación hasta su resultado.\n\n**Autenticación:** HTTP Basic permite consultar la documentación. Las llamadas a `/v1` requieren un token Bearer del tenant y el rol correspondiente. Introduce solo el token en **Authorize**; la contraseña de documentación no autoriza la API.\n\n**Flujo recomendado:** perfiles → creación → seguimiento por `operation_id` → acceso/Lifecycle → eliminación autorizada. Un 202 confirma admisión; no confirma disponibilidad ni eliminación. Conserva `Idempotency-Key`, UUID y cuerpo en reintentos. Ante `uncertain`, conserva la misma instancia y utiliza la reconciliación autorizada.\n\n**Alcance:** API privada por LAN/VPN, recursos propios del tenant, perfiles y cuotas vigentes. Los ejemplos son sintéticos y no constituyen autorizaciones. Las herramientas de diagnóstico y laboratorio se separan del recorrido CRM; las operaciones administrativas requieren su ámbito específico.\n\n**Precondiciones:** los perfiles DHCP y las cuotas proceden de la autorización vigente. Usa `power/shutdown` para apagar ordenadamente. DELETE requiere política o allowlist y autorización; VM 104, VM 106 y Golden Image 29000 permanecen protegidas. La admisión cerrada devuelve 503.",
     "title": "IACP Orchestrator",
     "version": "0.10.1"
   },
@@ -1891,6 +1891,7 @@
   "paths": {
     "/health/live": {
       "get": {
+        "description": "Comprobación de vida del proceso; no certifica dependencias ni crea infraestructura.",
         "operationId": "healthLive",
         "responses": {
           "200": {
@@ -1901,10 +1902,10 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           }
         },
-        "summary": "Live",
+        "summary": "Comprobar que la API responde",
         "tags": [
           "health"
         ]
@@ -1912,6 +1913,7 @@
     },
     "/health/ready": {
       "get": {
+        "description": "Verifica base de datos, esquema y cola. Un 503 indica que la plataforma no está preparada para atender operaciones.",
         "operationId": "healthReady",
         "responses": {
           "200": {
@@ -1922,20 +1924,28 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
-        "summary": "Ready",
+        "summary": "Comprobar disponibilidad de dependencias",
         "tags": [
           "health"
         ]
@@ -1943,7 +1953,7 @@
     },
     "/v1/events": {
       "get": {
-        "description": "Feed auditable por tenant y cursor ascendente. Repetir cursor puede repetir eventos: deduplicar event_id. Por commits concurrentes un ID menor puede aparecer tarde: solapar ventanas y deduplicar; no es un outbox transaccional para facturación.",
+        "description": "Feed por cursor para observación. Deduplica event_id y solapa ventanas; no constituye una garantía de entrega transaccional para facturación.",
         "operationId": "listAuditEvents",
         "parameters": [
           {
@@ -1979,27 +1989,43 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "422": {
             "content": {
@@ -2009,17 +2035,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2027,7 +2061,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Events",
+        "summary": "Consultar los eventos auditables del tenant",
         "tags": [
           "observability"
         ]
@@ -2035,6 +2069,7 @@
     },
     "/v1/instances": {
       "get": {
+        "description": "Lista paginada y estable del inventario propio. Utiliza limit, offset y los filtros disponibles. X-Total-Count indica el total del filtro; deleted conserva el historial de una instancia eliminada.",
         "operationId": "listInstances",
         "parameters": [
           {
@@ -2142,6 +2177,48 @@
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": [
+                      {
+                        "access": null,
+                        "commercial_context": {
+                          "customer_id": "cliente-ejemplo",
+                          "order_id": "pedido-ejemplo",
+                          "product_id": "kvm-lab"
+                        },
+                        "created_at": "2026-10-27T09:00:00-06:00",
+                        "disk_gb": 20,
+                        "executor": "provisioning",
+                        "image": "ubuntu-2404",
+                        "infrastructure_kind": "kvm",
+                        "instance_id": "11111111-1111-4111-8111-111111111111",
+                        "ip_addresses": [
+                          "192.0.2.10"
+                        ],
+                        "job_id": "33333333-3333-4333-8333-333333333333",
+                        "memory_mb": 1536,
+                        "name": "crm-ejemplo-001",
+                        "network_mode": "dhcp",
+                        "network_observation": null,
+                        "network_profile": "lab-dhcp",
+                        "node": "mng01",
+                        "node_preference": "mng01",
+                        "operation_id": "22222222-2222-4222-8222-222222222222",
+                        "provisioning_service": "provisioning",
+                        "result": null,
+                        "self_service_policy_id": "44444444-4444-4444-8444-444444444444",
+                        "start_on_create": true,
+                        "status": "ready",
+                        "tenant_id": "55555555-5555-4555-8555-555555555555",
+                        "updated_at": "2026-10-27T09:02:00-06:00",
+                        "vcpus": 1,
+                        "vmid": 30000
+                      }
+                    ]
+                  }
+                },
                 "schema": {
                   "items": {
                     "$ref": "#/components/schemas/InstanceResponse"
@@ -2151,27 +2228,43 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "422": {
             "content": {
@@ -2181,17 +2274,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2199,126 +2300,17 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Instances",
+        "summary": "Consultar las instancias del tenant",
         "tags": [
           "instances"
         ]
       },
       "post": {
-        "description": "Crea instancia, operación y job de forma atómica. El IaC Worker usa el perfil autorizado; un perfil de autoservicio exige política aprobada y completa el plan por delegación. Los perfiles históricos conservan revisión individual y habilitación explícita. Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló.",
+        "description": "Admite una intención idempotente bajo un perfil y una política vigentes. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.",
         "operationId": "createInstance",
         "parameters": [
           {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "maxLength": 128,
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9._:-]+$",
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InstanceCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InstanceAccepted"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Post Instance",
-        "tags": [
-          "instances"
-        ]
-      }
-    },
-    "/v1/instances/{instance_id}": {
-      "delete": {
-        "description": "Operator original y MISMA Idempotency-Key de deletion-plan. Requiere habilitación explícita, allowlist y aprobación independiente vigente. Para una VM nueva bajo política de autoservicio, enviar {} con una clave nueva: prepara, valida y ejecuta el plan por delegación auditada. IaC Worker aplica únicamente el plan guardado. Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. VM 104 y VM 106 quedan prohibidas. No invoca DELETE nativo ni borra volúmenes Docker.",
-        "operationId": "deleteDisposableInstance",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "instance_id",
-            "required": true,
-            "schema": {
-              "title": "Instance Id",
-              "type": "string"
-            }
-          },
-          {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -2335,6 +2327,187 @@
           "content": {
             "application/json": {
               "examples": {
+                "crm_sintetico": {
+                  "summary": "Ejemplo sintético; sustituir referencias por recursos autorizados",
+                  "value": {
+                    "commercial_context": {
+                      "customer_id": "cliente-ejemplo",
+                      "order_id": "pedido-ejemplo",
+                      "product_id": "kvm-lab"
+                    },
+                    "disk_gb": 20,
+                    "image": "ubuntu-2404",
+                    "memory_mb": 1536,
+                    "name": "crm-ejemplo-001",
+                    "network_profile": "lab-dhcp",
+                    "node_preference": "mng01",
+                    "self_service_policy_id": "44444444-4444-4444-8444-444444444444",
+                    "start_on_create": true,
+                    "vcpus": 1
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/InstanceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "executor": "provisioning",
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "provisioning_service": "provisioning",
+                      "status": "queued"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceAccepted"
+                }
+              }
+            },
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidad ausente o inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Rol, tenant o permiso insuficiente"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicto de intención, estado, autorización o cuota"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Crear una instancia KVM",
+        "tags": [
+          "instances"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}": {
+      "delete": {
+        "description": "Para una instancia nueva bajo una política vigente, envía {} y una nueva Idempotency-Key. Requiere VM apagada, autorización y ausencia de locks. Sigue la operación hasta confirmar eliminación; conserva UUID e historial. Los recursos protegidos permanecen excluidos. El contrato de aprobación independiente existente sigue disponible para operadores autorizados.",
+        "operationId": "deleteDisposableInstance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "crm_sintetico": {
+                  "summary": "Ejemplo sintético; sustituir referencias por recursos autorizados",
+                  "value": {}
+                },
                 "reviewed_plan": {
                   "summary": "Contrato histórico; sustituir por IDs/digest reales revisados",
                   "value": {
@@ -2368,52 +2541,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/DeletionAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -2423,17 +2639,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2441,12 +2665,13 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Eliminar una KVM descartable con plan aprobado",
+        "summary": "Eliminar una instancia descartable autorizada",
         "tags": [
           "disposable-deletion"
         ]
       },
       "get": {
+        "description": "Obtiene el estado persistido del UUID propio, sus recursos y las observaciones de red/acceso. Una instancia ajena o no visible devuelve 404.",
         "operationId": "getInstance",
         "parameters": [
           {
@@ -2463,42 +2688,106 @@
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "access": null,
+                      "commercial_context": {
+                        "customer_id": "cliente-ejemplo",
+                        "order_id": "pedido-ejemplo",
+                        "product_id": "kvm-lab"
+                      },
+                      "created_at": "2026-10-27T09:00:00-06:00",
+                      "disk_gb": 20,
+                      "executor": "provisioning",
+                      "image": "ubuntu-2404",
+                      "infrastructure_kind": "kvm",
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "ip_addresses": [
+                        "192.0.2.10"
+                      ],
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "memory_mb": 1536,
+                      "name": "crm-ejemplo-001",
+                      "network_mode": "dhcp",
+                      "network_observation": null,
+                      "network_profile": "lab-dhcp",
+                      "node": "mng01",
+                      "node_preference": "mng01",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "provisioning_service": "provisioning",
+                      "result": null,
+                      "self_service_policy_id": "44444444-4444-4444-8444-444444444444",
+                      "start_on_create": true,
+                      "status": "ready",
+                      "tenant_id": "55555555-5555-4555-8555-555555555555",
+                      "updated_at": "2026-10-27T09:02:00-06:00",
+                      "vcpus": 1,
+                      "vmid": 30000
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/InstanceResponse"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "422": {
             "content": {
@@ -2508,17 +2797,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2526,7 +2823,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Instance",
+        "summary": "Consultar una instancia",
         "tags": [
           "instances"
         ]
@@ -2534,7 +2831,7 @@
     },
     "/v1/instances/{instance_id}/access/verify": {
       "post": {
-        "description": "Observa Cloud-Init y autentica root por SSH con host key fijada desde QGA. Nunca devuelve ni cambia la contraseña. Repetir la clave permite recuperar una verificación no confirmada.",
+        "description": "Solicita la verificación autorizada del acceso del invitado. Conserva la operación y consulta el resultado sin enviar de nuevo una creación. No devuelve contraseñas.",
         "operationId": "verifyInstanceAccess",
         "parameters": [
           {
@@ -2547,6 +2844,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -2580,52 +2878,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/NetworkAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -2635,17 +2976,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2653,7 +3002,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Verify Access",
+        "summary": "Verificar el acceso inicial",
         "tags": [
           "instances"
         ]
@@ -2661,7 +3010,7 @@
     },
     "/v1/instances/{instance_id}/network/discover": {
       "post": {
-        "description": "Consulta asíncrona del Guest Agent con MAC e identidad verificadas. No reserva IPAM ni modifica state. Una IP pendiente no falla la creación.",
+        "description": "Solicita una observación asíncrona con identidad y MAC verificadas. Una IP pendiente no equivale a fallo de creación. Conserva operation_id y espera la observación; no cambia el direccionamiento autorizado.",
         "operationId": "discoverInstanceNetwork",
         "parameters": [
           {
@@ -2674,6 +3023,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -2707,52 +3057,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/NetworkAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -2762,17 +3155,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2780,7 +3181,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Discover Network",
+        "summary": "Observar la red del invitado",
         "tags": [
           "instances"
         ]
@@ -2788,7 +3189,7 @@
     },
     "/v1/instances/{instance_id}/network/initialize": {
       "post": {
-        "description": "Inicialización fija y única de identidad Ubuntu 24.04 para una clon nueva de laboratorio. Requiere perfil/política revisados, propiedad y Lifecycle habilitado. Sin comandos, archivos ni parámetros del cliente. Tras consumir el envío solo observa evidencia. Start la solicita automáticamente; esta ruta recupera una entrega no confirmada con la misma clave.",
+        "description": "Inicialización fija y de un solo uso para una clon nueva bajo perfil/política compatibles. No admite comandos o archivos del cliente. Start la solicita automáticamente; esta ruta conserva la intención ante una entrega no confirmada.",
         "operationId": "initializeInstanceNetwork",
         "parameters": [
           {
@@ -2801,6 +3202,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -2834,52 +3236,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/NetworkAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -2889,17 +3334,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -2907,7 +3360,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Initialize Network",
+        "summary": "Completar la inicialización autorizada",
         "tags": [
           "instances"
         ]
@@ -2915,7 +3368,7 @@
     },
     "/v1/instances/{instance_id}/power": {
       "get": {
-        "description": "Consulta Proxmox para una KVM administrada del tenant. Running no demuestra arranque del SO, Guest Agent, Cloud-Init ni accesibilidad; guest_ready permanece null.",
+        "description": "Observa la KVM propia y devuelve las transiciones disponibles. Running solo describe energía; no demuestra SSH, Cloud-Init, Guest Agent ni disponibilidad de aplicaciones.",
         "operationId": "getInstancePower",
         "parameters": [
           {
@@ -2932,52 +3385,101 @@
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "accessible": "unknown",
+                      "blocked_reason": null,
+                      "cloud_init": "unknown",
+                      "guest_agent": "unknown",
+                      "guest_ready": null,
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "mutations_available": true,
+                      "observed_at": "2026-10-27T09:02:00-06:00",
+                      "os_boot": "unknown",
+                      "power_state": "stopped"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerState"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -2987,17 +3489,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3005,7 +3515,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Power",
+        "summary": "Consultar el estado de energía",
         "tags": [
           "kvm-lifecycle"
         ]
@@ -3013,7 +3523,7 @@
     },
     "/v1/instances/{instance_id}/power/reboot": {
       "post": {
-        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain. Requiere VM running y tarea de reboot confirmada; running por sí solo no demuestra reboot.",
+        "description": "Solicita un reinicio de una KVM running con autorización vigente. Sigue la operación: observar running no basta para demostrar que el reinicio ocurrió.",
         "operationId": "rebootInstancePower",
         "parameters": [
           {
@@ -3026,6 +3536,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -3041,6 +3552,12 @@
         "requestBody": {
           "content": {
             "application/json": {
+              "examples": {
+                "crm_sintetico": {
+                  "summary": "Ejemplo sintético; sustituir referencias por recursos autorizados",
+                  "value": {}
+                }
+              },
               "schema": {
                 "anyOf": [
                   {
@@ -3059,52 +3576,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3114,17 +3674,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3132,7 +3700,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Reboot",
+        "summary": "Reiniciar una instancia autorizada",
         "tags": [
           "kvm-lifecycle"
         ]
@@ -3140,7 +3708,7 @@
     },
     "/v1/instances/{instance_id}/power/shutdown": {
       "post": {
-        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain. Apagado ordenado, timeout ACPI 60 s; forceStop=0 sin fallback forzado.",
+        "description": "Solicita shutdown mediante ACPI, sin apagado forzado de respaldo. Sigue operation_id hasta confirmar stopped antes de una eliminación autorizada.",
         "operationId": "shutdownInstancePower",
         "parameters": [
           {
@@ -3153,6 +3721,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -3168,6 +3737,12 @@
         "requestBody": {
           "content": {
             "application/json": {
+              "examples": {
+                "crm_sintetico": {
+                  "summary": "Ejemplo sintético; sustituir referencias por recursos autorizados",
+                  "value": {}
+                }
+              },
               "schema": {
                 "anyOf": [
                   {
@@ -3186,52 +3761,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3241,17 +3859,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3259,7 +3885,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Shutdown",
+        "summary": "Apagar una instancia ordenadamente",
         "tags": [
           "kvm-lifecycle"
         ]
@@ -3267,7 +3893,7 @@
     },
     "/v1/instances/{instance_id}/power/start": {
       "post": {
-        "description": "Operación asíncrona para una KVM administrada del tenant. Solo operator; Idempotency-Key obligatorio. Sin parámetros de VMID/nodo ni fuerza. Requiere contrato de propiedad started validado; de otro modo 409. 202 incluye operation_id para GET /v1/operations/{operation_id}. Repetir la clave conserva IDs y reanuda la observación tras un envío; nunca repite una mutación consumida. Un resultado ambiguo permanece uncertain.",
+        "description": "Solicita start con una intención idempotente. Requiere identidad, propiedad, perfil/política y habilitación vigentes. Sigue operation_id hasta el resultado terminal; no garantiza disponibilidad del invitado.",
         "operationId": "startInstancePower",
         "parameters": [
           {
@@ -3280,6 +3906,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -3295,6 +3922,12 @@
         "requestBody": {
           "content": {
             "application/json": {
+              "examples": {
+                "crm_sintetico": {
+                  "summary": "Ejemplo sintético; sustituir referencias por recursos autorizados",
+                  "value": {}
+                }
+              },
               "schema": {
                 "anyOf": [
                   {
@@ -3313,52 +3946,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3368,17 +4044,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3386,7 +4070,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Start",
+        "summary": "Iniciar una instancia autorizada",
         "tags": [
           "kvm-lifecycle"
         ]
@@ -3394,7 +4078,7 @@
     },
     "/v1/instances/{instance_id}/provision": {
       "post": {
-        "description": "Mismo UUID y operación de creación. Si el plan ya fue validado, usa la delegación aprobada y el plan guardado. Si la mutación comenzó, solo observa; jamás crea otra VM. Una planificación fallida se recupera con retry-provision y expected_attempt.",
+        "description": "Conserva UUID, intención y autorización. Una mutación ya consumida solo se observa/reconcilia; no crea otra VM. No utiliza una clave nueva para sustituir una ejecución incierta.",
         "operationId": "resumeLabProvisioning",
         "parameters": [
           {
@@ -3428,52 +4112,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3483,17 +4210,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3501,7 +4236,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Continuar o reconciliar el aprovisionamiento autorizado",
+        "summary": "Continuar la misma solicitud de aprovisionamiento",
         "tags": [
           "instances"
         ]
@@ -3509,7 +4244,7 @@
     },
     "/v1/instances/{instance_id}/reconcile": {
       "post": {
-        "description": "Consulta state/Proxmox o monitorea el UPID ya consumido. Nunca repite aprovisionamiento, energía ni DELETE. Disponible con admisión o política cerradas. Conserva UUID, VMID y auditoría; 409 si no existe mutación recuperable.",
+        "description": "Observa la misma instancia para resolver un resultado incierto bajo los controles existentes. No autoriza una segunda creación ni una nueva mutación de infraestructura.",
         "operationId": "reconcileInstance",
         "parameters": [
           {
@@ -3543,52 +4278,95 @@
           "202": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "job_id": "33333333-3333-4333-8333-333333333333",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "status": "queued"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PowerAccepted"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3598,17 +4376,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3616,7 +4402,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Reconciliar una mutación incierta solo por observación",
+        "summary": "Reconciliar el estado por observación",
         "tags": [
           "operations"
         ]
@@ -3624,7 +4410,7 @@
     },
     "/v1/instances/{instance_id}/retry-provision": {
       "post": {
-        "description": "Recupera solo un fallo de planificación sin Apply consumido. Conserva UUID, VMID, asignación y state. expected_attempt e Idempotency-Key cercan reintentos concurrentes.",
+        "description": "Recupera únicamente una planificación fallida antes de consumir la autorización de ejecución. expected_attempt e Idempotency-Key protegen frente a reintentos concurrentes. No sustituye una reconciliación de infraestructura incierta.",
         "operationId": "retryLabProvisioning",
         "parameters": [
           {
@@ -3637,6 +4423,7 @@
             }
           },
           {
+            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -3668,47 +4455,79 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3718,17 +4537,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3736,7 +4563,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Retry Provision",
+        "summary": "Reintentar una planificación no consumida",
         "tags": [
           "instances"
         ]
@@ -3744,7 +4571,7 @@
     },
     "/v1/jobs/smoke": {
       "post": {
-        "description": "Valida la cola y persistencia del laboratorio. No ejecuta infraestructura.",
+        "description": "Herramienta técnica de laboratorio para operadores. No aprovisiona infraestructura ni forma parte del recorrido comercial.",
         "operationId": "createSmokeJob",
         "responses": {
           "202": {
@@ -3755,37 +4582,61 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3793,7 +4644,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Smoke",
+        "summary": "Comprobar cola y persistencia del laboratorio",
         "tags": [
           "jobs"
         ]
@@ -3801,6 +4652,7 @@
     },
     "/v1/jobs/{job_id}": {
       "get": {
+        "description": "Consulta técnica por job_id, restringida al tenant. El CRM sigue principalmente operation_id para conocer el resultado de la intención.",
         "operationId": "getJob",
         "parameters": [
           {
@@ -3822,37 +4674,61 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "422": {
             "content": {
@@ -3862,17 +4738,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3880,7 +4764,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Job",
+        "summary": "Consultar un trabajo propio",
         "tags": [
           "jobs"
         ]
@@ -3888,6 +4772,7 @@
     },
     "/v1/lab/policies": {
       "get": {
+        "description": "Consulta de laboratorio. Comprueba vigencia, perfil, acciones y cuotas; consultar una política no la aprueba ni modifica.",
         "operationId": "listLabPolicies",
         "parameters": [
           {
@@ -3927,47 +4812,79 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -3977,17 +4894,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -3995,7 +4920,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Policies",
+        "summary": "Consultar las políticas visibles del tenant",
         "tags": [
           "lab-administration"
         ]
@@ -4003,6 +4928,7 @@
     },
     "/v1/lab/policies/{policy_id}": {
       "get": {
+        "description": "Devuelve una política propia y su revisión. El cliente debe usar referencias vigentes entregadas por el proceso autorizado.",
         "operationId": "getLabPolicy",
         "parameters": [
           {
@@ -4024,47 +4950,79 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "422": {
             "content": {
@@ -4074,17 +5032,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4092,7 +5058,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Policy",
+        "summary": "Consultar una política de laboratorio",
         "tags": [
           "lab-administration"
         ]
@@ -4100,6 +5066,7 @@
     },
     "/v1/lab/usage": {
       "get": {
+        "description": "Muestra uso y reservas del tenant. Los recursos fallidos o inciertos conservan su reserva hasta que se verifica su eliminación.",
         "operationId": "getLabUsage",
         "responses": {
           "200": {
@@ -4110,57 +5077,97 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4168,7 +5175,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Usage",
+        "summary": "Consultar el consumo autorizado del laboratorio",
         "tags": [
           "lab-administration"
         ]
@@ -4176,7 +5183,7 @@
     },
     "/v1/observability": {
       "get": {
-        "description": "Estado persistido del tenant y comprobación Redis. No certifica procesos worker vivos ni publica colas globales de otros tenants. Health global DB/esquema/Redis: /health/ready. La edad mide desde admisión, incluidos reintentos.",
+        "description": "Estado persistido, dependencias y edad de operaciones visibles. No acredita liveness de workers ni publica colas globales de otros tenants.",
         "operationId": "getTenantDiagnostics",
         "responses": {
           "200": {
@@ -4187,37 +5194,61 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4225,7 +5256,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Diagnostics",
+        "summary": "Consultar el diagnóstico del tenant",
         "tags": [
           "observability"
         ]
@@ -4233,7 +5264,7 @@
     },
     "/v1/operations": {
       "get": {
-        "description": "Historial del tenant con paginación estable. Filtrar por instance_id permite auditar creación, Lifecycle, red y DELETE.",
+        "description": "Lista paginada de intenciones del tenant. Filtra por instance_id para seguir creación, Lifecycle y eliminación. Consulta normalized_status y, para arranque automático, fulfillment.",
         "operationId": "listOperations",
         "parameters": [
           {
@@ -4296,6 +5327,25 @@
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": [
+                      {
+                        "created_at": "2026-10-27T09:00:00-06:00",
+                        "error_code": null,
+                        "events": [],
+                        "instance_id": "11111111-1111-4111-8111-111111111111",
+                        "kind": "instance.create",
+                        "normalized_status": "completed",
+                        "operation_id": "22222222-2222-4222-8222-222222222222",
+                        "requested_by": "operador-ejemplo",
+                        "status": "completed",
+                        "updated_at": "2026-10-27T09:02:00-06:00"
+                      }
+                    ]
+                  }
+                },
                 "schema": {
                   "items": {
                     "$ref": "#/components/schemas/OperationResponse"
@@ -4305,37 +5355,61 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "422": {
             "content": {
@@ -4345,17 +5419,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4363,7 +5445,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Operations",
+        "summary": "Consultar el historial de operaciones",
         "tags": [
           "operations"
         ]
@@ -4371,6 +5453,7 @@
     },
     "/v1/operations/{operation_id}": {
       "get": {
+        "description": "Consulta la misma operación hasta completed, failed o uncertain. Revisa error_code y recovery_required antes de continuar. Un estado uncertain exige observación/reconciliación autorizada sobre la misma instancia.",
         "operationId": "getOperation",
         "parameters": [
           {
@@ -4387,42 +5470,83 @@
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "created_at": "2026-10-27T09:00:00-06:00",
+                      "error_code": null,
+                      "events": [],
+                      "instance_id": "11111111-1111-4111-8111-111111111111",
+                      "kind": "instance.create",
+                      "normalized_status": "completed",
+                      "operation_id": "22222222-2222-4222-8222-222222222222",
+                      "requested_by": "operador-ejemplo",
+                      "status": "completed",
+                      "updated_at": "2026-10-27T09:02:00-06:00"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/OperationResponse"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "422": {
             "content": {
@@ -4432,17 +5556,25 @@
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4450,7 +5582,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Operation",
+        "summary": "Seguir una operación por su UUID",
         "tags": [
           "operations"
         ]
@@ -4458,11 +5590,43 @@
     },
     "/v1/profiles": {
       "get": {
+        "description": "Devuelve imágenes, destinos y límites autorizados para el tenant. Selecciona un perfil y una política aprobada antes de solicitar recursos; el catálogo no amplía cuotas.",
         "operationId": "listAuthorizedProfiles",
         "responses": {
           "200": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": [
+                      {
+                        "bridge": "vmbr-lab",
+                        "guest_initialization": null,
+                        "image": "ubuntu-2404",
+                        "max_disk_gb_per_instance": 20,
+                        "max_memory_mb_per_instance": 2048,
+                        "max_vcpus_per_instance": 2,
+                        "minimum_disk_gb": 20,
+                        "network_mode": "dhcp",
+                        "nodes": [
+                          "mng01"
+                        ],
+                        "profile": "lab-dhcp",
+                        "quotas": {
+                          "concurrent_operations": 2,
+                          "disk_gb": 60,
+                          "instances": 3,
+                          "memory_mb": 6144,
+                          "vcpus": 4
+                        },
+                        "root_password_bootstrap": false,
+                        "self_service_enabled": true,
+                        "vlan_tag": null
+                      }
+                    ]
+                  }
+                },
                 "schema": {
                   "items": {
                     "$ref": "#/components/schemas/ProfileResponse"
@@ -4472,57 +5636,97 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Consulta completada"
           },
           "401": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Unauthorized"
+            "description": "Identidad ausente o inválida"
           },
           "403": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Forbidden"
+            "description": "Rol, tenant o permiso insuficiente"
           },
           "404": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Not Found"
+            "description": "Recurso inexistente o no visible para el tenant"
           },
           "409": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Conflict"
+            "description": "Conflicto de intención, estado, autorización o cuota"
           },
           "503": {
             "content": {
               "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
           }
         },
         "security": [
@@ -4530,7 +5734,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Consultar plantillas, destinos y límites autorizados",
+        "summary": "Consultar el catálogo de perfiles",
         "tags": [
           "instances"
         ]
@@ -4545,28 +5749,32 @@
   ],
   "tags": [
     {
-      "description": "Liveness y readiness; no crean infraestructura.",
-      "name": "health"
-    },
-    {
-      "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa.",
+      "description": "01 · Perfiles, creación y consulta de instancias propias del tenant.",
       "name": "instances"
     },
     {
-      "description": "Seguimiento asíncrono y eventos auditados por operation_id.",
+      "description": "02 · Seguimiento de intenciones asíncronas, estados terminales y eventos.",
       "name": "operations"
     },
     {
-      "description": "Lifecycle Worker: energía de KVM propias; exige contrato de propiedad y habilitación.",
+      "description": "03 · Estado de energía, inicio, reinicio y apagado ordenado de KVM autorizadas.",
       "name": "kvm-lifecycle"
     },
     {
-      "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos.",
+      "description": "04 · Eliminación autorizada de instancias descartables; recursos protegidos excluidos.",
       "name": "disposable-deletion"
     },
     {
-      "description": "Contrato IaCoC de eventos versionados y diagnóstico por tenant; no ejecuta aprovisionamiento.",
+      "description": "Diagnóstico · Eventos y estado del tenant; no sustituye la supervisión de infraestructura.",
       "name": "observability"
+    },
+    {
+      "description": "Diagnóstico · Disponibilidad de la API y sus dependencias.",
+      "name": "health"
+    },
+    {
+      "description": "Laboratorio · Comprobación técnica de cola y consulta de trabajos propios.",
+      "name": "jobs"
     }
   ]
 }

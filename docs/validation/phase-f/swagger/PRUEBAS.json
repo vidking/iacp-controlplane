@@ -1,0 +1,15 @@
+{
+  "fecha_local": "2026-10-24T16:55:06.243541-06:00",
+  "estado": "PASS",
+  "pruebas_completas": 892,
+  "fallos": 0,
+  "omisiones": 0,
+  "duracion_segundos": 143.52,
+  "advertencias_de_deprecacion": 28,
+  "entorno": "Docker Python 3.12, PostgreSQL 17 y Redis 7 locales y descartables",
+  "comando": "bash scripts/test-integration.sh",
+  "pruebas_dirigidas_iniciales": 156,
+  "ejecucion_inicial": "Dos fallos: expectativa de documentación y PYTHONPATH ausente en subprocess del contenedor de pruebas",
+  "correcciones": "Se conserva la prueba de supervisión; se declara el entorno soportado en tests/Dockerfile y se verifica el JS local en el test documental",
+  "inyeccion_fisica_worker": "No ejecutada; permanece BLOCKED por aislamiento"
+}

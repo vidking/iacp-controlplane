@@ -4,8 +4,7 @@ import os
 import re
 import time
 
-from fastapi import Depends, FastAPI
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi import Depends, FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
@@ -14,6 +13,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability
 from .security import authorize_docs, authorize_admin_docs
+from .docs_ui import documentation
+from .openapi_presentation import DESCRIPTION, TAGS, present
 
 
 def create_app() -> FastAPI:
@@ -21,45 +22,8 @@ def create_app() -> FastAPI:
         title="IACP Orchestrator", version="0.10.1",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
-        description=(
-            "IACP Orchestrator administra instancias KVM, operaciones asíncronas y Lifecycle por tenant. "
-            "El componente **IaC Worker** aprovisiona recursos con perfiles y cuotas autorizados. "
-            "API corporativa privada por LAN/VPN. El backend CRM consume el contrato neutral de instancias y operaciones.\n\n"
-            "**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. "
-            "Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer "
-            "del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n"
-            "**Roles:** CRM/reader consulta inventario, operaciones y energía; operator crea y solicita "
-            "energía; approver autoriza planes y debe ser distinto del solicitante.\n\n"
-            "**Autoservicio:** consultar GET /v1/profiles y GET /v1/lab/policies. Crear con network_profile y "
-            "self_service_policy_id aprobados admite una VM nueva y el IaC Worker procesa el plan verificado por delegación. "
-            "Los perfiles de autoservicio exigen política; perfiles históricos conservan revisión independiente de cada plan. "
-            "HTTP 202 acredita admisión, no una VM lista. "
-            "Seguir operation_id hasta completed/failed/uncertain. Mantener Idempotency-Key en reintentos.\n\n"
-            "**Identificadores:** instance_id es el UUID estable de la instancia; VMID es un identificador interno asignado por IACP. "
-            "operation_id identifica una intención asíncrona; X-Request-ID correlaciona cada petición HTTP. "
-            "Idempotency-Key identifica una intención dentro del tenant: misma clave y mismo cuerpo conservan IDs; otro cuerpo devuelve 409. "
-            "VMID, plantilla y direccionamiento proceden de perfiles autorizados; node_preference valida un destino admitido u omitir para selección automática. "
-            "Los perfiles DHCP omiten IPAM y no esperan a descubrir la IP para completar creación. "
-            "Consultar ip_addresses/network_observation y reintentar network/discover cuando arranque el invitado. "
-            "Con admisión cerrada los comandos devuelven 503; Lifecycle tiene "
-            "su habilitación y certificación independientes. Apagado ordenado: power/shutdown, sin force. "
-            "Running no certifica Guest Agent, Cloud-Init ni guest_ready.\n\n"
-            "**DELETE:** deshabilitado por defecto. Solo UUID descartable en allowlist, VMID >=30000, "
-            "plan destroy verificado y aprobación independiente o delegación vigente para una VM creada bajo esa política. "
-            "Con política, DELETE con cuerpo {} prepara y ejecuta el único plan autorizado; exige VM apagada y sin locks. "
-            "VM 104 y VM 106 están protegidas. Las operaciones inciertas solo se reconcilian por observación."
-        ),
-        openapi_tags=[
-            {"name": "health", "description": "Liveness y readiness; no crean infraestructura."},
-            {"name": "instances", "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa."},
-            {"name": "operations", "description": "Seguimiento asíncrono y eventos auditados por operation_id."},
-            {"name": "lab-administration", "description": "Administración de políticas de laboratorio: propuesta, revisión independiente, vigencia, cuotas y revocación. No integra sistemas comerciales."},
-            {"name": "provisioning-administration", "description": "Administración de Provisioning: planes e intentos. El CRM usa instances y operations."},
-            {"name": "provisioning-approvals", "description": "Administración interna del IaC Worker: aprobación independiente y ejecución de un único plan guardado, o delegación auditable."},
-            {"name": "kvm-lifecycle", "description": "Lifecycle Worker: energía de KVM propias; exige contrato de propiedad y habilitación."},
-            {"name": "disposable-deletion", "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos."},
-            {"name": "observability", "description": "Contrato IaCoC de eventos versionados y diagnóstico por tenant; no ejecuta aprovisionamiento."},
-        ],
+        description=DESCRIPTION,
+        openapi_tags=TAGS,
     )
     @application.middleware("http")
     async def trace_request(request, call_next):
@@ -101,20 +65,16 @@ def create_app() -> FastAPI:
         return response
 
     @application.get("/docs", include_in_schema=False, dependencies=[Depends(authorize_docs)])
-    def docs():
-        return get_swagger_ui_html(openapi_url="/openapi.json", title="IACP API",
-                                   swagger_ui_parameters={"persistAuthorization": False, "docExpansion": "none",
-                                                          "displayRequestDuration": True, "filter": True,
-                                                          "tryItOutEnabled": False})
+    def docs(request: Request):
+        return documentation(request, application.version)
 
     @application.get("/openapi.json", include_in_schema=False, dependencies=[Depends(authorize_docs)])
     def contract():
         return JSONResponse(application.openapi())
 
     @application.get("/admin/docs", include_in_schema=False, dependencies=[Depends(authorize_admin_docs)])
-    def admin_docs():
-        return get_swagger_ui_html(openapi_url="/admin/openapi.json", title="IACP Administration",
-            swagger_ui_parameters={"persistAuthorization": False, "docExpansion": "none"})
+    def admin_docs(request: Request):
+        return documentation(request, application.version, administrative=True)
 
     @application.get("/admin/openapi.json", include_in_schema=False, dependencies=[Depends(authorize_admin_docs)])
     def admin_contract():
@@ -170,8 +130,8 @@ def create_app() -> FastAPI:
                 routes.append(route)
         tags = application.openapi_tags if administrative else [tag for tag in application.openapi_tags
             if tag["name"] not in {"provisioning-administration", "provisioning-approvals", "lab-administration"}]
-        return get_openapi(title=application.title, version=application.version,
-            description=application.description, servers=application.servers, tags=tags, routes=routes)
+        return present(get_openapi(title=application.title, version=application.version,
+            description=application.description, servers=application.servers, tags=tags, routes=routes))
 
     # Separate schemas, same handlers. Authorization is enforced by dependencies,
     # regardless of which documentation a caller has viewed.
