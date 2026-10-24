@@ -1,0 +1,13 @@
+{
+  "regresion_terminada": true,
+  "contenedores_locales_retirados": [
+    "iacp-fase-d-db",
+    "iacp-fase-d-redis"
+  ],
+  "red_interna_retirada": "iacp-fase-d-20261024",
+  "pertenencia_verificada": "Etiqueta iacp.fase=d-local y miembros exactos antes de retirar",
+  "almacenamiento": "PostgreSQL de prueba en tmpfs y Redis sin persistencia; no se borraron vol\u00famenes de usuario",
+  "servicios_del_control_plane_afectados_por_esta_limpieza": 0,
+  "prune_global": false,
+  "imagenes_eliminadas": 0
+}

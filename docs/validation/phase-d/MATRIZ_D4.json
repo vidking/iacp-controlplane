@@ -1,0 +1,135 @@
+{
+  "sha_aplicacion": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+  "junit": "REGRESION_IACP.junit.xml",
+  "escenarios": [
+    {
+      "escenario": "Redis/publicaci\u00f3n ambigua",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.test_power::test_broker_failure_can_republish_same_operation_safely",
+          "segundos_totales_caso": 0.33
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "PostgreSQL/conexi\u00f3n de lock",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.integration.test_resilience::test_c04_lost_postgres_lock_connection_fails_closed_and_releases_lock",
+          "segundos_totales_caso": 0.06
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Wasabi/S3 temporal",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.integration.test_resilience::test_c05_temporary_state_outage_is_not_absence_and_retry_is_readonly",
+          "segundos_totales_caso": 1.129
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Lock ocupado",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.integration.test_resilience::test_c06_occupied_native_state_lock_is_preserved",
+          "segundos_totales_caso": 2.164
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Redelivery y reinicio",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.integration.test_power::test_real_celery_worker_interruption_redelivery_and_api_restart",
+          "segundos_totales_caso": 6.394
+        },
+        {
+          "identificador": "tests.integration.test_resilience::test_c12_pending_jobs_complete_after_prefork_worker_restart",
+          "segundos_totales_caso": 9.833
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Idempotencia concurrente",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.integration.test_instances::test_database_arbitrates_concurrent_idempotent_creation[False]",
+          "segundos_totales_caso": 0.254
+        },
+        {
+          "identificador": "tests.integration.test_instances::test_database_arbitrates_concurrent_idempotent_creation[True]",
+          "segundos_totales_caso": 0.379
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Aislamiento tenant",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.test_lab_self_service::test_cross_tenant_inventory_policy_commands_and_catalog_are_isolated",
+          "segundos_totales_caso": 0.363
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "Protecci\u00f3n de recursos",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.test_deletion::test_controlplane_historical_and_non_disposable_ids_protected[104]",
+          "segundos_totales_caso": 0.278
+        },
+        {
+          "identificador": "tests.test_deletion::test_controlplane_historical_and_non_disposable_ids_protected[106]",
+          "segundos_totales_caso": 0.298
+        },
+        {
+          "identificador": "tests.test_deletion::test_controlplane_historical_and_non_disposable_ids_protected[29999]",
+          "segundos_totales_caso": 0.268
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    },
+    {
+      "escenario": "SIGKILL y fence de mutaci\u00f3n",
+      "resultado": "PASS",
+      "alcance": "Fixture/simulaci\u00f3n o integraci\u00f3n local aislada; no inyecci\u00f3n sobre dependencias compartidas",
+      "pruebas": [
+        {
+          "identificador": "tests.test_resilience::test_c02_killed_worker_cannot_leave_terraform_or_provider_running",
+          "segundos_totales_caso": 0.912
+        },
+        {
+          "identificador": "tests.test_resilience::test_c02_mutation_fence_survives_interruption_and_recovery_is_readonly",
+          "segundos_totales_caso": 0.353
+        }
+      ],
+      "duracion_fallo_y_recuperacion_separadas": "No medidas individualmente; no confundir con duraci\u00f3n total del caso."
+    }
+  ],
+  "ensayos_fisicos_de_dependencias_compartidas": "BLOCKED: no se interrumpieron servicios compartidos para completar una prueba positiva"
+}

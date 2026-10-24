@@ -1,0 +1,48 @@
+{
+  "hashes_codigo_en_ejecucion": {
+    "api": {
+      "api/operations.py": "fc37e16c1977812d5b05d2727e5aa3d7cf3d80faf882a720575b79082aec114e"
+    },
+    "terraform-worker": {
+      "terraform/runner.py": "70dd6aa0f943ef57d2ce1c8f3752a4fcfa12eafe72552955cbaad710bd1c93d9",
+      "terraform/process_supervisor.py": "9b76b22334356e238536bc1924b46957eac753f056537504015b05630701e761"
+    }
+  },
+  "promocion": {
+    "aprobado": true,
+    "sha_anterior": "4f153e89826f8e8decc25bcd083e093db37668fd",
+    "sha_posterior": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+    "imagenes": {
+      "api": "sha256:23bdc4736b06310ef74ef49dbf9332a6ced54c16fe9aab193c6a0a2d770011c5",
+      "terraform": "sha256:751dd7d24532ca1f257e027a411532bb01e196340ba75f6a2fb3bc1696e7b365",
+      "proxy": "sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56"
+    },
+    "esquema": "0011_crm_contract",
+    "infraestructura_db_redis_traefik_preservada": true,
+    "secretos_y_credenciales_preservados": true,
+    "rollback": "Cierre funcional de admisión/Lifecycle/DELETE/delegación con iacpctl rollback; conserva Apply=1, esquema e historia. Retorno de imágenes requeriría otra promoción coordinada y reabriría el P0 antiguo.",
+    "incidencia_preparacion": "Primer preflight detenido por directorio de evidencia previamente creado; directorio vacío conservado y repetición con destino nuevo, sin eludir controles."
+  },
+  "comparacion_historia_oficial": [
+    {
+      "at": "2026-10-24T19:01:08.386365+00:00",
+      "data": {
+        "admission": 0,
+        "history_unchanged": true,
+        "lifecycle": 0,
+        "schema": "0011_crm_contract"
+      }
+    }
+  ],
+  "correccion_peer": {
+    "aprobado": true,
+    "controlador": "04a1bd3f1ad46fae80a2e75c364f6e427c738de4",
+    "aplicacion_permanece": "4f153e89826f8e8decc25bcd083e093db37668fd",
+    "proxy_ip_anterior": "172.20.0.3",
+    "proxy_ip_observada_y_configurada": "172.20.0.2",
+    "credenciales_modificadas": false,
+    "compose_modificado": false,
+    "imágenes_cambiadas": false,
+    "revision_independiente": "Aprobación estática con once casos nuevos y 43 regresiones dirigidas; transición exclusiva con imágenes anteriores y configuration_changes vacío"
+  }
+}

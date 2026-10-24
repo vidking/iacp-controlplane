@@ -1,0 +1,12 @@
+{
+  "fuente": "REVISION_CONTENIDO.json",
+  "revisor": "Revisión de ubicaciones por el agente principal",
+  "credenciales_reales_confirmadas": 0,
+  "disposiciones": [
+    {"archivo": "docs/FAILURE_MATRIX.md", "linea": 167, "tipo": "Identificadores de pruebas en un párrafo sobre permisos; no valores de credenciales"},
+    {"archivo": "docs/RESILIENCE_CERTIFICATION.md", "linea": 74, "tipo": "Referencias relativas a archivos de escaneo/revisión; no valores de credenciales"},
+    {"archivo": "docs/validation/phase-d/REGRESION_IACP.junit.xml", "linea": 1, "tipo": "Parámetros de autenticación inválida de tests.test_api::test_all_protected_routes_reject_bad_auth; pruebas con fixtures y sin credenciales del runtime"}
+  ],
+  "valores_de_tokens_publicados": false,
+  "alcance": "Revisión de las tres ubicaciones señaladas por contenido; no constituye seguridad integral aprobada ni verificación de revocación de los tokens expuestos. D6 permanece diferido."
+}

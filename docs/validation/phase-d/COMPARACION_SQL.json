@@ -1,0 +1,40 @@
+{
+  "fecha_antes": "2026-10-24T18:59:22.717092+00:00",
+  "fecha_despues": "2026-10-24T19:04:22.235846+00:00",
+  "sha_antes": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "sha_despues": "7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa",
+  "mismo_conteo_operaciones": true,
+  "pares_payload_iguales": 12,
+  "metodo": "Llamadas directas secuenciales a los handlers realmente desplegados, SQL readonly; tres muestras por p\u00e1gina. Excluye HTTP, middleware y red del cliente; no se inyect\u00f3 c\u00f3digo candidato.",
+  "paginas": [
+    {
+      "limite": 1,
+      "sql_antes": 10,
+      "sql_despues": 9,
+      "mediana_antes_ms": 13.291,
+      "mediana_despues_ms": 10.13
+    },
+    {
+      "limite": 10,
+      "sql_antes": 67,
+      "sql_despues": 9,
+      "mediana_antes_ms": 68.25,
+      "mediana_despues_ms": 13.627
+    },
+    {
+      "limite": 50,
+      "sql_antes": 325,
+      "sql_despues": 9,
+      "mediana_antes_ms": 215.253,
+      "mediana_despues_ms": 22.556
+    },
+    {
+      "limite": 100,
+      "sql_antes": 648,
+      "sql_despues": 20,
+      "mediana_antes_ms": 419.614,
+      "mediana_despues_ms": 53.222
+    }
+  ],
+  "limite": "Quedan algunas consultas de fulfillment por creaci\u00f3n. La mejora directa no sustituye los percentiles HTTP."
+}

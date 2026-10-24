@@ -2,6 +2,28 @@
 
 Anotación de Fase D, 24/10/2026: se aplica la [nomenclatura obligatoria](CONVENCIONES_INFRAESTRUCTURA.md) y se añade la [explicación en español de la evidencia original](validation/phase-d/INTERPRETACION_FASE_C_ES.md). Los resultados históricos de Fase C conservan su fecha y alcance.
 
+## Dictamen actualizado de Fase D — 24/10/2026
+
+| Alcance | Dictamen fundamentado |
+|---|---|
+| MVP KVM para integración piloto con Desarrollo | **GO técnico para piloto supervisado en el clúster MNG**, con políticas/identidades autorizadas y cliente que conserve intención y gestione `uncertain` por observación acotada. No equivale a aprobación de seguridad ni a uso de producción. |
+| MVP con certificación integral de resiliencia | **NO-GO**: D3 físico y escenarios críticos de dependencias permanecen BLOCKED; la seguridad D6 está diferida y hay P1 de trazabilidad causal. |
+
+Versión exacta presentable el 27/10: **IACP 0.10.1, SHA `7c0804d5f6106a7142a14b7bb649fe3e5c6c43aa`**, realmente ejecutado en los cuatro roles de aplicación del **IACP Control Plane (VM 104)**. [Promoción, imágenes y riesgos](FASE_D_PROMOCION.md), [prueba de código ejecutado](validation/phase-d/PROMOCION_VERIFICADA.json). El main posterior `116ed8c…` incorpora operación/documentación; no se confunde con el SHA de las imágenes.
+
+**Demostrado:** 886 regresiones IACP y 36 del cliente aprobadas; E2E individual/doble automáticos con VM 30016/30017/30018 en `mng01` del clúster MNG; una mutación/Apply por VM, SSH/QGA/Lifecycle y DELETE normales; state vacío y sin locks. HTTPS/Swagger/readiness y contrato neutral `/v1` sin cambios. p95 global 260 ms y operaciones 360 ms a 5 RPS/240 s, cero errores de benchmark. [Evidencia](validation/phase-d/REGRESIONES.json), [E2E](validation/phase-d/RECUPERACION_OBSERVADA.json), [rendimiento](validation/phase-d/COMPARACION_HTTP.json).
+
+**Recuperación observada:** en dos creaciones el cliente solicitó reconciliación readonly automáticamente, una y dos veces; se conservó el mismo recurso y un Apply consumido. No fue reparación de infraestructura ni recuperación física tras muerte del worker. D3 sigue BLOCKED hasta demostrar aislamiento por cola, proceso, instancia y credenciales; [preparación mínima](FASE_D_ENSAYO_AISLADO.md).
+
+**P0:** supervisor corregido/desplegado y pruebas locales aprobadas; el gate de verificación física P0-C02 queda abierto para GO integral. **P1:** causa inicial de los episodios inciertos perdida tras reconciliar; preservar primer fallo sanitizado y repetir prueba conocida sin mutación adicional. También siguen pendientes DR conjunto de VM 104, revisión del peer TLS tras reinicios, permisos mínimos Lifecycle y colas p99. **P2:** correlación Celery/job, observabilidad de progreso y RTO por caso. No existe HA/failover independiente demostrado ni outbox/republisher automático.
+
+**D6 PENDIENTE**, diferido expresamente por el usuario para después del MVP y sin bloquear las demás actividades. No hay identidad confirmada de cada Bearer expuesto ni constancia verificable de revocación/rotación/expiración; no se modificaron credenciales ni se declara seguridad aprobada.
+
+El [cierre real](validation/phase-d/DEPENDENCIAS_CIERRE.json) conserva las protegidas y no tiene operaciones pendientes, mensajes unacked, advisory locks o VMs descartables. Platinum/PRX no se utilizó. Los PASS corresponden a su alcance probado; los resultados históricos siguientes no se modifican retroactivamente.
+
+## Dictamen histórico de Fase C — previo a la promoción
+
+
 **NO-GO para la certificación integral de resiliencia Fase C.** El objetivo antes del 27/10 requiere cerrar el P0 del runtime y completar los ensayos críticos que siguen BLOCKED. La evidencia de Fase B conserva su alcance de operación normal individual/doble.
 
 | Exigencia | Dictamen defendible |

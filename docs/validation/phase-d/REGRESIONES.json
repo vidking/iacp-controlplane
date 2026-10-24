@@ -1,0 +1,31 @@
+{
+  "suite_iacp": {
+    "aprobadas": 886,
+    "fallos": 0,
+    "errores": 0,
+    "omitidas": 0,
+    "advertencias": 26,
+    "segundos": 238.03,
+    "xml": "REGRESION_IACP.junit.xml",
+    "sha256_xml": "84884710cb4da30e59ba024cbb8ae07a5fa98f7a582f91726085d128cb6e8f7a",
+    "fuente_local": "276587d, aplicaci\u00f3n id\u00e9ntica a 7c0804d m\u00e1s controlador TLS 04a1bd3 y documentaci\u00f3n b29c191",
+    "imagen": "sha256:807571dfee55baace6a7462eb602c75e73d77d9010d14b9d0bb7c1b9c64c4f65",
+    "entorno": "Contenedor sin privilegios, fuente readonly, entorno vac\u00edo permitido, red Docker interna exclusiva con PostgreSQL 17 y Redis 7; 3 CPU, 2 GiB, 256 procesos, tmpfs 768 MiB, archivo 128 MiB, plazo 360 s. XML validado y promovido exclusivamente por el padre despu\u00e9s del proceso."
+  },
+  "cliente_externo": {
+    "commit": "927a5c56b9d7b7a4d16e53e1e97f2bc161eeb09b",
+    "aprobadas": 36,
+    "fallos": 0,
+    "segundos": 0.821,
+    "entorno": "Contenedor sin red, fuente y dependencias existentes readonly, UID 1000, 1 CPU, 512 MiB, 128 procesos, tmpfs 64 MiB. Venv privado de Python 3.12 preparado solo desde cach\u00e9 local, sin descargas."
+  },
+  "controlador_tls": {
+    "commit": "04a1bd3f1ad46fae80a2e75c364f6e427c738de4",
+    "dirigidas_aprobadas": 43,
+    "nuevas": 11,
+    "segundos": 2.61,
+    "revision_independiente": "Aprobaci\u00f3n est\u00e1tica sin defectos bloqueantes; transici\u00f3n exclusiva con im\u00e1genes anteriores, capacidades cerradas y ninguna excepci\u00f3n de im\u00e1genes."
+  },
+  "incidencias_del_entorno": "Primer intento de pruebas externas no pudo leer dependencias privadas con UID 10001; se corrigi\u00f3 a UID 1000 y pasaron las 36. No se cuenta ese error de preparaci\u00f3n como defecto de producto.",
+  "d6": "Diferido por instrucci\u00f3n expl\u00edcita del usuario; no se modificaron credenciales ni se certific\u00f3 seguridad."
+}
