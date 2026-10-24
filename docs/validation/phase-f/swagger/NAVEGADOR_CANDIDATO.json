@@ -1,0 +1,9 @@
+{
+  "fecha_local": "2026-10-24 16:51:19-06:00",
+  "alcance": "Candidato local aislado con DB SQLite y credenciales sintéticas; no es VM 104",
+  "operaciones": 26,
+  "busqueda_endpoints_visibles": 1,
+  "dependencias_externas": [],
+  "errores_javascript": [],
+  "desbordamiento_movil": false
+}

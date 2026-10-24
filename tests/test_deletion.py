@@ -277,7 +277,9 @@ def test_swagger_documents_roles_preconditions_and_gated_delete(client,auth):
     assert route['responses']['202'] and any(p['name']=='Idempotency-Key' and p['required'] for p in route['parameters'])
     assert 'force' not in schema['components']['schemas']['DeleteRequest']['properties']
     html=client.get('/docs',headers=auth).text
-    assert '"persistAuthorization": false' in html and '"displayRequestDuration": true' in html
+    assert '/docs?asset=iacp-v1.js' in html
+    script=client.get('/docs?asset=iacp-v1.js',headers=auth).text
+    assert 'persistAuthorization: false' in script and 'displayRequestDuration: true' in script
 
 
 def test_expired_unconsumed_plan_can_be_cancelled_while_drained(client,auth,sessions,disposable,monkeypatch):

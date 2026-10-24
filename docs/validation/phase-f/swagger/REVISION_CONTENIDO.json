@@ -1,0 +1,21 @@
+{
+  "fecha_local": "2026-10-24T16:55:52.227840-06:00",
+  "estado": "PASS de revisión del cambio; no auditoría universal de credenciales",
+  "coincidencias_con_secretos_activos": 0,
+  "hallazgos_vendor_revisados": [
+    {
+      "archivo": "app/iacp/static/swagger/5.34.0/swagger-ui-bundle.js",
+      "regla": "credential-assignment",
+      "linea": 2,
+      "dictamen": "Referencia de vendor revisada; paquete npm íntegro y hashes de procedencia coincidentes. Heurística sobre código/recursos minificados, sin coincidencias con credenciales activas."
+    },
+    {
+      "archivo": "app/iacp/static/swagger/5.34.0/swagger-ui.css",
+      "regla": "entropy-in-credential-context",
+      "linea": 1,
+      "dictamen": "Referencia de vendor revisada; paquete npm íntegro y hashes de procedencia coincidentes. Heurística sobre código/recursos minificados, sin coincidencias con credenciales activas."
+    }
+  ],
+  "capturas": "Candidato aislado separado del HTTPS real previo; sin credenciales en pantalla",
+  "candidato_aun_no_desplegado": true
+}

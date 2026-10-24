@@ -212,11 +212,14 @@ def test_engine_state_workers_migrations_and_compose_are_byte_identical():
 
 
 def test_business_http_and_models_preserve_the_baseline_except_agreed_service_names():
+    from scripts.openapi_contract import transport_projection
     before = json.loads((ROOT / 'docs/contracts/openapi-before-provisioning.json').read_text())
     after = create_app().openapi()
+    before_http, after_http = map(transport_projection, [before, after])
     for path, methods in after['paths'].items():
         for method, operation in methods.items():
-            original = before['paths'][path][method]
+            original = before_http['paths'][path][method]
+            operation = after_http['paths'][path][method]
             for field in ['operationId', 'parameters', 'requestBody', 'responses', 'security']:
                 assert operation.get(field) == original.get(field), (method, path, field)
     old_models, new_models = (s['components']['schemas'] for s in [before, after])

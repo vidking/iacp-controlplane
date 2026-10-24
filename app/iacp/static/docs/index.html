@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer"><meta name="color-scheme" content="light">
+  <title>IACP Orchestrator · Referencia de integración</title>
+  <link rel="icon" type="image/svg+xml" href="{{base}}?asset=iacp-v1.svg">
+  <link rel="stylesheet" href="{{base}}?asset=swagger-5.34.0.css">
+  <link rel="stylesheet" href="{{base}}?asset=iacp-v1.css">
+</head>
+<body data-schema="{{schema}}">
+<header class="masthead">
+  <a class="brand" href="{{base}}"><img src="{{base}}?asset=iacp-v1.svg" alt="" width="40" height="40"><span>IACP <b>Orchestrator</b><small>CyberFuel · Plataforma de infraestructura</small></span></a>
+  <div class="release"><span class="pill">API v1</span><span class="pill version">{{version}}</span><span class="access-label">Acceso corporativo · LAN/VPN</span></div>
+</header>
+<div class="workspace">
+<aside class="navigation" aria-label="Navegación documental">
+  <p class="eyebrow">CENTRO DE DESARROLLO</p><h2>Referencia de API</h2>
+  <a class="nav-link active" href="#inicio">Introducción <span>↗</span></a>
+  <p class="nav-label">RECORRIDO CRM</p>
+  <a class="nav-link" href="#/instances/listAuthorizedProfiles">01 <span>Catálogo de perfiles</span></a>
+  <a class="nav-link" href="#/instances/createInstance">02 <span>Crear una instancia</span></a>
+  <a class="nav-link" href="#/instances/listInstances">03 <span>Consultar instancias</span></a>
+  <a class="nav-link" href="#/operations/listOperations">04 <span>Seguir operaciones</span></a>
+  <a class="nav-link" href="#/kvm-lifecycle/getInstancePower">05 <span>Lifecycle</span></a>
+  <a class="nav-link" href="#/disposable-deletion/deleteDisposableInstance">06 <span>Eliminación autorizada</span></a>
+  <p class="nav-label">RECURSOS AUTORIZADOS</p>
+  <a class="nav-link" href="#guia">Guía rápida de integración</a>
+  <a class="nav-link" href="{{schema}}" target="_blank" rel="noopener noreferrer">Descargar OpenAPI <span>↗</span></a>
+  <a class="nav-link" href="https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/branch/main/docs/handbook/API_INTEGRATION.md" target="_blank" rel="noopener noreferrer">Manual para Desarrollo <span>↗</span></a>
+  <a class="nav-link" href="https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/branch/main/docs/handbook/OPERATIONS.md" target="_blank" rel="noopener noreferrer">Operación y recuperación <span>↗</span></a>
+  <div class="nav-note"><b>Contrato estable</b><p>Identidades por tenant, operaciones auditables e intenciones idempotentes.</p><small>Las herramientas de diagnóstico y laboratorio se identifican al final de la referencia.</small></div>
+</aside>
+<main id="inicio">
+  <section class="intro"><p class="eyebrow">{{scope}}</p><h1>Infraestructura KVM.<br><span>Una integración clara.</span></h1>
+    <p class="lead">Crea y administra instancias mediante perfiles autorizados. Sigue cada solicitud hasta su resultado y conserva el control de su ciclo de vida.</p>
+    <div class="features"><span>REST / JSON</span><span>Operaciones asíncronas</span><span>Idempotencia</span><span>OpenAPI 3.1</span></div>
+  </section>
+  <section class="integration" id="guia" aria-label="Guía rápida CRM">
+    <details><summary><span class="guide-icon">↳</span><span><b>De tu CRM a una instancia</b><small>Autenticación, flujo recomendado y respuestas que debes manejar</small></span><span class="guide-open">Ver guía</span></summary>
+      <div class="guide-content">
+        <div class="auth-note"><b>Dos credenciales, dos alcances.</b> HTTP Basic permite leer esta documentación. Para llamar a la API, pulsa <b>Authorize</b> e introduce solo el token Bearer del tenant, sin el prefijo. La clave de documentación no autoriza llamadas a <code>/v1</code>. La autorización no se conserva al recargar.</div>
+        <ol><li><b>Consulta perfiles.</b> Selecciona un perfil disponible y una política vigente aprobada; no envíes IDs de infraestructura interna.</li><li><b>Crea una intención.</b> Envía <code>POST /v1/instances</code> con una <code>Idempotency-Key</code> nueva y conserva <code>instance_id</code>, <code>operation_id</code> y <code>job_id</code>.</li><li><b>Sigue su estado.</b> Un 202 confirma admisión. Consulta la misma operación hasta <code>completed</code>, <code>failed</code> o <code>uncertain</code>. Con <code>start_on_create</code>, comprueba también <code>fulfillment</code> y los datos de acceso.</li><li><b>Administra Lifecycle.</b> Utiliza start, reboot y shutdown sobre el UUID propio. Running no garantiza SSH, Cloud-Init ni disponibilidad de una aplicación.</li><li><b>Elimina con autorización.</b> Apaga ordenadamente y solicita DELETE bajo la política vigente. Espera el resultado terminal; no interpretes 202 como eliminación completada.</li></ol>
+        <p><b>Reintentos:</b> misma intención, misma clave y mismo cuerpo. Un cuerpo distinto con la misma clave devuelve 409. Ante <code>uncertain</code>, conserva el UUID y usa la reconciliación autorizada; no crees una instancia sustituta.</p>
+        <div class="response-grid"><span><b>200</b> Consulta completada</span><span><b>202</b> Operación admitida</span><span><b>401 / 403</b> Identidad o permiso</span><span><b>404</b> Recurso no visible</span><span><b>409</b> Conflicto o cuota</span><span><b>422</b> Request inválido</span><span><b>429</b> Admisión HTTP limitada</span><span><b>500 / 503</b> Fallo o dependencia no disponible</span></div>
+        <p class="muted">Los códigos aplicables se indican en cada operación. Conserva <code>X-Request-ID</code> para soporte; la lista de instancias devuelve <code>X-Total-Count</code>. Los ejemplos son sintéticos: sustituye las referencias por recursos autorizados.</p>
+      </div>
+    </details>
+  </section>
+  <section class="reference" aria-label="Referencia de endpoints">
+    <div class="reference-toolbar"><div><p class="eyebrow">EXPLORA EL CONTRATO</p><h2>Endpoints</h2></div><label class="search"><span>⌕</span><input id="endpoint-search" type="search" placeholder="Buscar por ruta, método o descripción…" aria-label="Buscar endpoints"><kbd>/</kbd></label></div>
+    <p id="search-result" class="muted" aria-live="polite"></p>
+    <div id="swagger-ui"></div>
+  </section>
+  <footer>CyberFuel · IACP Orchestrator <span>Contrato /v1 · Documentación autenticada · {{version}}</span></footer>
+</main>
+</div>
+<script src="{{base}}?asset=swagger-5.34.0.js"></script>
+<script src="{{base}}?asset=iacp-v1.js"></script>
+</body></html>
