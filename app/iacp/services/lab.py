@@ -59,9 +59,11 @@ def snapshots(spec, tenant_id):
             if requested > ceiling:
                 raise Conflict("LAB_POLICY_EXCEEDS_SERVER_LIMIT")
         result[name] = p.model_dump()
+        if not p.root_password_bootstrap:
+            result[name].pop('root_password_bootstrap')  # Preserve existing reviewed snapshots.
         if p.guest_initialization:
-            from .guest_identity import PROGRAM_SHA256
-            result[name]['guest_initialization_program_sha256']=PROGRAM_SHA256
+            from .guest_identity import PROGRAM_SHA256, ROOT_PROGRAM_SHA256
+            result[name]['guest_initialization_program_sha256']=ROOT_PROGRAM_SHA256 if p.root_password_bootstrap else PROGRAM_SHA256
     return result
 
 
@@ -171,11 +173,18 @@ def limits(row):
 
 
 def instance_digest(instance, execution, row):
-    return fingerprint({"instance_id": instance.id, "tenant_id": instance.tenant_id, "name": instance.name,
+    values = {"instance_id": instance.id, "tenant_id": instance.tenant_id, "name": instance.name,
         "image": instance.image, "vcpus": instance.vcpus, "memory_mb": instance.memory_mb, "disk_gb": instance.disk_gb,
         "network_profile": instance.network_profile, "network_mode": instance.network_mode,
         "allocation": execution.allocation, "state_key": execution.state_key, "source_revision": execution.source_revision,
-        "policy_id": row.id, "policy_sha256": row.policy_sha256})
+        "policy_id": row.id, "policy_sha256": row.policy_sha256}
+    if instance.start_on_create:
+        values['start_on_create'] = True
+    if instance.initial_access_fingerprint:
+        values['initial_access_fingerprint'] = instance.initial_access_fingerprint
+    if instance.commercial_context:
+        values['commercial_context'] = instance.commercial_context
+    return fingerprint(values)
 
 
 def admit(session, instance):

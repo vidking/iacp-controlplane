@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0010_guest_identity"
+HEAD = "0011_crm_contract"
 SOURCE = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
 ARCHIVE = "05ed1d0d6f2b886df8072eb24cd764dc881f63e9f536baa9af3bafa0804d156b"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -69,7 +69,14 @@ def check_idle(report, allowed_uncertain=()):
 
 def compare_history(before, after):
     for name, evidence in before["tables"].items():
-        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],[HEAD]]:
+        if before.get('schema') and before['schema'] != [HEAD] and (name == 'operations' or
+                name == 'instances' and before['schema'] in [['0009_lab_self_service'], ['0010_guest_identity']]):
+            projected = after.get('compatibility', {}).get(name+'_before_0011', {})
+            require(projected.get('new_fields_default') is True and
+                {k:projected.get(k) for k in ('count','sha256')} == evidence,
+                'Historical data changed during CRM migration: '+name)
+            continue
+        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],[HEAD]]:
             projected=after.get('compatibility',{}).get(name+'_before_0009',{})
             if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
                 require(projected.get('new_fields_default') is True
@@ -254,7 +261,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             compatibility = live_compatibility(current, active)
             self.evidence("live-compatibility", compatibility)
             require(compatibility["passed"], "Active environment differs from the running containers")
-            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'))
+            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'))
             self.evidence("canonical-comparison", comparison)
             require(comparison["passed"], "Canonical configuration differs outside the reviewed changes")
         planned_files = {str((ROOT / file).resolve()) for file in self.m["compose_files"]}
@@ -274,6 +281,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 require("docker.sock" not in mount.get("source", ""), "Docker socket must not be mounted")
             for item in service.get("secrets", []):
                 path = Path(cfg["secrets"][item["source"]]["file"])
+                if item['source'] == 'root_input_key' and str(path) == '/dev/null' and service.get('environment', {}).get('IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED') == '0':
+                    continue
                 st = path.stat()
                 require(st.st_size > 0 and not st.st_mode & 0o007, "Empty or world-readable secret")
                 # Current application images run as UID/GID 10001; reject root-only mounts.
@@ -285,6 +294,21 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             planned = next(m for m in services[role]["volumes"] if m["target"] == destination)
             volume = cfg["volumes"][planned["source"]]
             require(volume.get("external") is True and volume["name"] == current["Name"], "Storage adoption mismatch")
+        root_review = self.m.get('root_bootstrap_configuration', {})
+        if root_review.get('enabled') is True:
+            proxy_ips = root_review.get('proxy_ips', '').split(',')
+            actual_proxy_ips = {n['IPAddress'] for n in self.container('traefik')['NetworkSettings']['Networks'].values()}
+            require(bool(proxy_ips) and all(ip and ip in actual_proxy_ips for ip in proxy_ips), 'TLS peer differs from the existing proxy')
+            key_path = root_review.get('key_path')
+            require(key_path and key_path != '/dev/null' and cfg['secrets']['root_input_key']['file'] == key_path,
+                    'Reviewed root input key required')
+            for role in ('api', 'terraform-worker'):
+                require(services[role]['environment']['IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED'] == '1', 'Root bootstrap gate differs')
+            require(services['api']['environment']['IACP_TLS_PROXY_IPS'] == root_review['proxy_ips'], 'TLS proxy trust differs')
+            self.run(self.docker+['run','--rm','--pull','never','--network','none','--read-only','--user','10001:10001',
+                '--cap-drop','ALL','--security-opt','no-new-privileges','--memory','256m','--cpus','1','--pids-limit','32',
+                '--mount','type=bind,source='+key_path+',target=/key,readonly',services['api']['image'],'python','-c',
+                "from pathlib import Path; from cryptography.fernet import Fernet; Fernet(Path('/key').read_bytes().strip()); print('ROOT_INPUT_KEY_VALID')"])
         lifecycle = services["lifecycle-worker"]
         ca_target = lifecycle["environment"].get("IACP_KVM_CA_FILE")
         ca_mounts = lifecycle.get("volumes", [])
@@ -323,7 +347,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         restored = json.loads(Path(backup["restore_evidence"]).read_text())
         expected_backup_schema=backup.get('schema','0004_authorized_apply')
         minimum_tables={'0004_authorized_apply':9,'0005_kvm_lifecycle':10,'0006_power_ownership':11,
-                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,'0009_lab_self_service':14,HEAD:15}
+                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,'0009_lab_self_service':14,'0010_guest_identity':15,HEAD:15}
         require(restored["passed"] is True and restored["isolated"] is True
                 and restored["backup_sha256"] == backup["sha256"] and restored["schema"] == expected_backup_schema
                 and expected_backup_schema in minimum_tables

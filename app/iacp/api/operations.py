@@ -5,9 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import DeletionExecution, GuestInitialization, NetworkDiscovery, Operation, OperationEvent, PowerExecution, TerraformApply, TerraformExecution
+from ..models import DeletionExecution, GuestInitialization, Instance, NetworkDiscovery, Operation, OperationEvent, PowerExecution, TerraformApply, TerraformExecution
 from ..schemas import DeletionProgress, ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
+from ..services.fulfillment import progress
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"], responses={
     401: {"model": ErrorResponse}, 403: {"model": ErrorResponse},
@@ -67,6 +68,8 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
         requested_by=row.requested_by, error_code=row.error_code, created_at=row.created_at, updated_at=row.updated_at,
         error_message=error_message,normalized_status=normalized,recovery_required=normalized=='uncertain',provisioning=provisioning,
         events=[EventResponse.model_validate(item) for item in events],
+        fulfillment=(progress(
+            session, session.get(Instance, row.instance_id), normalized) if row.kind == 'instance.create' else None),
         network=network.result if network else None,
         initialization=({'status':initialization.status,'mode':initialization.mode,'program_sha256':initialization.program_sha256,
             'started_at':initialization.started_at,'finished_at':initialization.finished_at,'pid':initialization.pid,

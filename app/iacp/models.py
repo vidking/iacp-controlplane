@@ -9,6 +9,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def operation_correlation(context):
+    from .services.tracing import correlation_id
+    return correlation_id.get() or context.get_current_parameters()['id']
+
+
 BOOTSTRAP_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
@@ -48,6 +53,7 @@ class Instance(Base):
     __tablename__ = "instances"
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_instances_tenant_name"),
+        Index('uq_instances_access_fingerprint', 'initial_access_fingerprint', unique=True),
         CheckConstraint("network_mode IN ('static','dhcp')", name="ck_instances_network_mode"),
         CheckConstraint("status IN ('pending', 'provisioning', 'ready', 'failed', 'deleting', 'deleted')", name="ck_instances_status"),
     )
@@ -59,6 +65,11 @@ class Instance(Base):
     node_preference: Mapped[str | None] = mapped_column(String(128))
     self_service_policy_id: Mapped[str | None] = mapped_column(ForeignKey("lab_policies.id"))
     policy_binding_sha256: Mapped[str | None] = mapped_column(String(64))
+    commercial_context: Mapped[dict | None] = mapped_column(JSON)
+    start_on_create: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    initial_access_ciphertext: Mapped[str | None] = mapped_column(Text)
+    initial_access_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    access_verification: Mapped[dict | None] = mapped_column(JSON)
     network_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="static", server_default="static")
     ip_addresses: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
     network_observation: Mapped[dict | None] = mapped_column(JSON)
@@ -75,6 +86,11 @@ class Instance(Base):
     creation: Mapped["Operation"] = relationship(
         primaryjoin="and_(Instance.id == Operation.instance_id, Operation.kind == 'instance.create')",
         uselist=False, viewonly=True)
+
+    @property
+    def access(self):
+        return ({'username': 'root', **(self.access_verification or {'status': 'pending'})}
+            if self.initial_access_ciphertext else None)
 
     @property
     def infrastructure_kind(self) -> str:
@@ -108,6 +124,7 @@ class Operation(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    correlation_id: Mapped[str | None] = mapped_column(String(36), default=operation_correlation)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     job: Mapped["Job"] = relationship(uselist=False)

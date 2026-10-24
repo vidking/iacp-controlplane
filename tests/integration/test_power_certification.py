@@ -107,8 +107,12 @@ def test_0006_preserves_0005_rows_and_never_backfills_certificates(pg_engine):
     with factory() as session:
         session.get(TerraformExecution, identifier).source_revision = LEGACY_TERRAFORM_POWER_SOURCE
         approval = session.scalar(select(TerraformApply))
-        session.add(Operation(id=operation_id, instance_id=identifier, tenant_id=BOOTSTRAP_TENANT_ID,
-            kind="instance.power.start", status="queued", idempotency_key="pre-0006", request_hash="a" * 64, requested_by="fixture"))
+        from sqlalchemy import MetaData, Table
+        from iacp.models import utcnow
+        operation_table = Table('operations', MetaData(), autoload_with=session.connection())
+        session.execute(operation_table.insert().values(id=operation_id, instance_id=identifier, tenant_id=BOOTSTRAP_TENANT_ID,
+            kind="instance.power.start", status="queued", idempotency_key="pre-0006", request_hash="a" * 64, requested_by="fixture",
+            created_at=utcnow(), updated_at=utcnow()))
         session.flush()
         session.add(Job(id=str(uuid4()), operation_id=operation_id, tenant_id=BOOTSTRAP_TENANT_ID,
                         operation="instance.power.start", status="queued"))
@@ -129,7 +133,7 @@ def test_0006_preserves_0005_rows_and_never_backfills_certificates(pg_engine):
     assert snapshot() == before
     with pg_engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM power_ownership_certificates")) == 0
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0010_guest_identity"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0011_crm_contract"
         assert connection.scalar(text("SELECT ownership_certificate_id FROM power_executions")) is None
     native = FakePower()
     execute_power(operation_id, factory, native)

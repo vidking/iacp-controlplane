@@ -65,6 +65,7 @@ class ProfileResponse(BaseModel):
     max_disk_gb_per_instance: int
     self_service_enabled: bool
     guest_initialization: str | None = None
+    root_password_bootstrap: bool = False
     quotas: dict[str, int]
 
 
@@ -109,7 +110,8 @@ def profiles(principal: Reader):
                 bridge=p.settings.network_bridge, vlan_tag=p.settings.vlan_id, nodes=p.target_nodes or [p.settings.node_name],
                 minimum_disk_gb=p.settings.boot_disk.minimum_size_gb, max_vcpus_per_instance=p.max_vcpus,
                 max_memory_mb_per_instance=p.max_memory_mb, max_disk_gb_per_instance=p.max_disk_gb,
-                self_service_enabled=p.self_service_enabled,guest_initialization=p.guest_initialization, quotas={"instances":p.max_live_instances,
+                self_service_enabled=p.self_service_enabled,guest_initialization=p.guest_initialization,
+                root_password_bootstrap=p.root_password_bootstrap, quotas={"instances":p.max_live_instances,
                     "vcpus":p.max_total_vcpus, "memory_mb":p.max_total_memory_mb, "disk_gb":p.max_total_disk_gb,
                     "concurrent_operations":p.max_concurrent_operations}))
         return result
@@ -185,6 +187,13 @@ def provision(instance_id: str, principal: Operator, session: Database, body: Po
             TerraformApply.attempt == execution.attempt))
         if approval and approval.status in {"running", "uncertain"}:
             recover_apply(session, execution, approval.id, principal, publish)
+        elif approval and approval.status == 'completed' and instance.start_on_create:
+            # Release request transaction before the existing admission locks.
+            from ..services.fulfillment import advance
+            from sqlalchemy.orm import sessionmaker
+            sessions = sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+            session.commit()
+            advance(instance.id, sessions)
         else:
             lab.member(session, instance, "create", current_profiles=True)
             if execution.status == "queued":

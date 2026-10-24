@@ -21,6 +21,23 @@ bearer = HTTPBearer(auto_error=False, description="Token ligado en el servidor a
 docs_basic = HTTPBasic(auto_error=False)
 
 
+def request_uses_https(request) -> bool:
+    """TLS termination is trusted only from explicitly configured proxy IPs.
+
+    Runtime disables uvicorn proxy headers. Never trust a caller's forwarded
+    header without checking the socket peer; no trust-all default.
+    """
+    if request.url.scheme == 'https':
+        return True
+    from ipaddress import ip_address
+    try:
+        peers = [ip_address(value.strip()) for value in os.environ.get('IACP_TLS_PROXY_IPS', '').split(',') if value.strip()]
+        return bool(request.client and ip_address(request.client.host) in peers
+            and request.headers.get('x-forwarded-proto') == 'https')
+    except ValueError:
+        return False
+
+
 @dataclass(frozen=True)
 class Principal:
     tenant_id: str

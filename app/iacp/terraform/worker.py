@@ -17,6 +17,8 @@ def apply_instance(identifier: str, mode: str = "apply") -> None:
     if mode not in {"apply", "reconcile"}:
         return
     execute_apply(identifier, get_session_factory(), reconcile=mode == "reconcile")
+    from ..services.fulfillment import after_apply
+    after_apply(identifier, get_session_factory())
 
 
 @celery_app.task(name="iacp.terraform.delete", autoretry_for=(), acks_late=True,
@@ -51,3 +53,12 @@ def discover_network(identifier: str) -> None:
 def initialize_guest(identifier: str) -> None:
     from ..services.guest_identity import execute_initialization
     execute_initialization(identifier,get_session_factory())
+    from ..services.access import after_initialization
+    after_initialization(identifier, get_session_factory())
+
+
+@celery_app.task(name='iacp.access.verify', autoretry_for=(), acks_late=True,
+                 reject_on_worker_lost=True, soft_time_limit=55, time_limit=65)
+def verify_access(identifier: str) -> None:
+    from ..services.access import execute_verification
+    execute_verification(identifier, get_session_factory())

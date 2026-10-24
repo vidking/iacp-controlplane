@@ -15,17 +15,24 @@ def managed_instance(sessions, tenant_id, *, vmid=21001, name="fixture-kvm"):
                              memory_mb=2048, disk_gb=20, status="ready", executor="terraform", vmid=vmid,
                              node="mng01", result=result)
         from sqlalchemy import inspect, MetaData, Table
-        if "self_service_policy_id" in {c["name"] for c in inspect(session.get_bind()).get_columns("instances")}:
+        if set(Instance.__table__.c.keys()) <= {c["name"] for c in inspect(session.connection()).get_columns("instances")}:
             session.add(instance)
         else:
-            table = Table("instances", MetaData(), autoload_with=session.get_bind())
+            table = Table("instances", MetaData(), autoload_with=session.connection())
             values = {c.name: getattr(instance,c.name) for c in table.c if getattr(instance,c.name) is not None}
             values.update(created_at=utcnow(), updated_at=utcnow())
             session.execute(table.insert().values(**values))
         session.flush()
-        session.add(Operation(id=operation_id, tenant_id=tenant_id, instance_id=identifier,
+        operation = Operation(id=operation_id, tenant_id=tenant_id, instance_id=identifier,
             kind="instance.create", status="completed", idempotency_key="seed-" + identifier,
-            request_hash="a" * 64, requested_by="bootstrap"))
+            request_hash="a" * 64, requested_by="bootstrap")
+        if 'correlation_id' in {c['name'] for c in inspect(session.connection()).get_columns('operations')}:
+            session.add(operation)
+        else:
+            table = Table('operations', MetaData(), autoload_with=session.connection())
+            values = {c.name: getattr(operation,c.name) for c in table.c if getattr(operation,c.name) is not None}
+            values.update(created_at=utcnow(), updated_at=utcnow())
+            session.execute(table.insert().values(**values))
         session.flush()
         session.add(Job(id=job_id, tenant_id=tenant_id, operation_id=operation_id, operation="instance.plan", status="completed"))
         session.flush()

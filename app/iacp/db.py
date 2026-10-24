@@ -16,6 +16,7 @@ def get_engine() -> Engine:
     return create_engine(
         database_url(),
         pool_pre_ping=True,
+        hide_parameters=True,
         pool_timeout=5,
         connect_args={"connect_timeout": 3, "options": "-c statement_timeout=3000"},
     )

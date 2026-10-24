@@ -1,4 +1,9 @@
-# Integración futura de Desarrollo/CRM con IACP
+# Integración de Desarrollo/CRM con IACP
+
+El [runbook MVP 0.10.0](MVP_CRM_RUNBOOK.md) documenta el contrato candidato,
+referencias comerciales, arranque y entrada root. La evidencia de 0.9.1 mantiene
+su alcance histórico; comprobar la versión OpenAPI desplegada antes de enviar
+campos nuevos.
 
 El laboratorio no depende de ningún sistema comercial. Un CRM futuro actuará como
 cliente de la API; IACP conserva autorización técnica, cuotas, propiedad y auditoría.
@@ -15,7 +20,9 @@ ID de solicitud y genera una Idempotency-Key estable para cada intención técni
 Registra cuerpo canónico, tenant implícito por token, instance_id y operation_id
 devueltos por POST /v1/instances. La API no admite un tenant arbitrario en el cuerpo
 y una política de laboratorio no acredita autorización comercial de producción.
-El ID comercial se conserva en la base del CRM; no se inventa un campo API.
+Los IDs comerciales se conservan en el CRM. Desde 0.10.0 el campo opcional
+`commercial_context` conserva customer_id/order_id/product_id como referencias
+opacas; no acredita pago ni concede permisos técnicos.
 
 Consultar GET /v1/operations/{operation_id} con backoff acotado, por ejemplo 1, 2,
 4 y hasta 15 segundos. Guardar X-Request-ID para diagnóstico. Tratar

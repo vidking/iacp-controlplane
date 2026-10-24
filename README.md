@@ -5,6 +5,11 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
+Candidato MVP KVM/CRM 0.10.0: [runbook](docs/MVP_CRM_RUNBOOK.md),
+[checklist de acreditación](docs/MVP_CHECKLIST.md), [contrato IaCoC](docs/IACOC_CONTRACT.md)
+y [auditoría Wasabi](docs/STATE_RETENTION_AUDIT.md). Locust vive en un proyecto
+externo de pruebas manuales y no forma parte del runtime IACP.
+
 Autoservicio multiinstancia 0.9.1: [guía para Desarrollo y Swagger](docs/SELF_SERVICE.md),
 [contrato futuro CRM](docs/CRM_INTEGRATION.md) y [evidencia de validación](docs/validation/SELF_SERVICE.json).
 [Release desplegada, cuatro KVM reales y limpieza](docs/SELF_SERVICE_VALIDATION.md).

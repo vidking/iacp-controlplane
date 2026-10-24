@@ -15,5 +15,9 @@ jobs:
         run: bash scripts/test-tls.sh
       - name: Documents
         run: docker compose -p "iacp-ci-${{ github.run_id }}" -f compose.test.yaml run --rm -T --no-deps tests python scripts/validate-handbook.py
+      - name: Exact OpenAPI snapshot
+        run: |
+          docker compose -p "iacp-ci-${{ github.run_id }}" -f compose.test.yaml run --rm -T --no-deps tests python scripts/export-openapi.py --stdout > /tmp/iacp-openapi-${{ github.run_id }}.json
+          cmp docs/openapi.json /tmp/iacp-openapi-${{ github.run_id }}.json
       - name: Certifier Docker execution regression
         run: IACP_TEST_IMAGE="iacp-ci-${{ github.run_id }}-tests" bash scripts/test-certifier-workspace.sh

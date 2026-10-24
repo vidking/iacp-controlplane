@@ -90,6 +90,21 @@ write(marker,json.dumps(result,sort_keys=True)+'\n')
 '''
 PROGRAM_SHA256 = hashlib.sha256(PROGRAM.encode()).hexdigest()
 
+# A separately reviewed variant for root-password lab profiles. No credentials
+# enter guest-exec arguments or files; Cloud-Init alone sets the initial password.
+ROOT_SSH_CONFIG = 'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n'
+ROOT_POLICY_PROGRAM = r'''
+ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-root-lab.conf')
+write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
+subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
+effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],check=True,capture_output=True,text=True,timeout=10).stdout
+assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
+subprocess.run(['/usr/bin/systemctl','reload','ssh'],check=True,capture_output=True,timeout=15)
+'''
+ROOT_PROGRAM = PROGRAM.replace("write(marker,json.dumps(result,sort_keys=True)+'\\n')",
+    ROOT_POLICY_PROGRAM + "\nwrite(marker,json.dumps(result,sort_keys=True)+'\\n')")
+ROOT_PROGRAM_SHA256 = hashlib.sha256(ROOT_PROGRAM.encode()).hexdigest()
+
 
 def active(session, instance_id):
     return session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance_id,
@@ -100,7 +115,8 @@ def configured_mode(session, instance, *, current_profiles=True):
     from ..services.lab import member
     row=member(session,instance,'start',current_profiles=current_profiles)
     mode=row.profile_snapshots[instance.network_profile].get('guest_initialization')
-    if mode!=MODE or row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=PROGRAM_SHA256:
+    expected = ROOT_PROGRAM_SHA256 if row.profile_snapshots[instance.network_profile].get('root_password_bootstrap') else PROGRAM_SHA256
+    if mode!=MODE or row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=expected:
         raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED')
     return mode
 
@@ -162,8 +178,11 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                 operation=Operation(id=str(uuid4()),tenant_id=instance.tenant_id,instance_id=instance.id,
                     kind='instance.network.initialize',status='queued',idempotency_key=key,request_hash=digest,requested_by=principal.subject)
                 session.add(operation);session.flush()
+                from ..models import LabPolicy
+                profile=session.get(LabPolicy,instance.self_service_policy_id).profile_snapshots[instance.network_profile]
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
-                    program_sha256=PROGRAM_SHA256,provisioning_binding=binding_digest(instance,execution,approval),status='queued')
+                    program_sha256=ROOT_PROGRAM_SHA256 if profile.get('root_password_bootstrap') else PROGRAM_SHA256,
+                    provisioning_binding=binding_digest(instance,execution,approval),status='queued')
                 session.add(row)
                 session.add(Job(id=str(uuid4()),tenant_id=instance.tenant_id,operation_id=operation.id,operation=operation.kind,status='queued'))
                 instance.ip_addresses=[]
@@ -207,11 +226,17 @@ class GuestClient:
         self.client._request('GET',target.path+'/agent/info')
 
     def submit(self,target,instance_id,mac):
+        return self._submit(target,instance_id,mac,PROGRAM,PROGRAM_SHA256)
+
+    def submit_root(self,target,instance_id,mac):
+        return self._submit(target,instance_id,mac,ROOT_PROGRAM,ROOT_PROGRAM_SHA256)
+
+    def _submit(self,target,instance_id,mac,program,digest):
         assert str(UUID(instance_id))==instance_id and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac)
         # PVE array form encoding: repeated command parameters, never shell quoting.
         result=self.client._request('POST',target.path+'/agent/exec',[
-            ('command','/usr/bin/python3'),('command','-c'),('command',PROGRAM),
-            ('command',instance_id),('command',mac),('command',PROGRAM_SHA256)])
+            ('command','/usr/bin/python3'),('command','-c'),('command',program),
+            ('command',instance_id),('command',mac),('command',digest)])
         pid=result.get('pid')
         if type(pid) is not int or pid<=0:raise Conflict('GUEST_INITIALIZATION_PID_INVALID')
         return pid
@@ -268,7 +293,7 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         configured_mode(s,instance)
                         from ..lifecycle.ownership import mutation_revision
                         mutation_revision()
-                        if row.program_sha256!=PROGRAM_SHA256:raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
+                        if row.program_sha256 not in {PROGRAM_SHA256, ROOT_PROGRAM_SHA256}:raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
                         while True:
                             try:client.ready(target);break
                             except PowerError:
@@ -278,7 +303,8 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         s.refresh(instance);configured_mode(s,instance);mutation_revision();client.check(target,row.mac_address)
                         row.started_at=utcnow();row.status=operation.status=job.status='running'
                         event(s,operation,'guest_initialization_dispatch_consumed','worker:iac');s.commit()
-                        row.pid=client.submit(target,instance.id,row.mac_address);s.commit()
+                        submit = client.submit_root if row.program_sha256 == ROOT_PROGRAM_SHA256 else client.submit
+                        row.pid=submit(target,instance.id,row.mac_address);s.commit()
                     while True:
                         validate_binding(s,row,operation)
                         result=client.observe(target,row)

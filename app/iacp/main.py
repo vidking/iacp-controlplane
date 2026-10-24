@@ -7,21 +7,22 @@ import time
 from fastapi import Depends, FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab
+from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability
 from .security import authorize_docs
 
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="IACP Orchestrator", version="0.9.1",
+        title="IACP Orchestrator", version="0.10.0",
         docs_url=None, redoc_url=None, openapi_url=None,
         servers=[{"url": "https://iac.cyberfuel.com", "description": "API oficial; acceso autorizado"}],
         description=(
             "IACP Orchestrator administra instancias KVM, operaciones asíncronas y Lifecycle por tenant. "
             "El componente **IaC Worker** aprovisiona recursos con perfiles y cuotas autorizados. "
-            "El contrato de autoservicio no depende de Terraform u OpenTofu. API corporativa privada por LAN/VPN.\n\n"
+            "API corporativa privada por LAN/VPN. El backend CRM consume el contrato neutral de instancias y operaciones.\n\n"
             "**Acceso:** el login HTTP Basic de esta documentación usa una identidad docs. "
             "Para ejecutar consultas y comandos, pulse **Authorize** e introduzca SOLO el token Bearer "
             "del tenant, sin el prefijo Bearer. La contraseña docs no autoriza llamadas a /v1.\n\n"
@@ -51,16 +52,19 @@ def create_app() -> FastAPI:
             {"name": "instances", "description": "Inventario del tenant. Crear requiere operator; perfil DHCP autorizado o asignación estática IPAM previa."},
             {"name": "operations", "description": "Seguimiento asíncrono y eventos auditados por operation_id."},
             {"name": "lab-administration", "description": "Administración de políticas de laboratorio: propuesta, revisión independiente, vigencia, cuotas y revocación. No integra sistemas comerciales."},
-            {"name": "terraform", "description": "Administración del IaC Worker. Endpoints históricos compatibles del motor Terraform 1.16.6; implementación y licencias conservadas para auditoría."},
-            {"name": "terraform-apply", "description": "Administración del IaC Worker: revisión independiente y Apply de un único plan guardado, o autorización delegada auditable."},
-            {"name": "kvm-lifecycle", "description": "Energía de KVM propias; exige contrato de propiedad y flag Lifecycle."},
+            {"name": "provisioning-administration", "description": "Administración interna del IaC Worker: planes e intentos. Rutas históricas conservadas; el CRM usa instances y operations."},
+            {"name": "provisioning-approvals", "description": "Administración interna del IaC Worker: aprobación independiente y ejecución de un único plan guardado, o delegación auditable."},
+            {"name": "kvm-lifecycle", "description": "Lifecycle Worker: energía de KVM propias; exige contrato de propiedad y habilitación."},
             {"name": "disposable-deletion", "description": "Plan, aprobación y DELETE de laboratorio; nunca recursos existentes protegidos."},
+            {"name": "observability", "description": "Contrato IaCoC de eventos versionados y diagnóstico por tenant; no ejecuta aprovisionamiento."},
         ],
     )
     @application.middleware("http")
     async def trace_request(request, call_next):
         from uuid import uuid4
         request.state.request_id = str(uuid4())
+        from .services.tracing import correlation_id
+        trace_token = correlation_id.set(request.state.request_id)
         started = time.monotonic()
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
@@ -80,6 +84,7 @@ def create_app() -> FastAPI:
                 # query strings, credential values or provider error messages.
                 response = JSONResponse(status_code=500, content={"detail": "Internal error"})
         response.headers["X-Request-ID"] = request.state.request_id
+        correlation_id.reset(trace_token)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
         route = request.scope.get("route")
@@ -110,6 +115,15 @@ def create_app() -> FastAPI:
     application.include_router(power.router)
     application.include_router(deletion.router)
     application.include_router(lab.router)
+    application.include_router(observability.router)
+
+    @application.exception_handler(RequestValidationError)
+    def invalid_request(request, error):
+        # Pydantic errors otherwise echo rejected inputs (including secrets and
+        # unknown fields). Keep locations/types, never input, context or values.
+        return JSONResponse(status_code=422, content={"detail": [
+            {"loc": list(item['loc']), "type": item['type'], "msg": "Invalid request value"}
+            for item in error.errors()]})
 
     from .terraform.config import PlanError
 
