@@ -66,7 +66,10 @@ def create_app() -> FastAPI:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
             r'/v1/instances/[a-f0-9-]{36}/(?:terraform/deletions/[a-f0-9-]{36}/(?:cancel|recover)|terraform/applies/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
-        bookkeeping = bookkeeping or (request.method == 'POST' and re.fullmatch(r'/v1/lab/policies/[a-f0-9-]{36}/revoke',request.url.path))
+        # Policy administration prepares/revokes delegation without submitting
+        # infrastructure work. It must be usable before activate-lab opens gates.
+        bookkeeping = bookkeeping or (request.method == 'POST' and re.fullmatch(
+            r'/v1/lab/policies(?:/[a-f0-9-]{36}/(?:approve|renew|revoke))?',request.url.path))
         if request.method not in {"GET", "HEAD", "OPTIONS"} and not bookkeeping and os.environ.get("IACP_ADMISSION_ENABLED", "1") != "1":
             response = JSONResponse(status_code=503, content={"detail": "Admission drained"}, headers={"Retry-After": "60"})
         else:
