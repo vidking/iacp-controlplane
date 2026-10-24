@@ -41,7 +41,7 @@ def main():
     p.add_argument('--evidence-dir', type=Path)
     p.add_argument('--compose-file', type=Path, default=ROOT / 'deploy/mng/compose.yaml')
     sub = p.add_subparsers(dest='action', required=True)
-    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete', 'activate-pilot'):
+    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete', 'activate-pilot', 'activate-lab'):
         s = sub.add_parser(action)
         if action == 'certify':
             s.add_argument('--record', action='store_true')
@@ -232,7 +232,7 @@ def main():
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot',
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-lab':'activate-lab',
                   'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
         subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
 

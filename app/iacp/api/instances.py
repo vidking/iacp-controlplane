@@ -1,7 +1,7 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_session
@@ -21,7 +21,7 @@ router = APIRouter(
 @router.post(
     "", status_code=202, response_model=InstanceAccepted, operation_id="createInstance",
     responses={409: {"model": ErrorResponse}},
-    description=("Crea instancia, operación y job de forma atómica. El servidor selecciona simulación o planificación Terraform; apply exige autorización independiente y habilitación explícita. "
+    description=("Crea instancia, operación y job de forma atómica. El IaC Worker usa el perfil autorizado; una política aprobada permite completar el plan por delegación. Sin política se conserva la revisión individual y habilitación explícita. "
                  "Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. "
                  "Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló."),
 )
@@ -42,13 +42,23 @@ def post_instance(
 
 @router.get("", response_model=list[InstanceResponse], operation_id="listInstances")
 def list_instances(
+    response: Response,
     principal: Annotated[Principal, Depends(authorize)],
     session: Annotated[Session, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    status: Literal["pending", "provisioning", "ready", "failed", "deleting", "deleted"] | None = None,
+    network_profile: Annotated[str | None, Query(max_length=63)] = None,
+    name: Annotated[str | None, Query(max_length=63, description="Nombre exacto; único por tenant")] = None,
+    node: Annotated[str | None, Query(max_length=128)] = None,
 ) -> list[InstanceResponse]:
+    filters=[Instance.tenant_id == principal.tenant_id]
+    for column,value in [(Instance.status,status),(Instance.network_profile,network_profile),(Instance.name,name),(Instance.node,node)]:
+        if value is not None:
+            filters.append(column==value)
+    response.headers['X-Total-Count']=str(session.scalar(select(func.count()).select_from(Instance).where(*filters)))
     rows = session.scalars(select(Instance).options(selectinload(Instance.creation).selectinload(Operation.job))
-                           .where(Instance.tenant_id == principal.tenant_id)
+                           .where(*filters)
                            .order_by(Instance.created_at, Instance.id).limit(limit).offset(offset))
     return [InstanceResponse.model_validate(row) for row in rows]
 

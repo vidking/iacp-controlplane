@@ -55,6 +55,30 @@ def fixture_config():
     return {'services': {role: {} for role in ('api', 'worker', 'terraform-worker', 'lifecycle-worker', 'traefik', 'db', 'redis', 'migrate', 'ownership-certifier')}}
 
 
+def test_profile_replacement_requires_exact_reviewed_readonly_bind():
+    old=fixture_config()
+    for role in ('api','terraform-worker'):
+        old['services'][role]['volumes']=[{'type':'bind','source':'/private/old.json','target':'/run/config/profiles.json',
+            'read_only':True,'bind':{'create_host_path':False}}]
+    new=deepcopy(old)
+    for role in ('api','terraform-worker'):new['services'][role]['volumes'][0]['source']='/private/reviewed.json'
+    assert not compare(old,new)['passed']
+    assert compare(old,new,profile_file='/private/reviewed.json')['passed']
+    new['services']['api']['volumes'][0]['read_only']=False
+    assert not compare(old,new,profile_file='/private/reviewed.json')['passed']
+
+
+def test_self_service_can_be_introduced_only_disabled():
+    old=fixture_config();new=deepcopy(old)
+    for role in ('api','terraform-worker','lifecycle-worker'):
+        new['services'][role]['environment']={'IACP_LAB_SELF_SERVICE_ENABLED':'0'}
+    assert not compare(old,new)['passed']  # Existing environment maps must match too.
+    for role in ('api','terraform-worker','lifecycle-worker'):old['services'][role]['environment']={}
+    assert compare(old,new)['passed']
+    new['services']['api']['environment']['IACP_LAB_SELF_SERVICE_ENABLED']='1'
+    assert not compare(old,new)['passed']
+
+
 def test_comparison_allows_only_certifier_fix_and_declared_image_changes():
     old = fixture_config()
     old['services']['ownership-certifier'] = {'environment': {}, 'tmpfs': ['/tmp']}

@@ -6,6 +6,9 @@ from .lifecycle import execute_plan
 @celery_app.task(name="iacp.terraform.plan", autoretry_for=(), acks_late=True)
 def plan_instance(job_id: str, attempt: int) -> None:
     execute_plan(job_id, attempt, get_session_factory())
+    from ..services.lab import after_plan
+    from ..api.dependencies import get_apply_publisher
+    after_plan(job_id, get_session_factory(), get_apply_publisher())
 
 
 @celery_app.task(name="iacp.terraform.apply", autoretry_for=(), acks_late=True, soft_time_limit=910, time_limit=930)
@@ -21,6 +24,20 @@ def apply_instance(identifier: str, mode: str = "apply") -> None:
 def delete_instance(identifier: str, mode: str) -> None:
     from .deletion import execute_deletion
     execute_deletion(identifier, mode, get_session_factory())
+    if mode == "plan":
+        from ..models import DeletionExecution, Instance, Operation
+        from ..services.lab import advance_deletion
+        from ..services.instances import event
+        from ..api.dependencies import get_deletion_publisher
+        with get_session_factory()() as session:
+            row = session.get(DeletionExecution, identifier)
+            if row and row.autonomous and row.status == "planned":
+                try:
+                    advance_deletion(session, session.get(Instance, row.instance_id), identifier, get_deletion_publisher())
+                except Exception:
+                    session.rollback()
+                    event(session, session.get(Operation, identifier), "lab_delete_paused", "worker:iac")
+                    session.commit()
 
 
 @celery_app.task(name='iacp.network.discover',autoretry_for=(),acks_late=True,reject_on_worker_lost=True)

@@ -15,7 +15,7 @@ def managed_instance(sessions, tenant_id, *, vmid=21001, name="fixture-kvm"):
                              memory_mb=2048, disk_gb=20, status="ready", executor="terraform", vmid=vmid,
                              node="mng01", result=result)
         from sqlalchemy import inspect, MetaData, Table
-        if "network_mode" in {c["name"] for c in inspect(session.get_bind()).get_columns("instances")}:
+        if "self_service_policy_id" in {c["name"] for c in inspect(session.get_bind()).get_columns("instances")}:
             session.add(instance)
         else:
             table = Table("instances", MetaData(), autoload_with=session.get_bind())

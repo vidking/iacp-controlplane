@@ -4,7 +4,7 @@ from ..models import Instance, Job, Operation, TerraformAttempt, TerraformExecut
 from ..services.instances import Conflict, event
 from ..services.jobs import QueueUnavailable
 from .lifecycle import fail_dispatch
-from .locks import ExecutionBusy, instance_lock
+from .locks import ExecutionBusy, instance_lock, admission_lock
 
 
 def cancel(session, execution, actor):
@@ -44,10 +44,16 @@ def retry(session, execution, expected, key, actor, publish):
             raise Conflict("Retry key already used for another attempt")
         return queue_response(execution, previous.number)
     try:
-        with instance_lock(session.get_bind(), execution.instance_id):
+        with admission_lock(session), instance_lock(session.get_bind(), execution.instance_id):
             execution = session.get(TerraformExecution, execution.instance_id, with_for_update=True, populate_existing=True)
             from .apply import block_replan
             block_replan(session, execution.instance_id)
+            instance = session.get(Instance, execution.instance_id)
+            if instance.self_service_policy_id:
+                from ..services.lab import member, check_quota, limits
+                policy = member(session, instance, 'create', current_profiles=True)
+                check_quota(session,instance.tenant_id,{'concurrent_operations':limits(policy)['concurrent_operations']},
+                    exclude_operation=execution.operation_id)
             # Releer después del lock: otra petición pudo registrar esta misma clave.
             previous = session.scalar(select(TerraformAttempt).where(TerraformAttempt.instance_id == execution.instance_id,
                                                                     TerraformAttempt.retry_key == key))

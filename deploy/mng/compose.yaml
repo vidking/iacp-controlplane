@@ -37,6 +37,7 @@ services:
     command: null
     entrypoint: null
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -139,6 +140,7 @@ services:
     - --without-mingle
     entrypoint: null
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
@@ -296,6 +298,7 @@ services:
     command: null
     entrypoint: null
     environment:
+      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db

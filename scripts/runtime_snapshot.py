@@ -30,12 +30,21 @@ def snapshot():
             report["tables"][name] = {"count": len(rows), "sha256": hashlib.sha256("".join(hashes).encode()).hexdigest()}
             if name=='instances' and 'network_profile' in table.c:
                 added={'network_profile','network_mode','ip_addresses','network_observation'}
+                added.update({'node_preference','self_service_policy_id','policy_binding_sha256'})
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility']['instances_before_0008']={
                     'count':len(rows),'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
                     'new_fields_default':all(row['network_profile'] is None and row['network_mode']=='static'
                         and row['ip_addresses']==[] and row['network_observation'] is None for row in rows)}
+            if name in {'instances','deletion_executions'} and ('self_service_policy_id' in table.c or 'autonomous' in table.c):
+                added=({'node_preference','self_service_policy_id','policy_binding_sha256'} if name=='instances' else {'autonomous'})
+                projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
+                    default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
+                report['compatibility'][name+'_before_0009']={'count':len(rows),
+                    'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
+                    'new_fields_default':all(all(row[k] is None for k in added) if name=='instances'
+                        else row['autonomous'] is False for row in rows)}
             if name in {"operations", "terraform_applies", "power_executions", "deletion_executions", "jobs"}:
                 terminal = {"completed", "failed", "cancelled"}
                 report["nonterminal"][name] = [{"id": row.get("id", row.get("operation_id")), "status": row["status"]}

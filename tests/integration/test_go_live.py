@@ -19,7 +19,7 @@ def test_readonly_promotion_snapshot_survives_both_real_migrations(pg_engine, ru
     assert before["schema"] == ["0004_authorized_apply"]
     upgrade(pg_engine)
     after = inspector.snapshot()
-    assert after["schema"] == ["0008_dhcp_profiles"]
+    assert after["schema"] == ["0009_lab_self_service"]
     for table, fingerprint in before["tables"].items():
         actual = dict(after["compatibility"]["instances_before_0008"]) if table == "instances" else after["tables"][table]
         actual.pop("new_fields_default", None)

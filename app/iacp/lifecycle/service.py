@@ -10,7 +10,7 @@ from ..models import Instance, Job, Operation, PowerExecution, TerraformApply, T
 from ..schemas import PowerAccepted
 from ..services.instances import Conflict, event
 from ..services.jobs import QueueUnavailable
-from ..terraform.locks import ExecutionBusy, instance_lock
+from ..terraform.locks import ExecutionBusy, instance_lock, admission_lock
 from .ownership import instance_ownership, mutation_revision
 from .proxmox import PowerError, Target
 
@@ -52,6 +52,12 @@ def binding(session, row, operation, *, check_ownership=False):
         raise PowerError("POWER_BINDING_CHANGED")
     if check_ownership and instance_ownership(session, instance, approval) != row.ownership_certificate_id:
         raise PowerError("POWER_BINDING_CHANGED")
+    if check_ownership and instance.self_service_policy_id:
+        from ..services.lab import member
+        try:
+            member(session, instance, row.action)
+        except Conflict as failure:
+            raise PowerError(str(failure)) from None
     return target, job
 
 
@@ -80,7 +86,7 @@ def request_power(session, instance, principal, action, key, publish, client_fac
     if previous:
         return previous_result(previous)
     try:
-        with instance_lock(session.get_bind(), instance.id) as heartbeat:
+        with admission_lock(session), instance_lock(session.get_bind(), instance.id) as heartbeat:
             instance = session.get(Instance, instance.id, with_for_update=True, populate_existing=True)
             previous = session.scalar(query)
             if previous:
@@ -91,6 +97,8 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                 from ..terraform.deletion import active_deletion
                 if active_deletion(session, instance.id):
                     raise Conflict("DELETE_OPERATION_ACTIVE")
+                from ..services.lab import authorize_operation
+                authorize_operation(session, instance, action)
                 try:
                     revision = mutation_revision()
                 except PowerError as failure:

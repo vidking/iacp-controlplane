@@ -1,11 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import DeletionExecution, NetworkDiscovery, Operation, OperationEvent, PowerExecution
+from ..models import DeletionExecution, NetworkDiscovery, Operation, OperationEvent, PowerExecution, TerraformApply, TerraformExecution
 from ..schemas import DeletionProgress, ErrorResponse, EventResponse, OperationResponse, PowerProgress
 from ..security import Principal, authorize
 
@@ -13,6 +13,20 @@ router = APIRouter(prefix="/v1/operations", tags=["operations"], responses={
     401: {"model": ErrorResponse}, 403: {"model": ErrorResponse},
     404: {"model": ErrorResponse}, 503: {"model": ErrorResponse},
 })
+
+
+@router.get("", response_model=list[OperationResponse], operation_id="listOperations",
+    description="Historial del tenant con paginación estable. Filtrar por instance_id permite auditar creación, Lifecycle, red y DELETE.")
+def list_operations(principal: Annotated[Principal, Depends(authorize)], session: Annotated[Session, Depends(get_session)],
+    instance_id: str | None = None, status: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50, offset: Annotated[int, Query(ge=0)] = 0):
+    query=select(Operation).where(Operation.tenant_id == principal.tenant_id)
+    if instance_id is not None:
+        query=query.where(Operation.instance_id == instance_id)
+    if status is not None:
+        query=query.where(Operation.status == status)
+    rows=session.scalars(query.order_by(Operation.created_at,Operation.id).limit(limit).offset(offset)).all()
+    return [get_operation(row.id,principal,session) for row in rows]
 
 
 @router.get("/{operation_id}", response_model=OperationResponse, operation_id="getOperation")
@@ -25,9 +39,27 @@ def get_operation(operation_id: str, principal: Annotated[Principal, Depends(aut
     power = session.get(PowerExecution, row.id)
     deletion = session.get(DeletionExecution, row.id)
     network = session.get(NetworkDiscovery,row.id)
+    provisioning=None
+    normalized=row.status
+    if row.kind=='instance.create':
+        execution=session.get(TerraformExecution,row.instance_id)
+        if execution:
+            approval=session.scalar(select(TerraformApply).where(TerraformApply.instance_id==row.instance_id,
+                TerraformApply.attempt==execution.attempt))
+            phase=approval.status if approval else execution.status
+            provisioning={'service':'IaC Worker','phase':phase,'attempt':execution.attempt,
+                'started_at':approval.started_at if approval else None,'finished_at':approval.finished_at if approval else None}
+            if approval and approval.status=='uncertain':
+                normalized='uncertain'
+    error_message=None
+    if row.error_code:
+        error_message=('Resultado incierto: reconcilie el mismo UUID; no solicite otra VM ni repita la mutación.' if normalized=='uncertain'
+            else 'No se confirmó la entrega; consulte esta operación y continúe con el mismo UUID.' if 'DISPATCH' in row.error_code
+            else 'La operación no completó los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.')
     return OperationResponse(
         id=row.id, instance_id=row.instance_id, kind=row.kind, status=row.status,
         requested_by=row.requested_by, error_code=row.error_code, created_at=row.created_at, updated_at=row.updated_at,
+        error_message=error_message,normalized_status=normalized,recovery_required=normalized=='uncertain',provisioning=provisioning,
         events=[EventResponse.model_validate(item) for item in events],
         network=network.result if network else None,
         deletion=(DeletionProgress(**{key: getattr(deletion, key) for key in (

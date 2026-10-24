@@ -1,12 +1,28 @@
 from contextlib import contextmanager
 import hashlib
-from threading import Lock
+from threading import Lock, RLock
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import text
 
 _guard = Lock()
 _local = WeakKeyDictionary()
+_admission = RLock()
+
+
+@contextmanager
+def admission_lock(session):
+    """One short transaction serializes tenant quotas and cluster VMID reservations.
+
+    PostgreSQL releases the lock at commit/rollback, including process death.
+    Infrastructure work and broker calls must happen after this transaction.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SELECT pg_advisory_xact_lock(59173197781242)"))
+        yield
+    else:
+        with _admission:
+            yield
 
 
 class ExecutionBusy(Exception):
