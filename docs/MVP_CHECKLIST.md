@@ -1,5 +1,19 @@
 # MVP KVM: estado de acreditación
 
+Actualización de contrato 24/10 UTC: [PR #42](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/pulls/42),
+`4f153e8`, **IACP 0.10.1 desplegado en MNG**, 857 pruebas aprobadas (49 de
+integración), Swagger/OpenAPI verificados por HTTPS. La API comercial es neutral;
+13 rutas heredadas retiradas y 17 controles administrativos con RBAC separado.
+[Inventario y decisiones](PROVISIONING_CONTRACT.md),
+[evidencia MNG](validation/PROVISIONING_CONTRACT_MNG.json).
+
+Fase B continuada con una única VM nueva, **30010**: creación recuperada por
+observación del mismo UUID, Cloud-Init/SSH, Lifecycle y DELETE completados,
+state vacío, cero locks y protegidas sin cambios. El ensayo automático Locust
+se detuvo durante la recuperación; **Fase B automática sigue pendiente**.
+No se presenta su continuación controlada como un ensayo automático aprobado.
+[Resultados y límites](validation/PROVISIONING_PHASE_B.json).
+
 Actualización 24/10 UTC: candidata `dff8052` desplegada (PR #40), **770 pruebas
 aprobadas**. Una única VM nueva, **30009**, UUID
 `93899a50-f9e4-48c1-987b-5a05ae79a670`, completó Cloud-Init, DHCP/QGA, SSH root,

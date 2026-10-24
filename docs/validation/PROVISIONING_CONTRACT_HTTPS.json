@@ -1,0 +1,173 @@
+{
+  "passed": true,
+  "at": "2026-10-24T07:07:01.415190+00:00",
+  "vantage": "Authorized development workstation over HTTPS; certificate verification enabled; no proxy or TLS bypass",
+  "base_url": "https://iac.cyberfuel.com",
+  "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "api_version": "0.10.1",
+  "public_contract_matches_checkout": true,
+  "administrative_contract_matches_checkout": true,
+  "canonical_public_openapi_sha256": "5c8916b438e2d178c3fc495acd57a2edc5760e8c1bd60f33489af69c4377e3aa",
+  "consumer_paths": 24,
+  "consumer_operations": 26,
+  "administrative_checks": [
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/provisioning/plan",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/plan/cancel",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/plan/retry",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/approvals",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/provisioning/executions",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/cancel",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/recover",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/executions/{approval_id}/resolve-absence",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletion-plan",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletion-approval",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/cancel",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/provisioning/deletions/{operation_id}/recover",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/approve",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/renew",
+      "crm_reader_status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/v1/lab/policies/{policy_id}/revoke",
+      "crm_reader_status": 403
+    }
+  ],
+  "legacy_checks": [
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform",
+      "status": 404
+    },
+    {
+      "method": "GET",
+      "path": "/v1/instances/{instance_id}/terraform/applies",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/cancel",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/recover",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/applies/{approval_id}/resolve-absence",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/apply",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/approvals",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/cancel",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-approval",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletion-plan",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/cancel",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/deletions/{operation_id}/recover",
+      "status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/v1/instances/{instance_id}/terraform/retry",
+      "status": 404
+    }
+  ],
+  "anonymous_docs_rejected": true,
+  "crm_reader_cannot_open_administration": true,
+  "administrative_plan_and_execution_history_accessible": true,
+  "commercial_responses_engine_and_backend_free": true,
+  "crm_operator_rejection": "Covered by automated HTTP tests with a server-configured operator credential without administration grant",
+  "credentials_rotated_or_refactored": false
+}

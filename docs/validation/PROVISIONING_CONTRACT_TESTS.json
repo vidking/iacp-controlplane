@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "revision": "4f153e89826f8e8decc25bcd083e093db37668fd",
+  "tests": {
+    "passed": 857,
+    "failed": 0,
+    "skipped": 0,
+    "integration": 49
+  },
+  "junit_sha256": "7205c361dfd76350e2c022e2c777e5fd83d37fb3fc6f57dbfff3ab63ea446a04",
+  "tls_fixture_passed": true,
+  "public_openapi_sha256": "d92a2dce92b2a7c8f66bae01d4424fc0ffbc0a04ecf2a4467a194795aa006e24",
+  "administrative_openapi_sha256": "193232c56dacba87bc8c77e21963c39339c74e50c82930fe3139a3e096bbeb60",
+  "worker_state_compose_invariants_passed": true,
+  "business_http_changes": []
+}

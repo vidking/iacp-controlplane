@@ -5,7 +5,7 @@ El código y los contenedores son portables entre equipos autorizados. El destin
 operativo es VM 104 `iacp-controlplane-01`; el equipo de desarrollo solo ejecuta
 entornos locales independientes.
 
-Candidato MVP KVM/CRM 0.10.0: [runbook](docs/MVP_CRM_RUNBOOK.md),
+Contrato KVM/CRM 0.10.1 (frontera neutral; flujo de negocio de 0.10.0): [runbook](docs/MVP_CRM_RUNBOOK.md),
 [checklist de acreditación](docs/MVP_CHECKLIST.md), [contrato IaCoC](docs/IACOC_CONTRACT.md)
 y [auditoría Wasabi](docs/STATE_RETENTION_AUDIT.md). Locust vive en un proyecto
 externo de pruebas manuales y no forma parte del runtime IACP.
@@ -128,3 +128,7 @@ La [validación final del PR #17](docs/VALIDATION_PR17.md) registra la suite com
 la evidencia S3 controlada y los límites de atribución del incidente productivo.
 
 Manual para Desarrollo, Infraestructura y Seguridad: [arquitectura, integración, operación y demostración](docs/handbook/README.md).
+
+Contrato de infraestructura IACP 0.10.1: [inventario, compatibilidad y validación
+MNG](docs/PROVISIONING_CONTRACT.md). Consumidores: `/docs` y `/openapi.json`;
+administración autorizada: `/admin/docs` y `/admin/openapi.json`.
