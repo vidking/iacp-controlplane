@@ -44,7 +44,34 @@
   <section class="integration" id="guia-crm" aria-label="Guía local de uso del MVP KVM">
     <details><summary><span class="guide-icon">↳</span><span><b>Cómo utilizar el MVP KVM</b><small>Del catálogo de perfiles a una KVM observada, operable y eliminable</small></span><span class="guide-open">Abrir manual</span></summary>
       <div class="guide-content">
-        <nav class="guide-toc" aria-label="Índice del manual del MVP"><b>En esta guía</b><a href="#crm-introduccion">Introducción</a><a href="#crm-autenticacion">Autenticación desde Swagger</a><a href="#crm-perfiles">Perfiles y políticas vigentes</a><a href="#crm-idempotencia">Idempotency-Key</a><a href="#crm-creacion">Crear una KVM</a><a href="#crm-seguimiento">Seguir el aprovisionamiento</a><a href="#crm-red">Red y acceso</a><a href="#crm-lifecycle">Lifecycle</a><a href="#crm-eliminacion">Eliminación autorizada</a><a href="#crm-errores">Errores y soluciones</a></nav>
+        <nav class="guide-toc" aria-label="Índice del manual del MVP"><b>En esta guía</b><a href="#crm-catalogo-g">Catálogo y transición G</a><a href="#crm-introduccion">Introducción</a><a href="#crm-autenticacion">Autenticación desde Swagger</a><a href="#crm-perfiles">Perfiles y políticas vigentes</a><a href="#crm-idempotencia">Idempotency-Key</a><a href="#crm-creacion">Crear una KVM</a><a href="#crm-seguimiento">Seguir el aprovisionamiento</a><a href="#crm-red">Red y acceso</a><a href="#crm-lifecycle">Lifecycle</a><a href="#crm-eliminacion">Eliminación autorizada</a><a href="#crm-errores">Errores y soluciones</a></nav>
+        <h3 id="crm-catalogo-g">Catálogo KVMHOST-54 y transición comercial G</h3>
+        <div class="auth-note"><b>Revisión comercial candidata; creación todavía bloqueada.</b> Los catálogos de lectura se pueden consultar en esta candidata. La creación por <code>plan_id</code> exige primero entrega segura de la contraseña fuera de PostgreSQL y del state, capacidad autorizada y consumidores migrados. Los ejemplos siguientes no deben enviarse al runtime histórico. <b>Authorize</b> conserva el Bearer opaco del tenant; HTTP Basic solo permite leer esta documentación.</div>
+        <p>Consulta <a href="#/instances/listKVMPlans" data-operation-id="listKVMPlans">GET /v1/plans</a>, <a href="#/instances/listGoldenImages" data-operation-id="listGoldenImages">GET /v1/images</a> y <a href="#/instances/listAuthorizedProfiles" data-operation-id="listAuthorizedProfiles">GET /v1/profiles</a>. Un producto definido no reserva capacidad: comprueba <code>availability.available</code>, <code>capacity_verified</code> y <code>reasons</code>. No se aumentaron cuotas de MNG.</p>
+        <table><thead><tr><th>plan_id</th><th>vCPU</th><th>RAM MiB</th><th>Disco GiB</th></tr></thead><tbody><tr><td>kvm-1</td><td>1</td><td>2048</td><td>50</td></tr><tr><td>kvm-2</td><td>2</td><td>4096</td><td>100</td></tr><tr><td>kvm-3</td><td>4</td><td>8192</td><td>200</td></tr><tr><td>kvm-4</td><td>8</td><td>16384</td><td>400</td></tr></tbody></table>
+        <p>La imagen habilitada es <code>ubuntu-2404</code>, independiente del tamaño. La red comercial inicial es <code>lab-dhcp</code>. <code>wan-static</code> requiere IPv4, prefijo, gateway y reserva validada por Infraestructura; su ejecución permanece bloqueada. No se permiten VLAN, nodos ni datastore libres. Las capacidades históricas root/SSH no certifican la entrega segura G6.</p>
+        <p><b>Ejemplo ilustrativo KVM 1 para la revisión candidata</b> — contraseña sintética que debe reemplazarse por una única del cliente; no representa una autorización ni una prueba real:</p>
+        <pre><code>{
+  "name": "cliente-kvm-1-001",
+  "plan_id": "kvm-1",
+  "image_id": "ubuntu-2404",
+  "network": {"profile_id": "lab-dhcp"},
+  "access": {"root_password": "CONTRASENA_ILUSTRATIVA_CAMBIAR", "ssh_public_keys": []},
+  "start_on_create": true,
+  "commercial_context": {"order_id": "ORD-1001", "product_id": "CRM-KVM-1"}
+}</code></pre>
+        <p><b>Ejemplo ilustrativo KVM 2</b> — CPU, RAM y disco los resuelve IACP, no los envía el CRM:</p>
+        <pre><code>{
+  "name": "cliente-kvm-2-001",
+  "plan_id": "kvm-2",
+  "image_id": "ubuntu-2404",
+  "network": {"profile_id": "lab-dhcp"},
+  "access": {"root_password": "CONTRASENA_ILUSTRATIVA_CAMBIAR", "ssh_public_keys": []},
+  "commercial_context": {"order_id": "ORD-1002", "product_id": "CRM-KVM-2"}
+}</code></pre>
+        <p>En la revisión G son obligatorios <code>name</code>, <code>plan_id</code>, <code>image_id</code>, <code>network.profile_id</code>, <code>access.root_password</code> y <code>commercial_context.order_id</code>. <code>start_on_create</code> vale <code>true</code> por defecto. SSH pública y <code>product_id</code> son opcionales. Se rechazan tamaños personalizados y <code>self_service_policy_id</code>. El tenant procede del Bearer, no del JSON.</p>
+        <p>Usa una <code>Idempotency-Key</code> por intención; conserva clave, cuerpo, tenant y revisión ante timeout. HTTP 202 solo confirma admisión. Sigue <a href="#/operations/getOperation" data-operation-id="getOperation">la operación</a> y <a href="#/instances/getInstance" data-operation-id="getInstance">la instancia</a>; confirma red y acceso antes de declarar lista la KVM. Lifecycle y DELETE conservan propiedad, locks, protección y seguimiento asíncrono. Ante 409 consulta el conflicto; ante 429 espera; ante 503 o timeout verifica primero si hubo admisión. No generes una nueva intención para sustituir una operación incierta.</p>
+        <p><b>Compatibilidad:</b> el resto de este manual describe el flujo histórico todavía servido. Sus UUID de política son evidencia de laboratorio, no opciones del catálogo comercial G. La migración incompatible de POST no está activada; no se ofrece el cuerpo G en el Try it out histórico. <a href="#inicio">Volver a referencia API</a>.</p>
         <h3 id="crm-introduccion">Introducción: qué hace IACP</h3>
         <p>IACP Orchestrator es la API privada que recibe intenciones del CRM, valida el tenant, los perfiles y las políticas, registra la operación en PostgreSQL y entrega el trabajo a sus workers. El CRM decide qué necesita su cliente; IACP ejecuta y observa la infraestructura KVM autorizada en el clúster MNG.</p>
         <p>El MVP certificado cubre catálogo de perfiles, creación asíncrona, consulta, descubrimiento de red, verificación de acceso, start, shutdown, reboot y eliminación autorizada de recursos descartables. No equivale a alta disponibilidad: la resiliencia física integral de workers, la consolidación de credenciales, OCI, LXD, IaCoC, Garbage Collector de Wasabi y extensiones comerciales siguen fuera del MVP.</p>

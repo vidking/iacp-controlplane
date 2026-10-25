@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability
+from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability, catalog
 from .security import authorize_docs, authorize_admin_docs
 from .docs_ui import documentation
 from .openapi_presentation import DESCRIPTION, TAGS, present
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(jobs.router)
     application.include_router(instances.router)
+    application.include_router(catalog.router)
     application.include_router(operations.router)
     application.include_router(terraform.router)
     application.include_router(applies.router)

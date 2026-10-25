@@ -144,6 +144,32 @@
         "title": "AuditEnvelope",
         "type": "object"
       },
+      "Availability": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "capacity_verified": {
+            "title": "Capacity Verified",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "available",
+          "capacity_verified",
+          "reasons"
+        ],
+        "title": "Availability",
+        "type": "object"
+      },
       "CommercialContext": {
         "additionalProperties": false,
         "description": "Opaque CRM references; never evidence of authorization or payment.",
@@ -517,6 +543,81 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "ImageResponse": {
+        "properties": {
+          "authorized": {
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "availability": {
+            "$ref": "#/components/schemas/Availability"
+          },
+          "cloud_init": {
+            "title": "Cloud Init",
+            "type": "boolean"
+          },
+          "compatible_plans": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compatible Plans",
+            "type": "array"
+          },
+          "image_id": {
+            "title": "Image Id",
+            "type": "string"
+          },
+          "minimum_requirements": {
+            "$ref": "#/components/schemas/MinimumRequirements"
+          },
+          "operating_system": {
+            "title": "Operating System",
+            "type": "string"
+          },
+          "qemu_guest_agent": {
+            "title": "Qemu Guest Agent",
+            "type": "boolean"
+          },
+          "root_access": {
+            "title": "Root Access",
+            "type": "boolean"
+          },
+          "ssh_access": {
+            "title": "Ssh Access",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pendiente",
+              "certificada",
+              "habilitada",
+              "retirada"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image_id",
+          "operating_system",
+          "version",
+          "status",
+          "cloud_init",
+          "qemu_guest_agent",
+          "root_access",
+          "ssh_access",
+          "minimum_requirements",
+          "compatible_plans",
+          "authorized",
+          "availability"
+        ],
+        "title": "ImageResponse",
         "type": "object"
       },
       "InstanceAccepted": {
@@ -1110,6 +1211,29 @@
         "title": "LabPolicySpec",
         "type": "object"
       },
+      "MinimumRequirements": {
+        "properties": {
+          "disk_gb": {
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vcpus",
+          "memory_mb",
+          "disk_gb"
+        ],
+        "title": "MinimumRequirements",
+        "type": "object"
+      },
       "NetworkAccepted": {
         "description": "Read-only infrastructure observation, tracked asynchronously.",
         "properties": {
@@ -1347,6 +1471,43 @@
           "status"
         ],
         "title": "PlanQueued",
+        "type": "object"
+      },
+      "PlanResponse": {
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/Availability"
+          },
+          "disk_gb": {
+            "title": "Disk Gb",
+            "type": "integer"
+          },
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan_id": {
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan_id",
+          "name",
+          "vcpus",
+          "memory_mb",
+          "disk_gb",
+          "availability"
+        ],
+        "title": "PlanResponse",
         "type": "object"
       },
       "PolicyResponse": {
@@ -2064,6 +2225,91 @@
         "summary": "Consultar los eventos auditables del tenant",
         "tags": [
           "observability"
+        ]
+      }
+    },
+    "/v1/images": {
+      "get": {
+        "description": "La imagen habilitada ubuntu-2404 procede de la certificación histórica. root_access/ssh_access describen esa capacidad histórica, no certifican G6. availability distingue habilitación, permiso y ejecución segura; no publica VMID, nodo ni almacenamiento interno.",
+        "operationId": "listGoldenImages",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ImageResponse"
+                  },
+                  "title": "Response Listgoldenimages",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Consulta completada"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidad ausente o inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Rol, tenant o permiso insuficiente"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Consultar Golden Images y su autorización",
+        "tags": [
+          "instances"
         ]
       }
     },
@@ -5585,6 +5831,91 @@
         "summary": "Seguir una operación por su UUID",
         "tags": [
           "operations"
+        ]
+      }
+    },
+    "/v1/plans": {
+      "get": {
+        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos ni acredita capacidad física. El contrato comercial G sigue bloqueado por G6.",
+        "operationId": "listKVMPlans",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlanResponse"
+                  },
+                  "title": "Response Listkvmplans",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Consulta completada"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidad ausente o inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Rol, tenant o permiso insuficiente"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Consultar los cuatro planes KVMHOST-54",
+        "tags": [
+          "instances"
         ]
       }
     },

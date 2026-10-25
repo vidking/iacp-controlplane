@@ -35,7 +35,7 @@
     if (!force && lastRevealKey === key) return true;
     lastRevealKey = key;
     if (group) group.hidden = false;
-    const summary = target.querySelector(".opblock-summary"); if (summary && !target.classList.contains("is-open")) summary.click();
+    const summary = target.querySelector(".opblock-summary-control"); if (summary && !target.classList.contains("is-open")) summary.click();
     requestAnimationFrame(() => {
       const current = document.querySelector(slug(operationId));
       if (!current) return;
@@ -70,7 +70,13 @@
   function revealAnchor(target) { if (!target) return false; requestAnimationFrame(() => scrollToTarget(document.getElementById(target.id) || target)); return true; }
   function navigate(link) {
     const operationId = link.dataset.operationId;
-    if (operationId) { const hash = link.getAttribute("href"); if (location.hash !== hash) history.pushState({operationId}, "", hash); revealOperation(operationId, true, link.dataset.navigationContext === "group"); return; }
+    if (operationId) {
+      const hash = link.getAttribute("href");
+      const target = document.querySelector(slug(operationId));
+      // Swagger registra el hash al abrir la operación; no duplicar esa entrada.
+      if ((!target || target.classList.contains("is-open")) && location.hash !== hash) history.pushState({operationId}, "", hash);
+      revealOperation(operationId, true, link.dataset.navigationContext === "group"); return;
+    }
     const tag = link.dataset.tagTarget;
     if (tag) { const hash = `#/tag/${tag}`; if (location.hash !== hash) history.pushState({tag}, "", hash); revealTag(tag, true); return; }
     const target = document.getElementById(link.dataset.docTarget); if (!target) return;
@@ -78,7 +84,7 @@
   }
   window.ui = SwaggerUIBundle({url: document.body.dataset.schema, dom_id: "#swagger-ui", deepLinking: true, docExpansion: "list", displayRequestDuration: true, persistAuthorization: false, tryItOutEnabled: false, validatorUrl: null, defaultModelsExpandDepth: -1, presets: [SwaggerUIBundle.presets.apis], layout: "BaseLayout", operationsSorter: (a, b) => { const rank = o => { const i = priority.indexOf(o.getIn(["operation", "operationId"]) || o.get("operationId")); return i < 0 ? 100 : i; }; return rank(a) - rank(b) || a.get("path").localeCompare(b.get("path")); }, onComplete: () => { let observed = false; const observer = new MutationObserver(() => { filter(); const id = operationForHash(); const tag = tagForHash(); if (id && document.querySelector(slug(id)) && !observed) { observed = true; revealOperation(id); } if (tag && revealTag(tag)) observed = true; }); observer.observe(document.getElementById("swagger-ui"), {childList: true, subtree: true}); filter(); const id = operationForHash(); if (id) revealOperation(id); const tag = tagForHash(); if (tag) revealTag(tag); const doc = documentForHash(); if (doc) revealDocument(doc); }});
   search.addEventListener("input", filter);
-  document.addEventListener("click", event => { const link = event.target.closest(".nav-link[data-operation-id], .nav-link[data-tag-target], .nav-link[data-doc-target]"); if (link) { event.preventDefault(); event.stopImmediatePropagation(); navigate(link); } });
+  document.addEventListener("click", event => { const link = event.target.closest("a[data-operation-id], .nav-link[data-tag-target], .nav-link[data-doc-target]"); if (link) { event.preventDefault(); event.stopImmediatePropagation(); navigate(link); } });
   document.addEventListener("click", event => { const link = event.target.closest(".guide-toc a[href^='#']"); if (!link) return; event.preventDefault(); const targetId = link.getAttribute("href").slice(1); const hash = `#${targetId}`; if (location.hash !== hash) history.pushState({anchor: targetId}, "", hash); revealAnchor(document.getElementById(targetId)); });
   window.addEventListener("hashchange", () => { const id = operationForHash(); const tag = tagForHash(); if (id) revealOperation(id); if (tag) revealTag(tag); const doc = documentForHash(); if (doc) revealDocument(doc); const anchor = anchorForHash(); if (anchor) revealAnchor(anchor); }); window.addEventListener("popstate", () => { const id = operationForHash(); const tag = tagForHash(); if (id) revealOperation(id); if (tag) revealTag(tag); const doc = documentForHash(); if (doc) revealDocument(doc); const anchor = anchorForHash(); if (anchor) revealAnchor(anchor); });
   toggle?.addEventListener("click", () => { const open = menu.classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });

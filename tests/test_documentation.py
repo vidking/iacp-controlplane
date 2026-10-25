@@ -45,10 +45,16 @@ def test_openapi_31_valid_and_wire_contract_exact():
     schema = create_app().openapi()
     validate(schema)
     before = json.loads((ROOT/'docs/validation/phase-f/swagger/OPENAPI_ANTES.json').read_text())
-    assert transport_projection(before) == transport_projection(schema)
+    # G añade dos catálogos de lectura; el contrato previo permanece exacto.
+    historical = deepcopy(schema)
+    for path in ('/v1/plans', '/v1/images'):
+        historical['paths'].pop(path)
+    historical['components']['schemas'] = {key:value for key,value in historical['components']['schemas'].items()
+        if key in before['components']['schemas']}
+    assert transport_projection(before) == transport_projection(historical)
     assert schema['openapi'] == '3.1.0'
     assert schema['components']['securitySchemes'] == before['components']['securitySchemes']
-    assert len(schema['paths']) == len(before['paths'])
+    assert len(schema['paths']) == len(before['paths']) + 2
 
 
 def test_comparator_detects_validation_defaults_headers_security_and_codes():
@@ -128,4 +134,9 @@ def test_manual_separa_bloques_de_codigo_y_codigo_en_linea(client, auth):
     page = client.get('/docs', headers=auth).text
     assert '<pre><code>curl ' in page
     assert '<code>Idempotency-Key</code>' in page
-    assert 'profile_id' not in page
+    # G exige network.profile_id; el error histórico era profile_id en la raíz.
+    from html import unescape
+    import re
+    for block in re.findall(r'<pre><code>(.*?)</code></pre>', page, re.S):
+        if block.lstrip().startswith('{'):
+            assert 'profile_id' not in json.loads(unescape(block))
