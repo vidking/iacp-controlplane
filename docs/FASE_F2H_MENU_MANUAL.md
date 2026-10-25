@@ -127,7 +127,15 @@ esta corrección visual.
 
 ## Promoción
 
-La candidata aún no está integrada en `main` ni desplegada en el IACP Control
-Plane (VM 104). Después del merge debe repetirse `iacpctl env-promote`,
-`go_live.py` y toda la validación Playwright sobre HTTPS real. No se declara
-ningún SHA runtime nuevo en esta fase de preparación.
+El manual base `9c68d29` ya está integrado en `main` mediante PR #63, cuyo SHA
+actual es `e1a36b3`. El correctivo visual de este informe (`acca80c`) todavía
+está pendiente de un PR de seguimiento; por ello no se promocionó ni se declara
+un SHA runtime nuevo en el IACP Control Plane (VM 104). El runtime conocido
+continúa en `447899ee6240286fe1ac54d398f83ffda33ce3fa`.
+
+Comparación para el PR de seguimiento:
+`https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/compare/main...feat/fase-f2-manual-menu`
+
+Después del merge del correctivo debe repetirse `iacpctl env-promote`,
+`go_live.py` y toda la validación Playwright sobre HTTPS real, conservando el
+respaldo y el rollback vigentes.
