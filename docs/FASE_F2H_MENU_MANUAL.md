@@ -126,6 +126,22 @@ anterior por dependencia de PostgreSQL descartable permanecen registradas como
 no ejecutadas en la evidencia histórica; no se presentan como aprobadas por
 esta corrección visual.
 
+## Revalidación sobre `main` actualizado
+
+Fecha: 24 de octubre de 2026, 20:41, America/Costa_Rica.
+
+Se creó la rama de seguimiento `fix/fase-f2-bloques-codigo` desde
+`origin/main` en `e1a36b3`, sin repetir los cambios del PR #63. El SHA de la
+candidata de seguimiento es `34b1548`; contiene únicamente el correctivo de
+legibilidad, su regresión documental y estas evidencias.
+
+Playwright se repitió sobre la candidata con Chromium (claro, oscuro nativo y
+móvil) y Firefox 157 administrado. Los cuatro escenarios quedaron PASS, sin
+errores de página ni respuestas HTTP fallidas. La evidencia detallada está en
+`~/.local/state/iacp-fase-f2/playwright-f2h-followup-code-block.json` y las
+capturas correspondientes usan el prefijo
+`SWAGGER_CANDIDATE_F2H_FOLLOWUP_`.
+
 ## Promoción
 
 El manual base `9c68d29` ya está integrado en `main` mediante PR #63, cuyo SHA
