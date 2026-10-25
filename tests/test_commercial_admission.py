@@ -156,13 +156,13 @@ def test_physical_budget_and_ceph_health_are_admission_requirements(sessions,com
     from iacp.services.commercial import live_capacity
     from iacp.services.catalog import authorized_profile
     from iacp.catalog import resolve_plan
-    from iacp.lifecycle.proxmox import ProxmoxPower
+    from iacp.services.capacity_readonly import CapacityReadOnly
     def read(method,path):
         assert method=='GET'
         if '/storage/' in path:return {'active':1,'enabled':1,'type':'rbd','avail':(1 if kind=='disk' else 1024)*1024**3}
         if '/ceph/' in path:return {'health':{'status':'HEALTH_WARN' if kind=='ceph' else 'HEALTH_OK'}}
         return {'memory':{'free':(1 if kind=='memory' else 16)*1024**3},'cpuinfo':{'cpus':1 if kind=='cpu' else 16},'cpu':0.1}
-    monkeypatch.setattr(ProxmoxPower,'configured',lambda:SimpleNamespace(_request=read))
+    monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
     with sessions() as s:
         with pytest.raises(Conflict):live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
         assert not s.scalars(select(Instance)).all()

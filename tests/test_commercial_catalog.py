@@ -11,7 +11,7 @@ from openapi_spec_validator import validate
 from pydantic import ValidationError
 import pytest
 
-from iacp.catalog import CATALOG_VERSION, IMAGES, PLANS, catalog_digest, resolve_image, resolve_plan
+from iacp.catalog import CATALOG_VERSION, IMAGES, PENDING_IMAGES, PLANS, catalog_digest, resolve_image, resolve_plan
 from iacp.commercial_contract import CommercialInstanceCreate, EXAMPLES, require_safe_execution, resolved_resources
 from iacp.models import BOOTSTRAP_TENANT_ID
 from iacp.services.catalog import authorized_profile, plan_availability
@@ -40,7 +40,7 @@ def catalog_profile(tmp_path, monkeypatch):
 def test_four_exact_plans_and_immutable_catalog():
     assert [(p.plan_id,p.vcpus,p.memory_mb,p.disk_gb) for p in PLANS] == [
         ('kvm-1',1,2048,50),('kvm-2',2,4096,100),('kvm-3',4,8192,200),('kvm-4',8,16384,400)]
-    assert catalog_digest() == 'fa565a7f79f1ebd1c4bf2131c4cc0e0bd07e6598ea1e3c9f88f7082f919bd689'
+    assert catalog_digest() == 'ee0e5d26cc0ff7884c9a5655e336025c2a254fa71b07d5b2ada5b20374006791'
     with pytest.raises(AttributeError):
         PLANS[0].disk_gb = 20
     with pytest.raises(ValueError, match='PLAN_NOT_FOUND'):
@@ -48,6 +48,18 @@ def test_four_exact_plans_and_immutable_catalog():
     assert resolve_image('ubuntu-2404').template_vm_id == 29000
     with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
         resolve_image('debian-no-certificada')
+
+
+def test_ubuntu_2604_pending_is_internal_and_cannot_provision(client, auth, catalog_profile):
+    pending, = PENDING_IMAGES
+    assert (pending.image_id, pending.version, pending.template_vm_id, pending.status) == (
+        'ubuntu-2604', '26.04', 29001, 'pendiente')
+    with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
+        resolve_image('ubuntu-2604')
+    assert all(row['image_id'] != 'ubuntu-2604'
+        for row in client.get('/v1/images', headers=auth).json())
+    with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
+        resolved_resources(CommercialInstanceCreate.model_validate({**EXAMPLES[0], 'image_id': 'ubuntu-2604'}))
 
 
 @pytest.mark.parametrize('status',['pendiente','certificada','retirada'])

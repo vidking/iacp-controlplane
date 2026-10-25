@@ -62,7 +62,7 @@ def differences(a, b, path=''):
     return [] if a == b else [path]
 
 
-def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None):
+def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None, commercial_bootstrap=None):
     if not set(image_changes) <= IMAGE_CHANGES:
         raise ValueError('Only separately reviewed application image changes may be allowed')
     if set(candidate.get('services', {})) != SERVICES:
@@ -70,6 +70,8 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
     a, b = normalized(current), normalized(candidate)
     allowed = set(image_changes)
     promoted_paths=[]
+    from commercial_runtime import normalize_commercial
+    promoted_paths.extend(normalize_commercial(a, b, commercial_bootstrap))
     # Narrow opt-in for the lab's reviewed input key and exact TLS proxy IPs.
     # This never changes DB/Redis, tenant tokens, RBAC, worker isolation or ports.
     import ipaddress
@@ -102,7 +104,7 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
                 promoted_paths.append('/services/'+role+'/secrets/root_input_key')
     # Typed, reviewed promotion of exactly one readonly policy file and pinned
     # IaC source. Never tolerate arbitrary volume/env/security changes.
-    for role in ('api','terraform-worker'):
+    for role in ('api','terraform-worker','lifecycle-worker'):
         old_service,new_service=a['services'][role],b['services'][role]
         if profile_file:
             old_mounts=old_service.get('volumes',[])

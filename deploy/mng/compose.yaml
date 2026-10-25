@@ -34,12 +34,25 @@ secrets:
   root_input_key:
     name: iacp-controlplane_root_input_key
     file: ${IACP_ROOT_INPUT_KEY_PATH:-/dev/null}
+  bootstrap_aes_key:
+    name: iacp-controlplane_bootstrap_aes_key
+    file: ${IACP_BOOTSTRAP_AES_KEY_PATH:-/dev/null}
+  guest_bootstrap_ssh_key:
+    name: iacp-controlplane_guest_bootstrap_ssh_key
+    file: ${IACP_GUEST_BOOTSTRAP_SSH_KEY_PATH:-/dev/null}
+  admission_credentials:
+    name: iacp-controlplane_admission_credentials
+    file: ${IACP_ADMISSION_CREDENTIALS_PATH:-/dev/null}
 services:
   api:
     restart: unless-stopped
     command: null
     entrypoint: null
     environment:
+      IACP_CREATION_CONTRACT: ${IACP_CREATION_CONTRACT:-historical}
+      IACP_ADMISSION_CREDENTIALS_FILE: /run/secrets/admission_credentials
+      IACP_BOOTSTRAP_AES_KEY_FILE: /run/secrets/bootstrap_aes_key
+      IACP_BOOTSTRAP_SECRET_TTL_SECONDS: ${IACP_BOOTSTRAP_SECRET_TTL_SECONDS:-900}
       IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED: ${IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED:-0}
       IACP_ROOT_INPUT_KEY_FILE: /run/secrets/root_input_key
       IACP_TLS_PROXY_IPS: ${IACP_TLS_PROXY_IPS:-}
@@ -68,6 +81,10 @@ services:
       egress: null
       frontend: null
     secrets:
+    - source: bootstrap_aes_key
+      target: /run/secrets/bootstrap_aes_key
+    - source: admission_credentials
+      target: /run/secrets/admission_credentials
     - source: root_input_key
       target: /run/secrets/root_input_key
     - source: db_password
@@ -148,6 +165,7 @@ services:
     - --without-mingle
     entrypoint: null
     environment:
+      IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -163,6 +181,13 @@ services:
       backend: null
       egress: null
     read_only: true
+    volumes:
+    - type: bind
+      source: ${IACP_TF_PROFILES_PATH:-../profiles.json}
+      target: /run/config/profiles.json
+      read_only: true
+      bind:
+        create_host_path: false
     secrets:
     - source: db_password
       target: /run/secrets/db_password
@@ -306,6 +331,9 @@ services:
     command: null
     entrypoint: null
     environment:
+      IACP_BOOTSTRAP_AES_KEY_FILE: /run/secrets/bootstrap_aes_key
+      IACP_BOOTSTRAP_SECRET_TTL_SECONDS: ${IACP_BOOTSTRAP_SECRET_TTL_SECONDS:-900}
+      IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE: /run/secrets/guest_bootstrap_ssh_key
       IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED: ${IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED:-0}
       IACP_ROOT_INPUT_KEY_FILE: /run/secrets/root_input_key
       IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:?Explicit operating flag required}
@@ -332,6 +360,10 @@ services:
       egress: null
     read_only: true
     secrets:
+    - source: bootstrap_aes_key
+      target: /run/secrets/bootstrap_aes_key
+    - source: guest_bootstrap_ssh_key
+      target: /run/secrets/guest_bootstrap_ssh_key
     - source: root_input_key
       target: /run/secrets/root_input_key
     - source: db_password

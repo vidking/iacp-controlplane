@@ -125,7 +125,8 @@ def test_canonical_preserves_roles_private_ports_and_certifier_isolation():
     assert next(v for v in cert['volumes'] if v['target'] == '/var/lib/iacp/terraform')['read_only'] is True
     assert cert['environment']['IACP_KVM_LIFECYCLE_ENABLED'] == '0'
     life = c['services']['lifecycle-worker']
-    assert not life.get('volumes')
+    assert life['volumes'] == [{'type': 'bind', 'source': '${IACP_TF_PROFILES_PATH:-../profiles.json}',
+        'target': '/run/config/profiles.json', 'read_only': True, 'bind': {'create_host_path': False}}]
     assert {s['source'] for s in life['secrets']} == {'db_password', 'kvm_credentials'}
     assert all(v['external'] is True for v in c['volumes'].values())
 

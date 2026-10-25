@@ -1,0 +1,39 @@
+{
+  "estado": "PREPARADA_NO_ACTIVADA",
+  "fecha": "25/10/2026",
+  "zona": "America/Costa_Rica",
+  "capacidad": "Confirmada por Infraestructura según instrucción del responsable; sin nueva auditoría integral de Ceph",
+  "datastore_autorizado": "DS_CYBERFUEL",
+  "perfil": "lab-dhcp",
+  "tenant_existente": "00000000-0000-0000-0000-000000000001",
+  "reserva_historica_protegida": {
+    "vmid": 106,
+    "instances": 1,
+    "vcpus": 2,
+    "memory_mb": 2048,
+    "disk_gb": 20
+  },
+  "profile_limits": {
+    "max_live_instances": 1,
+    "max_vcpus": 2,
+    "max_memory_mb": 4096,
+    "max_disk_gb": 100,
+    "max_total_vcpus": 2,
+    "max_total_memory_mb": 4096,
+    "max_total_disk_gb": 100,
+    "max_concurrent_operations": 1
+  },
+  "commercial_limits": {
+    "00000000-0000-0000-0000-000000000001": {
+      "allowed_plans": ["kvm-1", "kvm-2"],
+      "max_instances": 2,
+      "max_vcpus": 4,
+      "max_memory_mb": 6144,
+      "max_disk_gb": 120,
+      "max_concurrent_operations": 1
+    }
+  },
+  "perfil_candidato_host": "/etc/iacp/terraform/profiles-comercial-g-20261025.candidate.json",
+  "sha256_perfil_candidato": "314627240877aea09b145ff6d49edb0c43d0dc9e051cde9a456b9879205c7ec1",
+  "activacion": "Solo mediante promoción revisada; el perfil y cuotas activos permanecen intactos"
+}
