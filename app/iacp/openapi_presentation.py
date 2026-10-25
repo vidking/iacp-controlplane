@@ -125,6 +125,15 @@ def present(schema):
                 elif status == '200' and identifier == 'getInstance':value = INSTANCE
                 elif status == '200' and identifier == 'listInstances':value = [INSTANCE]
                 elif status == '200' and identifier == 'listAuthorizedProfiles':value = [PROFILE]
+                elif status == '200' and identifier == 'listGoldenImages':
+                    # FastAPI elimina None en ejemplos anidados al generar su
+                    # modelo OpenAPI. Restaurar null explícitos ya validados por
+                    # ImageResponse para expresar capacidades no certificadas.
+                    from copy import deepcopy
+                    from .api.catalog import IMAGE_RESPONSE_EXAMPLE
+                    response_media['examples']={'inventario_pendiente':{
+                        'summary':'Cuatro imágenes; capacidad de ejemplo no certificada',
+                        'value':deepcopy(IMAGE_RESPONSE_EXAMPLE)}}
                 elif status == '200' and identifier == 'getInstancePower':
                     value = {'instance_id':IID,'power_state':'stopped','observed_at':'2026-10-27T09:02:00-06:00',
                         'os_boot':'unknown','guest_agent':'unknown','cloud_init':'unknown','accessible':'unknown',

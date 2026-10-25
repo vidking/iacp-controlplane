@@ -1,0 +1,1 @@
+{"fecha_local": "2026-10-25T02:58:15.184194-06:00", "alcance": "Funci\u00f3n candidata en memoria; no desplegada, sin Ceph global ni escrituras", "resultados": [{"disk_gb": 50, "barrera": "PASS_LECTURAS_BACKEND"}, {"disk_gb": 100, "barrera": "PASS_LECTURAS_BACKEND"}], "apply_ejecutado": false}

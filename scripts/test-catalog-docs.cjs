@@ -43,7 +43,22 @@ async function main() {
       await selectGuide('guia-crm');
       await expect(page.locator('#crm-catalogo-g')).toBeInViewport();
       const text = await page.locator('#guia-crm .guide-content').innerText();
-      for (const word of ['KVMHOST-54','kvm-1','kvm-4','AES-256-GCM','root_password','capacity_verified']) expect(text).toContain(word);
+      for (const word of ['KVMHOST-54','kvm-1','kvm-4','AES-256-GCM','root_password','capacity_verified',
+        'ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']) expect(text).toContain(word);
+      const images = await context.request.get('http://127.0.0.1:8765/v1/images',{
+        headers:{Authorization:'Bearer identidad-sintetica-solo-pruebas-documentales'}});
+      expect(images.status()).toBe(200);
+      const imageRows=await images.json();
+      expect(imageRows.map(row=>row.image_id)).toEqual(['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']);
+      for (const row of imageRows.slice(1)) {
+        expect(row.status).toBe('pendiente');expect(row.availability.available).toBe(false);
+        expect(row.root_access).toBe(null);expect(row.authorized).toBe(false);
+      }
+      const imageTable=page.locator('#guia-crm table').filter({hasText:'almalinux-10'});
+      await imageTable.scrollIntoViewIfNeeded();
+      await expect(imageTable.locator('tbody tr')).toHaveCount(4);
+      for(const row of await imageTable.locator('tbody tr').all()) await expect(row).toBeInViewport({ratio:1});
+      await page.screenshot({path:path.join(output,mode+'-imagenes.png')});
       const code = page.locator('#guia-crm pre').filter({hasText:'"plan_id": "kvm-2"'});
       await code.scrollIntoViewIfNeeded();
       await expect(code).toBeInViewport();
@@ -67,7 +82,8 @@ async function main() {
       expect(contract.status()).toBe(200);
       expect((await contract.json()).openapi).toBe('3.1.0');
       expect(errors).toEqual([]);expect(external).toEqual([]);expect(mutations).toEqual([]);
-      results.push({mode,estado:'PASS',errors,external,mutations,style});
+      results.push({mode,estado:'PASS',errors,external,mutations,style,
+        imagenes:imageRows.map(row=>({image_id:row.image_id,status:row.status,available:row.availability.available}))});
     } finally { await browser.close(); }
   }
   const report={fecha:new Date().toLocaleString('es-CR',{timeZone:'America/Costa_Rica'}),

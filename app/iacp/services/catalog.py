@@ -1,6 +1,6 @@
 """Disponibilidad conservadora por tenant. Consultar no reserva capacidad."""
 import os
-from ..catalog import IMAGES, PLANS, resolve_image
+from ..catalog import IMAGES, PENDING_IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
 from .lab import usage
@@ -57,8 +57,9 @@ def plans_for(session, tenant_id):
             from .commercial import limits_for,quota,live_capacity
             from .bootstrap_secrets import configured_key,BootstrapSecretError
             from .instances import Conflict
-            reasons=[r for r in availability['reasons'] if r not in {
-                'PHYSICAL_CAPACITY_NOT_VERIFIED','COMMERCIAL_CONTRACT_NOT_ACTIVE'}]
+            # G usa derechos y presupuesto explícitos del tenant. Los topes del
+            # perfil histórico no definen ni reducen los productos comerciales.
+            reasons=[]
             verified=False
             try:
                 limits=limits_for(tenant_id)
@@ -66,6 +67,7 @@ def plans_for(session, tenant_id):
                 quota(session,tenant_id,limits,asdict(plan))
                 configured_key()
                 if p is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
+                if plan.disk_gb < p.settings.boot_disk.minimum_size_gb:raise Conflict('DISK_SHRINK_FORBIDDEN')
                 if p.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
                 if p.guest_initialization!='ubuntu-2404-lab-identity-v1':raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
                 live_capacity(session,p,plan);verified=True
@@ -80,7 +82,7 @@ def images_for(tenant_id,session=None):
     available_plans=(plans_for(session,tenant_id) if session is not None
         and os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else [])
     available=any(p['availability']['available'] for p in available_plans)
-    return [{"image_id": i.image_id, "operating_system": i.operating_system, "version": i.version,
+    result = [{"image_id": i.image_id, "operating_system": i.operating_system, "version": i.version,
              "status": i.status, "cloud_init": i.cloud_init, "qemu_guest_agent": i.qemu_guest_agent,
              "root_access": i.root_access, "ssh_access": i.ssh_access,
              "minimum_requirements": {"vcpus": i.minimum_vcpus, "memory_mb": i.minimum_memory_mb,
@@ -91,3 +93,11 @@ def images_for(tenant_id,session=None):
                  "reasons": (["TENANT_PROFILE_NOT_AUTHORIZED"] if not authorized else [])
                     + ([] if available else ['PHYSICAL_CAPACITY_NOT_VERIFIED'])}}
             for i in IMAGES]
+    result.extend({"image_id": i.image_id, "operating_system": i.operating_system,
+        "version": i.version, "status": i.status, "cloud_init": None,
+        "qemu_guest_agent": None, "root_access": None, "ssh_access": None,
+        "minimum_requirements": None, "compatible_plans": [], "authorized": False,
+        "availability": {"available": False, "capacity_verified": False,
+            "reasons": ["IMAGE_CERTIFICATION_PENDING"]}}
+        for i in PENDING_IMAGES)
+    return result

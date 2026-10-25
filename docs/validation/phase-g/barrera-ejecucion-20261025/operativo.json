@@ -1,0 +1,91 @@
+{
+  "fecha_local": "2026-10-25T02:23:34.085896-06:00",
+  "zona_horaria": "America/Costa_Rica",
+  "alcance": "Lecturas HTTPS desde el Terraform Worker existente; sin mutaciones",
+  "identidad": "iacp-provision@pve!terraform-lab",
+  "pool": "iacp-lab",
+  "miembros": [
+    104,
+    106,
+    29000,
+    29001,
+    29010,
+    29011
+  ],
+  "clonacion": {
+    "29000": {
+      "VM.Clone": 1,
+      "VM.Audit": 1
+    },
+    "29001": {
+      "VM.Clone": 1,
+      "VM.Audit": 1
+    },
+    "29010": {
+      "VM.Clone": 1,
+      "VM.Audit": 1
+    },
+    "29011": {
+      "VM.Clone": 1,
+      "VM.Audit": 1
+    }
+  },
+  "recursos_protegidos": {
+    "104": {},
+    "106": {
+      "VM.Audit": 0,
+      "VM.Allocate": 0,
+      "VM.PowerMgmt": 0
+    }
+  },
+  "nota_flags": "0 y 1 conceden el privilegio en el recurso exacto; no son negaciones",
+  "acl_excesivas": [
+    "Administrator en / para usuario y token",
+    "Administrator en /vms para usuario y token"
+  ],
+  "ceph": {
+    "http": 200,
+    "estado": "HEALTH_ERR",
+    "checks": [
+      "AUTH_INSECURE_CLIENT_KEY_TYPE",
+      "AUTH_INSECURE_KEYS_ALLOWED",
+      "AUTH_INSECURE_KEYS_CREATABLE",
+      "AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE",
+      "AUTH_INSECURE_SERVICE_KEY_TYPE",
+      "AUTH_INSECURE_SERVICE_TICKETS"
+    ]
+  },
+  "cambios_mng_aplicados": false,
+  "promocion_ejecutada": false,
+  "e2e_kvm_1": "BLOCKED",
+  "e2e_kvm_2": "BLOCKED",
+  "control_plane": {
+    "fecha_local": "2026-10-25T02:25:19.031382-06:00",
+    "esquema": "0011_crm_contract",
+    "operaciones_por_estado": {
+      "completed": 264,
+      "failed": 2
+    },
+    "locks_esperando": 0,
+    "api_imagen": "iacp/controlplane-api:fase-f2h-8a58db2",
+    "api_image_id": "sha256:8bfe4a02e4e38aadb738463309319f9dffc4e2465055bc37dd29ea9a055765a5",
+    "terraform_imagen": "iacp/terraform-worker:fase-f2h-8a58db2",
+    "terraform_image_id": "sha256:9da348a98ab299706aa0230fa70a9caf79b1dcd71af8cd3f8773d5f0e64d140b",
+    "nota_sha": "SHA estable vinculado al manifiesto e imágenes anteriores; no se infiere de una etiqueta OCI revision inexistente"
+  },
+  "capacity_ro": {
+    "fecha_local": "2026-10-25T02:25:57.591457-06:00",
+    "identidad": "iacp-admission@pve!capacity-ro",
+    "tls_verificado": true,
+    "GET /nodes/mng01/status": 200,
+    "GET /nodes/mng01/storage/DS_CYBERFUEL/status": 200,
+    "escritura": "No se repitió ninguna prueba de escritura en esta ejecución de solo lectura"
+  },
+  "barrera_candidata_lectura_real": {
+    "fecha_local": "2026-10-25T02:26:41.171692-06:00",
+    "resultado": "EXECUTION_CEPH_NOT_HEALTHY",
+    "apply_ejecutado": false,
+    "instalada_en_runtime": false,
+    "ejecucion": "Función candidata en memoria contra HTTPS real con identidad propia del worker"
+  }
+}

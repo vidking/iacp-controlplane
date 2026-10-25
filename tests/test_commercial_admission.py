@@ -142,6 +142,55 @@ def test_body_conflict_and_quota_keep_original_intent(sessions,commercial_config
         assert s.get(Instance,result.instance_id).disk_gb==50
 
 
+@pytest.mark.parametrize('plan_id', ['kvm-1','kvm-2','kvm-3','kvm-4'])
+def test_commercial_catalog_ignores_legacy_size_caps_but_requires_explicit_budget(
+        sessions, commercial_config, store, monkeypatch, plan_id):
+    from iacp.catalog import resolve_plan
+    raw=json.loads(commercial_config.read_text());profile=raw['profiles']['lab-dhcp']
+    profile.update(max_vcpus=4,max_memory_mb=4096,max_disk_gb=40,
+        max_total_vcpus=8,max_total_memory_mb=8192,max_total_disk_gb=80)
+    commercial_config.write_text(json.dumps(raw))
+    from pathlib import Path
+    limits=Path(os.environ['IACP_COMMERCIAL_LIMITS_FILE'])
+    limits.write_text(json.dumps({'tenants':{BOOTSTRAP_TENANT_ID:{
+        'allowed_plans':['kvm-1','kvm-2','kvm-3','kvm-4'],'max_instances':1,
+        'max_vcpus':8,'max_memory_mb':16384,'max_disk_gb':400,'max_concurrent_operations':1}}}))
+    with sessions() as s:
+        result=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),specification(plan_id),
+            'catalog-test',lambda _:None,store,capacity=lambda *_:None)
+        instance=s.get(Instance,result.instance_id);plan=resolve_plan(plan_id)
+        assert (instance.vcpus,instance.memory_mb,instance.disk_gb)==(plan.vcpus,plan.memory_mb,plan.disk_gb)
+        assert instance.self_service_policy_id is None
+
+
+def test_commercial_reservation_rejects_resources_outside_catalog(sessions,commercial_config):
+    from uuid import uuid4
+    from iacp.terraform.config import PlanError
+    with sessions() as s:
+        instance=Instance(id=str(uuid4()),tenant_id=BOOTSTRAP_TENANT_ID,name='invalid-shape',
+            image='ubuntu-2404',vcpus=3,memory_mb=4096,disk_gb=100,network_profile='lab-dhcp',
+            commercial_revision='commercial-g',status='pending',executor='terraform')
+        with pytest.raises(PlanError,match='RESOURCES_OUTSIDE_CATALOG'):
+            profiles.reserve_profile(s,instance)
+
+
+def test_commercial_availability_uses_tenant_budget_instead_of_legacy_caps(
+        sessions,commercial_config,monkeypatch):
+    from iacp.services.catalog import plans_for
+    from iacp.services import commercial,bootstrap_secrets
+    raw=json.loads(commercial_config.read_text());raw['profiles']['lab-dhcp'].update(
+        max_vcpus=4,max_memory_mb=4096,max_disk_gb=40,max_total_disk_gb=80)
+    commercial_config.write_text(json.dumps(raw))
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    monkeypatch.setattr(bootstrap_secrets,'configured_key',lambda:b'x'*32)
+    monkeypatch.setattr(commercial,'live_capacity',lambda *_:None)
+    with sessions() as s:
+        rows=plans_for(s,BOOTSTRAP_TENANT_ID)
+    assert all(row['availability']['available'] for row in rows[:2])
+    assert all(not row['availability']['available'] and
+        'COMMERCIAL_PLAN_NOT_AUTHORIZED' in row['availability']['reasons'] for row in rows[2:])
+
+
 def test_commercial_password_adapter_is_forbidden_even_if_legacy_data_corrupted():
     from iacp.terraform.config import Allocation,PlanError
     from tests.test_terraform import allocation_data
@@ -151,8 +200,8 @@ def test_commercial_password_adapter_is_forbidden_even_if_legacy_data_corrupted(
     with pytest.raises(PlanError,match='COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN'):allocation.variables(data)
 
 
-@pytest.mark.parametrize('kind',['disk','memory','cpu','ceph'])
-def test_physical_budget_and_ceph_health_are_admission_requirements(sessions,commercial_config,monkeypatch,kind):
+@pytest.mark.parametrize('kind',['disk','memory','cpu'])
+def test_physical_budget_is_an_admission_requirement(sessions,commercial_config,monkeypatch,kind):
     from iacp.services.commercial import live_capacity
     from iacp.services.catalog import authorized_profile
     from iacp.catalog import resolve_plan
@@ -160,12 +209,31 @@ def test_physical_budget_and_ceph_health_are_admission_requirements(sessions,com
     def read(method,path):
         assert method=='GET'
         if '/storage/' in path:return {'active':1,'enabled':1,'type':'rbd','avail':(1 if kind=='disk' else 1024)*1024**3}
-        if '/ceph/' in path:return {'health':{'status':'HEALTH_WARN' if kind=='ceph' else 'HEALTH_OK'}}
+        assert '/ceph/' not in path
         return {'memory':{'free':(1 if kind=='memory' else 16)*1024**3},'cpuinfo':{'cpus':1 if kind=='cpu' else 16},'cpu':0.1}
     monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
     with sessions() as s:
         with pytest.raises(Conflict):live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
         assert not s.scalars(select(Instance)).all()
+
+
+def test_capacity_read_identity_does_not_need_global_ceph_access(sessions,commercial_config,monkeypatch):
+    from iacp.services.commercial import live_capacity
+    from iacp.services.catalog import authorized_profile
+    from iacp.catalog import resolve_plan
+    from iacp.services.capacity_readonly import CapacityReadOnly
+    calls=[]
+    def read(method,path):
+        assert method=='GET'
+        calls.append(path)
+        if '/storage/' in path:
+            return {'active':1,'enabled':1,'type':'rbd','avail':1024*1024**3}
+        assert path.endswith('/status') and '/ceph/' not in path
+        return {'memory':{'free':16*1024**3},'cpuinfo':{'cpus':16},'cpu':0.1}
+    monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
+    with sessions() as session:
+        live_capacity(session,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
+    assert len(calls)==2
 
 
 def test_commercial_openapi_and_runtime_keep_old_post_until_explicit_transition(monkeypatch):
