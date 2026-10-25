@@ -30,16 +30,18 @@
   }
   function revealDocument(documentId) {
     const target = document.getElementById(documentId); if (!target) return false;
-    if (target.tagName === "DETAILS") target.open = true;
+    const panel = target.tagName === "DETAILS" ? target : target.querySelector(":scope > details");
+    if (panel) panel.open = true;
     const offset = (document.querySelector(".masthead")?.offsetHeight || 88) + 16;
-    window.scrollTo({top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - offset), behavior: "smooth"});
+    const heading = panel?.querySelector(".guide-content") || panel || target;
+    window.scrollTo({top: Math.max(0, heading.getBoundingClientRect().top + window.scrollY - offset), behavior: "smooth"});
     closeMenu(); return true;
   }
   function navigate(link) {
     const operationId = link.dataset.operationId;
     if (operationId) { const hash = link.getAttribute("href"); if (location.hash !== hash) history.pushState({operationId}, "", hash); revealOperation(operationId); return; }
     const target = document.getElementById(link.dataset.docTarget); if (!target) return;
-    const hash = `#${link.dataset.docTarget}`; if (location.hash !== hash) history.pushState({}, "", hash); const offset = (document.querySelector(".masthead")?.offsetHeight || 88) + 16; window.scrollTo({top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - offset), behavior: "smooth"}); closeMenu();
+    const hash = `#${link.dataset.docTarget}`; if (location.hash !== hash) history.pushState({}, "", hash); revealDocument(link.dataset.docTarget);
   }
   window.ui = SwaggerUIBundle({url: document.body.dataset.schema, dom_id: "#swagger-ui", deepLinking: true, docExpansion: "list", displayRequestDuration: true, persistAuthorization: false, tryItOutEnabled: false, validatorUrl: null, defaultModelsExpandDepth: -1, presets: [SwaggerUIBundle.presets.apis], layout: "BaseLayout", operationsSorter: (a, b) => { const rank = o => { const i = priority.indexOf(o.getIn(["operation", "operationId"]) || o.get("operationId")); return i < 0 ? 100 : i; }; return rank(a) - rank(b) || a.get("path").localeCompare(b.get("path")); }, onComplete: () => { new MutationObserver(() => { filter(); const id = operationForHash(); if (id) revealOperation(id); const doc = documentForHash(); if (doc) revealDocument(doc); }).observe(document.getElementById("swagger-ui"), {childList: true, subtree: true}); filter(); const id = operationForHash(); if (id) revealOperation(id); const doc = documentForHash(); if (doc) revealDocument(doc); }});
   search.addEventListener("input", filter);
