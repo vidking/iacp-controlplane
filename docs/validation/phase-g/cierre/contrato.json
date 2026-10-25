@@ -1,0 +1,27 @@
+{
+  "fecha": "24/10/2026 23:54 America/Costa_Rica",
+  "base_sha": "29aec3e5b2ad9b09460d8ec63b54cbd162d16bd1",
+  "openapi": "3.1.0",
+  "rutas_iguales": true,
+  "operation_id": "createInstance",
+  "parametros_idempotencia_iguales": true,
+  "solicitud_historica": {
+    "$ref": "#/components/schemas/InstanceCreate"
+  },
+  "solicitud_comercial": {
+    "$ref": "#/components/schemas/CommercialInstanceCreate"
+  },
+  "obligatorios_comerciales": [
+    "name",
+    "plan_id",
+    "image_id",
+    "network",
+    "access",
+    "commercial_context"
+  ],
+  "codigos_respuesta_iguales": true,
+  "schema_202_igual": true,
+  "cambio_respuesta_lectura": "commercial_context admite OrderContext sin inventar customer_id; contexto historico conservado",
+  "estado": "NO_GO_E2E_Y_CAPACIDAD",
+  "runtime_sin_promocion": "8a58db244ec1e9cd1a0d627b21e086548489e75d"
+}

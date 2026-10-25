@@ -1,0 +1,22 @@
+{
+  "estado": "PROPUESTA_NO_ACTIVAR",
+  "motivo": "Sin evidencia verificable de datastore/Ceph; la identidad actual recibe POWER_PERMISSION_DENIED",
+  "fecha": "2026-10-24",
+  "zona": "America/Costa_Rica",
+  "tenants": {},
+  "cuota_propuesta_para_pruebas_secuenciales": {
+    "allowed_plans": ["kvm-1", "kvm-2"],
+    "max_instances": 1,
+    "max_vcpus": 2,
+    "max_memory_mb": 4096,
+    "max_disk_gb": 100,
+    "max_concurrent_operations": 1
+  },
+  "condiciones_previas": [
+    "Capacidad física y reservas de MNG verificadas con identidad autorizada",
+    "DS_CYBERFUEL activo y Ceph saludable, con presupuesto suficiente",
+    "Perfil lab-dhcp revisado para permitir hasta 100 GiB sin reducir discos existentes",
+    "Identidad SSH de bootstrap autorizada y clave AES de 32 bytes inyectadas como secretos",
+    "Entorno candidato aislado y recuperación/cleanup certificados"
+  ]
+}

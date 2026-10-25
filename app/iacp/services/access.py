@@ -71,6 +71,10 @@ def admit_access(spec, tenant_id):
 
 
 def request_verification(session, instance, principal, key, publish):
+    if getattr(instance,'commercial_revision',None):
+        from .commercial_bootstrap import request
+        from ..api.dependencies import get_commercial_bootstrap_publisher
+        return request(session,instance,principal,key,get_commercial_bootstrap_publisher())
     from ..lifecycle.service import managed_target, response
     if not instance.initial_access_ciphertext:
         raise Conflict('ROOT_ACCESS_NOT_REQUESTED')
@@ -213,6 +217,10 @@ def after_initialization(identifier, sessions):
         if not row or row.status != 'completed':
             return
         instance = session.get(Instance, row.instance_id)
+        if instance.commercial_revision:
+            from .commercial_bootstrap import after_initialization as bootstrap
+            bootstrap(instance.id,sessions)
+            return
         if not instance.initial_access_ciphertext:
             return
         creation = session.scalar(select(Operation).where(Operation.instance_id == instance.id, Operation.kind == 'instance.create'))

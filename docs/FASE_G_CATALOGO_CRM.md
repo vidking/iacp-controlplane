@@ -1,5 +1,10 @@
 # Fase G: catálogo KVMHOST-54 y transición del contrato CRM
 
+> Documento histórico de la implementación parcial. Actualización del
+> 24/10/2026, America/Costa_Rica: consultar el
+> [cierre de código y preparación](FASE_G_CIERRE_PREPARACION.md) para el estado
+> candidato posterior. Las observaciones originales se conservan como evidencia.
+
 Fecha de auditoría: 24/10/2026, America/Costa_Rica.
 
 Estado: **implementación parcial candidata; no fusionar ni promocionar el cambio

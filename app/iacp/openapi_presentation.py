@@ -97,6 +97,13 @@ def present(schema):
                 media.setdefault('examples', {})['crm_sintetico'] = {
                     'summary': 'Ejemplo sintético; sustituir referencias por recursos autorizados',
                     'value': CREATION if identifier == 'createInstance' else {}}
+                if identifier=='createInstance' and media.get('schema',{}).get('$ref','').endswith('/CommercialInstanceCreate'):
+                    from .commercial_contract import EXAMPLES
+                    operation['summary']='Crear una KVM mediante plan_id'
+                    operation['description']='Admisión automática autenticada: plan, imagen, red, cuota y capacidad. '
+                    operation['description']+='Contraseña por HTTPS y Redis AES-256-GCM efímero; nunca plan/state. Un 202 exige seguimiento de operación e inicialización.'
+                    media['examples']={f'kvm_{i}':{'summary':f'KVM {i}; reemplazar contraseña ilustrativa','value':e}
+                        for i,e in enumerate(EXAMPLES,1)}
             for status, response in operation.get('responses', {}).items():
                 labels = {'200':'Consulta completada', '201':'Autorización o propuesta registrada',
                     '202':'Intención admitida; seguir operation_id hasta resultado terminal',

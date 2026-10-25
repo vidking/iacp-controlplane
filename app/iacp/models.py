@@ -69,6 +69,7 @@ class Instance(Base):
     start_on_create: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     initial_access_ciphertext: Mapped[str | None] = mapped_column(Text)
     initial_access_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    commercial_revision: Mapped[str | None] = mapped_column(String(32))
     access_verification: Mapped[dict | None] = mapped_column(JSON)
     network_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="static", server_default="static")
     ip_addresses: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list, server_default=text("'[]'"))
@@ -90,7 +91,7 @@ class Instance(Base):
     @property
     def access(self):
         return ({'username': 'root', **(self.access_verification or {'status': 'pending'})}
-            if self.initial_access_ciphertext else None)
+            if self.initial_access_ciphertext or self.commercial_revision else None)
 
     @property
     def infrastructure_kind(self) -> str:
@@ -105,6 +106,24 @@ class Instance(Base):
     @property
     def job_id(self) -> str:
         return self.creation.job.id
+
+
+class CommercialIntent(Base):
+    """Metadatos G: nunca contraseña ni ciphertext; referencias efímeras opacas."""
+    __tablename__ = 'commercial_intents'
+    instance_id: Mapped[str] = mapped_column(ForeignKey('instances.id'), primary_key=True)
+    revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    image_id: Mapped[str] = mapped_column(String(63), nullable=False)
+    catalog_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    specification: Mapped[dict] = mapped_column(JSON, nullable=False)
+    execution_binding: Mapped[str | None] = mapped_column(String(64))
+    secret_reference: Mapped[str | None] = mapped_column(String(43))
+    bootstrap_status: Mapped[str] = mapped_column(String(32), nullable=False, default='pending')
+    bootstrap_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bootstrap_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
 
 
 class Operation(Base):

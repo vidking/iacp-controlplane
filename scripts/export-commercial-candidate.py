@@ -3,6 +3,7 @@
 import argparse
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -14,7 +15,13 @@ from iacp.main import create_app
 
 
 def candidate_contract():
-    contract = deepcopy(create_app().openapi())
+    previous=os.environ.get('IACP_CREATION_CONTRACT')
+    try:
+        os.environ['IACP_CREATION_CONTRACT']='commercial-g'
+        contract = deepcopy(create_app().openapi())
+    finally:
+        if previous is None:os.environ.pop('IACP_CREATION_CONTRACT',None)
+        else:os.environ['IACP_CREATION_CONTRACT']=previous
     schema = CommercialInstanceCreate.model_json_schema(ref_template="#/components/schemas/{model}")
     definitions = schema.pop("$defs", {})
     contract["components"]["schemas"].update(definitions)
@@ -26,9 +33,9 @@ def candidate_contract():
             "value": example} for n, example in enumerate(EXAMPLES, 1)}}
     operation["description"] = ("Revisión candidata incompatible de creación: plan_id, image_id y network.profile_id. "
         "Sin tamaños libres ni UUID de política. Idempotency-Key obligatorio; 202 conserva identificadores. "
-        "NO SERVIDA: requiere entrega root fuera de PostgreSQL/plan/state, admisión interna y consumidores migrados.")
+        "Redis AES-256-GCM efímero y bootstrap SSH sin contraseña en plan/state. NO DESPLEGADA: falta E2E y capacidad verificable.")
     contract["x-iacp-creation-revision"] = "fase-g-candidata"
-    contract["x-iacp-deployment-status"] = "BLOCKED_G6_Y_MIGRACION"
+    contract["x-iacp-deployment-status"] = "NO_GO_E2E_Y_CAPACIDAD"
     return contract
 
 

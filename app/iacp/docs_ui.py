@@ -1,6 +1,7 @@
 """Presentación local de Swagger; reutiliza autenticación y rutas existentes."""
 from functools import lru_cache
 from html import escape
+import os
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -34,4 +35,10 @@ def documentation(request, version, *, administrative=False):
     html = template().replace('{{base}}', base).replace('{{schema}}', schema)
     html = html.replace('{{version}}', escape(version))
     html = html.replace('{{scope}}', 'Administración autorizada' if administrative else 'Integración CRM · MVP KVM')
+    html = html.replace('{{creation_status}}', ('Contrato comercial G seleccionado; certificación física pendiente.'
+        if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else
+        'Revisión comercial candidata; creación todavía bloqueada en el runtime histórico.'))
+    from alembic.script import ScriptDirectory
+    from .migrations import alembic_config
+    html=html.replace('{{schema_head}}',escape(ScriptDirectory.from_config(alembic_config()).get_current_head()))
     return HTMLResponse(html)

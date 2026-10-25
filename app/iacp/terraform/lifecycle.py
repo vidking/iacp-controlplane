@@ -97,7 +97,7 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
                 if actual != settings_for(profile, allocation.node_name).model_dump():
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
-            if instance.self_service_policy_id:
+            if instance.self_service_policy_id or instance.commercial_revision:
                 from ..services.lab import member
                 member(session,instance,"create",current_profiles=True)
             execution.allocation = allocation.model_dump()

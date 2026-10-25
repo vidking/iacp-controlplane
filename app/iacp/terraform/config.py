@@ -145,6 +145,8 @@ class Allocation(MachineSettings):
         values.update(vm_name=instance.name, cpu_cores=instance.vcpus, memory_mb=instance.memory_mb)
         result = {"environment": self.environment, "allowed_nodes": self.allowed_nodes, "instance": values}
         if getattr(instance, 'initial_access_ciphertext', None):
+            if getattr(instance,'commercial_revision',None):
+                raise PlanError('COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN')
             from ..services.access import decrypt_password
             if self.cloudinit_username != 'root' or self.environment != 'lab':
                 raise PlanError('ROOT_ACCESS_PROFILE_CHANGED')

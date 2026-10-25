@@ -205,10 +205,13 @@ def test_exception_responses_do_not_reveal_engine(client, auth, application, fai
     assert 'private' not in response.text
 
 
-def test_engine_state_workers_migrations_and_compose_are_byte_identical():
+def test_phase_g_core_changes_are_explicit_and_other_invariants_remain_identical():
     checksums = json.loads((ROOT / 'docs/contracts/provisioning-invariants.json').read_text())
+    reviewed=json.loads((ROOT/'docs/contracts/phase-g-core-reviewed.json').read_text())
+    assert set(reviewed)=={'app/iacp/models.py','app/iacp/terraform/apply.py','app/iacp/terraform/config.py',
+        'app/iacp/terraform/deletion.py','app/iacp/terraform/lifecycle.py','app/iacp/terraform/worker.py'}
     for path, digest in checksums.items():
-        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest, path
+        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == reviewed.get(path,digest), path
 
 
 def test_business_http_and_models_preserve_the_baseline_except_agreed_service_names():
@@ -229,7 +232,7 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
             for field in ['operationId', 'parameters', 'requestBody', 'responses', 'security']:
                 assert operation.get(field) == original.get(field), (method, path, field)
     old_models, new_models = (s['components']['schemas'] for s in [before, after])
-    assert set(new_models) - set(old_models) == {'Availability','PlanResponse','ImageResponse','MinimumRequirements'}
+    assert set(new_models) - set(old_models) == {'Availability','PlanResponse','ImageResponse','MinimumRequirements','OrderContext'}
     for name, model in new_models.items():
         if name not in old_models:
             continue
@@ -238,6 +241,11 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
             for field in ['executor', 'provisioning_service']:
                 original['properties'].pop(field)
                 current['properties'].pop(field)
+        if name=='InstanceResponse':
+            variants=current['properties']['commercial_context']['anyOf']
+            assert {'$ref':'#/components/schemas/OrderContext'} in variants
+            variants.remove({'$ref':'#/components/schemas/OrderContext'})
+            assert current['properties']['commercial_context'].pop('title')=='Commercial Context'
         if name == 'PowerRequest':
             # Documentation wording is neutral; the empty, strict body is exact.
             original['description'] = current['description']

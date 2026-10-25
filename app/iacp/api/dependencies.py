@@ -58,6 +58,11 @@ def get_autostart_publisher():
     return lambda identifier: continue_instance_start.apply_async(args=[identifier], queue='lifecycle')
 
 
+def get_commercial_bootstrap_publisher():
+    from ..terraform.worker import bootstrap_root
+    return lambda identifier: bootstrap_root.apply_async(args=[identifier],queue='terraform')
+
+
 def get_power_client():
     from ..lifecycle.proxmox import ProxmoxPower
     return ProxmoxPower.configured

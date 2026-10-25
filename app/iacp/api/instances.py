@@ -41,6 +41,7 @@ def post_instance(
     except Conflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
     except QueueUnavailable:
+        request.state.admission_committed=True
         raise HTTPException(status_code=503, detail="Queue unavailable; repeat with the same Idempotency-Key to retrieve the operation") from None
 
 

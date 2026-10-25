@@ -51,6 +51,10 @@ def test_openapi_31_valid_and_wire_contract_exact():
         historical['paths'].pop(path)
     historical['components']['schemas'] = {key:value for key,value in historical['components']['schemas'].items()
         if key in before['components']['schemas']}
+    widened=historical['components']['schemas']['InstanceResponse']['properties']['commercial_context']['anyOf']
+    assert {'$ref':'#/components/schemas/OrderContext'} in widened
+    widened.remove({'$ref':'#/components/schemas/OrderContext'})
+    assert historical['components']['schemas']['InstanceResponse']['properties']['commercial_context'].pop('title')=='Commercial Context'
     assert transport_projection(before) == transport_projection(historical)
     assert schema['openapi'] == '3.1.0'
     assert schema['components']['securitySchemes'] == before['components']['securitySchemes']

@@ -1,0 +1,43 @@
+"""POST comercial activado únicamente en la ventana de migración declarada."""
+from typing import Annotated
+import json
+import logging
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from sqlalchemy.orm import Session
+
+from ..commercial_contract import CommercialInstanceCreate, EXAMPLES
+from ..db import get_session
+from ..schemas import ErrorResponse, InstanceAccepted
+from ..security import Principal,authorize_write,request_uses_https
+from ..services.bootstrap_secrets import BootstrapSecretError
+from ..services.commercial import create
+from ..services.instances import Conflict
+from ..services.jobs import QueueUnavailable
+from .dependencies import get_instance_publisher
+
+router=APIRouter(tags=['instances'])
+
+
+@router.post('/v1/instances',status_code=202,response_model=InstanceAccepted,operation_id='createInstance',
+    summary='Crear una KVM del catálogo comercial',
+    description='Admisión automática por tenant, plan, imagen, red, cuota y capacidad. '
+        'Sin tamaños libres ni aprobación humana individual. Contraseña solo por HTTPS y Redis cifrado efímero. '
+        'Idempotency-Key conserva los mismos identificadores ante una repetición idéntica.',
+    responses={code:{'model':ErrorResponse} for code in [401,403,409,503]})
+def post(request:Request,spec:CommercialInstanceCreate,
+    key:Annotated[str,Header(alias='Idempotency-Key',min_length=1,max_length=128,pattern=r'^[A-Za-z0-9._:-]+$')],
+    principal:Annotated[Principal,Depends(authorize_write)],session:Annotated[Session,Depends(get_session)],
+    publish=Depends(get_instance_publisher)):
+    if not request_uses_https(request):raise HTTPException(422,'ROOT_ACCESS_REQUIRES_HTTPS')
+    try:return create(session,principal,spec,key,publish)
+    except Conflict as e:
+        code=str(e)
+        safe=code if code.startswith(('COMMERCIAL_','WAN_STATIC_')) else 'COMMERCIAL_REQUEST_REJECTED'
+        logging.getLogger('uvicorn.error').info(json.dumps({'event':'admission_policy_rejected',
+            'request_id':getattr(request.state,'request_id',None),'reason':safe,'executed':False}))
+        raise HTTPException(409,code) from None
+    except ValueError:raise HTTPException(409,'COMMERCIAL_PRODUCT_NOT_AVAILABLE') from None
+    except BootstrapSecretError as e:raise HTTPException(503,str(e)) from None
+    except QueueUnavailable:
+        request.state.admission_committed=True
+        raise HTTPException(503,'COMMERCIAL_DISPATCH_UNCONFIRMED; repeat the same key') from None

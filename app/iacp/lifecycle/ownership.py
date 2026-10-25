@@ -40,7 +40,7 @@ def instance_ownership(session, instance, approval):
         raise PowerError("POWER_OWNERSHIP_UNAVAILABLE")
     scope = os.environ.get("IACP_LIFECYCLE_INSTANCE_IDS", "")
     delegated = False
-    if instance.self_service_policy_id:
+    if instance.self_service_policy_id or getattr(instance,'commercial_revision',None):
         from ..services.lab import member
         from ..services.instances import Conflict
         try:
