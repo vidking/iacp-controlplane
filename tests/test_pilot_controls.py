@@ -25,7 +25,9 @@ def promotion(driver,tmp_path):
     op.evidence=Mock();op.approve=Mock(return_value={'reference':'lab-test'})
     op.preflight=Mock();op.verify=Mock();op.up=Mock();op.exec_python=Mock(return_value='PASS')
     allocations=tmp_path/'allocations.json';allocations.write_text('{}')
-    op.compose=Mock(return_value=json.dumps({'services':{'terraform-worker':{'volumes':[{'source':str(allocations),'target':'/run/config/allocations.json'}]}}}))
+    op.compose=Mock(return_value=json.dumps({'services':{
+        'api':{'environment':{'IACP_CREATION_CONTRACT':'historical'}},
+        'terraform-worker':{'volumes':[{'source':str(allocations),'target':'/run/config/allocations.json'}]}}}))
     return op,env,allocations
 
 

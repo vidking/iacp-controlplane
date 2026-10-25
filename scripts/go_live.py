@@ -367,12 +367,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 '--cap-drop','ALL','--security-opt','no-new-privileges','--memory','256m','--cpus','1','--pids-limit','32',
                 '--mount','type=bind,source='+key_path+',target=/key,readonly',services['api']['image'],'python','-c',
                 "from pathlib import Path; from cryptography.fernet import Fernet; Fernet(Path('/key').read_bytes().strip()); print('ROOT_INPUT_KEY_VALID')"])
-        lifecycle = services["lifecycle-worker"]
-        ca_target = lifecycle["environment"].get("IACP_KVM_CA_FILE")
-        ca_mounts = lifecycle.get("volumes", [])
-        require(all(item["type"] == "bind" and item["target"] == ca_target and item.get("read_only") is True for item in ca_mounts), "Lifecycle may mount only its public CA readonly")
-        require({s["source"] for s in lifecycle["secrets"]} == {"db_password", "kvm_credentials"}
-                and lifecycle.get("read_only") is True, "Lifecycle isolation changed")
+        self.lifecycle_mount_targets(services['lifecycle-worker'])
         for role in ("api", "worker", "terraform-worker"):
             old_mounts = {m["Destination"]: m["Source"] for m in self.container(role)["Mounts"] if m["Destination"].startswith("/run/")}
             planned = self.planned_mounts(cfg, role)
@@ -416,6 +411,32 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(len(files) == 1 and Path(files[0]).parts[0] == "deploy"
                 and Path(files[0]).name == "compose.yaml" and (ROOT / files[0]).resolve().is_relative_to(ROOT / "deploy"), "One versioned canonical Compose required")
         return True
+
+    def lifecycle_mount_targets(self, service):
+        """Permitir el perfil público revisado; nunca secretos adicionales o escritura."""
+        require({s['source'] for s in service['secrets']} == {'db_password', 'kvm_credentials'}
+                and service.get('read_only') is True, 'Lifecycle isolation changed')
+        allowed = {'/run/secrets/db_password', '/run/secrets/kvm_credentials'}
+        ca = service['environment'].get('IACP_KVM_CA_FILE')
+        profile_target = service['environment'].get('IACP_TERRAFORM_PROFILES_FILE')
+        seen = set()
+        for mount in service.get('volumes', []):
+            target = mount['target']
+            require(mount['type'] == 'bind' and mount.get('read_only') is True
+                    and target not in seen, 'Unexpected or writable Lifecycle mount')
+            seen.add(target)
+            if profile_target and target == profile_target:
+                ref = self.m.get('profile_configuration', {})
+                require(target == '/run/config/profiles.json' and mount['source'] == ref.get('path')
+                        and not Path(mount['source']).is_symlink()
+                        and digest(mount['source']) == ref.get('sha256'),
+                        'Lifecycle profile differs from review')
+            else:
+                require(bool(ca) and target == ca, 'Unexpected Lifecycle mount')
+            allowed.add(target)
+        require(not profile_target or profile_target in seen, 'Lifecycle profile mount missing')
+        require(not ca or ca in seen, 'Lifecycle CA mount missing')
+        return allowed
 
     def review_commercial_configuration(self, cfg):
         """Validar material G6 antes de alterar entorno o detener la API."""
@@ -604,9 +625,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 require(values.get("IACP_ADMISSION_ENABLED") == str(admission), "Admission flag mismatch")
             if role == "lifecycle-worker":
                 require(not c["HostConfig"]["PortBindings"] and c["HostConfig"]["ReadonlyRootfs"], "Lifecycle container is not isolated")
-                allowed = {"/run/secrets/db_password", "/run/secrets/kvm_credentials"}
-                if values.get("IACP_KVM_CA_FILE"):
-                    allowed.add(values["IACP_KVM_CA_FILE"])
+                allowed = self.lifecycle_mount_targets(config['services'][role])
                 require(set(actual_mounts) == allowed, "Unexpected Lifecycle mount")
             self.evidence("running", {"role": role, "image": c["Image"], "mounts": [{"target": m["Destination"], "rw": m["RW"]} for m in c["Mounts"]]})
         pins = json.loads(self.exec_python("terraform-worker", "import json,subprocess\nfrom iacp.terraform.config import SOURCE_REVISION\nprint(json.dumps({'source':SOURCE_REVISION,'terraform':json.loads(subprocess.check_output(['terraform','version','-json']))['terraform_version']}))"))
@@ -752,11 +771,33 @@ with get_session_factory()() as s:
         review=self.operator_review('lab_self_service_review',change)
         require(review.get('environment')=='lab' and review.get('lab_network_authorized') is True,
                 'Explicit laboratory network review required')
-        require(bool(review.get('policies')), 'Independently approved policies required')
         ref=self.m['profile_configuration']
         require(review.get('profile_file')==ref and digest(ref['path'])==ref['sha256'], 'Lab profiles differ from review')
         require(review.get('resource_capacity_verified') is True, 'Lab resource capacity review required')
-        code='''import json
+        cfg=json.loads(self.compose('config','--format','json'))
+        commercial=cfg['services']['api']['environment'].get('IACP_CREATION_CONTRACT','historical')=='commercial-g'
+        if commercial:
+            require(review.get('contract')=='commercial-g' and isinstance(review.get('tenants'),dict)
+                    and bool(review['tenants']) and not review.get('policies'),
+                    'Reviewed commercial tenant limits required; historical policies are not products')
+            code='''import json
+from iacp.db import get_session_factory
+from iacp.models import Tenant
+from iacp.services.commercial import limits_for
+from iacp.services.catalog import authorized_profile
+with get_session_factory()() as s:
+ for identifier,expected in json.loads(__COMMERCIAL_TENANTS__).items():
+  tenant=s.get(Tenant,identifier)
+  assert tenant and tenant.active
+  assert limits_for(identifier).model_dump()==expected
+  profile=authorized_profile(identifier)
+  assert profile and profile.settings.environment=='lab' and profile.settings.network_mode=='dhcp'
+  assert profile.guest_initialization=='ubuntu-2404-lab-identity-v1' and not profile.root_password_bootstrap
+print('COMMERCIAL_TENANT_LIMITS_VERIFIED')
+'''.replace('__COMMERCIAL_TENANTS__',repr(json.dumps(review['tenants'])))
+        else:
+            require(bool(review.get('policies')), 'Independently approved policies required')
+            code='''import json
 from datetime import timezone
 from iacp.db import get_session_factory
 from iacp.models import LabPolicy,utcnow
@@ -780,7 +821,9 @@ print('INDEPENDENT_LAB_POLICIES_VERIFIED')
             self.flags(admission=0,lifecycle=0,deletion=0,disposable_ids=[],lifecycle_ids=[],lab_self_service=0)
             self.up('api','terraform-worker','lifecycle-worker')
             raise
-        self.evidence('lab-self-service-activated',{'policies':review['policies'],'historical_instances_authorized':False})
+        self.evidence('lab-self-service-activated',{'policies':review.get('policies',[]),
+            'commercial_tenants':list(review.get('tenants',{})) if commercial else [],
+            'historical_instances_authorized':False})
 
     def admit(self):
         change = self.approve('enable-admission')
