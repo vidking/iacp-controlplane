@@ -1,0 +1,211 @@
+ Network iacp-g-dependencias-tests_test Creating
+ Network iacp-g-dependencias-tests_test Creating
+ Network iacp-g-dependencias-tests_test Created
+ Network iacp-g-dependencias-tests_test Created
+ Container iacp-g-dependencias-tests-test-redis-1 Creating
+ Container iacp-g-dependencias-tests-test-db-1 Creating
+ Container iacp-g-dependencias-tests-test-db-1 Created
+ Container iacp-g-dependencias-tests-test-redis-1 Created
+ Container iacp-g-dependencias-tests-test-redis-1 Starting
+ Container iacp-g-dependencias-tests-test-db-1 Starting
+ Container iacp-g-dependencias-tests-test-redis-1 Started
+ Container iacp-g-dependencias-tests-test-db-1 Started
+ Image iacp-g-dependencias-tests-tests Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 610B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 991B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/hashicorp/terraform:1.16.6
+#3 DONE 0.0s
+
+#4 [internal] load metadata for docker.io/library/python:3.12-slim
+#4 DONE 0.7s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 114B done
+#5 DONE 0.0s
+
+#6 [stage-1  1/15] FROM docker.io/library/python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+#6 resolve docker.io/library/python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 0.0s done
+#6 DONE 0.0s
+
+#7 [terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316
+#7 resolve docker.io/hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 0.0s done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 181.51kB 0.0s done
+#8 DONE 0.0s
+
+#9 [stage-1  5/15] RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [stage-1  6/15] RUN pip install --no-cache-dir -r app/requirements-dev.txt && groupadd -g 10001 iacp && useradd -u 10001 -g iacp -M iacp
+#10 CACHED
+
+#11 [stage-1  3/15] COPY --from=terraform-cli /bin/terraform /usr/local/bin/terraform
+#11 CACHED
+
+#12 [stage-1  2/15] WORKDIR /workspace
+#12 CACHED
+
+#13 [stage-1  4/15] COPY app/requirements*.txt ./app/
+#13 CACHED
+
+#14 [stage-1  7/15] RUN mkdir /test-tls && chown 10001:10001 /test-tls
+#14 CACHED
+
+#15 [stage-1  8/15] COPY app ./app
+#15 DONE 0.1s
+
+#16 [stage-1  9/15] COPY tests ./tests
+#16 DONE 0.0s
+
+#17 [stage-1 10/15] COPY docs ./docs
+#17 DONE 0.1s
+
+#18 [stage-1 11/15] COPY scripts ./scripts
+#18 DONE 0.0s
+
+#19 [stage-1 12/15] COPY traefik ./traefik
+#19 DONE 0.0s
+
+#20 [stage-1 13/15] COPY deploy ./deploy
+#20 DONE 0.0s
+
+#21 [stage-1 14/15] COPY pytest.ini compose*.yaml ./
+#21 DONE 0.1s
+
+#22 [stage-1 15/15] RUN find /workspace -type d -exec chmod 0755 {} + && find /workspace -type f -exec chmod 0644 {} +     && chmod 0755 /workspace/scripts/iacpctl /workspace/scripts/test-certifier-workspace.sh
+#22 DONE 0.2s
+
+#23 exporting to image
+#23 exporting layers
+#23 exporting layers 0.4s done
+#23 exporting manifest sha256:f8f2970ab696d7419722eff33cbf76dff128176510d2f54039e4482d6ee2aa85 done
+#23 exporting config sha256:31b7f1f1300d42999e785ef17bb4ba599009475eb2171cafefaf6c10bd56ef46 done
+#23 exporting attestation manifest sha256:392ca46285e5fb9413be757528ba3bddbdca4e3c0bd9811a4de7db494f1bbca5 done
+#23 exporting manifest list sha256:0de224a18d7676fdfe58c4b0899380b5a4f34cd08b3e01ef4910cf4a1be0accf done
+#23 naming to docker.io/library/iacp-g-dependencias-tests-tests:latest done
+#23 unpacking to docker.io/library/iacp-g-dependencias-tests-tests:latest
+#23 unpacking to docker.io/library/iacp-g-dependencias-tests-tests:latest 0.2s done
+#23 DONE 0.6s
+
+#24 resolving provenance for metadata file
+#24 DONE 0.0s
+ Image iacp-g-dependencias-tests-tests Built
+ Container iacp-g-dependencias-tests-test-db-1 Waiting
+ Container iacp-g-dependencias-tests-test-redis-1 Waiting
+ Container iacp-g-dependencias-tests-test-redis-1 Healthy
+ Container iacp-g-dependencias-tests-test-db-1 Healthy
+ Container iacp-g-dependencias-tests-tests-run-0b50a08caa25 Creating
+ Container iacp-g-dependencias-tests-tests-run-0b50a08caa25 Created
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-8.3.5, pluggy-1.7.0
+rootdir: /workspace
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.15.1
+collected 1051 items
+
+tests/integration/test_apply.py ...                                      [  0%]
+tests/integration/test_commercial_admission.py ...                       [  0%]
+tests/integration/test_commercial_secret_store.py ..                     [  0%]
+tests/integration/test_deletion.py ......                                [  1%]
+tests/integration/test_dhcp_profiles.py ..                               [  1%]
+tests/integration/test_go_live.py ..                                     [  1%]
+tests/integration/test_instances.py ....                                 [  2%]
+tests/integration/test_lab_self_service.py ....                          [  2%]
+tests/integration/test_power.py .......                                  [  3%]
+tests/integration/test_power_certification.py ...                        [  3%]
+tests/integration/test_readonly_state.py ........                        [  4%]
+tests/integration/test_resilience.py ....                                [  4%]
+tests/integration/test_runtime.py ......                                 [  5%]
+tests/integration/test_terraform.py ....                                 [  5%]
+tests/test_api.py .............................                          [  8%]
+tests/test_apply.py ............................                         [ 10%]
+tests/test_capacity_audit.py ........                                    [ 11%]
+tests/test_capacity_readonly.py ..................                       [ 13%]
+tests/test_clone_permissions.py .......                                  [ 14%]
+tests/test_commercial_admission.py .........................             [ 16%]
+tests/test_commercial_bootstrap.py .......                               [ 17%]
+tests/test_commercial_catalog.py ....................................... [ 20%]
+...................                                                      [ 22%]
+tests/test_commercial_runtime.py ....                                    [ 23%]
+tests/test_compose.py .......                                            [ 23%]
+tests/test_config.py .                                                   [ 23%]
+tests/test_crm_contract.py ...................                           [ 25%]
+tests/test_deletion.py ..................................                [ 28%]
+tests/test_deletion_executor.py .........................                [ 31%]
+tests/test_development.py .......                                        [ 31%]
+tests/test_dhcp_gateway_postconditions.py ......                         [ 32%]
+tests/test_dhcp_profiles.py ........                                     [ 33%]
+tests/test_documentation.py .........                                    [ 34%]
+tests/test_evidence_secrets.py ..                                        [ 34%]
+tests/test_execution_health.py ..............................            [ 37%]
+tests/test_fenced_recovery_deploy.py ........                            [ 37%]
+tests/test_go_live.py ................                                   [ 39%]
+tests/test_guest_identity.py .............                               [ 40%]
+tests/test_historical_recovery.py ...................................... [ 44%]
+......                                                                   [ 44%]
+tests/test_instances.py ..................................               [ 48%]
+tests/test_internal_exposure.py .......................                  [ 50%]
+tests/test_lab_self_service.py .........................                 [ 52%]
+tests/test_migrations.py .........                                       [ 53%]
+tests/test_network_discovery.py .........                                [ 54%]
+tests/test_normalization.py .................                            [ 55%]
+tests/test_operation_batching.py ..                                      [ 56%]
+tests/test_pilot_controls.py .................                           [ 57%]
+tests/test_power.py ...............................                      [ 60%]
+tests/test_power_certification.py ...................................... [ 64%]
+                                                                         [ 64%]
+tests/test_power_proxmox.py ....................................         [ 67%]
+tests/test_present_resource_reconciliation.py .......................... [ 70%]
+.......................................                                  [ 73%]
+tests/test_provisioning_contract.py .................................... [ 77%]
+...................................................                      [ 82%]
+tests/test_readonly_reconciliation.py .................................. [ 85%]
+...............................                                          [ 88%]
+tests/test_resilience.py ..........                                      [ 89%]
+tests/test_semantic_postconditions.py .................................. [ 92%]
+......................                                                   [ 94%]
+tests/test_terraform.py ................................                 [ 97%]
+tests/test_tls.py ............                                           [ 98%]
+tests/test_tls_proxy_peer.py ...........                                 [ 99%]
+tests/test_worker.py .                                                   [100%]
+
+=============================== warnings summary ===============================
+../usr/local/lib/python3.12/site-packages/starlette/testclient.py:37
+  /usr/local/lib/python3.12/site-packages/starlette/testclient.py:37: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = typing.Callable[[], typing.ContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_commercial_catalog.py:9
+tests/test_commercial_catalog.py:9
+  /workspace/tests/test_commercial_catalog.py:9: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft202012Validator, RefResolver
+
+tests/test_documentation.py:8
+tests/test_documentation.py:8
+  /workspace/tests/test_documentation.py:8: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft202012Validator, RefResolver
+
+tests/integration/test_power_certification.py: 4 warnings
+tests/integration/test_readonly_state.py: 16 warnings
+tests/integration/test_resilience.py: 3 warnings
+  /usr/local/lib/python3.12/site-packages/botocore/auth.py:425: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    datetime_now = datetime.datetime.utcnow()
+
+tests/integration/test_resilience.py::test_c05_temporary_state_outage_is_not_absence_and_retry_is_readonly
+  /usr/local/lib/python3.12/site-packages/botocore/endpoint.py:170: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    response_received_timestamp = datetime.datetime.utcnow()
+
+tests/integration/test_resilience.py::test_c05_temporary_state_outage_is_not_absence_and_retry_is_readonly
+  /usr/local/lib/python3.12/site-packages/botocore/endpoint.py:153: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    local_timestamp = datetime.datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================ 1051 passed, 30 warnings in 140.42s (0:02:20) =================

@@ -1,4 +1,4 @@
-"""Barrera de almacenamiento y Ceph con la identidad propia del worker."""
+"""Barrera operativa de los datastores KVM; no administra ni evalúa Ceph global."""
 import ssl
 from urllib.parse import quote
 from urllib.request import HTTPSHandler, ProxyHandler, build_opener
@@ -8,7 +8,7 @@ from .observation import NoRedirect
 
 
 def require_execution_health(env, expected, cancelled=lambda: False):
-    """Solo GET; un error o una salud distinta de HEALTH_OK impiden ejecutar."""
+    """Solo GET; estado, espacio y lectura del backend deben ser comprobables."""
     from ..lifecycle.proxmox import ProxmoxPower, PowerError
     phase = 'preflight.execution_health'
     try:
@@ -19,22 +19,35 @@ def require_execution_health(env, expected, cancelled=lambda: False):
         stores = {expected['boot_disk']['datastore_id'], expected['cloudinit_datastore_id']}
         if expected.get('clone_datastore_id'):
             stores.add(expected['clone_datastore_id'])
-        ceph = False
         for store in sorted(stores):
             if cancelled():
                 raise PlanError('CANCELLED', phase=phase)
-            status = client._request('GET', f'/nodes/{node}/storage/{quote(store, safe="")}/status')
+            path = f'/nodes/{node}/storage/{quote(store, safe="")}'
+            status = client._request('GET', path + '/status')
             if (not isinstance(status, dict) or status.get('active') != 1
                     or status.get('enabled', 1) != 1 or not isinstance(status.get('type'), str)
                     or not status['type']):
                 raise PlanError('EXECUTION_STORAGE_UNAVAILABLE', phase=phase)
-            ceph = ceph or status['type'] in {'rbd', 'cephfs'}
-        if ceph:
+            # No convertir avisos globales ajenos en un fallo KVM. Verificar el
+            # backend concreto, sin escrituras ni credenciales CephX en la API.
+            if (type(status.get('avail')) is not int or type(status.get('total')) is not int
+                    or not 0 < status['avail'] <= status['total']
+                    or 'images' not in str(status.get('content', '')).split(',')):
+                raise PlanError('EXECUTION_STORAGE_UNAVAILABLE', phase=phase)
+            if store in {expected['boot_disk']['datastore_id'], expected.get('clone_datastore_id')}:
+                size = expected['boot_disk']['size_gb']
+                if type(size) is not int or size < 1:
+                    raise PlanError('EXECUTION_STORAGE_UNAVAILABLE', phase=phase)
+                if status['avail'] < size * 1024**3:
+                    raise PlanError('EXECUTION_STORAGE_CAPACITY_EXCEEDED', phase=phase)
             if cancelled():
                 raise PlanError('CANCELLED', phase=phase)
-            status = client._request('GET', f'/nodes/{node}/ceph/status')
-            if status.get('health', {}).get('status') != 'HEALTH_OK':
-                raise PlanError('EXECUTION_CEPH_NOT_HEALTHY', phase=phase)
+            content = client._request('GET', path + '/content?content=images')
+            if (not isinstance(content, list) or any(not isinstance(row, dict)
+                    or not isinstance(row.get('volid'), str)
+                    or not row['volid'].startswith(store + ':')
+                    or row.get('content') != 'images' for row in content)):
+                raise PlanError('EXECUTION_STORAGE_READ_FAILED', phase=phase)
         if cancelled():
             raise PlanError('CANCELLED', phase=phase)
     except PlanError:

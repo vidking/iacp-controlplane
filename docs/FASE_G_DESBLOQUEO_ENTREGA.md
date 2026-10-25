@@ -1,6 +1,10 @@
 # Fase G: desbloqueo del flujo comercial
 
 Fecha: 25/10/2026, America/Costa_Rica. Estado: **NO-GO FASE G**.
+Actualización posterior del responsable: Ceph queda fuera del alcance y VM 106
+es descartable. El criterio operativo vigente y sus pruebas están en
+[dependencias KVM y permisos](validation/phase-g/diagnostico-ceph-rbac-20261025/RESULTADOS.md).
+Lo siguiente conserva el diagnóstico y la candidata anteriores a esa decisión.
 Rama: `fix/fase-g-barrera-ejecucion`. Base local: `14966da`.
 Último main comprobado: `d8ac23e`; Forgejo no permite actualizarlo en esta
 ejecución: conexión SSH al puerto 2222 rechazada. No se presume main actualizado.
