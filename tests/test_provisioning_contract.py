@@ -216,14 +216,23 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
     before = json.loads((ROOT / 'docs/contracts/openapi-before-provisioning.json').read_text())
     after = create_app().openapi()
     before_http, after_http = map(transport_projection, [before, after])
+    additions = {'/v1/plans', '/v1/images'}
+    assert set(after['paths']) - set(before['paths']) == additions
     for path, methods in after['paths'].items():
+        if path in additions:
+            assert set(methods) == {'get'}
+            assert methods['get']['security'] == [{'HTTPBearer': []}]
+            continue
         for method, operation in methods.items():
             original = before_http['paths'][path][method]
             operation = after_http['paths'][path][method]
             for field in ['operationId', 'parameters', 'requestBody', 'responses', 'security']:
                 assert operation.get(field) == original.get(field), (method, path, field)
     old_models, new_models = (s['components']['schemas'] for s in [before, after])
+    assert set(new_models) - set(old_models) == {'Availability','PlanResponse','ImageResponse','MinimumRequirements'}
     for name, model in new_models.items():
+        if name not in old_models:
+            continue
         original, current = copy.deepcopy(old_models[name]), copy.deepcopy(model)
         if name in {'InstanceAccepted', 'InstanceResponse'}:
             for field in ['executor', 'provisioning_service']:
