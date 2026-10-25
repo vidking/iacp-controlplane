@@ -52,7 +52,10 @@ Capturas sanitizadas y resultado Playwright:
 
 - `~/.local/state/iacp-fase-f2/SWAGGER_VM104_F2G_DESKTOP_FINAL.png`
 - `~/.local/state/iacp-fase-f2/SWAGGER_VM104_F2G_MOBILE_FINAL.png`
-- `~/.local/state/iacp-fase-f2/playwright-f2g-final.json`
+- `~/.local/state/iacp-fase-f2/playwright-f2g-scroll.json` (13 comprobaciones
+  geométricas y documentales PASS).
+- `~/.local/state/iacp-fase-f2/playwright-f2g-final.json` (incluye la prueba
+  independiente de historial, registrada como pendiente más abajo).
 
 ## Regresión de runtime
 
