@@ -32,9 +32,11 @@
     const target = document.getElementById(documentId); if (!target) return false;
     const panel = target.tagName === "DETAILS" ? target : target.querySelector(":scope > details");
     if (panel) panel.open = true;
-    const offset = (document.querySelector(".masthead")?.offsetHeight || 88) + 16;
-    const heading = panel?.querySelector(".guide-content") || panel || target;
-    window.scrollTo({top: Math.max(0, heading.getBoundingClientRect().top + window.scrollY - offset), behavior: "smooth"});
+    requestAnimationFrame(() => {
+      const current = document.getElementById(documentId); if (!current) return;
+      const offset = (document.querySelector(".masthead")?.offsetHeight || 88) + 20;
+      window.scrollTo({top: Math.max(0, current.getBoundingClientRect().top + window.scrollY - offset), behavior: "smooth"});
+    });
     closeMenu(); return true;
   }
   function navigate(link) {
