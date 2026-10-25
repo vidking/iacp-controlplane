@@ -1,0 +1,32 @@
+{
+  "estado": "PROPUESTA_NO_APLICADA",
+  "zona": "America/Costa_Rica",
+  "fecha_local": "2026-10-25T13:10:32.539672-06:00",
+  "motivo": "Consumo existente más una sola KVM 4; no suma KVM 3 y KVM 4 simultáneamente",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "limites_actuales": {
+    "allowed_plans": [
+      "kvm-1",
+      "kvm-2"
+    ],
+    "max_instances": 2,
+    "max_vcpus": 4,
+    "max_memory_mb": 6144,
+    "max_disk_gb": 120,
+    "max_concurrent_operations": 1
+  },
+  "limites_propuestos": {
+    "allowed_plans": [
+      "kvm-1",
+      "kvm-2",
+      "kvm-3",
+      "kvm-4"
+    ],
+    "max_instances": 2,
+    "max_vcpus": 10,
+    "max_memory_mb": 18432,
+    "max_disk_gb": 420,
+    "max_concurrent_operations": 1
+  },
+  "condicion": "Recalcular uso, comprobar admisión física y registrar revisión antes de aplicar mediante procedimiento vigente; restaurar presupuesto previo al cerrar las pruebas"
+}

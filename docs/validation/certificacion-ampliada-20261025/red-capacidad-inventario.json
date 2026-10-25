@@ -1,0 +1,310 @@
+{
+  "fecha_local": "2026-10-25T13:08:59.382611-06:00",
+  "solo_lectura": true,
+  "nodo": "mng01",
+  "red": {
+    "http": 200,
+    "interfaces": [
+      {
+        "iface": "eno4",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vlan96",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "96",
+        "vlan-raw-device": "bond0"
+      },
+      {
+        "iface": "vmbr1",
+        "type": "bridge",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": "vlan23",
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vmbr0",
+        "type": "bridge",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": "bond1",
+        "bridge_vlan_aware": 1,
+        "bridge_vids": "2-4094",
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vlan23",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "23",
+        "vlan-raw-device": "bond2"
+      },
+      {
+        "iface": "ens3f1np1",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "ens2f0np0",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "ens3f0np0",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "ens2f1np1",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vlan94",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "94",
+        "vlan-raw-device": "bond0"
+      },
+      {
+        "iface": "vlan22",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "22",
+        "vlan-raw-device": "bond2"
+      },
+      {
+        "iface": "vmbr2",
+        "type": "bridge",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": "eno3",
+        "bridge_vlan_aware": 1,
+        "bridge_vids": "2-4094",
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "eno2",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vlan95",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "95",
+        "vlan-raw-device": "bond0"
+      },
+      {
+        "iface": "eno3",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "bond1",
+        "type": "bond",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "idrac",
+        "type": "eth",
+        "active": null,
+        "autostart": null,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "bond0",
+        "type": "bond",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "Cyberfuel",
+        "type": "OVSBridge",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "vlan21",
+        "type": "vlan",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": "21",
+        "vlan-raw-device": "bond2"
+      },
+      {
+        "iface": "eno1",
+        "type": "eth",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      },
+      {
+        "iface": "bond2",
+        "type": "bond",
+        "active": 1,
+        "autostart": 1,
+        "bridge_ports": null,
+        "bridge_vlan_aware": null,
+        "bridge_vids": null,
+        "vlan-id": null,
+        "vlan-raw-device": null
+      }
+    ]
+  },
+  "capacidad_puntual": {
+    "node_http": 200,
+    "storage_http": 200,
+    "datastore": "DS_CYBERFUEL",
+    "cpus": 48,
+    "cpu_load_fraction": 0.0108920958973757,
+    "memory_free_bytes": 186093428736,
+    "storage_avail_bytes": 11622502367232,
+    "storage_active": 1,
+    "storage_enabled": 1,
+    "nota": "Observación puntual; no reserva capacidad ni consulta salud global Ceph"
+  },
+  "plantillas": [
+    {
+      "vmid": 29000,
+      "name": "iacp-ubuntu-2404-golden",
+      "template": 1,
+      "lock": null,
+      "agent": "enabled=1",
+      "ostype": "l26",
+      "net0": "virtio=BC:24:11:F0:88:41,bridge=vmbr0",
+      "scsi0": "DS_CYBERFUEL:base-29000-disk-1,discard=on,iothread=1,size=20G",
+      "ide2": null
+    },
+    {
+      "vmid": 29001,
+      "name": "iacp-ubuntu-2604-golden",
+      "template": 1,
+      "lock": null,
+      "agent": "enabled=1",
+      "ostype": "l26",
+      "net0": "virtio=BC:24:11:13:1D:06,bridge=vmbr0",
+      "scsi0": "DS_CYBERFUEL:base-29001-disk-1,discard=on,iothread=1,size=20G",
+      "ide2": null
+    },
+    {
+      "vmid": 29010,
+      "name": "iacp-almalinux-9-golden",
+      "template": 1,
+      "lock": null,
+      "agent": "enabled=1",
+      "ostype": "l26",
+      "net0": "virtio=BC:24:11:71:B1:33,bridge=vmbr0",
+      "scsi0": "DS_CYBERFUEL:base-29010-disk-1,discard=on,iothread=1,size=20G",
+      "ide2": null
+    },
+    {
+      "vmid": 29011,
+      "name": "iacp-almalinux-10-golden",
+      "template": 1,
+      "lock": null,
+      "agent": "enabled=1",
+      "ostype": "l26",
+      "net0": "virtio=BC:24:11:80:6B:B4,bridge=vmbr0",
+      "scsi0": "DS_CYBERFUEL:base-29011-disk-1,discard=on,iothread=1,size=20G",
+      "ide2": null
+    }
+  ]
+}

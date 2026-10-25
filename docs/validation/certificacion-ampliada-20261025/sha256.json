@@ -1,0 +1,14 @@
+{
+  "DEMO_20261027.md": "79afcddf1b7fafdfb1b1968d3617097b838f5e302881ced8161b874bbfa4996b",
+  "INTEGRACION_DESARROLLO.md": "82f27183f947f37facac08257cadb7ff36c547d3aea6e88fb9fdd0e86e3bfed8",
+  "MATRIZ_CERTIFICACION.md": "e973a8fb0fe7ae7742b29dca0d3846c7dfb4c932f28a8a18927aa90b04a4574f",
+  "PLAN_CERTIFICACION.md": "a94268569f86923a9aa9e7edd5afa57e14225ba9208ce521b11b719c21da492e",
+  "casos-e2e-secuenciales.json": "0ddd67ba363e940f7e728e8394ce21b97f00f2ae38983d9d98744ecccb114221",
+  "endpoints-integracion.json": "004e14980877f4f10a5667dd0def009332e94f46cb7f9816c80ded4f78221a04",
+  "inventario-runtime.json": "1f16fb794b24fbcf2f4b3ece87245ad03bbee8ca759b4dcc3a7a76d376e092a4",
+  "openapi-runtime.json": "ffae2ceaf519e386325202b3bc3c7ddbfe9b0414c12e29b58c8c4641bc1cea1f",
+  "presupuesto-secuencial.propuesto.json": "1d76bd91b0af75abed3dd2a08d66b5877b5b51f4d2078c0569d66a4070b19c09",
+  "red-capacidad-inventario.json": "3b43600b4524eb9031d85a99e696dfd9193ddf7fa683ef8ecb4b869a587b9084",
+  "salud-runtime.json": "0eddad1c12b925ffdf0fbbb8d5ddacac9936744de5310c22a67d5e2beeec2d08",
+  "validacion-preparacion.json": "a9761216faf2d2c385242c3cede6d7dc2bd4de26bf581364258d214ceb7fd08e"
+}

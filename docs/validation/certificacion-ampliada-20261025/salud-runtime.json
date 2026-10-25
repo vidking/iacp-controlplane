@@ -1,0 +1,32 @@
+{
+  "fecha_local": "2026-10-25T13:12:23.289673-06:00",
+  "evidencia_privada": "/opt/iacp/evidence/certificacion-ampliada-inventario-20261025-1309",
+  "release_operativo": "dedb344b49d401c4da00d0271882881a0ee34dae",
+  "nonterminal": {
+    "deletion_executions": [],
+    "guest_initializations": [],
+    "jobs": [],
+    "operations": [],
+    "power_executions": [],
+    "terraform_applies": []
+  },
+  "colas": {},
+  "unacked": 0,
+  "schema": [
+    "0012_commercial_intents"
+  ],
+  "doctor": {
+    "passed": true,
+    "changed_paths": [],
+    "unexpected_paths": [],
+    "roles_running": {
+      "terraform-worker": true,
+      "api": true,
+      "lifecycle-worker": true,
+      "worker": true,
+      "traefik": true,
+      "db": true,
+      "redis": true
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "fecha_local": "2026-10-25T13:12:58.587467-06:00",
+  "alcance": "Inspección y documentación; sin operaciones de infraestructura",
+  "main": "5916a6df21fcec09e21215dafd24605dd8fb474c",
+  "pr_73_integrado": true,
+  "codigo_runtime_sin_cambios": true,
+  "openapi_igual_a_cierre_fase_g": true,
+  "openapi": "3.1.0",
+  "endpoints_extraidos_verificados": 16,
+  "enlaces_locales": "PASS",
+  "escaneo_secretos": "Coincidencias revisadas: siete placeholders ilustrativos; sin secretos reales detectados",
+  "nuevos_e2e_ejecutados": 0,
+  "regresion_completa_repetida": false,
+  "nota_regresion": "No hay cambios de código; se conserva el resultado anterior de 1062 pruebas sin presentarlo como nueva ejecución"
+}

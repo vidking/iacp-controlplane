@@ -1,0 +1,79 @@
+{
+  "ejecucion_ordenada": [
+    {
+      "image_id": "ubuntu-2404",
+      "plan_id": "kvm-3",
+      "vcpus": 4,
+      "memory_mb": 8192,
+      "disk_gb": 200,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "ubuntu-2404",
+      "plan_id": "kvm-4",
+      "vcpus": 8,
+      "memory_mb": 16384,
+      "disk_gb": 400,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "ubuntu-2604",
+      "plan_id": "kvm-3",
+      "vcpus": 4,
+      "memory_mb": 8192,
+      "disk_gb": 200,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "ubuntu-2604",
+      "plan_id": "kvm-4",
+      "vcpus": 8,
+      "memory_mb": 16384,
+      "disk_gb": 400,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "almalinux-9",
+      "plan_id": "kvm-3",
+      "vcpus": 4,
+      "memory_mb": 8192,
+      "disk_gb": 200,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "almalinux-9",
+      "plan_id": "kvm-4",
+      "vcpus": 8,
+      "memory_mb": 16384,
+      "disk_gb": 400,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "almalinux-10",
+      "plan_id": "kvm-3",
+      "vcpus": 4,
+      "memory_mb": 8192,
+      "disk_gb": 200,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    },
+    {
+      "image_id": "almalinux-10",
+      "plan_id": "kvm-4",
+      "vcpus": 8,
+      "memory_mb": 16384,
+      "disk_gb": 400,
+      "estado": "PENDIENTE",
+      "ejecutado": false
+    }
+  ],
+  "maximo_vms_ensayo_simultaneas": 1,
+  "condicion_siguiente_caso": "DELETE terminal, ausencia Proxmox y volúmenes, state sin recurso, lock ausente, cuota liberada y servicios sanos",
+  "secretos_en_artefactos": false
+}
