@@ -177,7 +177,7 @@ def provision(instance_id: str, principal: Operator, session: Database, body: Po
     instance = own_instance(session, principal, instance_id)
     def resume():
         execution = session.get(TerraformExecution, instance.id)
-        if not instance.self_service_policy_id or execution is None:
+        if not (instance.self_service_policy_id or instance.commercial_revision) or execution is None:
             raise Conflict("LAB_POLICY_REQUIRED")
         operation = session.get(Operation, execution.operation_id)
         # Recovery after consumption remains readonly even if policy was revoked.
@@ -237,6 +237,15 @@ def reconcile(instance_id: str, principal: Operator, session: Database, body: Po
     instance=own_instance(session,principal,instance_id)
     def request():
         from ..models import GuestInitialization
+        if instance.commercial_revision:
+            from ..models import CommercialIntent
+            row=session.get(CommercialIntent,instance.id)
+            if row and row.bootstrap_started_at and row.bootstrap_status in {'running','uncertain'}:
+                op=session.scalar(select(Operation).where(Operation.instance_id==instance.id,Operation.kind=='instance.access.bootstrap'))
+                if op:
+                    from .dependencies import get_commercial_bootstrap_publisher
+                    get_commercial_bootstrap_publisher()(op.id)
+                    return response(session,op)
         initialization=session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id,
             GuestInitialization.status.in_(['running','uncertain']),GuestInitialization.started_at.is_not(None)))
         if initialization:

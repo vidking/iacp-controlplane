@@ -52,7 +52,7 @@ def binding(session, row, operation, *, check_ownership=False):
         raise PowerError("POWER_BINDING_CHANGED")
     if check_ownership and instance_ownership(session, instance, approval) != row.ownership_certificate_id:
         raise PowerError("POWER_BINDING_CHANGED")
-    if check_ownership and instance.self_service_policy_id:
+    if check_ownership and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
         from ..services.lab import member
         try:
             member(session, instance, row.action)
@@ -99,6 +99,9 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                     raise Conflict("DELETE_OPERATION_ACTIVE")
                 from ..services.guest_identity import active as active_initialization
                 if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
+                if instance.commercial_revision:
+                    from ..services.commercial_bootstrap import active as bootstrap_active
+                    if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
                 from ..services.lab import authorize_operation
                 authorize_operation(session, instance, action)
                 try:

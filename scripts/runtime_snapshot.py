@@ -30,7 +30,14 @@ def snapshot():
             hashes = sorted(hashlib.sha256(json.dumps(dict(row), default=str, sort_keys=True,
                             separators=(",", ":")).encode()).hexdigest() for row in rows)
             report["tables"][name] = {"count": len(rows), "sha256": hashlib.sha256("".join(hashes).encode()).hexdigest()}
+            if name=='instances' and 'commercial_revision' in table.c:
+                projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k!='commercial_revision'},
+                    default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
+                report['compatibility']['instances_before_0012']={'count':len(rows),
+                    'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
+                    'new_fields_default':all(row['commercial_revision'] is None for row in rows)}
             added_crm = CRM_INSTANCE_FIELDS if name == 'instances' else {'correlation_id'} if name == 'operations' else set()
+            if name=='instances' and 'commercial_revision' in table.c:added_crm=added_crm|{'commercial_revision'}
             if added_crm and added_crm <= set(table.c.keys()):
                 projected = sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added_crm},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
@@ -41,6 +48,7 @@ def snapshot():
                 added={'network_profile','network_mode','ip_addresses','network_observation'}
                 added.update({'node_preference','self_service_policy_id','policy_binding_sha256'})
                 added.update(CRM_INSTANCE_FIELDS)
+                if 'commercial_revision' in table.c:added.add('commercial_revision')
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility']['instances_before_0008']={
@@ -49,6 +57,7 @@ def snapshot():
                         and row['ip_addresses']==[] and row['network_observation'] is None for row in rows)}
             if name in {'instances','deletion_executions'} and ('self_service_policy_id' in table.c or 'autonomous' in table.c):
                 added=({'node_preference','self_service_policy_id','policy_binding_sha256'} | CRM_INSTANCE_FIELDS if name=='instances' else {'autonomous'})
+                if name=='instances' and 'commercial_revision' in table.c:added=added|{'commercial_revision'}
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility'][name+'_before_0009']={'count':len(rows),

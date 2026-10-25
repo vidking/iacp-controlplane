@@ -813,153 +813,6 @@
         "title": "InstanceAccepted",
         "type": "object"
       },
-      "InstanceCreate": {
-        "additionalProperties": false,
-        "examples": [
-          {
-            "disk_gb": 20,
-            "image": "ubuntu-2404",
-            "memory_mb": 2048,
-            "name": "iacp-mvp-dhcp-01",
-            "network_profile": "lab-dhcp",
-            "vcpus": 2
-          },
-          {
-            "disk_gb": 20,
-            "image": "ubuntu-2404",
-            "memory_mb": 2048,
-            "name": "desarrollo-kvm-01",
-            "network_profile": "lab-dhcp",
-            "self_service_policy_id": "00000000-0000-4000-8000-000000000001",
-            "vcpus": 2
-          }
-        ],
-        "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RootAccess"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "commercial_context": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CommercialContext"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Referencias opacas del CRM. No incluyen datos personales ni secretos y no conceden autorización técnica."
-          },
-          "disk_gb": {
-            "default": 20,
-            "maximum": 4096.0,
-            "minimum": 8.0,
-            "title": "Disk Gb",
-            "type": "integer"
-          },
-          "image": {
-            "description": "Perfil de imagen autorizado por el servidor; no una URL o VMID de Proxmox.",
-            "examples": [
-              "ubuntu-2404"
-            ],
-            "maxLength": 63,
-            "minLength": 1,
-            "pattern": "^[a-z0-9][a-z0-9._-]*$",
-            "title": "Image",
-            "type": "string"
-          },
-          "memory_mb": {
-            "default": 2048,
-            "maximum": 262144.0,
-            "minimum": 512.0,
-            "multipleOf": 256.0,
-            "title": "Memory Mb",
-            "type": "integer"
-          },
-          "name": {
-            "description": "Nombre único por tenant. El perfil DHCP omite IPAM; el modo estático conserva la asignación autorizada.",
-            "examples": [
-              "iacp-mvp-demo-01"
-            ],
-            "maxLength": 63,
-            "minLength": 1,
-            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-            "title": "Name",
-            "type": "string"
-          },
-          "network_profile": {
-            "anyOf": [
-              {
-                "maxLength": 63,
-                "minLength": 1,
-                "pattern": "^[a-z0-9][a-z0-9._-]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Perfil autorizado por tenant. DHCP omite IPAM; sin perfil se conserva el flujo estático existente.",
-            "examples": [
-              "lab-dhcp"
-            ],
-            "title": "Network Profile"
-          },
-          "node_preference": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9.-]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Preferencia opcional entre los nodos de destino del perfil. Omitir para selección automática.",
-            "title": "Node Preference"
-          },
-          "self_service_policy_id": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9-]{36}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "UUID de una política de laboratorio aprobada e independiente. Solo vincula VMs nuevas; nunca adopta recursos existentes.",
-            "title": "Self Service Policy Id"
-          },
-          "start_on_create": {
-            "default": false,
-            "description": "Solicita start posterior al aprovisionamiento mediante Lifecycle Worker. Requiere política con start; conserva operaciones y fences independientes.",
-            "title": "Start On Create",
-            "type": "boolean"
-          },
-          "vcpus": {
-            "default": 2,
-            "maximum": 64.0,
-            "minimum": 1.0,
-            "title": "Vcpus",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "name",
-          "image"
-        ],
-        "title": "InstanceCreate",
-        "type": "object"
-      },
       "InstanceResponse": {
         "properties": {
           "access": {
@@ -978,9 +831,13 @@
                 "$ref": "#/components/schemas/CommercialContext"
               },
               {
+                "$ref": "#/components/schemas/OrderContext"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Commercial Context"
           },
           "created_at": {
             "format": "date-time",
@@ -2128,31 +1985,6 @@
         "title": "RetryRequest",
         "type": "object"
       },
-      "RootAccess": {
-        "additionalProperties": false,
-        "properties": {
-          "password": {
-            "description": "Solo entrada HTTPS. Contraseña única por VM. En laboratorio el plan/state y sus versiones históricas pueden conservarla; nunca se devuelve por API.",
-            "format": "password",
-            "maxLength": 128,
-            "minLength": 16,
-            "title": "Password",
-            "type": "string",
-            "writeOnly": true
-          },
-          "username": {
-            "const": "root",
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "username",
-          "password"
-        ],
-        "title": "RootAccess",
-        "type": "object"
-      },
       "StaticNetwork": {
         "additionalProperties": false,
         "properties": {
@@ -2762,7 +2594,7 @@
         ]
       },
       "post": {
-        "description": "Revisión candidata incompatible de creación: plan_id, image_id y network.profile_id. Sin tamaños libres ni UUID de política. Idempotency-Key obligatorio; 202 conserva identificadores. NO SERVIDA: requiere entrega root fuera de PostgreSQL/plan/state, admisión interna y consumidores migrados.",
+        "description": "Revisión candidata incompatible de creación: plan_id, image_id y network.profile_id. Sin tamaños libres ni UUID de política. Idempotency-Key obligatorio; 202 conserva identificadores. Redis AES-256-GCM efímero y bootstrap SSH sin contraseña en plan/state. NO DESPLEGADA: falta E2E y capacidad verificable.",
         "operationId": "createInstance",
         "parameters": [
           {
@@ -2943,7 +2775,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Crear una instancia KVM",
+        "summary": "Crear una KVM mediante plan_id",
         "tags": [
           "instances"
         ]
@@ -6067,7 +5899,7 @@
     },
     "/v1/plans": {
       "get": {
-        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos ni acredita capacidad física. El contrato comercial G sigue bloqueado por G6.",
+        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos. En modo comercial verifica capacidad física; en modo histórico informa que G no está activo.",
         "operationId": "listKVMPlans",
         "responses": {
           "200": {
@@ -6340,5 +6172,5 @@
     }
   ],
   "x-iacp-creation-revision": "fase-g-candidata",
-  "x-iacp-deployment-status": "BLOCKED_G6_Y_MIGRACION"
+  "x-iacp-deployment-status": "NO_GO_E2E_Y_CAPACIDAD"
 }

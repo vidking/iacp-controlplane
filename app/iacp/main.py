@@ -62,6 +62,12 @@ def create_app() -> FastAPI:
             "method": request.method, "route": getattr(route, "path", "unmatched"),
             "status": response.status_code, "duration_ms": round((time.monotonic() - started) * 1000),
         }))
+        if request.method=='POST' and request.url.path=='/v1/instances' and response.status_code>=400:
+            committed=getattr(request.state,'admission_committed',False)
+            logging.getLogger('uvicorn.error').info(json.dumps({
+                'event':'admission_dispatch_unconfirmed' if committed else 'admission_rejected',
+                'request_id':request.state.request_id,'status':response.status_code,
+                'admitted':committed,'executed':None if committed else False}))
         return response
 
     @application.get("/docs", include_in_schema=False, dependencies=[Depends(authorize_docs)])
@@ -82,7 +88,18 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router)
     application.include_router(jobs.router)
-    application.include_router(instances.router)
+    creation_contract=os.environ.get('IACP_CREATION_CONTRACT','historical')
+    if creation_contract not in {'historical','commercial-g'}:
+        raise ValueError('CREATION_CONTRACT_INVALID')
+    if creation_contract=='commercial-g':
+        from .api import commercial
+        from fastapi import APIRouter
+        historical_reads=APIRouter(routes=[r for r in instances.router.routes
+            if not (r.path=='/v1/instances' and 'POST' in r.methods)])
+        application.include_router(historical_reads)
+        application.include_router(commercial.router)
+    else:
+        application.include_router(instances.router)
     application.include_router(catalog.router)
     application.include_router(operations.router)
     application.include_router(terraform.router)

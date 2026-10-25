@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from .api.presentation import public_code, public_executor, public_message, public_result
+from .commercial_contract import OrderContext
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
 OperationStatus = Literal["queued", "running", "completed", "failed", "uncertain"]
@@ -110,7 +111,7 @@ class InstanceResponse(BaseModel):
     network_profile: str | None = None
     node_preference: str | None = None
     self_service_policy_id: str | None = None
-    commercial_context: CommercialContext | None = None
+    commercial_context: CommercialContext | OrderContext | None = None
     start_on_create: bool = False
     access: AccessProgress | None = None
     network_mode: Literal["static", "dhcp"] = "static"

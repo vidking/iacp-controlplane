@@ -1,4 +1,5 @@
 """Disponibilidad conservadora por tenant. Consultar no reserva capacidad."""
+import os
 from ..catalog import IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
@@ -41,7 +42,7 @@ def plan_availability(plan, profile, used):
                 or used["concurrent_operations"] + 1 > min(2, profile.max_concurrent_operations)):
             reasons.append("TENANT_TECHNICAL_QUOTA_EXCEEDED")
     # No convertir un catálogo estático en un certificado de capacidad física.
-    reasons.extend(["PHYSICAL_CAPACITY_NOT_VERIFIED", "ROOT_BOOTSTRAP_OUTSIDE_STATE_UNAVAILABLE"])
+    reasons.extend(["PHYSICAL_CAPACITY_NOT_VERIFIED", "COMMERCIAL_CONTRACT_NOT_ACTIVE"])
     return {"available": False, "capacity_verified": False, "reasons": reasons}
 
 
@@ -49,11 +50,36 @@ def plans_for(session, tenant_id):
     from dataclasses import asdict
     p = authorized_profile(tenant_id)
     used = usage(session, tenant_id)
-    return [{**asdict(plan), "availability": plan_availability(plan, p, used)} for plan in PLANS]
+    result=[]
+    for plan in PLANS:
+        availability=plan_availability(plan,p,used)
+        if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g':
+            from .commercial import limits_for,quota,live_capacity
+            from .bootstrap_secrets import configured_key,BootstrapSecretError
+            from .instances import Conflict
+            reasons=[r for r in availability['reasons'] if r not in {
+                'PHYSICAL_CAPACITY_NOT_VERIFIED','COMMERCIAL_CONTRACT_NOT_ACTIVE'}]
+            verified=False
+            try:
+                limits=limits_for(tenant_id)
+                if plan.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
+                quota(session,tenant_id,limits,asdict(plan))
+                configured_key()
+                if p is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
+                if p.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
+                if p.guest_initialization!='ubuntu-2404-lab-identity-v1':raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
+                live_capacity(session,p,plan);verified=True
+            except (Conflict,BootstrapSecretError) as error:reasons.append(str(error))
+            availability={'available':not reasons,'capacity_verified':verified,'reasons':reasons}
+        result.append({**asdict(plan),'availability':availability})
+    return result
 
 
-def images_for(tenant_id):
+def images_for(tenant_id,session=None):
     authorized = authorized_profile(tenant_id) is not None
+    available_plans=(plans_for(session,tenant_id) if session is not None
+        and os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else [])
+    available=any(p['availability']['available'] for p in available_plans)
     return [{"image_id": i.image_id, "operating_system": i.operating_system, "version": i.version,
              "status": i.status, "cloud_init": i.cloud_init, "qemu_guest_agent": i.qemu_guest_agent,
              "root_access": i.root_access, "ssh_access": i.ssh_access,
@@ -61,7 +87,7 @@ def images_for(tenant_id):
                                       "disk_gb": i.minimum_disk_gb},
              "compatible_plans": [p.plan_id for p in PLANS if p.vcpus >= i.minimum_vcpus
                  and p.memory_mb >= i.minimum_memory_mb and p.disk_gb >= i.minimum_disk_gb],
-             "authorized": authorized, "availability": {"available": False, "capacity_verified": False,
+             "authorized": authorized, "availability": {"available": authorized and available, "capacity_verified": available,
                  "reasons": (["TENANT_PROFILE_NOT_AUTHORIZED"] if not authorized else [])
-                    + ["ROOT_BOOTSTRAP_OUTSIDE_STATE_UNAVAILABLE", "PHYSICAL_CAPACITY_NOT_VERIFIED"]}}
+                    + ([] if available else ['PHYSICAL_CAPACITY_NOT_VERIFIED'])}}
             for i in IMAGES]

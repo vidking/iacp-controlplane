@@ -65,12 +65,17 @@ def progress(session, instance, provisioning_status):
         Operation.instance_id == instance.id, Operation.idempotency_key == 'autostart-' + instance.id))
     initialization = session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id == instance.id))
     policy = session.get(LabPolicy, instance.self_service_policy_id)
-    requires_identity = bool(policy and policy.profile_snapshots.get(instance.network_profile, {}).get('guest_initialization'))
+    requires_identity = bool(instance.commercial_revision or policy and policy.profile_snapshots.get(instance.network_profile, {}).get('guest_initialization'))
     phase, status = 'provisioning', provisioning_status
     if provisioning_status == 'completed':
         phase, status = 'start', start.status if start else 'queued'
         if start and start.status == 'completed' and requires_identity:
             phase, status = 'guest_initialization', initialization.status if initialization else 'queued'
+        if status=='completed' and instance.commercial_revision:
+            from ..models import CommercialIntent
+            intent=session.get(CommercialIntent,instance.id)
+            phase,status='root_bootstrap',intent.bootstrap_status if intent else 'failed'
+            if status=='pending':status='queued'
         if status == 'completed' and instance.initial_access_ciphertext:
             access = session.scalar(select(Operation).where(Operation.instance_id == instance.id,
                 Operation.idempotency_key == 'access-verify-' + instance.id))

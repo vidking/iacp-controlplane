@@ -124,6 +124,9 @@ def execute_discovery(identifier,sessions,observer=observe_guest):
                     if row.provisioning_binding!=binding_digest(instance,execution,approval):raise Conflict('NETWORK_BINDING_CHANGED')
                     from ..models import GuestInitialization,LabPolicy
                     policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+                    if instance.commercial_revision:
+                        from .commercial import delegation
+                        policy=delegation(s,instance,'start')
                     requires_identity=bool(policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'))
                     initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
                     if requires_identity and (not initialization or initialization.status!='completed'):
@@ -160,6 +163,9 @@ def after_power(identifier,sessions):
             if instance.network_mode!='dhcp':return
             from ..models import LabPolicy
             policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+            if instance.commercial_revision:
+                from .commercial import delegation
+                policy=delegation(s,instance,'start')
             if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
                 from .guest_identity import request_initialization
                 from ..api.dependencies import get_guest_initialization_publisher
@@ -187,7 +193,7 @@ def after_power(identifier,sessions):
             if operation:
                 event(s,operation,'network_followup_dispatch_unconfirmed','worker:lifecycle')
                 instance=s.get(Instance,operation.instance_id)
-                if instance and instance.self_service_policy_id:
+                if instance and (instance.self_service_policy_id or instance.commercial_revision):
                     instance.ip_addresses=[]
                     instance.network_observation={'status':'pending','ip_addresses':[],'reason':'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED'}
                 s.commit()

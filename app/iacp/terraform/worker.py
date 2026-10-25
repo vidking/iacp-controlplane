@@ -62,3 +62,10 @@ def initialize_guest(identifier: str) -> None:
 def verify_access(identifier: str) -> None:
     from ..services.access import execute_verification
     execute_verification(identifier, get_session_factory())
+
+
+@celery_app.task(name='iacp.commercial.bootstrap',autoretry_for=(),acks_late=True,
+    reject_on_worker_lost=True,soft_time_limit=90,time_limit=110)
+def bootstrap_root(identifier: str) -> None:
+    from ..services.commercial_bootstrap import execute
+    execute(identifier,get_session_factory())

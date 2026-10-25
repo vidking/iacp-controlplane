@@ -43,7 +43,7 @@ async function main() {
       await selectGuide('guia-crm');
       await expect(page.locator('#crm-catalogo-g')).toBeInViewport();
       const text = await page.locator('#guia-crm .guide-content').innerText();
-      for (const word of ['KVMHOST-54','kvm-1','kvm-4','creación todavía bloqueada','root_password','capacity_verified']) expect(text).toContain(word);
+      for (const word of ['KVMHOST-54','kvm-1','kvm-4','AES-256-GCM','root_password','capacity_verified']) expect(text).toContain(word);
       const code = page.locator('#guia-crm pre').filter({hasText:'"plan_id": "kvm-2"'});
       await code.scrollIntoViewIfNeeded();
       await expect(code).toBeInViewport();

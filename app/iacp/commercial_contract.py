@@ -1,6 +1,6 @@
-"""Revisión candidata G de creación. No está conectada a la admisión vigente.
+"""Revisión G de creación, seleccionada en una ventana de migración explícita.
 
-La promoción exige resolver G6 y migrar consumidores. No transforma solicitudes
+La promoción exige certificar G6/E2E y migrar consumidores. No transforma solicitudes
 comerciales en solicitudes históricas con contraseñas dentro de Terraform.
 """
 import ipaddress
@@ -119,8 +119,9 @@ def resolved_resources(spec: CommercialInstanceCreate) -> dict:
 
 
 def require_safe_execution(spec: CommercialInstanceCreate) -> None:
-    """G4/G6 fallan cerrados; ningún flag puede habilitar el adaptador histórico."""
+    """Preflight de formato/red/clave; no sustituye la admisión ni la capacidad."""
     resolved_resources(spec)
     if spec.network.profile_id == "wan-static":
         raise ValueError("WAN_STATIC_EXECUTION_NOT_CERTIFIED")
-    raise ValueError("ROOT_BOOTSTRAP_OUTSIDE_STATE_UNAVAILABLE")
+    from .services.bootstrap_secrets import configured_key
+    configured_key()

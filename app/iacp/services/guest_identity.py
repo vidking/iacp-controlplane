@@ -132,7 +132,7 @@ def validate_binding(session, row, operation):
     target,approval=managed_target(session,instance)
     execution=session.get(TerraformExecution,instance.id)
     mac=(instance.result or {}).get('network',{}).get('mac_address','').lower()
-    if (target.vmid<30000 or target.vmid in {104,106} or not instance.self_service_policy_id
+    if (target.vmid<30000 or target.vmid in {104,106} or not (instance.self_service_policy_id or instance.commercial_revision)
             or instance.network_mode!='dhcp' or row.mode!=MODE or mac!=row.mac_address
             or row.provisioning_binding!=binding_digest(instance,execution,approval)):
         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
@@ -181,7 +181,8 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                     kind='instance.network.initialize',status='queued',idempotency_key=key,request_hash=digest,requested_by=principal.subject)
                 session.add(operation);session.flush()
                 from ..models import LabPolicy
-                profile=session.get(LabPolicy,instance.self_service_policy_id).profile_snapshots[instance.network_profile]
+                from .lab import member
+                profile=member(session,instance,'start').profile_snapshots[instance.network_profile]
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
                     program_sha256=ROOT_PROGRAM_SHA256 if profile.get('root_password_bootstrap') else PROGRAM_SHA256,
                     provisioning_binding=binding_digest(instance,execution,approval),status='queued')

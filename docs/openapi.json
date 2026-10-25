@@ -832,9 +832,13 @@
                 "$ref": "#/components/schemas/CommercialContext"
               },
               {
+                "$ref": "#/components/schemas/OrderContext"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Commercial Context"
           },
           "created_at": {
             "format": "date-time",
@@ -1437,6 +1441,37 @@
           "events"
         ],
         "title": "OperationResponse",
+        "type": "object"
+      },
+      "OrderContext": {
+        "additionalProperties": false,
+        "properties": {
+          "order_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "title": "OrderContext",
         "type": "object"
       },
       "PlanQueued": {
@@ -5836,7 +5871,7 @@
     },
     "/v1/plans": {
       "get": {
-        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos ni acredita capacidad física. El contrato comercial G sigue bloqueado por G6.",
+        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos. En modo comercial verifica capacidad física; en modo histórico informa que G no está activo.",
         "operationId": "listKVMPlans",
         "responses": {
           "200": {

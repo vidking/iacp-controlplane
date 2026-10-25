@@ -120,7 +120,8 @@ def test_canonical_examples_resolve_resources_without_password(example):
     secret=spec.access.root_password.get_secret_value()
     assert secret not in repr(spec) and secret not in spec.model_dump_json()
     assert secret not in json.dumps(resources)
-    with pytest.raises(ValueError,match='ROOT_BOOTSTRAP_OUTSIDE_STATE_UNAVAILABLE'):
+    from iacp.services.bootstrap_secrets import BootstrapSecretError
+    with pytest.raises(BootstrapSecretError,match='BOOTSTRAP_KEY_UNAVAILABLE'):
         require_safe_execution(spec)
 
 
@@ -220,7 +221,7 @@ def test_candidate_openapi_valid_examples_and_active_contract_is_historical():
     from iacp.main import create_app
     current=create_app().openapi()
     assert current['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/InstanceCreate')
-    assert contract['x-iacp-deployment-status']=='BLOCKED_G6_Y_MIGRACION'
+    assert contract['x-iacp-deployment-status']=='NO_GO_E2E_Y_CAPACIDAD'
 
 
 def test_local_manual_candidate_examples_match_real_schema(client,auth):

@@ -31,7 +31,10 @@ def gate(instance, session=None):
     if session is not None:
         from ..services.guest_identity import active as active_initialization
         if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
-    if session is not None and instance.self_service_policy_id:
+        if getattr(instance,'commercial_revision',None):
+            from ..services.commercial_bootstrap import active as bootstrap_active
+            if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
+    if session is not None and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
         from ..services.lab import member
         member(session, instance, 'delete', current_profiles=True)
         delegated = True
@@ -107,7 +110,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 gate(instance, session)
                 from ..services.lab import authorize_operation
                 authorize_operation(session, instance, 'delete')
-                if autonomous and not instance.self_service_policy_id:
+                if autonomous and not instance.self_service_policy_id and not getattr(instance,'commercial_revision',None):
                     raise Conflict('LAB_POLICY_REQUIRED')
                 target, approval = managed_target(session, instance)
                 if active_deletion(session, instance.id):

@@ -198,6 +198,9 @@ def admit(session, instance):
 
 
 def member(session, instance, action, *, current_profiles=False):
+    if getattr(instance,'commercial_revision',None)=='commercial-g':
+        from .commercial import delegation
+        return delegation(session,instance,action,current_profiles=current_profiles)
     row = policy(session, instance.self_service_policy_id, instance.tenant_id, action)
     execution = session.get(TerraformExecution, instance.id)
     creation = session.scalar(select(Operation).where(Operation.instance_id == instance.id, Operation.kind == "instance.create"))
@@ -217,6 +220,14 @@ def member(session, instance, action, *, current_profiles=False):
 
 
 def authorize_operation(session, instance, action):
+    if getattr(instance,'commercial_revision',None)=='commercial-g':
+        from .commercial import member as commercial_member,limits_for,quota
+        commercial_member(session,instance,action)
+        limit=limits_for(instance.tenant_id)
+        used=usage(session,instance.tenant_id)
+        if used['concurrent_operations']>=limit.max_concurrent_operations:
+            raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:concurrent_operations')
+        return
     if instance.self_service_policy_id:
         row = member(session, instance, action)
         check_quota(session, instance.tenant_id, {"concurrent_operations": limits(row)["concurrent_operations"]})
@@ -224,6 +235,9 @@ def authorize_operation(session, instance, action):
 
 def advance(session, instance, publish):
     """Approve the exact verified plan by delegation, then use the existing Apply fence."""
+    if getattr(instance,'commercial_revision',None)=='commercial-g':
+        from .commercial import advance as commercial_advance
+        return commercial_advance(session,instance,publish)
     from ..terraform.apply import approve, dispatch, recover_apply
     execution = session.get(TerraformExecution, instance.id)
     row = member(session, instance, "create", current_profiles=True)
@@ -275,7 +289,7 @@ def after_plan(job_id, sessions, publish):
         if execution is None or execution.status != "planned":
             return
         instance = session.get(Instance, execution.instance_id)
-        if not instance.self_service_policy_id:
+        if not instance.self_service_policy_id and not getattr(instance,'commercial_revision',None):
             return
         try:
             advance(session, instance, publish)

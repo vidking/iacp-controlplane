@@ -60,7 +60,7 @@ def catalog_headers(response):
     summary="Consultar los cuatro planes KVMHOST-54",
     description="Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. "
     "vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; "
-    "no reserva recursos ni acredita capacidad física. El contrato comercial G sigue bloqueado por G6.")
+    "no reserva recursos. En modo comercial verifica capacidad física; en modo histórico informa que G no está activo.")
 def plans(response: Response, principal: Annotated[Principal, Depends(authorize)],
           session: Annotated[Session, Depends(get_session)]):
     catalog_headers(response)
@@ -72,6 +72,7 @@ def plans(response: Response, principal: Annotated[Principal, Depends(authorize)
     description="La imagen habilitada ubuntu-2404 procede de la certificación histórica. "
     "root_access/ssh_access describen esa capacidad histórica, no certifican G6. "
     "availability distingue habilitación, permiso y ejecución segura; no publica VMID, nodo ni almacenamiento interno.")
-def images(response: Response, principal: Annotated[Principal, Depends(authorize)]):
+def images(response: Response, principal: Annotated[Principal, Depends(authorize)],
+           session: Annotated[Session,Depends(get_session)]):
     catalog_headers(response)
-    return images_for(principal.tenant_id)
+    return images_for(principal.tenant_id,session)
