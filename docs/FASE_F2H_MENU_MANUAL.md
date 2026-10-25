@@ -75,6 +75,56 @@ Evidencias privadas:
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_DESKTOP.png`
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_MOBILE.png`
 
+## Correctivo visual de bloques de código
+
+Fecha: 24 de octubre de 2026, 20:24, America/Costa_Rica.
+
+La inspección con `getComputedStyle()` confirmó la causa del defecto: la regla
+general `.guide-content code` estaba heredando al `<code>` dentro de los bloques
+multilínea el fondo claro, padding y tamaño destinados al código en línea. El
+`<pre>` conservaba el fondo oscuro, por lo que cada línea quedaba cubierta por
+franjas claras.
+
+El correctivo se limitó a `app/iacp/static/docs/ux-f1.css` y separa ambos
+casos: `.guide-content pre code` usa fondo transparente sobre el bloque oscuro,
+tipografía monoespaciada heredada, saltos de línea y desplazamiento horizontal;
+`.guide-content :not(pre)>code` conserva el estilo claro y compacto del código
+en línea. No se modificó layout, API, autenticación ni Swagger UI.
+
+La validación Playwright de candidata, sin extensiones, registró para
+Chromium:
+
+- Tema claro de escritorio (1536×1000), tema oscuro nativo emulado y móvil
+  (390×844): PASS.
+- `pre`: `rgb(16, 36, 58)` con texto `rgb(231, 242, 245)`, contraste 13,79:1.
+- `pre code`: fondo transparente, display `block`, `white-space: pre`, fuente
+  monoespaciada y texto seleccionable completo.
+- Código en línea: contraste 12,81:1, sin regresión visual.
+- Sin errores JavaScript, respuestas HTTP fallidas ni solicitudes externas.
+- Firefox: BLOCKED para automatización Playwright; el Firefox del sistema no
+  expone el canal Juggler compatible. No se declara PASS de Firefox.
+
+La evidencia detallada y las capturas están en:
+
+- `~/.local/state/iacp-fase-f2/playwright-f2h-code-block.json`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_LIGHT.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_DARK.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_MOBILE.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_JSON.png`
+
+Los tres ejemplos de creación y el cuerpo JSON del comando curl se validaron
+contra el esquema `InstanceCreate` de OpenAPI 3.1: 3/3 PASS. Los campos
+obligatorios son `name` e `image`; no aparece el campo inexistente `profile_id`.
+Los `self_service_policy_id` documentados corresponden a la fotografía de
+laboratorio indicada arriba y se presentan como valores dinámicos, no como
+autorizaciones permanentes.
+
+La suite ejecutada en el stack efímero de pruebas el 24/10/2026 obtuvo 895
+aprobadas y 28 advertencias. Las 49 pruebas omitidas de la ejecución candidata
+anterior por dependencia de PostgreSQL descartable permanecen registradas como
+no ejecutadas en la evidencia histórica; no se presentan como aprobadas por
+esta corrección visual.
+
 ## Promoción
 
 La candidata aún no está integrada en `main` ni desplegada en el IACP Control
