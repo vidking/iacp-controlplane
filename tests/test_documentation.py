@@ -117,3 +117,15 @@ def test_local_guides_render_documentation_not_only_hashes(client, auth):
     assert '0011_crm_contract' in page and 'go_live.py' in page
     assert 'Ver fuente versionada en Forgejo' in page
     assert 'Manual para Desarrollo</a>' not in page
+
+
+def test_manual_separa_bloques_de_codigo_y_codigo_en_linea(client, auth):
+    css = client.get('/docs?asset=ux-f1.css', headers=auth).text
+    assert '.guide-content pre code' in css
+    assert 'background:transparent' in css
+    assert 'font:inherit' in css
+    assert '.guide-content :not(pre)>code' in css
+    page = client.get('/docs', headers=auth).text
+    assert '<pre><code>curl ' in page
+    assert '<code>Idempotency-Key</code>' in page
+    assert 'profile_id' not in page

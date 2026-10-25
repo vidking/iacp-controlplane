@@ -75,9 +75,68 @@ Evidencias privadas:
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_DESKTOP.png`
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_MOBILE.png`
 
+## Correctivo visual de bloques de código
+
+Fecha: 24 de octubre de 2026, 20:24, America/Costa_Rica.
+
+La inspección con `getComputedStyle()` confirmó la causa del defecto: la regla
+general `.guide-content code` estaba heredando al `<code>` dentro de los bloques
+multilínea el fondo claro, padding y tamaño destinados al código en línea. El
+`<pre>` conservaba el fondo oscuro, por lo que cada línea quedaba cubierta por
+franjas claras.
+
+El correctivo se limitó a `app/iacp/static/docs/ux-f1.css` y separa ambos
+casos: `.guide-content pre code` usa fondo transparente sobre el bloque oscuro,
+tipografía monoespaciada heredada, saltos de línea y desplazamiento horizontal;
+`.guide-content :not(pre)>code` conserva el estilo claro y compacto del código
+en línea. No se modificó layout, API, autenticación ni Swagger UI.
+
+La validación Playwright de candidata, sin extensiones, registró para
+Chromium:
+
+- Tema claro de escritorio (1536×1000), tema oscuro nativo emulado y móvil
+  (390×844): PASS.
+- `pre`: `rgb(16, 36, 58)` con texto `rgb(231, 242, 245)`, contraste 13,79:1.
+- `pre code`: fondo transparente, display `block`, `white-space: pre`, fuente
+  monoespaciada y texto seleccionable completo.
+- Código en línea: contraste 12,81:1, sin regresión visual.
+- Sin errores JavaScript, respuestas HTTP fallidas ni solicitudes externas.
+- Firefox 157 administrado por Playwright: PASS en escritorio, con los mismos
+  estilos calculados, texto seleccionable y sin errores ni respuestas fallidas.
+
+La evidencia detallada y las capturas están en:
+
+- `~/.local/state/iacp-fase-f2/playwright-f2h-code-block.json`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_LIGHT.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_DARK.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_MOBILE.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_JSON.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_FIREFOX.png`
+
+Los tres ejemplos de creación y el cuerpo JSON del comando curl se validaron
+contra el esquema `InstanceCreate` de OpenAPI 3.1: 3/3 PASS. Los campos
+obligatorios son `name` e `image`; no aparece el campo inexistente `profile_id`.
+Los `self_service_policy_id` documentados corresponden a la fotografía de
+laboratorio indicada arriba y se presentan como valores dinámicos, no como
+autorizaciones permanentes.
+
+La suite ejecutada en el stack efímero de pruebas el 24/10/2026 obtuvo 895
+aprobadas y 28 advertencias. Las 49 pruebas omitidas de la ejecución candidata
+anterior por dependencia de PostgreSQL descartable permanecen registradas como
+no ejecutadas en la evidencia histórica; no se presentan como aprobadas por
+esta corrección visual.
+
 ## Promoción
 
-La candidata aún no está integrada en `main` ni desplegada en el IACP Control
-Plane (VM 104). Después del merge debe repetirse `iacpctl env-promote`,
-`go_live.py` y toda la validación Playwright sobre HTTPS real. No se declara
-ningún SHA runtime nuevo en esta fase de preparación.
+El manual base `9c68d29` ya está integrado en `main` mediante PR #63, cuyo SHA
+actual es `e1a36b3`. El correctivo visual de este informe (`acca80c`) todavía
+está pendiente de un PR de seguimiento; por ello no se promocionó ni se declara
+un SHA runtime nuevo en el IACP Control Plane (VM 104). El runtime conocido
+continúa en `447899ee6240286fe1ac54d398f83ffda33ce3fa`.
+
+Comparación para el PR de seguimiento:
+`https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/compare/main...feat/fase-f2-manual-menu`
+
+Después del merge del correctivo debe repetirse `iacpctl env-promote`,
+`go_live.py` y toda la validación Playwright sobre HTTPS real, conservando el
+respaldo y el rollback vigentes.
