@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 
 
-CATALOG_VERSION = "KVMHOST-54.1"
+CATALOG_VERSION = "KVMHOST-54.2"
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,22 @@ IMAGES = (GoldenImage("ubuntu-2404", "Ubuntu", "24.04", "habilitada", 29000,
     "mng01", "DS_CYBERFUEL", True, True, True, True, 1, 512, 20),)
 
 
+@dataclass(frozen=True)
+class PendingGoldenImage:
+    """Registro interno incompleto: no presume procedencia ni compatibilidad."""
+    image_id: str
+    operating_system: str
+    version: str
+    template_vm_id: int
+    status: str = "pendiente"
+
+
+# Identidad comunicada por Infraestructura el 25/10/2026, America/Costa_Rica.
+# Falta evidencia del frente de imágenes: no seleccionable ni publicada como
+# habilitada. Nodo, storage y capacidades se incorporarán al certificarla.
+PENDING_IMAGES = (PendingGoldenImage("ubuntu-2604", "Ubuntu", "26.04", 29001),)
+
+
 def resolve_plan(plan_id: str) -> Plan:
     for plan in PLANS:
         if plan.plan_id == plan_id:
@@ -67,5 +83,6 @@ def catalog_digest() -> str:
     """Digest determinista del producto, sin autorización ni capacidad dinámica."""
     from dataclasses import asdict
     data = {"version": CATALOG_VERSION, "plans": [asdict(p) for p in PLANS],
-            "images": [asdict(i) for i in IMAGES]}
+            "images": [asdict(i) for i in IMAGES],
+            "pending_images": [asdict(i) for i in PENDING_IMAGES]}
     return sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

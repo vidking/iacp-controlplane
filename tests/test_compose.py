@@ -85,5 +85,8 @@ def test_canonical_guest_identity_worker_has_shared_gate_without_expanding_lifec
     for role in ['api','terraform-worker','lifecycle-worker']:
         assert '${IACP_KVM_LIFECYCLE_ENABLED:?' in services[role]['environment']['IACP_KVM_LIFECYCLE_ENABLED']
     lifecycle=services['lifecycle-worker']
-    assert 'IACP_TERRAFORM_PROFILES_FILE' not in lifecycle['environment']
+    assert lifecycle['environment']['IACP_TERRAFORM_PROFILES_FILE']=='/run/config/profiles.json'
+    assert len(lifecycle['volumes'])==1
+    assert lifecycle['volumes'][0]['target']=='/run/config/profiles.json'
+    assert lifecycle['volumes'][0]['read_only'] is True
     assert {v['source'] for v in lifecycle['secrets']}=={'db_password','kvm_credentials'}

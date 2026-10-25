@@ -1,0 +1,97 @@
+{
+  "fecha": "25/10/2026",
+  "zona": "America/Costa_Rica",
+  "integrado": "3e6d0f9923dbd926d379cf379900e49f8ffc6d08",
+  "runtime": "8a58db244ec1e9cd1a0d627b21e086548489e75d",
+  "regresion_final": {
+    "estado": "PASS",
+    "aprobadas": 1012,
+    "omitidas": 0,
+    "advertencias_deprecacion": 30,
+    "duracion_segundos": 348.36,
+    "alcance": "Candidata con cliente capacity-ro; PostgreSQL y Redis descartables"
+  },
+  "promocion": "NO_EJECUTADA_CONTROLES_PREVIOS_BLOQUEADOS",
+  "identidad_admision_nueva": {
+    "identificador": "iacp-admission@pve!capacity-ro",
+    "autorizacion": "Infraestructura, instrucción del 25/10/2026",
+    "cliente_exclusivo": "IMPLEMENTADO_CANDIDATA",
+    "montaje": "Solo API; no workers",
+    "fallback_a_Terraform": false,
+    "secreto_operativo_localizado": false,
+    "lecturas_HTTP_reales": "BLOCKED_NO_EJECUTADAS",
+    "denegacion_escritura_HTTP_real": "BLOCKED_NO_EJECUTADA",
+    "version_esquema_MNG_auditado": "9.2.20",
+    "ceph_alias_exige_auditoria_en_raiz": true
+  },
+  "cuota": {
+    "estado": "PREPARADA_NO_ACTIVADA",
+    "perfil_validado": true,
+    "kvm1_secuencial": "PASS_AISLADO",
+    "kvm2_secuencial": "PASS_AISLADO",
+    "reserva_VM106_contabilizada": true,
+    "segunda_VM_prueba": "RECHAZADA_EN_VALIDACION_AISLADA",
+    "concurrencia": 1
+  },
+  "capacidad_observada": {
+    "fecha": "2026-10-25T00:19:25-06:00",
+    "identidad": "Terraform existente",
+    "nodo": "mng01",
+    "datastore": "DS_CYBERFUEL",
+    "cpu_logicas": 48,
+    "memoria_libre_bytes": 189834575872,
+    "storage_activo": true,
+    "storage_tipo": "rbd",
+    "storage_disponible_bytes": 11627464228864,
+    "storage_total_bytes": 13844486744911,
+    "auditoria_integral_ceph": false,
+    "lectura_identidad_API": "POWER_PERMISSION_DENIED"
+  },
+  "g6": {
+    "aes_archivo_creado": true,
+    "aes_bytes": 32,
+    "aes_modo": "0440",
+    "clave_en_git": false,
+    "valor_emitido": false,
+    "clave_montada_runtime": false,
+    "ssh_privada_disponible_worker": false,
+    "redis_runtime": {
+      "appendonly": "yes",
+      "appendfsync": "everysec",
+      "save": "3600 1 300 100 60 10000",
+      "reiniciado": false
+    },
+    "redis_prueba_descartable": {
+      "resultado": "PASS",
+      "appendonly_tras_reinicio": "yes",
+      "ttl_antes": 120,
+      "ttl_despues": 97,
+      "ciphertext_recuperable_tras_reinicio": true,
+      "expiracion_efectiva": true,
+      "plaintext_senuelo_en_RDB_AOF": false
+    }
+  },
+  "snapshot_runtime": {
+    "fecha": "2026-10-25T00:20:22-06:00",
+    "schema": "0011_crm_contract",
+    "operaciones_no_terminales": 0,
+    "colas": {},
+    "unacked": 0,
+    "locks_advisory_PostgreSQL": 0,
+    "locks_esperando_PostgreSQL": 0,
+    "doctor": "PASS"
+  },
+  "autenticacion_HTTPS": {
+    "Basic_docs": 200,
+    "Basic_openapi": 200,
+    "Basic_API": 401,
+    "Bearer_valido_profiles": 200,
+    "Bearer_invalido_profiles": 401,
+    "plans_runtime_historico": 404,
+    "images_runtime_historico": 404,
+    "readiness": 200
+  },
+  "e2e_kvm1": "BLOCKED_NO_EJECUTADO",
+  "e2e_kvm2": "BLOCKED_NO_EJECUTADO",
+  "dictamen": "NO_GO_FASE_G"
+}

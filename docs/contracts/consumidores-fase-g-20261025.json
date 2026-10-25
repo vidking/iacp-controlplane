@@ -1,0 +1,48 @@
+{
+  "fecha": "25/10/2026",
+  "zona": "America/Costa_Rica",
+  "alcance": "Repositorios locales y herramientas documentadas; no inventario global de clientes externos",
+  "consumidores": [
+    {
+      "nombre": "Swagger y manual local",
+      "repositorio": "CyberFuel/iacp-controlplane",
+      "estado": "Candidata G implementada; runtime todavía histórico",
+      "migracion": "Request Body depende de IACP_CREATION_CONTRACT; ejemplos KVM 1/2 validan CommercialInstanceCreate"
+    },
+    {
+      "nombre": "Pruebas del contrato histórico",
+      "repositorio": "CyberFuel/iacp-controlplane",
+      "estado": "Conservadas deliberadamente para regresión y compatibilidad",
+      "migracion": "No ejecutar sus peticiones históricas contra un runtime con commercial-g"
+    },
+    {
+      "nombre": "Pruebas comerciales y herramientas de exportación",
+      "repositorio": "CyberFuel/iacp-controlplane",
+      "estado": "Usan plan_id, image_id, network, access y commercial_context",
+      "migracion": "Regresión aislada; E2E físico pendiente"
+    },
+    {
+      "nombre": "E2E de laboratorio",
+      "repositorio": "CyberFuel/iacp-load-testing",
+      "sha": "f0fe34324b1b5549cf963df02f53c2558d3948ce",
+      "archivo": "e2e.py",
+      "estado": "INCOMPATIBLE_PENDIENTE",
+      "motivo": "Envía tamaños, network_profile y self_service_policy_id; autentica SSH root mediante contraseña",
+      "migracion": "Adaptar creación a plan_id y SSH a llave pública; contraseña de consola se valida por procedimiento autorizado. No ejecutar esta versión contra commercial-g"
+    },
+    {
+      "nombre": "Perfil Locust de lectura",
+      "repositorio": "CyberFuel/iacp-load-testing",
+      "estado": "No crea VMs ni depende del cuerpo de creación",
+      "migracion": "No equivale a certificar los nuevos endpoints de catálogo"
+    },
+    {
+      "nombre": "Clientes administrativos temporales documentados",
+      "referencia": "internal-client-migration.json",
+      "estado": "ARCHIVO_HISTORICO_NO_LOCALIZADO_EN_TMP",
+      "migracion": "No declarar activos o migrados: no se localizaron esos archivos en /tmp durante esta revisión"
+    }
+  ],
+  "crm_comercial_externo": "No se identificó un consumidor CRM comercial desplegado en los repositorios inspeccionados; no se afirma su inexistencia fuera del alcance",
+  "gate": "Mantener contrato histórico activo hasta resolver incompatibilidad de los clientes de laboratorio y aprobar la transición"
+}

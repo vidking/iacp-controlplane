@@ -30,6 +30,17 @@ def test_promotion_accepts_the_deployed_0010_schema_before_migrating():
             driver.require_supported_schema(unknown)
 
 
+def test_restore_evidence_accepts_actual_0011_backup_and_rejects_unverified_restore():
+    backup = {'schema': '0011_crm_contract', 'sha256': 'digest-comprobado'}
+    restored = {'schema': '0011_crm_contract', 'backup_sha256': 'digest-comprobado',
+        'passed': True, 'isolated': True, 'table_count': 15}
+    driver.check_restore_evidence(backup, restored)
+    for change in ({'schema': driver.HEAD}, {'backup_sha256': 'otro'},
+                   {'table_count': 14}, {'passed': False}, {'isolated': False}):
+        with pytest.raises(RuntimeError, match='Restore attestation'):
+            driver.check_restore_evidence(backup, {**restored, **change})
+
+
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
 def test_docs_require_tenant_authentication(client, auth, path):
     assert client.get(path).status_code == 401

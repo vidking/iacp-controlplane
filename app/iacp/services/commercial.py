@@ -48,10 +48,10 @@ def limits_for(tenant_id):
 
 def live_capacity(session,profile,plan):
     """Lectura física con la identidad existente; sin privilegios nuevos ni IPAM."""
-    from ..lifecycle.proxmox import ProxmoxPower
+    from .capacity_readonly import CapacityReadOnly
     from ..models import Instance
     try:
-        client=ProxmoxPower.configured()
+        client=CapacityReadOnly.configured()
         node=profile.settings.node_name
         storage=profile.settings.boot_disk.datastore_id
         if node not in {'mng01','mng02'} or profile.settings.environment!='lab':raise ValueError()

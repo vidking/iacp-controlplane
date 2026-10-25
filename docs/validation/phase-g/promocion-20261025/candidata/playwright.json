@@ -1,0 +1,43 @@
+{
+  "fecha": "25/10/2026, 12:13:33 a. m.",
+  "zona": "America/Costa_Rica",
+  "alcance": "Candidata local descartable; no certifica VM 104",
+  "results": [
+    {
+      "mode": "chromium-escritorio",
+      "estado": "PASS",
+      "errors": [],
+      "external": [],
+      "mutations": [],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(231, 242, 245)",
+        "display": "block"
+      }
+    },
+    {
+      "mode": "chromium-movil",
+      "estado": "PASS",
+      "errors": [],
+      "external": [],
+      "mutations": [],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(231, 242, 245)",
+        "display": "block"
+      }
+    },
+    {
+      "mode": "firefox-escritorio",
+      "estado": "PASS",
+      "errors": [],
+      "external": [],
+      "mutations": [],
+      "style": {
+        "background": "rgba(0, 0, 0, 0)",
+        "color": "rgb(231, 242, 245)",
+        "display": "block"
+      }
+    }
+  ]
+}

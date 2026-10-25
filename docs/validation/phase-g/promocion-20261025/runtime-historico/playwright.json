@@ -1,0 +1,25 @@
+{
+  "fecha": "25/10/2026, 12:14:27 a. m.",
+  "zona": "America/Costa_Rica",
+  "alcance": "Baseline HTTPS del runtime histórico 8a58db2; NO certifica Fase G ni nuevos catálogos",
+  "results": [
+    {
+      "modo": "escritorio",
+      "estado": "PASS",
+      "errores_js": [],
+      "recursos_externos": [],
+      "mutaciones": [],
+      "openapi": "3.1.0",
+      "creacion": "InstanceCreate histórica"
+    },
+    {
+      "modo": "movil",
+      "estado": "PASS",
+      "errores_js": [],
+      "recursos_externos": [],
+      "mutaciones": [],
+      "openapi": "3.1.0",
+      "creacion": "InstanceCreate histórica"
+    }
+  ]
+}

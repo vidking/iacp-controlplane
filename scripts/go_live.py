@@ -41,6 +41,20 @@ def require_supported_schema(schema):
     require(len(schema) == 1 and schema[0] in supported, 'Unsupported schema')
 
 
+def check_restore_evidence(backup, restored):
+    """Aceptar respaldos comprobados de 0011 sin confundirlos con el HEAD 0012."""
+    schema = backup.get('schema', '0004_authorized_apply')
+    minimum_tables = {'0004_authorized_apply': 9, '0005_kvm_lifecycle': 10,
+        '0006_power_ownership': 11, '0007_safe_deletion': 12, '0008_dhcp_profiles': 13,
+        '0009_lab_self_service': 14, '0010_guest_identity': 15,
+        '0011_crm_contract': 15, HEAD: 16}
+    require(restored.get('passed') is True and restored.get('isolated') is True
+        and restored.get('backup_sha256') == backup['sha256']
+        and restored.get('schema') == schema and schema in minimum_tables
+        and restored.get('table_count', 0) >= minimum_tables[schema],
+        'Restore attestation is incomplete')
+
+
 def digest(path):
     value = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -293,9 +307,10 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             compatibility = live_compatibility(current, active)
             self.evidence("live-compatibility", compatibility)
             require(compatibility["passed"], "Active environment differs from the running containers")
-            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'))
+            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'), commercial_bootstrap=self.m.get('commercial_bootstrap_configuration'))
             self.evidence("canonical-comparison", comparison)
             require(comparison["passed"], "Canonical configuration differs outside the reviewed changes")
+        self.review_commercial_configuration(cfg)
         planned_files = {str((ROOT / file).resolve()) for file in self.m["compose_files"]}
         # Old bootstrap labels reference a different compose for DB/Redis. Their
         # immutable volumes/secrets are checked directly; all application overrides persist.
@@ -314,6 +329,10 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             for item in service.get("secrets", []):
                 path = Path(cfg["secrets"][item["source"]]["file"])
                 if item['source'] == 'root_input_key' and str(path) == '/dev/null' and service.get('environment', {}).get('IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED') == '0':
+                    continue
+                if (item['source'] in {'bootstrap_aes_key', 'guest_bootstrap_ssh_key', 'admission_credentials'}
+                        and str(path) == '/dev/null'
+                        and services['api']['environment'].get('IACP_CREATION_CONTRACT', 'historical') == 'historical'):
                     continue
                 st = path.stat()
                 require(st.st_size > 0 and not st.st_mode & 0o007, "Empty or world-readable secret")
@@ -384,13 +403,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(digest(backup["path"]) == backup["sha256"], "Backup checksum mismatch")
         require(digest(backup["restore_evidence"]) == backup["restore_evidence_sha256"], "Restore evidence checksum mismatch")
         restored = json.loads(Path(backup["restore_evidence"]).read_text())
-        expected_backup_schema=backup.get('schema','0004_authorized_apply')
-        minimum_tables={'0004_authorized_apply':9,'0005_kvm_lifecycle':10,'0006_power_ownership':11,
-                        '0007_safe_deletion':12,'0008_dhcp_profiles':13,'0009_lab_self_service':14,'0010_guest_identity':15,HEAD:15}
-        require(restored["passed"] is True and restored["isolated"] is True
-                and restored["backup_sha256"] == backup["sha256"] and restored["schema"] == expected_backup_schema
-                and expected_backup_schema in minimum_tables
-                and restored["table_count"] >= minimum_tables[expected_backup_schema], "Restore attestation is incomplete")
+        check_restore_evidence(backup, restored)
         report = self.snapshot()
         require_supported_schema(report['schema'])
         self.evidence("preflight", {"passed": True, "configuration_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()})
@@ -403,6 +416,50 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(len(files) == 1 and Path(files[0]).parts[0] == "deploy"
                 and Path(files[0]).name == "compose.yaml" and (ROOT / files[0]).resolve().is_relative_to(ROOT / "deploy"), "One versioned canonical Compose required")
         return True
+
+    def review_commercial_configuration(self, cfg):
+        """Validar material G6 antes de alterar entorno o detener la API."""
+        if cfg['services']['api']['environment'].get('IACP_CREATION_CONTRACT', 'historical') != 'commercial-g':
+            return
+        review = self.m.get('commercial_bootstrap_configuration')
+        require(review is not None and review.get('contract') == 'commercial-g',
+            'Commercial bootstrap review required')
+        require(set(review) == {'contract', 'aes_key_path', 'ssh_key_path', 'ttl_seconds', 'admission_credentials_path'}
+            and type(review['ttl_seconds']) is int and 60 <= review['ttl_seconds'] <= 3600,
+            'Commercial bootstrap review invalid')
+        for role in ('api', 'terraform-worker'):
+            env = cfg['services'][role]['environment']
+            require(env.get('IACP_BOOTSTRAP_AES_KEY_FILE') == '/run/secrets/bootstrap_aes_key'
+                and env.get('IACP_BOOTSTRAP_SECRET_TTL_SECONDS') == str(review['ttl_seconds']),
+                'Commercial bootstrap environment mismatch')
+        require(cfg['services']['terraform-worker']['environment'].get('IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE')
+            == '/run/secrets/guest_bootstrap_ssh_key', 'Commercial SSH reference mismatch')
+        require(cfg['services']['api']['environment'].get('IACP_ADMISSION_CREDENTIALS_FILE')
+            == '/run/secrets/admission_credentials', 'Commercial admission identity mismatch')
+        for key, name in [('aes_key_path', 'bootstrap_aes_key'),
+                          ('ssh_key_path', 'guest_bootstrap_ssh_key'),
+                          ('admission_credentials_path', 'admission_credentials')]:
+            path = Path(review[key])
+            require(path.is_file() and not path.is_symlink() and not path.stat().st_mode & 0o027,
+                'Commercial bootstrap secret missing or unsafe')
+            require(cfg['secrets'][name]['file'] == str(path), 'Commercial secret reference mismatch')
+        require(Path(review['aes_key_path']).stat().st_size == 32,
+            'Commercial bootstrap AES key must contain 32 bytes')
+        profile = self.m['profile_configuration']['path']
+        # El contenedor valida acceso UID/GID, parseo de identidad y coincidencia
+        # pública con el perfil. Nunca serializa ni imprime la clave privada.
+        code = "import json;from pathlib import Path;import paramiko;from iacp.services.bootstrap_secrets import configured_key;from iacp.services.capacity_readonly import CapacityReadOnly;configured_key();CapacityReadOnly.configured();key=paramiko.PKey.from_path('/run/secrets/guest_bootstrap_ssh_key');p=json.loads(Path('/policy.json').read_text())['profiles']['lab-dhcp'];assert key.get_base64() in [v.split()[1] for v in p['settings']['ssh_public_keys']];print('COMMERCIAL_BOOTSTRAP_KEYS_VALID')"
+        self.run(self.docker + ['run', '--rm', '--pull', 'never', '--network', 'none',
+            '--read-only', '--user', '10001:10001', '--cap-drop', 'ALL',
+            '--security-opt', 'no-new-privileges', '--memory', '256m', '--pids-limit', '64',
+            '-e', 'IACP_BOOTSTRAP_AES_KEY_FILE=/run/secrets/bootstrap_aes_key',
+            '-e', 'IACP_ADMISSION_CREDENTIALS_FILE=/run/secrets/admission_credentials',
+            '--mount', 'type=bind,source='+review['aes_key_path']+',target=/run/secrets/bootstrap_aes_key,readonly',
+            '--mount', 'type=bind,source='+review['ssh_key_path']+',target=/run/secrets/guest_bootstrap_ssh_key,readonly',
+            '--mount', 'type=bind,source='+review['admission_credentials_path']+',target=/run/secrets/admission_credentials,readonly',
+            '--mount', 'type=bind,source='+profile+',target=/policy.json,readonly',
+            cfg['services']['api']['image'], 'python', '-c', code])
+        self.evidence('commercial-bootstrap-preflight', {'passed': True, 'key_material_emitted': False})
 
     def publish(self):
         self.approve("publish-api")
