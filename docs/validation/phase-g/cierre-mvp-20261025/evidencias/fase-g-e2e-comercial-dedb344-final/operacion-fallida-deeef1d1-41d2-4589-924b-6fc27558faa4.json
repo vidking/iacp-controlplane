@@ -1,0 +1,66 @@
+{
+  "operation_id": "deeef1d1-41d2-4589-924b-6fc27558faa4",
+  "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+  "kind": "instance.power.reboot",
+  "status": "failed",
+  "requested_by": "bootstrap",
+  "error_code": "POWER_ACPI_TIMEOUT",
+  "error_message": "La operación no completó los controles autorizados. Consulte error_code y el historial; conserve UUID e Idempotency-Key.",
+  "normalized_status": "failed",
+  "recovery_required": false,
+  "provisioning": null,
+  "created_at": "2026-10-25T18:00:17.390418Z",
+  "updated_at": "2026-10-25T18:01:22.155509Z",
+  "events": [
+    {
+      "id": 1313,
+      "status": "queued",
+      "code": "power_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T18:00:17.393582Z"
+    },
+    {
+      "id": 1314,
+      "status": "running",
+      "code": "power_started",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:17.423824Z"
+    },
+    {
+      "id": 1315,
+      "status": "running",
+      "code": "power_dispatching",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:17.718982Z"
+    },
+    {
+      "id": 1316,
+      "status": "running",
+      "code": "power_task_recorded",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:17.867879Z"
+    },
+    {
+      "id": 1317,
+      "status": "failed",
+      "code": "power_failed",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:01:22.156482Z"
+    }
+  ],
+  "power": {
+    "action": "reboot",
+    "status": "failed",
+    "phase": "finished",
+    "power_state": "running",
+    "guest_ready": null,
+    "recovery_required": false,
+    "started_at": "2026-10-25T18:00:17.422207Z",
+    "submitted_at": "2026-10-25T18:00:17.718051Z",
+    "finished_at": "2026-10-25T18:01:22.154138Z"
+  },
+  "deletion": null,
+  "network": null,
+  "initialization": null,
+  "fulfillment": null
+}

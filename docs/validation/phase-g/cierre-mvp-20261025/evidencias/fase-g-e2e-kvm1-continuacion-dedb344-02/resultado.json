@@ -1,0 +1,6 @@
+{
+  "estado": "PASS",
+  "plan": "kvm-1",
+  "evidencia_creacion_acceso": "/opt/iacp/evidence/fase-g-e2e-comercial-dedb344-final/kvm-1-proxmox-guest-state.json",
+  "nota": "ACPI inicial falló. Red consultada y guest listo antes de nueva intención; misma VM, sin recreación."
+}

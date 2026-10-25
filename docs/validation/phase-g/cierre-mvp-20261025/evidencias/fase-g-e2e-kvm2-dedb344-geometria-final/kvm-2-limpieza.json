@@ -1,0 +1,21 @@
+{
+  "vmid": 30025,
+  "node": "mng01",
+  "instance_status": "deleted",
+  "bootstrap_status": "completed",
+  "secret_reference_removed": true,
+  "proxmox": {
+    "present": false
+  },
+  "state": {
+    "present": false,
+    "metadata": {
+      "version_id": "001792953082342060868-_EAwnX8Hqw",
+      "lineage": "1ce05b78-f934-447d-c608-ae361194e3fb",
+      "serial": 2,
+      "sha256": "b87aefed78a58dc39e69acc29a7ba3e7dbee514c372fa9578240643bc33cce9e",
+      "content_sha256": "911d8813d76b6fe7af0853bcc000b7e550ff7839bb2e5030375afe14da7d62f4"
+    },
+    "lock_absent": true
+  }
+}

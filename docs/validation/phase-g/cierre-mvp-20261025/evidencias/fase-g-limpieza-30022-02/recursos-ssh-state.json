@@ -1,0 +1,103 @@
+{
+  "vmid": 30022,
+  "node": "mng01",
+  "instance_status": "ready",
+  "bootstrap_status": "completed",
+  "secret_reference_removed": true,
+  "proxmox": {
+    "present": true,
+    "power_state": "running"
+  },
+  "state": {
+    "present": true,
+    "metadata": {
+      "version_id": "001792950284119836334-3NHRZtzoPa",
+      "lineage": "6a1f78f9-86d4-2040-c9d5-c8dc9b2424be",
+      "serial": 1,
+      "sha256": "92da8591766e40f093303b1ed36c345a54a764131face8cc81371523890e92ee",
+      "content_sha256": "79c031b347e624d4418dd46b1cbaa0a80c8aa5f0bb0bab6ed0d943c384d9ab55"
+    }
+  },
+  "proxmox_resources": {
+    "cores": 1,
+    "memory_mb": "2048",
+    "boot_disk": "DS_CYBERFUEL:vm-30022-disk-1,aio=io_uring,backup=1,cache=none,discard=on,iothread=0,replicate=1,size=50G,ssd=0",
+    "cloud_init_network": "ip=dhcp"
+  },
+  "guest": {
+    "root_fs_bytes": 50884108288,
+    "cloud_init": "done",
+    "cloud_init_rc": 2,
+    "cloud_init_warnings": {
+      "DEPRECATED": [
+        "'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.",
+        "'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead."
+      ]
+    },
+    "cpus": 1,
+    "lsblk": {
+      "blockdevices": [
+        {
+          "name": "sda",
+          "size": 53687091200,
+          "type": "disk",
+          "fstype": null,
+          "mountpoints": [
+            null
+          ],
+          "children": [
+            {
+              "name": "sda1",
+              "size": 52612283904,
+              "type": "part",
+              "fstype": "ext4",
+              "mountpoints": [
+                "/"
+              ]
+            },
+            {
+              "name": "sda14",
+              "size": 4194304,
+              "type": "part",
+              "fstype": null,
+              "mountpoints": [
+                null
+              ]
+            },
+            {
+              "name": "sda15",
+              "size": 111149056,
+              "type": "part",
+              "fstype": "vfat",
+              "mountpoints": [
+                "/boot/efi"
+              ]
+            },
+            {
+              "name": "sda16",
+              "size": 957350400,
+              "type": "part",
+              "fstype": "ext4",
+              "mountpoints": [
+                "/boot"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sr0",
+          "size": 4194304,
+          "type": "rom",
+          "fstype": "iso9660",
+          "mountpoints": [
+            null
+          ]
+        }
+      ]
+    }
+  },
+  "ip": "192.168.3.148",
+  "ssh_root_key": true,
+  "root_ssh_password_enabled": false,
+  "root_password_pam": "NO_EJECUTADO_CLIENTE_SIN_SECRETO"
+}

@@ -1,0 +1,43 @@
+{
+  "operation_id": "e4b6f00d-5318-451f-9fb2-7fad954ed6d5",
+  "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+  "kind": "instance.network.discover",
+  "status": "completed",
+  "requested_by": "bootstrap",
+  "error_code": null,
+  "error_message": null,
+  "normalized_status": "completed",
+  "recovery_required": false,
+  "provisioning": null,
+  "created_at": "2026-10-25T18:12:36.066100Z",
+  "updated_at": "2026-10-25T18:12:36.377047Z",
+  "events": [
+    {
+      "id": 1329,
+      "status": "queued",
+      "code": "network_discovery_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T18:12:36.069021Z"
+    },
+    {
+      "id": 1330,
+      "status": "completed",
+      "code": "network_observed",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:12:36.377676Z"
+    }
+  ],
+  "power": null,
+  "deletion": null,
+  "network": {
+    "status": "observed",
+    "source": "qemu-guest-agent",
+    "ip_addresses": [
+      "192.168.3.245"
+    ],
+    "mac_address": "BC:24:11:37:66:B3",
+    "observed_at": "2026-10-25T18:12:36.374806+00:00"
+  },
+  "initialization": null,
+  "fulfillment": null
+}

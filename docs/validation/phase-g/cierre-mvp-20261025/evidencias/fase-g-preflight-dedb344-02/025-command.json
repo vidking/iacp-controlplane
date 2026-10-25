@@ -1,0 +1,8 @@
+{
+  "at": "2026-10-25T17:21:20.155139+00:00",
+  "data": {
+    "arguments_sha256": "be5bc9b5db0d7567ccc38f28f5ace52a6912c7fcb4f521d83033babed2e5c9cb",
+    "program": "docker",
+    "returncode": 0
+  }
+}

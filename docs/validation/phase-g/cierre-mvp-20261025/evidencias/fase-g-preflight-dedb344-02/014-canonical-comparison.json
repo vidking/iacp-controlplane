@@ -1,0 +1,21 @@
+{
+  "at": "2026-10-25T17:21:17.127987+00:00",
+  "data": {
+    "changed_paths": [
+      "/services/api/image",
+      "/services/lifecycle-worker/image",
+      "/services/migrate/image",
+      "/services/ownership-certifier/image",
+      "/services/terraform-worker/image",
+      "/services/worker/image",
+      "/services/api/environment/IACP_CREATION_CONTRACT",
+      "/services/api/volumes/profiles.json",
+      "/services/terraform-worker/volumes/profiles.json",
+      "/services/lifecycle-worker/volumes/profiles.json"
+    ],
+    "ignored_build_metadata": [],
+    "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+    "passed": true,
+    "unexpected_paths": []
+  }
+}

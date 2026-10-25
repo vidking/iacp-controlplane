@@ -1,0 +1,113 @@
+{
+  "at": "2026-10-25T17:32:18.244293+00:00",
+  "data": {
+    "compatibility": {
+      "deletion_executions_before_0009": {
+        "count": 22,
+        "new_fields_default": false,
+        "sha256": "f874ea8283d4f428e4048849f1c0969b25b2d646561111bbb197d0016336dc98"
+      },
+      "instances_before_0008": {
+        "count": 23,
+        "new_fields_default": false,
+        "sha256": "dd808bf20aac8ca9b2dda6ea1b0085802d2b4d299c1656becd86c59ca5857b88"
+      },
+      "instances_before_0009": {
+        "count": 23,
+        "new_fields_default": false,
+        "sha256": "a7e0b32d1644551885404a5ee5a873bae3bc1e26aea783f6bebd8cdf7a921fe4"
+      },
+      "instances_before_0011": {
+        "count": 23,
+        "new_fields_default": false,
+        "sha256": "8532cb1dd2b563ab617b2f1745e2bac284c0db6177c1c9ccf97665e97ab46a40"
+      },
+      "instances_before_0012": {
+        "count": 23,
+        "new_fields_default": true,
+        "sha256": "e399db5852e46e1cdd984c67dc36e97dd320c7e4a2f60861250b43eeccabe3e8"
+      },
+      "operations_before_0011": {
+        "count": 266,
+        "new_fields_default": false,
+        "sha256": "6192c263ac18785db91055cfd059e74edff882a9b63a403a7dc86b55971a73a9"
+      }
+    },
+    "nonterminal": {
+      "deletion_executions": [],
+      "guest_initializations": [],
+      "jobs": [],
+      "operations": [],
+      "power_executions": [],
+      "terraform_applies": []
+    },
+    "queues": {},
+    "redis": true,
+    "schema": [
+      "0012_commercial_intents"
+    ],
+    "tables": {
+      "commercial_intents": {
+        "count": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "deletion_executions": {
+        "count": 22,
+        "sha256": "9659f27e550c56498eb96935362bfa3231ec4307f12b32a1fa32c45d828f6662"
+      },
+      "guest_initializations": {
+        "count": 18,
+        "sha256": "7514fb2c1e11288cfc57c501e313cadb08d2e31e3c89965ea31fa9a5980d0b02"
+      },
+      "instances": {
+        "count": 23,
+        "sha256": "ad65d9cf9333f3b674e4ab5c7a1e5c21da901bf2c423af79f166e5e1dbed9445"
+      },
+      "jobs": {
+        "count": 294,
+        "sha256": "39e1133326e59130cf194332d4a1a885d12086a4e019470f71b63485e1c23e66"
+      },
+      "lab_policies": {
+        "count": 6,
+        "sha256": "2b72b7fb3e1a86aaf7c50192fd0e997b3bbab90104e135e8eb68f24258dde35f"
+      },
+      "network_discoveries": {
+        "count": 103,
+        "sha256": "f68dbf207e0c6f2c013ed2555064dad2fbbbdf5f01c04957f472598f1f3ffff1"
+      },
+      "operation_events": {
+        "count": 1243,
+        "sha256": "b3f9c5916a37e219393bd132082e0efbcf453dc8bb7db49c3124fb12080eb888"
+      },
+      "operations": {
+        "count": 266,
+        "sha256": "624188bb489903d8ba6bd61d37f0c7ef0d71bce06eb14af151bc37238a0463c2"
+      },
+      "power_executions": {
+        "count": 88,
+        "sha256": "c27027c99f13e19af002e50886381be18cd45e300312d1ba3b2f215a84bd6537"
+      },
+      "power_ownership_certificates": {
+        "count": 1,
+        "sha256": "759f86025b15adc1c4eccce985d6c61ac191abd68c74e73a8d9d5c1618215e27"
+      },
+      "tenants": {
+        "count": 2,
+        "sha256": "e2669c9e6a591177e987e2bfa200f453635919ccbc2809d7c222ab9cd257e062"
+      },
+      "terraform_applies": {
+        "count": 26,
+        "sha256": "165f870bd3eecb80f3b9bbd9c8d1035933ed8ec39ffe7b6f4daa12d5f94b6d54"
+      },
+      "terraform_attempts": {
+        "count": 30,
+        "sha256": "e55a7f87cbc5e09ffee66338362d2cc129b13434bcf43615f8cf578204d28159"
+      },
+      "terraform_executions": {
+        "count": 23,
+        "sha256": "99ac3553903348eadd22ae48270ca0c7f90c7c1d2bfe0cffafdb6a053f748339"
+      }
+    },
+    "unacked": 0
+  }
+}

@@ -1,0 +1,54 @@
+[
+  {
+    "plan_id": "kvm-1",
+    "name": "KVM 1",
+    "vcpus": 1,
+    "memory_mb": 2048,
+    "disk_gb": 50,
+    "availability": {
+      "available": true,
+      "capacity_verified": true,
+      "reasons": []
+    }
+  },
+  {
+    "plan_id": "kvm-2",
+    "name": "KVM 2",
+    "vcpus": 2,
+    "memory_mb": 4096,
+    "disk_gb": 100,
+    "availability": {
+      "available": true,
+      "capacity_verified": true,
+      "reasons": []
+    }
+  },
+  {
+    "plan_id": "kvm-3",
+    "name": "KVM 3",
+    "vcpus": 4,
+    "memory_mb": 8192,
+    "disk_gb": 200,
+    "availability": {
+      "available": false,
+      "capacity_verified": false,
+      "reasons": [
+        "COMMERCIAL_PLAN_NOT_AUTHORIZED"
+      ]
+    }
+  },
+  {
+    "plan_id": "kvm-4",
+    "name": "KVM 4",
+    "vcpus": 8,
+    "memory_mb": 16384,
+    "disk_gb": 400,
+    "availability": {
+      "available": false,
+      "capacity_verified": false,
+      "reasons": [
+        "COMMERCIAL_PLAN_NOT_AUTHORIZED"
+      ]
+    }
+  }
+]

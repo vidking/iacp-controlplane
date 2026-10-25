@@ -1,0 +1,11 @@
+{
+  "fecha_local": "2026-10-25T12:57:19.574344-06:00",
+  "positivo": "PASS",
+  "negativos_rechazados": [
+    "disk_bytes",
+    "root_partition_end_bytes",
+    "filesystem_raw_bytes"
+  ],
+  "dry_run": "PASS: sin --execute no realiza solicitudes",
+  "py_compile": "PASS"
+}
