@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-25T18:50:19.468619+00:00",
+  "data": {
+    "image": "sha256:511c251830375a201cf6377f477774d07f39c992383cc589decc1fe9ec9ccfa6",
+    "mounts": [
+      {
+        "rw": false,
+        "target": "/run/secrets/api_token"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/db_password"
+      }
+    ],
+    "role": "worker"
+  }
+}

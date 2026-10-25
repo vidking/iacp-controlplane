@@ -1,0 +1,66 @@
+{
+  "operation_id": "3d56d4a1-c189-463b-b2c8-b8f4f0f5a8e0",
+  "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+  "kind": "instance.power.start",
+  "status": "completed",
+  "requested_by": "bootstrap",
+  "error_code": null,
+  "error_message": null,
+  "normalized_status": "completed",
+  "recovery_required": false,
+  "provisioning": null,
+  "created_at": "2026-10-25T18:00:09.654033Z",
+  "updated_at": "2026-10-25T18:00:12.470412Z",
+  "events": [
+    {
+      "id": 1306,
+      "status": "queued",
+      "code": "power_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T18:00:09.657695Z"
+    },
+    {
+      "id": 1307,
+      "status": "running",
+      "code": "power_started",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:09.686095Z"
+    },
+    {
+      "id": 1308,
+      "status": "running",
+      "code": "power_dispatching",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:09.963248Z"
+    },
+    {
+      "id": 1309,
+      "status": "running",
+      "code": "power_task_recorded",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:10.043600Z"
+    },
+    {
+      "id": 1310,
+      "status": "completed",
+      "code": "power_completed",
+      "actor": "worker:lifecycle",
+      "created_at": "2026-10-25T18:00:12.471049Z"
+    }
+  ],
+  "power": {
+    "action": "start",
+    "status": "completed",
+    "phase": "finished",
+    "power_state": "running",
+    "guest_ready": null,
+    "recovery_required": false,
+    "started_at": "2026-10-25T18:00:09.684656Z",
+    "submitted_at": "2026-10-25T18:00:09.962345Z",
+    "finished_at": "2026-10-25T18:00:12.469621Z"
+  },
+  "deletion": null,
+  "network": null,
+  "initialization": null,
+  "fulfillment": null
+}

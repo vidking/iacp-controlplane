@@ -1,0 +1,12 @@
+{
+  "respuesta": {
+    "job_id": "9c6bbc0b-f070-4251-af63-e85bbbb8ee0e",
+    "status": "queued",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "operation_id": "d8d6515f-c019-402d-be76-02ff55c15559",
+    "executor": "provisioning",
+    "provisioning_service": "provisioning"
+  },
+  "request_id": "bf07d057-75a9-4307-bb0e-85156465d456",
+  "plan_id": "kvm-2"
+}

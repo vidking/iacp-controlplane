@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "changed_paths": [],
+  "unexpected_paths": [],
+  "ignored_build_metadata": [],
+  "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+  "live_compatibility": {
+    "passed": true,
+    "unexpected_paths": []
+  },
+  "roles_running": {
+    "terraform-worker": true,
+    "api": true,
+    "lifecycle-worker": true,
+    "worker": true,
+    "traefik": true,
+    "db": true,
+    "redis": true
+  }
+}

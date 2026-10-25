@@ -1,0 +1,103 @@
+{
+  "vmid": 30025,
+  "node": "mng01",
+  "instance_status": "ready",
+  "bootstrap_status": "completed",
+  "secret_reference_removed": true,
+  "proxmox": {
+    "present": true,
+    "power_state": "running"
+  },
+  "state": {
+    "present": true,
+    "metadata": {
+      "version_id": "001792952921656232214-Vl5kFiiL1X",
+      "lineage": "1ce05b78-f934-447d-c608-ae361194e3fb",
+      "serial": 1,
+      "sha256": "6cae0e418cfccc7e4feb885301747041e4e6ca1ddf5141fb8526b87611e092f0",
+      "content_sha256": "c61a664fc7b96e815a3a3412a0df7954e302a46fab50f9b0ae6e87d3cdf14e9d"
+    }
+  },
+  "proxmox_resources": {
+    "cores": 2,
+    "memory_mb": "4096",
+    "boot_disk": "DS_CYBERFUEL:vm-30025-disk-1,aio=io_uring,backup=1,cache=none,discard=on,iothread=0,replicate=1,size=100G,ssd=0",
+    "cloud_init_network": "ip=dhcp"
+  },
+  "guest": {
+    "root_fs_bytes": 102888095744,
+    "cloud_init": "done",
+    "cloud_init_rc": 0,
+    "cloud_init_warnings": {},
+    "cpus": 2,
+    "disk_bytes": 107374182400,
+    "root_partition_bytes": 106299375104,
+    "root_partition_end_bytes": 107374165504,
+    "filesystem_raw_bytes": 106299371520,
+    "filesystem_block_bytes": 4096,
+    "lsblk": {
+      "blockdevices": [
+        {
+          "name": "sda",
+          "size": 107374182400,
+          "type": "disk",
+          "fstype": null,
+          "mountpoints": [
+            null
+          ],
+          "children": [
+            {
+              "name": "sda1",
+              "size": 106299375104,
+              "type": "part",
+              "fstype": "ext4",
+              "mountpoints": [
+                "/"
+              ]
+            },
+            {
+              "name": "sda14",
+              "size": 4194304,
+              "type": "part",
+              "fstype": null,
+              "mountpoints": [
+                null
+              ]
+            },
+            {
+              "name": "sda15",
+              "size": 111149056,
+              "type": "part",
+              "fstype": "vfat",
+              "mountpoints": [
+                "/boot/efi"
+              ]
+            },
+            {
+              "name": "sda16",
+              "size": 957350400,
+              "type": "part",
+              "fstype": "ext4",
+              "mountpoints": [
+                "/boot"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sr0",
+          "size": 4194304,
+          "type": "rom",
+          "fstype": "iso9660",
+          "mountpoints": [
+            null
+          ]
+        }
+      ]
+    }
+  },
+  "ip": "192.168.3.112",
+  "ssh_root_key": true,
+  "root_ssh_password_enabled": false,
+  "root_password_pam": "NO_EJECUTADO_CLIENTE_SIN_SECRETO"
+}

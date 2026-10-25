@@ -1,0 +1,68 @@
+{
+  "estado": "PASS",
+  "fecha_local": "2026-10-25 12:54:38 GMT−6",
+  "resultados": [
+    {
+      "modo": "escritorio",
+      "https_real": true,
+      "autenticacion": "Bearer de automatización existente; no Basic de usuario documental",
+      "guia_visible": true,
+      "errores_js": [],
+      "externos": [],
+      "mutaciones": [],
+      "assets": [
+        {
+          "path": "/docs?asset=ux-f1.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=iacp-v1.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=swagger-5.34.0.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=iacp-v1.js",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=swagger-5.34.0.js",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "modo": "movil",
+      "https_real": true,
+      "autenticacion": "Bearer de automatización existente; no Basic de usuario documental",
+      "guia_visible": true,
+      "errores_js": [],
+      "externos": [],
+      "mutaciones": [],
+      "assets": [
+        {
+          "path": "/docs?asset=ux-f1.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=iacp-v1.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=swagger-5.34.0.css",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=iacp-v1.js",
+          "status": 200
+        },
+        {
+          "path": "/docs?asset=swagger-5.34.0.js",
+          "status": 200
+        }
+      ]
+    }
+  ]
+}

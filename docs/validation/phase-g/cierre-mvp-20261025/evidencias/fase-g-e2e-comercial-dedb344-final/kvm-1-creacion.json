@@ -1,0 +1,90 @@
+{
+  "operation_id": "8cf904bd-459d-469e-b553-40acc7dede9f",
+  "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+  "kind": "instance.create",
+  "status": "completed",
+  "requested_by": "bootstrap",
+  "error_code": null,
+  "error_message": null,
+  "normalized_status": "completed",
+  "recovery_required": false,
+  "provisioning": {
+    "service": "provisioning",
+    "phase": "completed",
+    "attempt": 1,
+    "started_at": "2026-10-25T17:59:01.841513Z",
+    "finished_at": "2026-10-25T17:59:16.942155Z"
+  },
+  "created_at": "2026-10-25T17:58:49.585049Z",
+  "updated_at": "2026-10-25T17:59:16.944530Z",
+  "events": [
+    {
+      "id": 1282,
+      "status": "queued",
+      "code": "commercial_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T17:58:49.593851Z"
+    },
+    {
+      "id": 1283,
+      "status": "running",
+      "code": "provisioning_plan_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T17:58:49.617887Z"
+    },
+    {
+      "id": 1284,
+      "status": "running",
+      "code": "provisioning_planned",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T17:58:58.020258Z"
+    },
+    {
+      "id": 1285,
+      "status": "running",
+      "code": "provisioning_apply_approved",
+      "actor": "commercial:KVMHOST-54.3",
+      "created_at": "2026-10-25T17:58:58.036368Z"
+    },
+    {
+      "id": 1286,
+      "status": "running",
+      "code": "provisioning_apply_queued",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T17:58:58.043856Z"
+    },
+    {
+      "id": 1287,
+      "status": "running",
+      "code": "provisioning_apply_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T17:58:58.060971Z"
+    },
+    {
+      "id": 1288,
+      "status": "running",
+      "code": "provisioning_mutation_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T17:59:01.844323Z"
+    },
+    {
+      "id": 1289,
+      "status": "completed",
+      "code": "provisioning_apply_completed",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T17:59:16.945137Z"
+    }
+  ],
+  "power": null,
+  "deletion": null,
+  "network": null,
+  "initialization": null,
+  "fulfillment": {
+    "status": "completed",
+    "phase": "verified",
+    "start_operation_id": "b0cdca81-581a-4927-bab5-57758fe2553c",
+    "initialization_operation_id": "8c586e9e-1228-4544-b669-2ed611d66902",
+    "guest_ready": null,
+    "resume_endpoint": "/v1/instances/b50a71f8-210c-44da-b5ca-f73b7ce00ee9/provision"
+  }
+}

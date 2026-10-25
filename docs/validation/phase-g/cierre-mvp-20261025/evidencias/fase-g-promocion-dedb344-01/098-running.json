@@ -1,0 +1,45 @@
+{
+  "at": "2026-10-25T17:28:09.878326+00:00",
+  "data": {
+    "image": "sha256:c1157faf2bb71d6469d83c51a6c975b95be24dd8d05610d39c0bfe5c515da3c5",
+    "mounts": [
+      {
+        "rw": false,
+        "target": "/iac-source"
+      },
+      {
+        "rw": false,
+        "target": "/run/config/allocations.json"
+      },
+      {
+        "rw": false,
+        "target": "/run/config/profiles.json"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/bootstrap_aes_key"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/db_password"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/guest_bootstrap_ssh_key"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/root_input_key"
+      },
+      {
+        "rw": false,
+        "target": "/run/secrets/terraform_credentials"
+      },
+      {
+        "rw": true,
+        "target": "/var/lib/iacp/terraform"
+      }
+    ],
+    "role": "terraform-worker"
+  }
+}

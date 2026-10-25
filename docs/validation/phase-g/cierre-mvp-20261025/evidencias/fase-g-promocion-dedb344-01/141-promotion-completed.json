@@ -1,0 +1,9 @@
+{
+  "at": "2026-10-25T17:28:39.656961+00:00",
+  "data": {
+    "admission": 0,
+    "history_unchanged": true,
+    "lifecycle": 0,
+    "schema": "0012_commercial_intents"
+  }
+}

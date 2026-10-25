@@ -1,0 +1,75 @@
+{
+  "fecha_local": "2026-10-25T12:50:49.466655-06:00",
+  "zona": "America/Costa_Rica",
+  "release_operativo": "dedb344b49d401c4da00d0271882881a0ee34dae",
+  "version_producto": "0.10.1",
+  "schema": [
+    "0012_commercial_intents"
+  ],
+  "nonterminal": {
+    "deletion_executions": [],
+    "guest_initializations": [],
+    "jobs": [],
+    "operations": [],
+    "power_executions": [],
+    "terraform_applies": []
+  },
+  "colas": {},
+  "unacked": 0,
+  "roles": [
+    {
+      "rol": "terraform-worker",
+      "imagen": "iacp/terraform-worker:fase-g-e855677",
+      "image_id": "sha256:c1157faf2bb71d6469d83c51a6c975b95be24dd8d05610d39c0bfe5c515da3c5",
+      "estado": "running",
+      "health": null
+    },
+    {
+      "rol": "api",
+      "imagen": "iacp/controlplane-api:fase-g-e855677",
+      "image_id": "sha256:511c251830375a201cf6377f477774d07f39c992383cc589decc1fe9ec9ccfa6",
+      "estado": "running",
+      "health": "healthy"
+    },
+    {
+      "rol": "lifecycle-worker",
+      "imagen": "iacp/controlplane-api:fase-g-e855677",
+      "image_id": "sha256:511c251830375a201cf6377f477774d07f39c992383cc589decc1fe9ec9ccfa6",
+      "estado": "running",
+      "health": null
+    },
+    {
+      "rol": "worker",
+      "imagen": "iacp/controlplane-api:fase-g-e855677",
+      "image_id": "sha256:511c251830375a201cf6377f477774d07f39c992383cc589decc1fe9ec9ccfa6",
+      "estado": "running",
+      "health": null
+    },
+    {
+      "rol": "traefik",
+      "imagen": "traefik@sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56",
+      "image_id": "sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56",
+      "estado": "running",
+      "health": null
+    },
+    {
+      "rol": "db",
+      "imagen": "postgres:17-alpine",
+      "image_id": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+      "estado": "running",
+      "health": "healthy"
+    },
+    {
+      "rol": "redis",
+      "imagen": "redis:7-alpine",
+      "image_id": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "estado": "running",
+      "health": "healthy"
+    }
+  ],
+  "configuracion_comercial_activa": true,
+  "rbac_terraform": "Administrator LAB autorizado; sin cambios",
+  "ceph": "Sin intervención",
+  "jiras_modificados": 0,
+  "nota_fuente_imagenes": "app e855677: árbol app idéntico al main dedb344; driver ejecutado dedb344."
+}

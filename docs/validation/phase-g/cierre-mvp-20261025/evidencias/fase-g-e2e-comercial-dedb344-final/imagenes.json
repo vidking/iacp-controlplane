@@ -1,0 +1,89 @@
+[
+  {
+    "image_id": "ubuntu-2404",
+    "operating_system": "Ubuntu",
+    "version": "24.04",
+    "status": "habilitada",
+    "cloud_init": true,
+    "qemu_guest_agent": true,
+    "root_access": true,
+    "ssh_access": true,
+    "minimum_requirements": {
+      "vcpus": 1,
+      "memory_mb": 512,
+      "disk_gb": 20
+    },
+    "compatible_plans": [
+      "kvm-1",
+      "kvm-2",
+      "kvm-3",
+      "kvm-4"
+    ],
+    "authorized": true,
+    "availability": {
+      "available": true,
+      "capacity_verified": true,
+      "reasons": []
+    }
+  },
+  {
+    "image_id": "ubuntu-2604",
+    "operating_system": "Ubuntu",
+    "version": "26.04",
+    "status": "pendiente",
+    "cloud_init": null,
+    "qemu_guest_agent": null,
+    "root_access": null,
+    "ssh_access": null,
+    "minimum_requirements": null,
+    "compatible_plans": [],
+    "authorized": false,
+    "availability": {
+      "available": false,
+      "capacity_verified": false,
+      "reasons": [
+        "IMAGE_CERTIFICATION_PENDING"
+      ]
+    }
+  },
+  {
+    "image_id": "almalinux-9",
+    "operating_system": "AlmaLinux",
+    "version": "9",
+    "status": "pendiente",
+    "cloud_init": null,
+    "qemu_guest_agent": null,
+    "root_access": null,
+    "ssh_access": null,
+    "minimum_requirements": null,
+    "compatible_plans": [],
+    "authorized": false,
+    "availability": {
+      "available": false,
+      "capacity_verified": false,
+      "reasons": [
+        "IMAGE_CERTIFICATION_PENDING"
+      ]
+    }
+  },
+  {
+    "image_id": "almalinux-10",
+    "operating_system": "AlmaLinux",
+    "version": "10",
+    "status": "pendiente",
+    "cloud_init": null,
+    "qemu_guest_agent": null,
+    "root_access": null,
+    "ssh_access": null,
+    "minimum_requirements": null,
+    "compatible_plans": [],
+    "authorized": false,
+    "availability": {
+      "available": false,
+      "capacity_verified": false,
+      "reasons": [
+        "IMAGE_CERTIFICATION_PENDING"
+      ]
+    }
+  }
+]

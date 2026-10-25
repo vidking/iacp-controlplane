@@ -1,0 +1,741 @@
+[
+  {
+    "operation_id": "d8d6515f-c019-402d-be76-02ff55c15559",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.create",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": {
+      "service": "provisioning",
+      "phase": "completed",
+      "attempt": 1,
+      "started_at": "2026-10-25T18:28:33.027961Z",
+      "finished_at": "2026-10-25T18:28:48.130317Z"
+    },
+    "created_at": "2026-10-25T18:28:20.906741Z",
+    "updated_at": "2026-10-25T18:28:48.132197Z",
+    "events": [
+      {
+        "id": 1379,
+        "status": "queued",
+        "code": "commercial_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:28:20.915238Z"
+      },
+      {
+        "id": 1380,
+        "status": "running",
+        "code": "provisioning_plan_started",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:28:20.935277Z"
+      },
+      {
+        "id": 1381,
+        "status": "running",
+        "code": "provisioning_planned",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:28:29.348336Z"
+      },
+      {
+        "id": 1382,
+        "status": "running",
+        "code": "provisioning_apply_approved",
+        "actor": "commercial:KVMHOST-54.3",
+        "created_at": "2026-10-25T18:28:29.366367Z"
+      },
+      {
+        "id": 1383,
+        "status": "running",
+        "code": "provisioning_apply_queued",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:28:29.374289Z"
+      },
+      {
+        "id": 1384,
+        "status": "running",
+        "code": "provisioning_apply_started",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:28:29.392103Z"
+      },
+      {
+        "id": 1385,
+        "status": "running",
+        "code": "provisioning_mutation_started",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:28:33.030693Z"
+      },
+      {
+        "id": 1386,
+        "status": "completed",
+        "code": "provisioning_apply_completed",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:28:48.132751Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": {
+      "status": "completed",
+      "phase": "verified",
+      "start_operation_id": "c2272542-ab16-4471-9e8c-d35f665123cd",
+      "initialization_operation_id": "29cd12e5-e60d-4e0c-a129-615eb309b9d2",
+      "guest_ready": null,
+      "resume_endpoint": "/v1/instances/e1cc735c-e269-4423-a222-77f70f09c05a/provision"
+    }
+  },
+  {
+    "operation_id": "c2272542-ab16-4471-9e8c-d35f665123cd",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.power.start",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:28:48.232351Z",
+    "updated_at": "2026-10-25T18:28:50.936439Z",
+    "events": [
+      {
+        "id": 1387,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:28:48.235432Z"
+      },
+      {
+        "id": 1388,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:28:48.264319Z"
+      },
+      {
+        "id": 1389,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:28:48.565576Z"
+      },
+      {
+        "id": 1390,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:28:48.648679Z"
+      },
+      {
+        "id": 1391,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:28:50.937099Z"
+      }
+    ],
+    "power": {
+      "action": "start",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-25T18:28:48.262543Z",
+      "submitted_at": "2026-10-25T18:28:48.564761Z",
+      "finished_at": "2026-10-25T18:28:50.935599Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "29cd12e5-e60d-4e0c-a129-615eb309b9d2",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.initialize",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:28:50.972175Z",
+    "updated_at": "2026-10-25T18:29:20.346935Z",
+    "events": [
+      {
+        "id": 1392,
+        "status": "queued",
+        "code": "guest_initialization_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:28:50.977798Z"
+      },
+      {
+        "id": 1393,
+        "status": "running",
+        "code": "guest_initialization_dispatch_consumed",
+        "actor": "worker:iac",
+        "created_at": "2026-10-25T18:29:10.019073Z"
+      },
+      {
+        "id": 1394,
+        "status": "completed",
+        "code": "guest_initialization_verified",
+        "actor": "worker:iac",
+        "created_at": "2026-10-25T18:29:20.347835Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": null,
+    "initialization": {
+      "status": "completed",
+      "mode": "ubuntu-2404-lab-identity-v1",
+      "program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+      "started_at": "2026-10-25T18:29:10.016685Z",
+      "finished_at": "2026-10-25T18:29:20.344228Z",
+      "pid": 979,
+      "result": {
+        "ifindex": 2,
+        "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+        "mac_address": "bc:24:11:44:5d:2e",
+        "machine_id_sha256": "372059c3cee9ca7fe647278607384e9d9e48e5106ca55f2cc5821c6df09391d9",
+        "mode": "ubuntu-2404-lab-identity-v1",
+        "network_sha256": "0209f16d7bdcd9c8f2645fa707a2d740af19b6a937cfe2c42cc3cb0512a28422",
+        "program_sha256": "134a4ae9fff7019c8e2ea9001f30f89868f44c6df14b68308aef5c817dba2a2f",
+        "network": {
+          "status": "observed",
+          "source": "qemu-guest-agent",
+          "ip_addresses": [
+            "192.168.3.112"
+          ],
+          "mac_address": "bc:24:11:44:5d:2e"
+        },
+        "source": "qemu-guest-agent",
+        "guest_ready": null
+      }
+    },
+    "fulfillment": null
+  },
+  {
+    "operation_id": "ba987b72-b0c6-4f94-97ca-f0296cc1daa6",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.access.bootstrap",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:29:20.371337Z",
+    "updated_at": "2026-10-25T18:29:23.233125Z",
+    "events": [
+      {
+        "id": 1395,
+        "status": "queued",
+        "code": "commercial_bootstrap_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:29:20.373229Z"
+      },
+      {
+        "id": 1396,
+        "status": "running",
+        "code": "commercial_bootstrap_dispatch_consumed",
+        "actor": "worker:iac",
+        "created_at": "2026-10-25T18:29:20.399356Z"
+      },
+      {
+        "id": 1397,
+        "status": "completed",
+        "code": "commercial_bootstrap_completed",
+        "actor": "worker:iac",
+        "created_at": "2026-10-25T18:29:23.233706Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "89cb6dc4-3518-4b32-b8da-fad582168312",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.power.shutdown",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:29:38.656695Z",
+    "updated_at": "2026-10-25T18:29:43.373944Z",
+    "events": [
+      {
+        "id": 1398,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:29:38.659515Z"
+      },
+      {
+        "id": 1399,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:38.687429Z"
+      },
+      {
+        "id": 1400,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:38.969559Z"
+      },
+      {
+        "id": 1401,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:39.054255Z"
+      },
+      {
+        "id": 1402,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:43.375065Z"
+      }
+    ],
+    "power": {
+      "action": "shutdown",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "stopped",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-25T18:29:38.685995Z",
+      "submitted_at": "2026-10-25T18:29:38.968825Z",
+      "finished_at": "2026-10-25T18:29:43.373087Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "46883ffd-dea9-41b4-b083-8c9049e8172c",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.power.start",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:29:44.136004Z",
+    "updated_at": "2026-10-25T18:29:46.853109Z",
+    "events": [
+      {
+        "id": 1403,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:29:44.138947Z"
+      },
+      {
+        "id": 1404,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:44.171115Z"
+      },
+      {
+        "id": 1405,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:44.423551Z"
+      },
+      {
+        "id": 1406,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:44.508047Z"
+      },
+      {
+        "id": 1407,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:29:46.853734Z"
+      }
+    ],
+    "power": {
+      "action": "start",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-25T18:29:44.169262Z",
+      "submitted_at": "2026-10-25T18:29:44.422702Z",
+      "finished_at": "2026-10-25T18:29:46.852285Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "b94f0d3c-75f6-4b27-8a14-513dcf97c9d9",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.discover",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:29:46.870796Z",
+    "updated_at": "2026-10-25T18:29:50.045597Z",
+    "events": [
+      {
+        "id": 1408,
+        "status": "queued",
+        "code": "network_discovery_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:29:46.873154Z"
+      },
+      {
+        "id": 1409,
+        "status": "completed",
+        "code": "network_pending",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:29:50.046156Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": {
+      "status": "pending",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [],
+      "reason": "GUEST_AGENT_UNAVAILABLE",
+      "observed_at": "2026-10-25T18:29:50.043630+00:00"
+    },
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "b0d111b8-1fa3-466c-bae5-b27508efbc4b",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.discover",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:29:58.845046Z",
+    "updated_at": "2026-10-25T18:30:01.456487Z",
+    "events": [
+      {
+        "id": 1410,
+        "status": "queued",
+        "code": "network_discovery_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:29:58.847710Z"
+      },
+      {
+        "id": 1411,
+        "status": "completed",
+        "code": "network_observed",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:30:01.457051Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": {
+      "status": "observed",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [
+        "192.168.3.112"
+      ],
+      "mac_address": "BC:24:11:44:5D:2E",
+      "observed_at": "2026-10-25T18:30:01.454548+00:00"
+    },
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "2b61a975-c780-4b1b-925e-3bd420676f3a",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.power.reboot",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:30:13.748447Z",
+    "updated_at": "2026-10-25T18:30:18.523147Z",
+    "events": [
+      {
+        "id": 1412,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:30:13.751038Z"
+      },
+      {
+        "id": 1413,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:13.778973Z"
+      },
+      {
+        "id": 1414,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:14.058812Z"
+      },
+      {
+        "id": 1415,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:14.141478Z"
+      },
+      {
+        "id": 1416,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:18.523767Z"
+      }
+    ],
+    "power": {
+      "action": "reboot",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "running",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-25T18:30:13.777588Z",
+      "submitted_at": "2026-10-25T18:30:14.058031Z",
+      "finished_at": "2026-10-25T18:30:18.522278Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "04912cd6-581d-40b3-9687-94364b0cacd0",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.discover",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:30:18.540568Z",
+    "updated_at": "2026-10-25T18:30:21.801839Z",
+    "events": [
+      {
+        "id": 1417,
+        "status": "queued",
+        "code": "network_discovery_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:30:18.543547Z"
+      },
+      {
+        "id": 1418,
+        "status": "completed",
+        "code": "network_pending",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:30:21.802411Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": {
+      "status": "pending",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [],
+      "reason": "GUEST_AGENT_UNAVAILABLE",
+      "observed_at": "2026-10-25T18:30:21.799936+00:00"
+    },
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "e59e051b-4f34-4164-bd92-e3783ae82684",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.discover",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:30:29.492206Z",
+    "updated_at": "2026-10-25T18:30:32.657243Z",
+    "events": [
+      {
+        "id": 1419,
+        "status": "queued",
+        "code": "network_discovery_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:30:29.495563Z"
+      },
+      {
+        "id": 1420,
+        "status": "completed",
+        "code": "network_pending",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:30:32.657826Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": {
+      "status": "pending",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [],
+      "reason": "GUEST_AGENT_UNAVAILABLE",
+      "observed_at": "2026-10-25T18:30:32.655391+00:00"
+    },
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "f81e07a5-8908-4836-8cad-c30ef33c27f0",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.network.discover",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:30:41.481556Z",
+    "updated_at": "2026-10-25T18:30:41.679290Z",
+    "events": [
+      {
+        "id": 1421,
+        "status": "queued",
+        "code": "network_discovery_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:30:41.483938Z"
+      },
+      {
+        "id": 1422,
+        "status": "completed",
+        "code": "network_observed",
+        "actor": "worker:provisioning",
+        "created_at": "2026-10-25T18:30:41.680391Z"
+      }
+    ],
+    "power": null,
+    "deletion": null,
+    "network": {
+      "status": "observed",
+      "source": "qemu-guest-agent",
+      "ip_addresses": [
+        "192.168.3.112"
+      ],
+      "mac_address": "BC:24:11:44:5D:2E",
+      "observed_at": "2026-10-25T18:30:41.677110+00:00"
+    },
+    "initialization": null,
+    "fulfillment": null
+  },
+  {
+    "operation_id": "ce4ffce7-60a4-423c-8225-1b3f96dfae8f",
+    "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+    "kind": "instance.power.shutdown",
+    "status": "completed",
+    "requested_by": "bootstrap",
+    "error_code": null,
+    "error_message": null,
+    "normalized_status": "completed",
+    "recovery_required": false,
+    "provisioning": null,
+    "created_at": "2026-10-25T18:30:56.610355Z",
+    "updated_at": "2026-10-25T18:31:01.491713Z",
+    "events": [
+      {
+        "id": 1423,
+        "status": "queued",
+        "code": "power_accepted",
+        "actor": "bootstrap",
+        "created_at": "2026-10-25T18:30:56.613296Z"
+      },
+      {
+        "id": 1424,
+        "status": "running",
+        "code": "power_started",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:56.642465Z"
+      },
+      {
+        "id": 1425,
+        "status": "running",
+        "code": "power_dispatching",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:57.012154Z"
+      },
+      {
+        "id": 1426,
+        "status": "running",
+        "code": "power_task_recorded",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:30:57.099404Z"
+      },
+      {
+        "id": 1427,
+        "status": "completed",
+        "code": "power_completed",
+        "actor": "worker:lifecycle",
+        "created_at": "2026-10-25T18:31:01.492329Z"
+      }
+    ],
+    "power": {
+      "action": "shutdown",
+      "status": "completed",
+      "phase": "finished",
+      "power_state": "stopped",
+      "guest_ready": null,
+      "recovery_required": false,
+      "started_at": "2026-10-25T18:30:56.640868Z",
+      "submitted_at": "2026-10-25T18:30:57.011356Z",
+      "finished_at": "2026-10-25T18:31:01.490946Z"
+    },
+    "deletion": null,
+    "network": null,
+    "initialization": null,
+    "fulfillment": null
+  }
+]

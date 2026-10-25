@@ -1,0 +1,57 @@
+{
+  "vms_residuales": [],
+  "discos_residuales": [],
+  "instancias": [
+    {
+      "instance_id": "04319f56-8ec0-4893-be23-ed1ceb0fc642",
+      "vmid": 30022,
+      "status": "deleted",
+      "bootstrap_status": "completed",
+      "referencia_eliminada": true
+    },
+    {
+      "instance_id": "6b0985c9-94e8-4fd6-b96f-9d0dc63f0438",
+      "vmid": 30024,
+      "status": "deleted",
+      "bootstrap_status": "completed",
+      "referencia_eliminada": true
+    },
+    {
+      "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+      "vmid": 30023,
+      "status": "deleted",
+      "bootstrap_status": "completed",
+      "referencia_eliminada": true
+    },
+    {
+      "instance_id": "e1cc735c-e269-4423-a222-77f70f09c05a",
+      "vmid": 30025,
+      "status": "deleted",
+      "bootstrap_status": "completed",
+      "referencia_eliminada": true
+    }
+  ],
+  "plantillas_protegidas": [
+    {
+      "vmid": 29000,
+      "template": 1,
+      "lock": null
+    },
+    {
+      "vmid": 29001,
+      "template": 1,
+      "lock": null
+    },
+    {
+      "vmid": 29010,
+      "template": 1,
+      "lock": null
+    },
+    {
+      "vmid": 29011,
+      "template": 1,
+      "lock": null
+    }
+  ],
+  "fecha_local": "2026-10-25T12:54:33.573583-06:00"
+}

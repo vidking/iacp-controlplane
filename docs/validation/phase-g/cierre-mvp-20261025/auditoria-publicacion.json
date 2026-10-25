@@ -1,0 +1,10 @@
+{
+  "fecha_local": "2026-10-25T12:57:19.551728-06:00",
+  "alcance": "Archivos nuevos de evidencias y cliente secuencial; capturas revisadas visualmente",
+  "escaneo": "scripts/audit_evidence_secrets.py:scan",
+  "hallazgos_revisados": 8,
+  "clasificacion": "Ocho coincidencias en dos snapshots OpenAPI: placeholder CONTRASENA_ILUSTRATIVA_CAMBIAR; no contraseña real",
+  "secretos_reales_detectados": 0,
+  "fixtures_opacos_privados_exportados": false,
+  "dumps_o_state_completo_exportados": false
+}

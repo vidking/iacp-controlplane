@@ -1,0 +1,86 @@
+{
+  "operation_id": "9ec85b55-0838-4583-ae02-de60ec7e0c02",
+  "instance_id": "6b0985c9-94e8-4fd6-b96f-9d0dc63f0438",
+  "kind": "instance.delete",
+  "status": "completed",
+  "requested_by": "bootstrap",
+  "error_code": null,
+  "error_message": null,
+  "normalized_status": "completed",
+  "recovery_required": false,
+  "provisioning": null,
+  "created_at": "2026-10-25T18:26:23.603598Z",
+  "updated_at": "2026-10-25T18:26:42.609470Z",
+  "events": [
+    {
+      "id": 1371,
+      "status": "queued",
+      "code": "delete_plan_accepted",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T18:26:23.612163Z"
+    },
+    {
+      "id": 1372,
+      "status": "running",
+      "code": "delete_plan_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:26:23.630843Z"
+    },
+    {
+      "id": 1373,
+      "status": "running",
+      "code": "delete_plan_ready",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:26:33.468151Z"
+    },
+    {
+      "id": 1374,
+      "status": "running",
+      "code": "delete_plan_approved",
+      "actor": "policy:commercial:0deed2d15ffa283e75cf407bc9dde8ce8af268469cf21fc52c2fc4c9f3dbb3ff",
+      "created_at": "2026-10-25T18:26:33.495969Z"
+    },
+    {
+      "id": 1375,
+      "status": "queued",
+      "code": "delete_queued",
+      "actor": "bootstrap",
+      "created_at": "2026-10-25T18:26:33.517933Z"
+    },
+    {
+      "id": 1376,
+      "status": "running",
+      "code": "delete_apply_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:26:33.537203Z"
+    },
+    {
+      "id": 1377,
+      "status": "running",
+      "code": "delete_mutation_started",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:26:38.198876Z"
+    },
+    {
+      "id": 1378,
+      "status": "completed",
+      "code": "delete_completed",
+      "actor": "worker:provisioning",
+      "created_at": "2026-10-25T18:26:42.610030Z"
+    }
+  ],
+  "power": null,
+  "deletion": {
+    "status": "completed",
+    "phase": "deleted",
+    "plan_sha256": "19ab4cc1c4c4361ba87bfab7bc2ae66d5a0262172dcafe8c2141b06ee98dd4a6",
+    "approved_by": "policy:commercial:0deed2d15ffa283e75cf407bc9dde8ce8af268469cf21fc52c2fc4c9f3dbb3ff",
+    "expires_at": "2026-10-25T18:31:33.494760Z",
+    "started_at": "2026-10-25T18:26:38.195184Z",
+    "finished_at": "2026-10-25T18:26:42.605973Z",
+    "recovery_required": false
+  },
+  "network": null,
+  "initialization": null,
+  "fulfillment": null
+}
