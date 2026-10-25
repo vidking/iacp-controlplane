@@ -103,3 +103,13 @@ def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
     assert 'window.scrollTo' in script and 'history.pushState' in script
     assert 'deepLinking: true' in script and 'scrollIntoView' not in script
     assert 'localStorage' not in script
+
+
+def test_local_guides_render_documentation_not_only_hashes(client, auth):
+    page = client.get('/docs', headers=auth).text
+    for marker in ('crm-arquitectura', 'crm-flujo', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
+        assert f'id="{marker}"' in page
+    assert 'TOKEN_DEL_TENANT' in page and 'Idempotency-Key' in page
+    assert '0011_crm_contract' in page and 'go_live.py' in page
+    assert 'Ver fuente versionada en Forgejo' in page
+    assert 'Manual para Desarrollo</a>' not in page
