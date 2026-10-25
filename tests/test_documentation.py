@@ -113,20 +113,19 @@ def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
     assert 'data-doc-target="guia-despliegue"' in page.text
     script = client.get('/docs?asset=iacp-v1.js', headers=auth).text
     assert 'window.scrollTo' in script and 'history.pushState' in script
-    assert 'deepLinking: true' in script and 'scrollIntoView' not in script
+    assert 'deepLinking: false' in script and 'navigationPlugin' in script and 'scrollIntoView' not in script
     assert 'localStorage' not in script
 
 
 def test_local_guides_render_documentation_not_only_hashes(client, auth):
     page = client.get('/docs', headers=auth).text
-    for marker in ('crm-introduccion', 'crm-autenticacion', 'crm-perfiles', 'crm-idempotencia', 'crm-creacion', 'crm-seguimiento', 'crm-red', 'crm-lifecycle', 'crm-eliminacion', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
+    for marker in ('piloto-acceso', 'piloto-json', 'piloto-respuesta', 'piloto-seguimiento', 'piloto-ssh', 'piloto-lifecycle', 'piloto-delete', 'crm-introduccion', 'crm-autenticacion', 'crm-perfiles', 'crm-idempotencia', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
         assert f'id="{marker}"' in page
-    assert 'TOKEN_DEL_TENANT' in page and 'Idempotency-Key' in page
-    assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' in page
-    assert 'GET /v1/lab/policies' in page
-    assert '0011_crm_contract' in page and 'go_live.py' in page
+    assert 'Crear una VM piloto — Ubuntu 24.04' in page
+    assert 'Idempotency-Key' in page and '0012_commercial_intents' in page
+    assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' not in page
+    assert '"self_service_policy_id"' not in page and '&quot;self_service_policy_id&quot;' not in page
     assert 'Ver fuente versionada en Forgejo' in page
-    assert 'Manual para Desarrollo</a>' not in page
 
 
 def test_manual_separa_bloques_de_codigo_y_codigo_en_linea(client, auth):
@@ -136,7 +135,7 @@ def test_manual_separa_bloques_de_codigo_y_codigo_en_linea(client, auth):
     assert 'font:inherit' in css
     assert '.guide-content :not(pre)>code' in css
     page = client.get('/docs', headers=auth).text
-    assert '<pre><code>curl ' in page
+    assert 'curl --fail-with-body' in page
     assert '<code>Idempotency-Key</code>' in page
     # G exige network.profile_id; el error histórico era profile_id en la raíz.
     from html import unescape
@@ -144,3 +143,46 @@ def test_manual_separa_bloques_de_codigo_y_codigo_en_linea(client, auth):
     for block in re.findall(r'<pre><code>(.*?)</code></pre>', page, re.S):
         if block.lstrip().startswith('{'):
             assert 'profile_id' not in json.loads(unescape(block))
+
+
+def test_pilot_example_and_real_response_match_active_commercial_contract(monkeypatch, client, auth):
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    from iacp.commercial_contract import CommercialInstanceCreate
+    pilot=json.loads((ROOT/'app/iacp/static/docs/piloto.json').read_text())
+    parsed=CommercialInstanceCreate.model_validate(pilot['request'])
+    assert parsed.plan_id=='kvm-1' and parsed.image_id=='ubuntu-2404'
+    schema=create_app().openapi()
+    resolver=RefResolver.from_schema(schema)
+    Draft202012Validator(schema['components']['schemas']['CommercialInstanceCreate'],resolver=resolver).validate(pilot['request'])
+    response_schema=schema['paths']['/v1/instances']['post']['responses']['202']['content']['application/json']['schema']
+    Draft202012Validator(response_schema,resolver=resolver).validate(pilot['accepted'])
+    actual=json.loads((ROOT/pilot['provenance']['evidencia']).read_text())
+    assert pilot['accepted']==actual['respuesta'] and pilot['request_id']==actual['request_id']
+    page=client.get('/docs',headers=auth).text
+    assert '{{pilot_' not in page
+    assert 'data-copy-target="pilot-json"' in page and 'data-copy-target="pilot-curl"' in page
+
+
+def test_copied_curl_generates_valid_body_without_constant_password(monkeypatch,tmp_path,client,auth):
+    import os, getpass
+    from iacp.commercial_contract import CommercialInstanceCreate
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    fixture=Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.OpenSSH,PublicFormat.OpenSSH).decode()
+    key=tmp_path/'public.pub';key.write_text(fixture)
+    monkeypatch.setenv('IACP_NAME','piloto-prueba-documental')
+    monkeypatch.setenv('IACP_SSH_PUBLIC_KEY_FILE',str(key))
+    monkeypatch.setenv('IACP_WORK',str(tmp_path))
+    sentinel='Solo-prueba-documental-2026!'
+    monkeypatch.setattr(getpass,'getpass',lambda _:sentinel)
+    from html import unescape
+    import re
+    page=client.get('/docs',headers=auth).text
+    command=unescape(re.search(r'<code id="pilot-curl">(.*?)</code>',page,re.S).group(1))
+    program=command.split("python3 - <<'PY'\n",1)[1].split('\nPY',1)[0]
+    exec(compile(program,'curl-piloto-documental','exec'),{})
+    body=json.loads((tmp_path/'request.json').read_text())
+    parsed=CommercialInstanceCreate.model_validate(body)
+    assert parsed.access.root_password.get_secret_value()==sentinel
+    assert parsed.access.ssh_public_keys==[fixture]
+    assert 'curl --fail-with-body' in command and '--data-binary' in command

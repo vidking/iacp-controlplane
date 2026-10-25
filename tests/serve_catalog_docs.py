@@ -23,10 +23,13 @@ if __name__ == "__main__":
         path.write_text("identidad-sintetica-solo-pruebas-documentales")
         path.chmod(0o600)
         os.environ["IACP_API_TOKEN_FILE"]=str(path)
+        os.environ["IACP_CREATION_CONTRACT"]="commercial-g"
         engine=create_engine(f"sqlite:///{Path(directory)/'docs.sqlite'}",connect_args={"check_same_thread":False})
         upgrade(engine)
         sessions=sessionmaker(bind=engine)
         app=create_app()
+        # Try it out solo puede consultar este fixture; nunca la API real.
+        app.servers=[{"url":"http://127.0.0.1:8765","description":"Fixture local de solo lectura"}]
         def session_override():
             with sessions() as session:
                 yield session

@@ -1,0 +1,16 @@
+{
+  "fecha_local": "2026-10-25T15:26:24.096058-06:00",
+  "candidata": "PASS",
+  "runtime_nuevo": "PENDIENTE_MERGE_Y_PROMOCION",
+  "regresion_completa": {
+    "pass": 1064,
+    "omitidas": 0
+  },
+  "revalidacion_documental": {
+    "pass": 69
+  },
+  "playwright_modos": 3,
+  "coordenadas_verificadas": 102,
+  "contrato_publico": "IDENTICO",
+  "mutaciones_infraestructura": 0
+}
