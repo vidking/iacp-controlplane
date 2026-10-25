@@ -41,7 +41,7 @@
     const operationId = link.dataset.operationId;
     if (operationId) { const hash = link.getAttribute("href"); if (location.hash !== hash) history.pushState({operationId}, "", hash); revealOperation(operationId); return; }
     const target = document.getElementById(link.dataset.docTarget); if (!target) return;
-    const hash = `#${link.dataset.docTarget}`; if (location.hash !== hash) history.pushState({}, "", hash); revealDocument(link.dataset.docTarget);
+    const hash = `#${link.dataset.docTarget}`; if (location.hash !== hash) location.hash = hash; else revealDocument(link.dataset.docTarget);
   }
   window.ui = SwaggerUIBundle({url: document.body.dataset.schema, dom_id: "#swagger-ui", deepLinking: true, docExpansion: "list", displayRequestDuration: true, persistAuthorization: false, tryItOutEnabled: false, validatorUrl: null, defaultModelsExpandDepth: -1, presets: [SwaggerUIBundle.presets.apis], layout: "BaseLayout", operationsSorter: (a, b) => { const rank = o => { const i = priority.indexOf(o.getIn(["operation", "operationId"]) || o.get("operationId")); return i < 0 ? 100 : i; }; return rank(a) - rank(b) || a.get("path").localeCompare(b.get("path")); }, onComplete: () => { new MutationObserver(() => { filter(); const id = operationForHash(); if (id) revealOperation(id); const doc = documentForHash(); if (doc) revealDocument(doc); }).observe(document.getElementById("swagger-ui"), {childList: true, subtree: true}); filter(); const id = operationForHash(); if (id) revealOperation(id); const doc = documentForHash(); if (doc) revealDocument(doc); }});
   search.addEventListener("input", filter);
