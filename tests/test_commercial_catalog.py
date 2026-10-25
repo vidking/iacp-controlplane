@@ -40,7 +40,7 @@ def catalog_profile(tmp_path, monkeypatch):
 def test_four_exact_plans_and_immutable_catalog():
     assert [(p.plan_id,p.vcpus,p.memory_mb,p.disk_gb) for p in PLANS] == [
         ('kvm-1',1,2048,50),('kvm-2',2,4096,100),('kvm-3',4,8192,200),('kvm-4',8,16384,400)]
-    assert catalog_digest() == 'ee0e5d26cc0ff7884c9a5655e336025c2a254fa71b07d5b2ada5b20374006791'
+    assert catalog_digest() == '0deed2d15ffa283e75cf407bc9dde8ce8af268469cf21fc52c2fc4c9f3dbb3ff'
     with pytest.raises(AttributeError):
         PLANS[0].disk_gb = 20
     with pytest.raises(ValueError, match='PLAN_NOT_FOUND'):
@@ -51,15 +51,29 @@ def test_four_exact_plans_and_immutable_catalog():
 
 
 def test_ubuntu_2604_pending_is_internal_and_cannot_provision(client, auth, catalog_profile):
-    pending, = PENDING_IMAGES
+    pending = next(row for row in PENDING_IMAGES if row.image_id == 'ubuntu-2604')
     assert (pending.image_id, pending.version, pending.template_vm_id, pending.status) == (
         'ubuntu-2604', '26.04', 29001, 'pendiente')
     with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
         resolve_image('ubuntu-2604')
-    assert all(row['image_id'] != 'ubuntu-2604'
-        for row in client.get('/v1/images', headers=auth).json())
+    row = next(row for row in client.get('/v1/images', headers=auth).json() if row['image_id']=='ubuntu-2604')
+    assert row['status']=='pendiente' and not row['availability']['available']
+    assert row['root_access'] is None and row['minimum_requirements'] is None
     with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
         resolved_resources(CommercialInstanceCreate.model_validate({**EXAMPLES[0], 'image_id': 'ubuntu-2604'}))
+
+
+def test_almalinux_images_from_inventory_remain_pending_and_unselectable(client, auth, catalog_profile):
+    assert {(row.image_id, row.template_vm_id, row.status) for row in PENDING_IMAGES} == {
+        ('ubuntu-2604', 29001, 'pendiente'), ('almalinux-9', 29010, 'pendiente'),
+        ('almalinux-10', 29011, 'pendiente')}
+    for image_id in ('almalinux-9', 'almalinux-10'):
+        with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
+            resolve_image(image_id)
+    rows = client.get('/v1/images', headers=auth).json()
+    assert [row['image_id'] for row in rows] == ['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']
+    assert all(not row['authorized'] and not row['availability']['available']
+        and row['availability']['reasons']==['IMAGE_CERTIFICATION_PENDING'] for row in rows[1:])
 
 
 @pytest.mark.parametrize('status',['pendiente','certificada','retirada'])
@@ -139,7 +153,8 @@ def test_canonical_examples_resolve_resources_without_password(example):
 
 @pytest.mark.parametrize('field,value', [('vcpus',2),('memory_mb',4096),('disk_gb',100),
     ('self_service_policy_id','00000000-0000-4000-8000-000000000001'),('tenant_id',BOOTSTRAP_TENANT_ID),
-    ('node_preference','mng01'),('image','ubuntu-2404'),('network_profile','lab-dhcp'),('profile_id','kvm-2')])
+    ('node_preference','mng01'),('image','ubuntu-2404'),('network_profile','lab-dhcp'),('profile_id','kvm-2'),
+    ('template_vm_id',29011),('vmid',30050)])
 def test_obsolete_and_privileged_fields_explicitly_rejected(field,value):
     with pytest.raises(ValidationError) as e:
         CommercialInstanceCreate.model_validate({**EXAMPLES[0],field:value})

@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 
 
-CATALOG_VERSION = "KVMHOST-54.2"
+CATALOG_VERSION = "KVMHOST-54.3"
 
 
 @dataclass(frozen=True)
@@ -56,13 +56,19 @@ class PendingGoldenImage:
     operating_system: str
     version: str
     template_vm_id: int
+    source_node: str
+    source_storage: str
     status: str = "pendiente"
 
 
 # Identidad comunicada por Infraestructura el 25/10/2026, America/Costa_Rica.
-# Falta evidencia del frente de imágenes: no seleccionable ni publicada como
-# habilitada. Nodo, storage y capacidades se incorporarán al certificarla.
-PENDING_IMAGES = (PendingGoldenImage("ubuntu-2604", "Ubuntu", "26.04", 29001),)
+# Inventario Proxmox de solo lectura comprobado el 25/10/2026: plantillas,
+# mng01 y DS_CYBERFUEL. La presencia no certifica bootstrap o filesystem.
+PENDING_IMAGES = (
+    PendingGoldenImage("ubuntu-2604", "Ubuntu", "26.04", 29001, "mng01", "DS_CYBERFUEL"),
+    PendingGoldenImage("almalinux-9", "AlmaLinux", "9", 29010, "mng01", "DS_CYBERFUEL"),
+    PendingGoldenImage("almalinux-10", "AlmaLinux", "10", 29011, "mng01", "DS_CYBERFUEL"),
+)
 
 
 def resolve_plan(plan_id: str) -> Plan:

@@ -75,7 +75,22 @@ def reserve_profile(session, instance):
     p=load_profile(instance.network_profile,instance.tenant_id)
     if instance.image != p.settings.image:
         raise PlanError('AUTHORIZED_IMAGE_MISMATCH')
-    if instance.vcpus>p.max_vcpus or instance.memory_mb>p.max_memory_mb or instance.disk_gb>p.max_disk_gb:
+    commercial = getattr(instance, 'commercial_revision', None)
+    if commercial:
+        from ..catalog import PLANS
+        from ..services.commercial import limits_for, quota
+        if commercial != 'commercial-g' or instance.network_profile != 'lab-dhcp':
+            raise PlanError('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
+        plan = next((row for row in PLANS if (row.vcpus, row.memory_mb, row.disk_gb)
+            == (instance.vcpus, instance.memory_mb, instance.disk_gb)), None)
+        if plan is None:
+            raise PlanError('COMMERCIAL_RESOURCES_OUTSIDE_CATALOG')
+        limits = limits_for(instance.tenant_id)
+        if plan.plan_id not in limits.allowed_plans:
+            raise PlanError('COMMERCIAL_PLAN_NOT_AUTHORIZED')
+        quota(session, instance.tenant_id, limits, dict(vcpus=plan.vcpus,
+            memory_mb=plan.memory_mb, disk_gb=plan.disk_gb))
+    elif instance.vcpus>p.max_vcpus or instance.memory_mb>p.max_memory_mb or instance.disk_gb>p.max_disk_gb:
         raise PlanError('PROFILE_CAPACITY_EXCEEDED')
     if instance.disk_gb<p.settings.boot_disk.minimum_size_gb:
         raise PlanError('DISK_SHRINK_FORBIDDEN')
@@ -86,7 +101,7 @@ def reserve_profile(session, instance):
         return None  # Existing per-instance IPAM is resolved ONLY by the worker.
     rows=session.scalars(select(Instance).where(Instance.tenant_id==instance.tenant_id,
         Instance.network_profile==instance.network_profile,Instance.status!='deleted')).all()
-    if (len(rows) >= p.max_live_instances or sum(i.vcpus for i in rows)+instance.vcpus > p.max_total_vcpus
+    if not commercial and (len(rows) >= p.max_live_instances or sum(i.vcpus for i in rows)+instance.vcpus > p.max_total_vcpus
             or sum(i.memory_mb for i in rows)+instance.memory_mb > p.max_total_memory_mb
             or sum(i.disk_gb for i in rows)+instance.disk_gb > p.max_total_disk_gb):
         raise PlanError('PROFILE_CAPACITY_EXCEEDED')

@@ -199,7 +199,10 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,
                 commercial_context=spec.commercial_context.model_dump(exclude_none=True),commercial_revision='commercial-g',status='pending',executor='terraform')
-            allocation=reserve_profile(session,instance)
+            try:
+                allocation=reserve_profile(session,instance)
+            except PlanError as error:
+                raise Conflict(str(error)) from None
             from ..terraform.profiles import settings_for
             capacity_profile=profile.model_copy(update={'settings':settings_for(profile,allocation.node_name)})
             capacity(session,capacity_profile,resolve_plan(spec.plan_id))

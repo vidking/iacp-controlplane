@@ -1,0 +1,76 @@
+{
+  "fecha": "25/10/2026",
+  "zona": "America/Costa_Rica",
+  "main_verificado": "d8ac23e5bfd9d210a3e2f1eec24a1255fb6f7db6",
+  "publicacion_Forgejo": {
+    "estado": "BLOCKED_SSH_CONNECTION_REFUSED",
+    "destino": "192.168.3.110:2222",
+    "rechazo_desde_estacion": true,
+    "codigo_TCP_desde_VM104": 111,
+    "PR_nuevo_confirmado": false
+  },
+  "runtime_conservado": "8a58db244ec1e9cd1a0d627b21e086548489e75d",
+  "runtime_final": {
+    "fecha": "2026-10-25T01:45:44-06:00",
+    "schema": "0011_crm_contract",
+    "clases_no_terminales_vacias": 6,
+    "colas": {},
+    "unacked": 0,
+    "readiness": "PASS",
+    "doctor": "PASS",
+    "servicios_operativos": 7,
+    "imagen_API": "sha256:8bfe4a02e4e38aadb738463309319f9dffc4e2465055bc37dd29ea9a055765a5",
+    "revision_OCI": null
+  },
+  "capacity_ro": {
+    "identidad": "iacp-admission@pve!capacity-ro",
+    "fqdn": "mng01.cyberfuel.com",
+    "ip": "192.168.1.113",
+    "TLS": "TLSv1.3",
+    "hostname_y_cadena_verificados": true,
+    "SAN": ["*.cyberfuel.com", "cyberfuel.com"],
+    "emisor": "Sectigo Public Server Authentication CA DV R36",
+    "secreto_original_0600_root_intacto": true,
+    "JSON_operativo_preparado": "/etc/iacp/admission/capacity-ro.json",
+    "montado_en_API_activa": false,
+    "HTTP_reales": [
+      {"metodo": "GET", "ruta": "/access/permissions", "http": 200},
+      {"metodo": "GET", "ruta": "/nodes/mng01/status", "http": 200},
+      {"metodo": "GET", "ruta": "/nodes/mng01/storage/DS_CYBERFUEL/status", "http": 200},
+      {"metodo": "GET", "ruta": "/nodes/mng01/ceph/status", "http": 403},
+      {"metodo": "PUT", "ruta": "/nodes/mng01/config", "cuerpo": "vacío", "http": 403}
+    ],
+    "cliente_candidato_UID10001": "Mismos resultados de lectura; no equivale a despliegue",
+    "ACL_observadas": ["/nodes/mng01", "/storage/DS_CYBERFUEL"],
+    "ACL_raiz_para_alias_Ceph": "NO_PRESENTE",
+    "checks_desactivados": false,
+    "identidad_Terraform_reutilizada_para_capacidad": false
+  },
+  "G6": {
+    "estado": "PREFLIGHT_MATERIAL_PASS; GUEST_NO_PROBADO",
+    "clave_tecnica": "/opt/iacp/stacks/controlplane/secrets/guest_bootstrap_ed25519",
+    "tipo": "ssh-ed25519",
+    "modo": "0440",
+    "propietario": "root:10001",
+    "privada_fuera_VM104": false,
+    "publica_coincide_perfil": true,
+    "publicas_en_perfil_comercial": 1,
+    "llaves_personales_en_perfil_comercial": false,
+    "AES256_preflight_memoria": "PASS",
+    "autenticacion_guest_real": "NO_EJECUTADA",
+    "secreto_en_evidencias": false
+  },
+  "plantillas": [
+    {"image_id": "ubuntu-2404", "vmid": 29000, "nombre": "iacp-ubuntu-2404-golden", "nodo": "mng01", "datastore": "DS_CYBERFUEL", "template": true, "detenida": true, "lock": null, "disco_cloud_init": true, "QGA_configurado": true, "estado_IACP": "habilitada_historica"},
+    {"image_id": "ubuntu-2604", "vmid": 29001, "nombre": "iacp-ubuntu-2604-golden", "nodo": "mng01", "datastore": "DS_CYBERFUEL", "template": true, "detenida": true, "lock": null, "disco_cloud_init": true, "QGA_configurado": true, "estado_IACP": "pendiente"},
+    {"image_id": "almalinux-9", "vmid": 29010, "nombre": "iacp-almalinux-9-golden", "nodo": "mng01", "datastore": "DS_CYBERFUEL", "template": true, "detenida": true, "lock": null, "disco_cloud_init": true, "QGA_configurado": true, "estado_IACP": "pendiente"},
+    {"image_id": "almalinux-10", "vmid": 29011, "nombre": "iacp-almalinux-10-golden", "nodo": "mng01", "datastore": "DS_CYBERFUEL", "template": true, "detenida": true, "lock": null, "disco_cloud_init": true, "QGA_configurado": true, "estado_IACP": "pendiente"}
+  ],
+  "regresion": {"estado": "PASS", "aprobadas": 1021, "omitidas": 0, "advertencias": 30, "duracion_segundos": 272.86},
+  "contrato": {"POST_instances_identico_a_main": true, "rutas_iguales": true, "cambio_GET_images": "Cuatro registros; capacidades pendientes nullable; ejemplos y descripción"},
+  "promocion": "NO_EJECUTADA",
+  "E2E_kvm1": "BLOCKED_NO_EJECUTADO",
+  "E2E_kvm2": "BLOCKED_NO_EJECUTADO",
+  "VMs_creadas": 0,
+  "dictamen": "NO_GO_FASE_G"
+}

@@ -210,7 +210,7 @@ def test_phase_g_core_changes_are_explicit_and_other_invariants_remain_identical
     reviewed=json.loads((ROOT/'docs/contracts/phase-g-core-reviewed.json').read_text())
     assert set(reviewed)=={'app/iacp/models.py','app/iacp/terraform/apply.py','app/iacp/terraform/config.py',
         'app/iacp/terraform/deletion.py','app/iacp/terraform/lifecycle.py','app/iacp/terraform/worker.py',
-        'deploy/mng/compose.yaml'}
+        'deploy/mng/compose.yaml','app/iacp/terraform/profiles.py'}
     for path, digest in checksums.items():
         assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == reviewed.get(path,digest), path
 

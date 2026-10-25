@@ -1,5 +1,10 @@
 # Integración de Desarrollo/CRM con IACP
 
+> Referencia del contrato histórico. Para la candidata comercial G consultar la
+> [guía actualizada](GUIA_CRM_DESARROLLO.md) y comprobar el Request Body realmente
+> desplegado antes de enviar peticiones. Actualización: 25/10/2026,
+> America/Costa_Rica. El contenido histórico se conserva para trazabilidad.
+
 El contrato vigente es [IACP 0.10.1](openapi.json). El
 [runbook MVP 0.10.0](MVP_CRM_RUNBOOK.md) conserva el flujo de negocio,
 referencias comerciales, arranque y entrada root. La evidencia de 0.9.1 mantiene

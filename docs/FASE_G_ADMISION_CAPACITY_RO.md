@@ -2,6 +2,12 @@
 
 Fecha: 25/10/2026, America/Costa_Rica.
 
+> Actualización posterior del 25/10/2026: el secreto ya fue instalado, TLS se
+> verificó mediante FQDN y nodo/datastore devolvieron 200. Ceph continúa en 403.
+> La clave SSH técnica ya está preparada. Consultar el
+> [cierre comercial e imágenes](FASE_G_CIERRE_COMERCIAL_IMAGENES.md).
+> Los resultados originales siguientes conservan su alcance histórico.
+
 Identidad autorizada por Infraestructura: `iacp-admission@pve!capacity-ro`.
 **Implementación candidata; sin promoción y sin HTTP reales certificados con
 esta identidad hasta disponer de su secreto operativo.**

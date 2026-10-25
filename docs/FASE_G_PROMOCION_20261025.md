@@ -2,6 +2,10 @@
 
 Fecha: 25/10/2026, America/Costa_Rica. **NO-GO FASE G.**
 
+> Preparación histórica. La actualización posterior de credenciales, FQDN,
+> bootstrap técnico y catálogo de cuatro imágenes se registra en el
+> [informe de cierre comercial](FASE_G_CIERRE_COMERCIAL_IMAGENES.md).
+
 Actualización de admisión: Infraestructura autorizó después la identidad
 `iacp-admission@pve!capacity-ro`. Se implementó su separación en esta misma rama,
 sin reutilizar la credencial Terraform. Consultar el
