@@ -101,8 +101,8 @@ Chromium:
   monoespaciada y texto seleccionable completo.
 - Código en línea: contraste 12,81:1, sin regresión visual.
 - Sin errores JavaScript, respuestas HTTP fallidas ni solicitudes externas.
-- Firefox: BLOCKED para automatización Playwright; el Firefox del sistema no
-  expone el canal Juggler compatible. No se declara PASS de Firefox.
+- Firefox 157 administrado por Playwright: PASS en escritorio, con los mismos
+  estilos calculados, texto seleccionable y sin errores ni respuestas fallidas.
 
 La evidencia detallada y las capturas están en:
 
@@ -111,6 +111,7 @@ La evidencia detallada y las capturas están en:
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_DARK.png`
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_MOBILE.png`
 - `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_JSON.png`
+- `~/.local/state/iacp-fase-f2/SWAGGER_CANDIDATE_F2H_CODE_FIREFOX.png`
 
 Los tres ejemplos de creación y el cuerpo JSON del comando curl se validaron
 contra el esquema `InstanceCreate` de OpenAPI 3.1: 3/3 PASS. Los campos
