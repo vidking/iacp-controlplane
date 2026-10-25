@@ -200,8 +200,8 @@ def test_commercial_password_adapter_is_forbidden_even_if_legacy_data_corrupted(
     with pytest.raises(PlanError,match='COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN'):allocation.variables(data)
 
 
-@pytest.mark.parametrize('kind',['disk','memory','cpu','ceph'])
-def test_physical_budget_and_ceph_health_are_admission_requirements(sessions,commercial_config,monkeypatch,kind):
+@pytest.mark.parametrize('kind',['disk','memory','cpu'])
+def test_physical_budget_is_an_admission_requirement(sessions,commercial_config,monkeypatch,kind):
     from iacp.services.commercial import live_capacity
     from iacp.services.catalog import authorized_profile
     from iacp.catalog import resolve_plan
@@ -209,12 +209,31 @@ def test_physical_budget_and_ceph_health_are_admission_requirements(sessions,com
     def read(method,path):
         assert method=='GET'
         if '/storage/' in path:return {'active':1,'enabled':1,'type':'rbd','avail':(1 if kind=='disk' else 1024)*1024**3}
-        if '/ceph/' in path:return {'health':{'status':'HEALTH_WARN' if kind=='ceph' else 'HEALTH_OK'}}
+        assert '/ceph/' not in path
         return {'memory':{'free':(1 if kind=='memory' else 16)*1024**3},'cpuinfo':{'cpus':1 if kind=='cpu' else 16},'cpu':0.1}
     monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
     with sessions() as s:
         with pytest.raises(Conflict):live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
         assert not s.scalars(select(Instance)).all()
+
+
+def test_capacity_read_identity_does_not_need_global_ceph_access(sessions,commercial_config,monkeypatch):
+    from iacp.services.commercial import live_capacity
+    from iacp.services.catalog import authorized_profile
+    from iacp.catalog import resolve_plan
+    from iacp.services.capacity_readonly import CapacityReadOnly
+    calls=[]
+    def read(method,path):
+        assert method=='GET'
+        calls.append(path)
+        if '/storage/' in path:
+            return {'active':1,'enabled':1,'type':'rbd','avail':1024*1024**3}
+        assert path.endswith('/status') and '/ceph/' not in path
+        return {'memory':{'free':16*1024**3},'cpuinfo':{'cpus':16},'cpu':0.1}
+    monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
+    with sessions() as session:
+        live_capacity(session,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
+    assert len(calls)==2
 
 
 def test_commercial_openapi_and_runtime_keep_old_post_until_explicit_transition(monkeypatch):

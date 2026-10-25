@@ -2,6 +2,12 @@
 
 Fecha: 25/10/2026, America/Costa_Rica.
 
+Actualización del 25/10/2026, 02:25 America/Costa_Rica: este informe conserva
+la evidencia de la candidata anterior. El [correctivo de desbloqueo](FASE_G_DESBLOQUEO_ENTREGA.md)
+prepara la barrera Ceph en el worker, sin ampliar capacity-ro. Su lectura real
+devuelve HEALTH_ERR; la promoción y los E2E continúan bloqueados. La consulta
+autoritativa del pool confirma las cuatro plantillas y VM 104/106 en `iacp-lab`.
+
 ## Políticas efectivas y límites encontrados
 
 Main comprobado: `d8ac23e5bfd9d210a3e2f1eec24a1255fb6f7db6`; contiene

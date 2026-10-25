@@ -47,7 +47,7 @@ def limits_for(tenant_id):
 
 
 def live_capacity(session,profile,plan):
-    """Lectura física con la identidad existente; sin privilegios nuevos ni IPAM."""
+    """Capacidad con identidad de lectura; el worker verifica salud antes de aplicar."""
     from .capacity_readonly import CapacityReadOnly
     from ..models import Instance
     try:
@@ -58,9 +58,6 @@ def live_capacity(session,profile,plan):
         n=client._request('GET',f'/nodes/{node}/status')
         s=client._request('GET',f'/nodes/{node}/storage/{storage}/status')
         if not s.get('active') or not s.get('enabled',1):raise ValueError()
-        if s.get('type') in {'rbd','cephfs'}:
-            health=client._request('GET',f'/nodes/{node}/ceph/status')
-            if health.get('health',{}).get('status')!='HEALTH_OK':raise ValueError()
         pending=session.scalars(select(Instance).where(Instance.status!='deleted')).all()
         # Presupuesto completo, incluso discos thin de ready. Puede descontar
         # otra vez uso físico ya materializado: conservador, nunca sobreventa.

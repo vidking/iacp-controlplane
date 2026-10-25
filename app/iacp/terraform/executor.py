@@ -13,6 +13,7 @@ import zipfile
 from .config import Allocation, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from .runner import CommandRunner
 from .observation import proxmox_resource, require_clone_permissions
+from .execution_health import require_execution_health
 from .state import S3StateReader
 
 ADDRESS = "module.kvm.proxmox_virtual_environment_vm.this"
@@ -136,6 +137,7 @@ class TerraformExecutor:
             with tempfile.TemporaryDirectory() as scratch:
                 env=self.environment(Path(scratch))
                 require_clone_permissions(env,variables['instance'])
+                require_execution_health(env, variables['instance'], cancelled)
                 if proxmox_resource(env,variables['instance'],cancelled)['present']:
                     raise PlanError('VMID_ALREADY_PRESENT')
         workspace = self.workspace(instance_id, attempt)
@@ -284,6 +286,10 @@ class TerraformExecutor:
         self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables)
         if cancelled():
             raise PlanError("CANCELLED")
+        if variables["instance"].get("network_mode") == "dhcp":
+            # Relectura efectiva, sin reutilizar salud de admisión ni del plan.
+            # Antes de consumir la autorización y de llamar a Terraform apply.
+            require_execution_health(env, variables['instance'], cancelled)
         before_mutation()
         self.runner.apply_saved(root, env, cancelled)
         return self.observe(instance_id, attempt, allocation, variables, cancelled)
