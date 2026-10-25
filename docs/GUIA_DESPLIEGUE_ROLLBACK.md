@@ -6,4 +6,13 @@ El personal autorizado comprueba salud, versión, imágenes, colas, locks, opera
 
 El rollback cierra admisión y conserva PostgreSQL, Redis, state, historial y trabajos activos. No usa `down -v`, no borra estados ni fuerza desbloqueos. Una operación incierta sigue su procedimiento de recuperación y no se resuelve desde la documentación CRM.
 
+## Secuencia resumida
+
+1. `inventory`: confirma salud, workers, colas y ausencia de operaciones no terminales.
+2. `preflight`: compara checkout, imágenes, mounts, secretos y persistencia contra el manifiesto.
+3. `promote`: drena admisión, ejecuta migraciones idempotentes y recrea solo los servicios de aplicación necesarios.
+4. `verify`: valida readiness, workers, esquema, autenticación, contrato y configuración posterior.
+
+La guía accesible a Desarrollo no contiene rutas privadas, tokens ni comandos privilegiados. El runbook administrativo detallado permanece restringido.
+
 [Ver fuente versionada](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane/src/branch/main/docs/GUIA_DESPLIEGUE_ROLLBACK.md).
