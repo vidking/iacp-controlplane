@@ -94,6 +94,8 @@ def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
     page = client.get('/docs', headers=auth)
     assert 'API privada · HTTPS/TLS' in page.text
     assert '/docs?asset=ux-f1.css' in page.text
+    for tag in ('instances', 'operations', 'kvm-lifecycle', 'disposable-deletion', 'observability', 'jobs', 'lab-administration'):
+        assert f'data-tag-target="{tag}"' in page.text
     for operation in ('listAuthorizedProfiles', 'createInstance', 'listOperations', 'getInstancePower', 'deleteDisposableInstance'):
         assert f'data-operation-id="{operation}"' in page.text
     assert 'data-doc-target="guia-crm"' in page.text
@@ -107,9 +109,11 @@ def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
 
 def test_local_guides_render_documentation_not_only_hashes(client, auth):
     page = client.get('/docs', headers=auth).text
-    for marker in ('crm-arquitectura', 'crm-flujo', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
+    for marker in ('crm-introduccion', 'crm-autenticacion', 'crm-perfiles', 'crm-idempotencia', 'crm-creacion', 'crm-seguimiento', 'crm-red', 'crm-lifecycle', 'crm-eliminacion', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
         assert f'id="{marker}"' in page
     assert 'TOKEN_DEL_TENANT' in page and 'Idempotency-Key' in page
+    assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' in page
+    assert 'GET /v1/lab/policies' in page
     assert '0011_crm_contract' in page and 'go_live.py' in page
     assert 'Ver fuente versionada en Forgejo' in page
     assert 'Manual para Desarrollo</a>' not in page
