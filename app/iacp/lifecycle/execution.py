@@ -102,6 +102,8 @@ def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
                     raise PowerError("POWER_TASK_TIMEOUT")
                 pause(min(2, max(0, deadline - time.monotonic())))
             observation = client.observe(target)
+            if task_outcome == "guest_agent_timeout":
+                raise PowerError("POWER_GUEST_AGENT_UNAVAILABLE")
             if task_outcome == "timeout":
                 raise PowerError("POWER_ACPI_TIMEOUT")
             if task_outcome != "completed":

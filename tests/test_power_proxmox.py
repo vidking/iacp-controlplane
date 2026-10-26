@@ -118,6 +118,21 @@ def test_reboot_task_identity_is_required(task):
         ProxmoxPower.validate_task(TARGET, "reboot", task)
 
 
+def test_guest_agent_timeout_is_reported_as_a_distinct_task_outcome(native):
+    client, _, _ = native
+    task = "UPID:mng01:1:2:3:qmreboot:21001:synthetic@pve:"
+    def opened(request, timeout):
+        assert request.method == "GET"
+        stream = io.BytesIO(json.dumps({"data": {
+            "status": "stopped",
+            "exitstatus": "QEMU Guest Agent is not running - VM 21001 qga command 'guest-ping' failed - got timeout"
+        }}).encode())
+        stream.status = 200
+        return stream
+    client.opener.open.side_effect = opened
+    assert client.task_status(TARGET, "reboot", task) == "guest_agent_timeout"
+
+
 @pytest.mark.parametrize("vmid,node", [(104, "mng01"), (True, "mng01"), (21001, "../mng01"), (None, "mng01")])
 def test_provider_identifiers_are_validated_before_network_access(vmid, node):
     with pytest.raises(PowerError, match="POWER_TARGET_INVALID"):

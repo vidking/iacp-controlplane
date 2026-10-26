@@ -8,8 +8,8 @@ from iacp.terraform.config import PlanError,Allocation
 from iacp.terraform.golden_adapter import install,verify,DIGEST,FILES
 
 
-def golden(cpu='x86-64-v4,flags=+aes',numa=1):
-    return dict(template=1,cpu=cpu,numa=numa,sockets=1,bios='ovmf',machine='q35',scsihw='virtio-scsi-single',hotplug='disk,network,memory',boot='order=scsi0')
+def golden(cpu='x86-64-v4,flags=+aes',numa=1,hotplug='disk,network,memory'):
+    return dict(template=1,cpu=cpu,numa=numa,sockets=1,bios='ovmf',machine='q35',scsihw='virtio-scsi-single',hotplug=hotplug,boot='order=scsi0')
 
 
 @pytest.mark.parametrize('cpu',['x86-64-v4,flags=+aes','host,flags=+aes;-vmx','Haswell-v4'])
