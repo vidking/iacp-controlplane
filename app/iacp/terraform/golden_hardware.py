@@ -311,11 +311,17 @@ def verify_disk_plan(actual, variables):
 
 def verify_live(config, hardware, expected):
     try:
-        if hardware.get('source_cpu') != config.get('cpu'):
-            # La representación cruda también forma parte del contrato. En
-            # particular, ``cputype=`` no es equivalente para esta validación.
+        source_cpu = hardware.get('source_cpu')
+        observed_cpu = config.get('cpu')
+        # Proxmox/bpg 0.116.1 serializa el modelo explícito de CPU con el
+        # prefijo ``cputype=`` al leer la configuración efectiva. Es una
+        # normalización de representación, no un cambio de modelo: la
+        # equivalencia solo se admite cuando el valor restante coincide
+        # byte por byte con la Golden Image observada.
+        if observed_cpu not in {source_cpu, f'cputype={source_cpu}'}:
             raise ValueError()
-        parts=config['cpu'].split(',')
+        normalized_cpu = observed_cpu.removeprefix('cputype=')
+        parts=normalized_cpu.split(',')
         cpu_type=parts[0]
         options=dict(part.split('=',1) for part in parts[1:] if '=' in part)
         flags=options.get('flags','').split(';') if options.get('flags') else []

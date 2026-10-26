@@ -82,10 +82,12 @@ def test_native_verification_preserves_firmware_controller_and_hotplug():
         with pytest.raises(PlanError):verify_live(wrong,h,expected)
 
 
-def test_live_verification_rejects_provider_cputype_prefix():
+def test_live_verification_accepts_provider_cputype_prefix_only_for_same_cpu():
     h=parse(golden(hotplug='disk,network,memory'),29001,'mng01',2).model_dump()
     clone=golden(hotplug='disk,network,memory')
     clone.update(cpu='cputype=x86-64-v4,flags=+aes',cores=2,sockets=1)
+    verify_live(clone,h,{'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}})
+    clone['cpu']='cputype=qemu64,flags=+aes'
     with pytest.raises(PlanError,match='POSTCONDITION_MISMATCH'):
         verify_live(clone,h,{'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}})
 
