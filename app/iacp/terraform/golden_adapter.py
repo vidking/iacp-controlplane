@@ -15,11 +15,11 @@ FILES={
   'flags':'${var.golden_hardware.flags}',
   'numa':'${var.golden_hardware.numa}'
  }],
-  'bios':'${var.golden_hardware.terraform_base.bios}',
-  'machine':'${var.golden_hardware.terraform_base.machine}',
-  'scsi_hardware':'${var.golden_hardware.terraform_base.scsi_hardware}',
-  'hotplug':'${var.golden_hardware.terraform_base.hotplug}',
-  'boot_order':'${var.golden_hardware.terraform_base.boot_order}'
+  'bios':'${try(var.golden_hardware.terraform_base.bios, null)}',
+  'machine':'${try(var.golden_hardware.terraform_base.machine, null)}',
+  'scsi_hardware':'${try(var.golden_hardware.terraform_base.scsi_hardware, null)}',
+  'hotplug':'${try(var.golden_hardware.terraform_base.hotplug, null)}',
+  'boot_order':'${try(var.golden_hardware.terraform_base.boot_order, null)}'
  }}}},sort_keys=True),
 }
 MAIN_ARGUMENT='  golden_hardware = var.iacp_golden_hardware\n'

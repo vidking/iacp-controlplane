@@ -66,8 +66,8 @@ def test_adapter_is_versioned_sealed_and_cannot_enter_legacy_workspaces(tmp_path
     override=json.loads(FILES['modules/compute/kvm/iacp_golden_override.tf.json'])
     resource=override['resource']['proxmox_virtual_environment_vm']['this']
     assert resource['cpu'][0]['type']=='${var.golden_hardware.cpu_type}'
-    assert resource['bios']=='${var.golden_hardware.terraform_base.bios}'
-    assert resource['scsi_hardware']=='${var.golden_hardware.terraform_base.scsi_hardware}'
+    assert resource['bios']=='${try(var.golden_hardware.terraform_base.bios, null)}'
+    assert resource['scsi_hardware']=='${try(var.golden_hardware.terraform_base.scsi_hardware, null)}'
     with pytest.raises(PlanError):verify(tmp_path,{}, {})
     path=tmp_path/next(iter(FILES));path.write_text('{}')
     with pytest.raises(PlanError):verify(tmp_path,manifest,variables)
