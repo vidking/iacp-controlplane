@@ -124,6 +124,20 @@ class ProxmoxPower:
                 raise PowerError("POWER_PENDING_CONFIGURATION")
         return readiness(status["status"])
 
+    def uptime(self, target):
+        """Devuelve el uptime QEMU observado por Proxmox, sin mutar la VM.
+
+        Se utiliza únicamente como evidencia adicional para distinguir un
+        reboot ACPI consumido cuyo UPID termina en timeout de un reboot que no
+        produjo ningún cambio. La ausencia o forma inválida del valor se
+        conserva como desconocida y nunca autoriza un éxito por sí sola.
+        """
+        status = self._request("GET", target.path + "/status/current")
+        value = status.get("uptime") if isinstance(status, dict) else None
+        if type(value) is not int or value < 0:
+            raise PowerError("POWER_PROXMOX_UNAVAILABLE")
+        return value
+
     def submit(self, target, action):
         if action not in {"start", "shutdown", "reboot"}:
             raise PowerError("POWER_ACTION_INVALID")

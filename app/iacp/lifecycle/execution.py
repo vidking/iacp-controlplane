@@ -25,6 +25,7 @@ def execute_power(identifier, sessions, client=None, *, monitor_seconds=90, paus
 
 def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
     observation, task_outcome, error = None, None, None
+    initial_uptime = None
     try:
         with sessions() as session:
             row = session.get(PowerExecution, identifier, with_for_update=True)
@@ -58,6 +59,16 @@ def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
             else:
                 if action == "reboot" and observation["power_state"] != "running":
                     raise PowerError("POWER_REBOOT_REQUIRES_RUNNING")
+                if action == "reboot":
+                    # Esta medición es solo una evidencia de postcondición.
+                    # Los dobles de prueba y clientes antiguos pueden no
+                    # ofrecerla; en ese caso un timeout continúa siendo fallo.
+                    reader = getattr(client, "uptime", None)
+                    if reader is not None:
+                        try:
+                            initial_uptime = reader(target)
+                        except PowerError:
+                            initial_uptime = None
                 # Consume the command BEFORE crossing the network boundary.
                 # A crash between this commit and receiving the UPID is ambiguous
                 # and must never issue the command again, particularly reboot.
@@ -102,6 +113,20 @@ def _execute(identifier, sessions, client, heartbeat, monitor_seconds, pause):
                     raise PowerError("POWER_TASK_TIMEOUT")
                 pause(min(2, max(0, deadline - time.monotonic())))
             observation = client.observe(target)
+            if (task_outcome == "timeout" and action == "reboot"
+                    and observation["power_state"] == "running"
+                    and initial_uptime is not None):
+                reader = getattr(client, "uptime", None)
+                try:
+                    final_uptime = reader(target) if reader is not None else None
+                except PowerError:
+                    final_uptime = None
+                # qmreboot puede devolver timeout después de que QEMU ya
+                # completó el ciclo ACPI. Solo se acepta si la observación
+                # independiente muestra un uptime estrictamente menor; si no,
+                # el resultado permanece POWER_ACPI_TIMEOUT.
+                if type(final_uptime) is int and final_uptime < initial_uptime:
+                    task_outcome = "completed"
             if task_outcome == "guest_agent_timeout":
                 raise PowerError("POWER_GUEST_AGENT_UNAVAILABLE")
             if task_outcome == "timeout":
