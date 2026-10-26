@@ -70,7 +70,7 @@ DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
    devueltos hasta conocer operación y acceso; 202 no significa SSH listo.
 5. Consultar `ip_addresses`; descubrir red si falta IP y esperar la operación.
    Verificar huella del host por el canal autorizado. Root SSH es por llave;
-   la contraseña inicial permite consola, sin habilitar root SSH por contraseña.
+   la contraseña inicial permite consola y SSH root en el piloto LAB autorizado.
 6. Ejecutar una acción Lifecycle cada vez, esperar terminal e invitado listo antes
    de reboot. Ante timeout conservar clave/cuerpo, sin nuevas intenciones ciegas.
 7. Apagar y esperar terminal; DELETE comercial con `{}`, después seguir operación

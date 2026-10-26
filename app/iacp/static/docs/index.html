@@ -38,37 +38,63 @@
 <main id="inicio">
   <section class="intro pilot guide-content" aria-labelledby="pilot-title">
 <details id="pilot-panel" data-document-root open>
-    <summary class="pilot-summary"><span class="eyebrow">INICIO RÁPIDO · MVP CERTIFICADO</span>
+    <summary class="pilot-summary"><span class="eyebrow">APROVISIONAMIENTO · CATÁLOGO AUTORIZADO</span>
     <h1 id="pilot-title">Crear máquina virtual</h1><span>Minimizar / expandir recorrido</span></summary>
     {{pilot_contract_note}}
-    <p>Comienza con <b>KVM 1: 1 vCPU, 2048 MiB RAM y 50 GiB</b>, red <code>lab-dhcp</code>. Selecciona Ubuntu 24.04, Ubuntu 26.04, AlmaLinux 9 o AlmaLinux 10 del catálogo autorizado. Base real: <code>https://iac.cyberfuel.com</code>. Cada creación consume recursos del laboratorio.</p>
-    <nav class="guide-toc" aria-label="Recorrido piloto"><a href="#piloto-acceso">1. Acceso</a><a href="#piloto-json">2. Plan, imagen y JSON</a><a href="#piloto-curl">3. cURL</a><a href="#piloto-respuesta">4. Respuesta</a><a href="#piloto-seguimiento">5. Progreso e IP</a><a href="#piloto-ssh">6. SSH</a><a href="#piloto-lifecycle">7. Lifecycle</a><a href="#piloto-delete">8. Eliminar</a></nav>
+    <p>Selecciona un plan y un sistema operativo del catálogo real, introduce nombre y acceso y crea la VM con tu identidad autorizada. Base: <code>https://iac.cyberfuel.com</code>. Cada solicitud utiliza recursos reales de MNG.</p>
+    <nav class="guide-toc" aria-label="Recorrido piloto"><a href="#piloto-acceso">1. Acceso</a><a href="#piloto-json">2. Configurar máquina virtual</a><a href="#piloto-curl">3. cURL</a><a href="#piloto-respuesta">4. Respuesta</a><a href="#piloto-seguimiento">5. Progreso e IP</a><a href="#piloto-ssh">6. SSH</a><a href="#piloto-lifecycle">7. Lifecycle</a><a href="#piloto-delete">8. Eliminar</a></nav>
     <p>El tenant LAB autorizado de MNG puede usar el modo explícito sin presupuesto comercial acumulado; conserva capacidad física y concurrencia. Otros tenants mantienen sus cuotas. Un rechazo 409 debe resolverse por su código, no repitiendo con claves nuevas.</p>
     <p id="copy-status" role="status" aria-live="polite"></p>
 
     <details class="pilot-step" id="step-piloto-acceso"><summary><h2 id="piloto-acceso">1. Acceso autorizado</h2></summary><div class="pilot-step-content">
     <p>El backend consumidor configura <code>IACP_API_TOKEN</code> como secreto de entorno y envía <code>Authorization: Bearer</code>. IACP reutiliza el tenant persistente asociado; no crea un tenant por solicitud. HTTP Basic protege esta documentación. La API requiere el <b>Bearer opaco del tenant</b>; en Swagger pulsa <a href="#referencia-api" data-authorize>Authorize</a> e introduce solo ese token. Al finalizar usa Logout en Authorize. No es un JWT ni la contraseña de documentación.</p>
-    <p>El token debe pertenecer a un tenant activo con permiso de creación, un plan autorizado y capacidad disponible. Comprueba <a href="#/instances/listKVMPlans" data-operation-id="listKVMPlans">planes</a>, <a href="#/instances/listGoldenImages" data-operation-id="listGoldenImages">imágenes</a> y <a href="#/instances/listAuthorizedProfiles" data-operation-id="listAuthorizedProfiles">perfiles</a>: exige disponibilidad efectiva de <code>kvm-1</code>, <code>ubuntu-2404</code> y <code>lab-dhcp</code>. Si falta un derecho, solicita a Infraestructura la identidad o habilitación LAB mediante el procedimiento existente; no se crea una política por VM ni se envía su UUID.</p>
+    <p>El token debe pertenecer a un tenant activo con permiso de creación, un plan autorizado y capacidad disponible. Comprueba <a href="#/instances/listKVMPlans" data-operation-id="listKVMPlans">planes</a>, <a href="#/instances/listGoldenImages" data-operation-id="listGoldenImages">imágenes</a> y <a href="#/instances/listAuthorizedProfiles" data-operation-id="listAuthorizedProfiles">perfiles</a>: exige disponibilidad efectiva del plan, la imagen seleccionada y <code>lab-dhcp</code>. Si falta un derecho, solicita a Infraestructura la identidad o habilitación LAB mediante el procedimiento existente; no se crea una política por VM ni se envía su UUID.</p>
 </div></details>
-    <details class="pilot-step" id="step-piloto-json" open><summary><h2 id="piloto-json">2. Plan, imagen y JSON</h2></summary><div class="pilot-step-content">
+    <details class="pilot-step" id="step-piloto-json" open><summary><h2 id="piloto-json">2. Configurar máquina virtual</h2></summary><div class="pilot-step-content">
 
-    <p>Primero pulsa <a href="#referencia-api" data-authorize>Authorize</a> con tu token y después <button type="button" id="load-pilot-catalog">Consultar catálogo autorizado</button>. La disponibilidad es una observación, no una reserva; Execute vuelve a comprobarla.</p>
-    <p><label>Plan <select id="pilot-plan" aria-label="Plan de la máquina virtual"><option value="kvm-1">KVM 1 · ejemplo certificado; consultar disponibilidad</option></select></label> <label>Imagen <select id="pilot-image" aria-label="Imagen de la máquina virtual"><option value="ubuntu-2404">Ubuntu 24.04 · ejemplo certificado; consultar disponibilidad</option></select></label></p>
-    <p id="pilot-catalog-status" role="status" aria-live="polite">Consulta el catálogo antes de ejecutar. Solo se habilitan opciones autorizadas y disponibles.</p>
-
+    <p><a href="#referencia-api" data-authorize>Authorize</a>: introduce tu Bearer y pulsa <button type="button" id="load-pilot-catalog">Consultar catálogo autorizado</button>.</p>
+    <form id="pilot-form" autocomplete="off">
+      <label>Plan obligatorio <select id="pilot-plan" required><option value="">Consulta el catálogo</option></select></label>
+      <label>Sistema operativo obligatorio <select id="pilot-image" required><option value="">Consulta el catálogo</option></select></label>
+      <p id="pilot-catalog-status" role="status">Consulta los planes e imágenes de tu identidad.</p>
+      <label>Nombre obligatorio <input id="pilot-name" required maxlength="63" pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" placeholder="mi-servidor-001"></label>
+      <small>1–63 caracteres: minúsculas, números y guiones; comienza y termina con letra o número.</small>
+      <label>Contraseña root obligatoria <input id="pilot-password" type="password" required minlength="16" maxlength="128" autocomplete="new-password"></label>
+      <small>16–128 caracteres ASCII imprimibles. Se entrega por bootstrap seguro y permite acceso root por SSH y consola.</small>
+      <label>Llave pública SSH opcional <textarea id="pilot-ssh" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea></label>
+      <small>Una llave pública por línea, máximo 16. Puedes acceder con contraseña; añade tu llave pública si también quieres autenticarte con llave. Nunca envíes una privada.</small>
+      <label>Idempotency-Key automática <input id="pilot-key" readonly></label>
+      <button type="button" id="pilot-new-intent">Nueva intención</button>
+      <small>Un reintento conserva la clave y el cuerpo. Nueva intención prepara otra VM. Si recargas, introduce la misma contraseña para reanudar.</small>
+      <p id="pilot-validation" role="status"></p>
+      <button type="submit" id="pilot-execute" disabled>Crear máquina virtual</button>
+    </form>
+    <p>La vista previa oculta la contraseña. Los botones Copiar JSON y Copiar cURL utilizan la contraseña real introducida: no los compartas ni registres su contenido.</p>
     <div class="copy-toolbar"><b>Solicitud de la combinación seleccionada</b><button type="button" data-copy-target="pilot-json">Copiar JSON</button></div>
     <p>Cambia <code>name</code> por un nombre único y <code>root_password</code> por tu contraseña. Para entrar por SSH, añade tu llave pública.</p>
-    <pre><code id="pilot-json">{{pilot_json}}</code></pre>
-    <p>Para crear desde Swagger: copia el JSON, abre <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>, pulsa <b>Try it out</b>, pega el cuerpo, cambia nombre y contraseña, añade tu llave pública y completa <b>Idempotency-Key</b> con una clave nueva para esta intención. Pulsa <b>Execute</b> una sola vez y conserva la respuesta. Ante timeout, conserva cuerpo y clave originales.</p>
+    <pre><code id="pilot-json">Completa el formulario para generar la solicitud.</code></pre>
+    <p>El botón Crear máquina virtual envía esta misma intención. Para usar la referencia avanzada, copia el JSON, abre <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>, pulsa <b>Try it out</b>, pega el mismo cuerpo y completa <b>Idempotency-Key</b> con la clave del formulario para conservar esta intención. Pulsa <b>Execute</b> una sola vez y conserva la respuesta. Ante timeout, conserva cuerpo y clave originales.</p>
     <details><summary>Datos de acceso y opciones del cuerpo</summary>
-    <p>Solicitud del piloto LAB para <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>. Cambia el nombre por el tuyo y la contraseña por una única de 16–128 caracteres ASCII imprimibles. Para entrar por SSH agrega tu llave <b>pública</b> a <code>ssh_public_keys</code>; es opcional para la API. Nunca envíes la llave privada. El cURL inferior solicita esos datos y sustituye el marcador de contraseña. IACP resuelve <code>lab-dhcp</code> solo si está autorizado; puedes omitir <code>commercial_context</code> en este piloto sin generar un pedido ficticio. Las solicitudes completas existentes siguen siendo válidas.</p>
+    <p>Solicitud del piloto LAB para <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>. Cambia el nombre por el tuyo y la contraseña por una única de 16–128 caracteres ASCII imprimibles. Para entrar por SSH agrega tu llave <b>pública</b> a <code>ssh_public_keys</code>; es opcional para la API. Nunca envíes la llave privada. El cURL se genera con los mismos valores del formulario. IACP resuelve <code>lab-dhcp</code> solo si está autorizado; puedes omitir <code>commercial_context</code> en este piloto sin generar un pedido ficticio. Las solicitudes completas existentes siguen siendo válidas.</p>
     </details>
 </div></details>
     <details class="pilot-step" id="step-piloto-curl"><summary><h2 id="piloto-curl">3. cURL de creación</h2></summary><div class="pilot-step-content">
-    <p>Guarda el siguiente bloque como <code>crear-piloto.sh</code> en un directorio privado fuera de Git y ejecuta <code>source ./crear-piloto.sh</code> desde Bash para conservar las variables de seguimiento. Requiere cURL y Python 3. El token y la contraseña se introducen sin eco; el cuerpo temporal se elimina. Conserva <code>respuesta.json</code>, <code>respuesta.headers</code> y la misma <code>IACP_KEY</code> para recuperar un timeout. No actives <code>set -x</code>.</p>
+    <p>El cURL contiene el mismo cuerpo y la misma Idempotency-Key que el formulario. Configura <code>IACP_API_TOKEN</code> en una terminal Bash privada sin historial ni trazas. La copia incluye tu contraseña: no la guardes ni compartas. Reintenta con los mismos datos ante un timeout.</p>
     <div class="copy-toolbar"><b>Crear mediante HTTPS</b><button type="button" data-copy-target="pilot-curl">Copiar cURL</button></div>
-    <pre><code id="pilot-curl">{{pilot_curl}}</code></pre>
+    <pre><code id="pilot-curl">Completa el formulario para generar el cURL de la misma intención.</code></pre>
 </div></details>
+    <section aria-label="Resultado de la solicitud" class="pilot-live">
+      <h2>Resultado y seguimiento</h2><p id="pilot-live-status" role="status">Todavía no se ha enviado una solicitud desde este formulario.</p>
+      <pre><code id="pilot-live-result"></code></pre>
+      <button type="button" id="pilot-refresh" disabled>Actualizar estado e IP</button>
+      <p id="pilot-power-status">Consulta el estado para habilitar las acciones de esta VM.</p>
+      <button type="button" data-pilot-action="start" disabled>Iniciar</button>
+      <button type="button" data-pilot-action="shutdown" disabled>Apagar</button>
+      <button type="button" data-pilot-action="reboot" disabled>Reiniciar</button>
+      <button type="button" data-pilot-action="delete" disabled>Eliminar esta VM</button>
+      <p id="pilot-operation-links"></p>
+      <p>202 significa admitida. Consulta estado, acceso e IP; verifica SSH con tu contraseña o llave antes de considerarla accesible. Las acciones Lifecycle y DELETE están en los pasos siguientes y en la referencia API.</p>
+    </section>
     <details class="pilot-step" id="step-piloto-respuesta"><summary><h2 id="piloto-respuesta">4. Respuesta real: HTTP 202</h2></summary><div class="pilot-step-content">
     <p>Para integrar basta conservar <code>instance_id</code> y <code>status</code> y consultar <code>GET /v1/instances/{instance_id}</code>. Los identificadores técnicos permanecen disponibles para compatibilidad y soporte. Respuesta completa de la prueba KVM 1 del <b>25/10/2026, Costa Rica</b>. Esa VM ya fue eliminada: estos identificadores son evidencia, <b>no los de tu solicitud</b>. Un 202 confirma admisión, no SSH listo.</p>
     <pre><code id="pilot-response">{{pilot_response}}</code></pre>
@@ -88,7 +114,7 @@ python3 -m json.tool instancia.json</code></pre>
   -H "Idempotency-Key: $IACP_KEY-network" -d '{}'</code></pre>
 </div></details>
     <details class="pilot-step" id="step-piloto-ssh"><summary><h2 id="piloto-ssh">6. Acceder por SSH</h2></summary><div class="pilot-step-content">
-    <p>Espera DHCP, Guest Agent y Cloud-Init; una VM running aún puede no estar lista. La contraseña inicial root sirve para consola del guest; <b>root SSH por contraseña no se habilita</b>. Este recorrido pide tu llave pública para verificar SSH; selecciona su llave privada correspondiente al conectar. Verifica la huella del host mediante el canal autorizado, no desactives la comprobación.</p>
+    <p>Espera DHCP, Guest Agent y Cloud-Init; una VM running aún puede no estar lista. La contraseña root introducida permite acceso por SSH y consola tras completar el bootstrap. Si añadiste una llave pública, también puedes seleccionar su llave privada correspondiente al conectar. Verifica la huella del host mediante el canal autorizado, no desactives la comprobación.</p>
     <pre><code>IACP_IP="$(python3 -c 'import json; a=json.load(open("instancia.json"))["ip_addresses"]; assert a, "Sin IP observada"; print(a[0])')"
 read -r -p 'Ruta de tu llave privada correspondiente: ' IACP_SSH_PRIVATE_KEY_FILE
 ssh -i "$IACP_SSH_PRIVATE_KEY_FILE" "root@$IACP_IP"</code></pre>
@@ -145,4 +171,5 @@ curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" -H "Authori
 </div>
 <script src="{{base}}?asset=swagger-5.34.0.js"></script>
 <script src="{{base}}?asset=iacp-v1.js"></script>
+<script src="{{base}}?asset=provisioning-v1.js"></script>
 </body></html>

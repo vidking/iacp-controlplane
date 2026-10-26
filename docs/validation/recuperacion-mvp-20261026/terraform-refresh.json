@@ -1,0 +1,10 @@
+{
+  "estado": "PASS",
+  "alcance": "Terraform Core 1.16.6, provider local 2.5.3; no acredita Proxmox",
+  "changes": [],
+  "resource_drift": [],
+  "prior_state_empty": true,
+  "serial_before": 1,
+  "serial_after": 2,
+  "resources_after": []
+}
