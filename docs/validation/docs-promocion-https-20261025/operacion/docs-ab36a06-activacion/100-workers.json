@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-26T01:01:49.299286+00:00",
+  "data": {
+    "active": {
+      "celery@6e25b343c4d5": 0,
+      "celery@99c41e475ded": 0,
+      "celery@dd03a94b8aeb": 0
+    },
+    "active_queues": {
+      "celery@6e25b343c4d5": [
+        "terraform"
+      ],
+      "celery@99c41e475ded": [
+        "celery"
+      ],
+      "celery@dd03a94b8aeb": [
+        "lifecycle"
+      ]
+    },
+    "reserved": {
+      "celery@6e25b343c4d5": 0,
+      "celery@99c41e475ded": 0,
+      "celery@dd03a94b8aeb": 0
+    },
+    "scheduled": {
+      "celery@6e25b343c4d5": 0,
+      "celery@99c41e475ded": 0,
+      "celery@dd03a94b8aeb": 0
+    }
+  }
+}

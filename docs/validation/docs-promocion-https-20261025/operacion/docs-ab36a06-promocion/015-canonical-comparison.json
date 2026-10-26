@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-26T00:59:29.597210+00:00",
+  "data": {
+    "changed_paths": [],
+    "ignored_build_metadata": [],
+    "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+    "passed": true,
+    "unexpected_paths": []
+  }
+}

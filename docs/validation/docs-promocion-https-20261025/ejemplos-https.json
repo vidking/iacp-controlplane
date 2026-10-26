@@ -1,0 +1,32 @@
+{
+  "url": "https://iac.cyberfuel.com/docs",
+  "json_servido_valida_pydantic_runtime": true,
+  "respuesta_servida_valida_modelo_runtime": true,
+  "curl_servido_sintaxis_bash": "PASS",
+  "ejecutada_creacion": false,
+  "template_request": {
+    "name": "piloto-kvm-1",
+    "plan_id": "kvm-1",
+    "image_id": "ubuntu-2404",
+    "network": {
+      "profile_id": "lab-dhcp"
+    },
+    "access": {
+      "root_password": "REEMPLAZAR_POR_CONTRASENA_UNICA",
+      "ssh_public_keys": []
+    },
+    "start_on_create": true,
+    "commercial_context": {
+      "order_id": "piloto-kvm-1",
+      "product_id": "CRM-KVM-1"
+    }
+  },
+  "respuesta_historica": {
+    "job_id": "f60d87be-f142-47a8-aabd-a84aa690e3fa",
+    "status": "queued",
+    "instance_id": "b50a71f8-210c-44da-b5ca-f73b7ce00ee9",
+    "operation_id": "8cf904bd-459d-469e-b553-40acc7dede9f",
+    "executor": "provisioning",
+    "provisioning_service": "provisioning"
+  }
+}

@@ -1,0 +1,264 @@
+{
+  "fecha_local": "2026-10-25T19:03:18.883656-06:00",
+  "zona": "America/Costa_Rica",
+  "consultas": {
+    "/health/live": {
+      "http": 200,
+      "datos": {
+        "status": "live"
+      }
+    },
+    "/health/ready": {
+      "http": 200,
+      "datos": {
+        "status": "ready"
+      }
+    },
+    "/v1/plans": {
+      "http": 200,
+      "datos": [
+        {
+          "plan_id": "kvm-1",
+          "name": "KVM 1",
+          "vcpus": 1,
+          "memory_mb": 2048,
+          "disk_gb": 50,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "plan_id": "kvm-2",
+          "name": "KVM 2",
+          "vcpus": 2,
+          "memory_mb": 4096,
+          "disk_gb": 100,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "plan_id": "kvm-3",
+          "name": "KVM 3",
+          "vcpus": 4,
+          "memory_mb": 8192,
+          "disk_gb": 200,
+          "availability": {
+            "available": false,
+            "capacity_verified": false,
+            "reasons": [
+              "COMMERCIAL_PLAN_NOT_AUTHORIZED"
+            ]
+          }
+        },
+        {
+          "plan_id": "kvm-4",
+          "name": "KVM 4",
+          "vcpus": 8,
+          "memory_mb": 16384,
+          "disk_gb": 400,
+          "availability": {
+            "available": false,
+            "capacity_verified": false,
+            "reasons": [
+              "COMMERCIAL_PLAN_NOT_AUTHORIZED"
+            ]
+          }
+        }
+      ]
+    },
+    "/v1/images": {
+      "http": 200,
+      "datos": [
+        {
+          "image_id": "ubuntu-2404",
+          "operating_system": "Ubuntu",
+          "version": "24.04",
+          "status": "habilitada",
+          "cloud_init": true,
+          "qemu_guest_agent": true,
+          "root_access": true,
+          "ssh_access": true,
+          "minimum_requirements": {
+            "vcpus": 1,
+            "memory_mb": 512,
+            "disk_gb": 20
+          },
+          "compatible_plans": [
+            "kvm-1",
+            "kvm-2",
+            "kvm-3",
+            "kvm-4"
+          ],
+          "authorized": true,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "image_id": "ubuntu-2604",
+          "operating_system": "Ubuntu",
+          "version": "26.04",
+          "status": "pendiente",
+          "cloud_init": null,
+          "qemu_guest_agent": null,
+          "root_access": null,
+          "ssh_access": null,
+          "minimum_requirements": null,
+          "compatible_plans": [],
+          "authorized": false,
+          "availability": {
+            "available": false,
+            "capacity_verified": false,
+            "reasons": [
+              "IMAGE_CERTIFICATION_PENDING"
+            ]
+          }
+        },
+        {
+          "image_id": "almalinux-9",
+          "operating_system": "AlmaLinux",
+          "version": "9",
+          "status": "pendiente",
+          "cloud_init": null,
+          "qemu_guest_agent": null,
+          "root_access": null,
+          "ssh_access": null,
+          "minimum_requirements": null,
+          "compatible_plans": [],
+          "authorized": false,
+          "availability": {
+            "available": false,
+            "capacity_verified": false,
+            "reasons": [
+              "IMAGE_CERTIFICATION_PENDING"
+            ]
+          }
+        },
+        {
+          "image_id": "almalinux-10",
+          "operating_system": "AlmaLinux",
+          "version": "10",
+          "status": "pendiente",
+          "cloud_init": null,
+          "qemu_guest_agent": null,
+          "root_access": null,
+          "ssh_access": null,
+          "minimum_requirements": null,
+          "compatible_plans": [],
+          "authorized": false,
+          "availability": {
+            "available": false,
+            "capacity_verified": false,
+            "reasons": [
+              "IMAGE_CERTIFICATION_PENDING"
+            ]
+          }
+        }
+      ]
+    },
+    "/v1/profiles": {
+      "http": 200,
+      "datos": [
+        {
+          "profile": "lab-dhcp",
+          "image": "ubuntu-2404",
+          "network_mode": "dhcp",
+          "bridge": "vmbr0",
+          "vlan_tag": null,
+          "nodes": [
+            "mng01"
+          ],
+          "minimum_disk_gb": 20,
+          "max_vcpus_per_instance": 8,
+          "max_memory_mb_per_instance": 16384,
+          "max_disk_gb_per_instance": 400,
+          "self_service_enabled": true,
+          "guest_initialization": "ubuntu-2404-lab-identity-v1",
+          "root_password_bootstrap": false,
+          "quotas": {
+            "instances": 1,
+            "vcpus": 8,
+            "memory_mb": 16384,
+            "disk_gb": 400,
+            "concurrent_operations": 1
+          }
+        },
+        {
+          "profile": "lab-root-dhcp",
+          "image": "ubuntu-2404",
+          "network_mode": "dhcp",
+          "bridge": "vmbr0",
+          "vlan_tag": null,
+          "nodes": [
+            "mng01"
+          ],
+          "minimum_disk_gb": 20,
+          "max_vcpus_per_instance": 4,
+          "max_memory_mb_per_instance": 4096,
+          "max_disk_gb_per_instance": 40,
+          "self_service_enabled": true,
+          "guest_initialization": "ubuntu-2404-lab-identity-v1",
+          "root_password_bootstrap": true,
+          "quotas": {
+            "instances": 4,
+            "vcpus": 8,
+            "memory_mb": 8192,
+            "disk_gb": 80,
+            "concurrent_operations": 2
+          }
+        }
+      ]
+    },
+    "/v1/lab/usage": {
+      "http": 200,
+      "datos": {
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "usage": {
+          "instances": 1,
+          "vcpus": 2,
+          "memory_mb": 2048,
+          "disk_gb": 20,
+          "concurrent_operations": 0
+        },
+        "description": "Incluye reservas fallidas e inciertas y todos los perfiles del tenant; se libera capacidad solo con deleted verificado."
+      }
+    }
+  },
+  "servicios": [
+    {
+      "nombre": "/iacp-controlplane-api-1",
+      "imagen": "iacp/controlplane-api:docs-ab36a06",
+      "image_id": "sha256:be95d630c280a153ce91a1b5cc4cd2594e3e234b5f4b970bf8e4fd3f6aa4e0c6",
+      "estado": "running",
+      "health": "healthy"
+    },
+    {
+      "nombre": "/iacp-controlplane-terraform-worker-1",
+      "imagen": "iacp/terraform-worker:fase-g-e855677",
+      "image_id": "sha256:c1157faf2bb71d6469d83c51a6c975b95be24dd8d05610d39c0bfe5c515da3c5",
+      "estado": "running",
+      "health": null
+    }
+  ],
+  "limites_operativos": {
+    "tenant": "00000000-0000-0000-0000-000000000001",
+    "limites": {
+      "allowed_plans": [
+        "kvm-1",
+        "kvm-2"
+      ],
+      "max_instances": 2,
+      "max_vcpus": 4,
+      "max_memory_mb": 6144,
+      "max_disk_gb": 120,
+      "max_concurrent_operations": 1
+    }
+  }
+}

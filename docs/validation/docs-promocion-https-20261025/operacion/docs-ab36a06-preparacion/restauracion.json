@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "isolated": true,
+  "backup_sha256": "f4906d0a824affbe1a040f32807a9d5d1d390c7ba3d81edc9d536391e7888495",
+  "schema": "0012_commercial_intents",
+  "table_count": 16,
+  "fecha_local": "2026-10-25T18:57:58.253293-06:00"
+}

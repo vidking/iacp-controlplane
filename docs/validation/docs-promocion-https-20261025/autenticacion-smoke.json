@@ -1,0 +1,36 @@
+{
+  "fecha_local": "2026-10-25T19:03:48.071445-06:00",
+  "https_verificado": true,
+  "sin_credenciales": [
+    {
+      "ruta": "/docs",
+      "http": 401,
+      "challenge": "Basic realm=\"IACP docs\", charset=\"UTF-8\""
+    },
+    {
+      "ruta": "/docs?asset=iacp-v1.js",
+      "http": 401,
+      "challenge": "Basic realm=\"IACP docs\", charset=\"UTF-8\""
+    },
+    {
+      "ruta": "/openapi.json",
+      "http": 401,
+      "challenge": "Basic realm=\"IACP docs\", charset=\"UTF-8\""
+    },
+    {
+      "ruta": "/v1/plans",
+      "http": 401,
+      "challenge": "Bearer"
+    },
+    {
+      "ruta": "/health/live",
+      "http": 200,
+      "challenge": null
+    },
+    {
+      "ruta": "/health/ready",
+      "http": 200,
+      "challenge": null
+    }
+  ]
+}
