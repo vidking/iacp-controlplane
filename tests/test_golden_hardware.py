@@ -126,9 +126,16 @@ def test_disk_plan_rejects_provider_defaults_not_present_in_golden():
           'file_format':None,'aio':None,'cache':None,'discard':'on','backup':None,
           'replicate':None,'iothread':True,'ssd':None,'serial':None,'queues':None}
     verify_disk_plan(plan,variables)
-    plan['iothread']=False
+    for key, value in {
+        'aio': 'io_uring', 'backup': True, 'cache': 'none',
+        'replicate': True, 'ssd': False, 'queues': 0,
+    }.items():
+        wrong=dict(plan); wrong[key]=value
+        with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
+            verify_disk_plan(wrong,variables)
+    wrong=dict(plan); wrong['iothread']=False
     with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
-        verify_disk_plan(plan,variables)
+        verify_disk_plan(wrong,variables)
 
 
 @pytest.mark.parametrize('password',[False,True])
