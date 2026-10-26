@@ -108,6 +108,18 @@ ROOT_PROGRAM = PROGRAM.replace("write(marker,json.dumps(result,sort_keys=True)+'
 ROOT_PROGRAM_SHA256 = hashlib.sha256(ROOT_PROGRAM.encode()).hexdigest()
 
 
+def program_for_mode(mode, *, root=False):
+    if mode == MODE:
+        return (ROOT_PROGRAM, ROOT_PROGRAM_SHA256) if root else (PROGRAM, PROGRAM_SHA256)
+    if root:
+        raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED')
+    from .guest_image_programs import image_program
+    try:
+        return image_program(mode, PROGRAM)
+    except ValueError:
+        raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED') from None
+
+
 def active(session, instance_id):
     return session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance_id,
         GuestInitialization.status.in_(['queued','running','uncertain'])))
@@ -117,8 +129,8 @@ def configured_mode(session, instance, *, current_profiles=True):
     from ..services.lab import member
     row=member(session,instance,'start',current_profiles=current_profiles)
     mode=row.profile_snapshots[instance.network_profile].get('guest_initialization')
-    expected = ROOT_PROGRAM_SHA256 if row.profile_snapshots[instance.network_profile].get('root_password_bootstrap') else PROGRAM_SHA256
-    if mode!=MODE or row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=expected:
+    expected = program_for_mode(mode, root=bool(row.profile_snapshots[instance.network_profile].get('root_password_bootstrap')))[1]
+    if row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=expected:
         raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED')
     return mode
 
@@ -133,7 +145,7 @@ def validate_binding(session, row, operation):
     execution=session.get(TerraformExecution,instance.id)
     mac=(instance.result or {}).get('network',{}).get('mac_address','').lower()
     if (target.vmid<30000 or target.vmid in {104,106} or not (instance.self_service_policy_id or instance.commercial_revision)
-            or instance.network_mode!='dhcp' or row.mode!=MODE or mac!=row.mac_address
+            or instance.network_mode!='dhcp' or row.mode not in {MODE, 'ubuntu-2604-lab-identity-v1', 'almalinux-9-lab-identity-v1', 'almalinux-10-lab-identity-v1'} or mac!=row.mac_address
             or row.provisioning_binding!=binding_digest(instance,execution,approval)):
         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
     return instance,target
@@ -184,7 +196,7 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                 from .lab import member
                 profile=member(session,instance,'start').profile_snapshots[instance.network_profile]
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
-                    program_sha256=ROOT_PROGRAM_SHA256 if profile.get('root_password_bootstrap') else PROGRAM_SHA256,
+                    program_sha256=program_for_mode(mode, root=bool(profile.get('root_password_bootstrap')))[1],
                     provisioning_binding=binding_digest(instance,execution,approval),status='queued')
                 session.add(row)
                 session.add(Job(id=str(uuid4()),tenant_id=instance.tenant_id,operation_id=operation.id,operation=operation.kind,status='queued'))
@@ -231,6 +243,10 @@ class GuestClient:
     def submit(self,target,instance_id,mac):
         return self._submit(target,instance_id,mac,PROGRAM,PROGRAM_SHA256)
 
+    def submit_image(self,target,instance_id,mac,mode):
+        program,digest=program_for_mode(mode)
+        return self._submit(target,instance_id,mac,program,digest)
+
     def submit_root(self,target,instance_id,mac):
         return self._submit(target,instance_id,mac,ROOT_PROGRAM,ROOT_PROGRAM_SHA256)
 
@@ -256,16 +272,22 @@ class GuestClient:
             if value.get('truncated'):raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
             return value['content']
         evidence=json.loads(read(MARKER))
+        from .guest_image_programs import NETWORK_MANAGER_FILE
+        network_file=NETWORK_MANAGER_FILE if row.mode.startswith('almalinux-') else NETWORK_FILE
         if type(evidence.get('ifindex')) is not int or not 1<=evidence['ifindex']<=65535:
             raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
         if (evidence.get('instance_id')!=row.instance_id or evidence.get('mac_address')!=row.mac_address
                 or evidence.get('mode')!=row.mode or evidence.get('program_sha256')!=row.program_sha256
                 or evidence.get('machine_id_sha256')!=hashlib.sha256(read('/etc/machine-id').encode()).hexdigest()
-                or evidence.get('network_sha256')!=hashlib.sha256(read(NETWORK_FILE).encode()).hexdigest()):
+                or evidence.get('network_sha256')!=hashlib.sha256(read(network_file).encode()).hexdigest()):
             raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
         from .network import agent_addresses
         network=agent_addresses(self.client._request('GET',target.path+'/agent/network-get-interfaces'),row.mac_address)
         if not network['ip_addresses']:return None
+        if row.mode.startswith('almalinux-'):
+            if evidence.get('network_manager_dhcp') is not True:
+                raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
+            return {**evidence,'network':network,'source':'qemu-guest-agent','guest_ready':None}
         try:lease_content=read('/run/systemd/netif/leases/'+str(evidence['ifindex']))
         except PowerError:return None  # networkd replaces the lease while DHCP converges.
         lease=dict(line.split('=',1) for line in lease_content.splitlines() if '=' in line)
@@ -296,7 +318,7 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         configured_mode(s,instance)
                         from ..lifecycle.ownership import mutation_revision
                         mutation_revision()
-                        if row.program_sha256 not in {PROGRAM_SHA256, ROOT_PROGRAM_SHA256}:raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
+                        if row.program_sha256 not in {program_for_mode(row.mode)[1], ROOT_PROGRAM_SHA256 if row.mode==MODE else program_for_mode(row.mode)[1]}:raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
                         while True:
                             try:client.ready(target);break
                             except PowerError:
@@ -307,7 +329,8 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         row.started_at=utcnow();row.status=operation.status=job.status='running'
                         event(s,operation,'guest_initialization_dispatch_consumed','worker:iac');s.commit()
                         submit = client.submit_root if row.program_sha256 == ROOT_PROGRAM_SHA256 else client.submit
-                        row.pid=submit(target,instance.id,row.mac_address);s.commit()
+                        row.pid=(submit(target,instance.id,row.mac_address) if row.mode==MODE else
+                            client.submit_image(target,instance.id,row.mac_address,row.mode));s.commit()
                     while True:
                         validate_binding(s,row,operation)
                         result=client.observe(target,row)

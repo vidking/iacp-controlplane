@@ -1,0 +1,16 @@
+{
+  "fecha_local": "25/10/2026 America/Costa_Rica",
+  "alcance": "Candidata para revisión de PR; ningún otro sello de invariantes se modifica",
+  "archivos": {
+    "app/iacp/terraform/lifecycle.py": {
+      "anterior": "ab9ce157ede2e713dff6984a7b3fb32c353fdc88c5921e6fe00d8687853d8c53",
+      "candidata": "309d0a81eb0a7e1872d1080989faa7b4df28f2a5f11cc2e4744c9c9b1a083c70",
+      "motivo": "Resolver la imagen autorizada por instancia, con configuración LAB acotada; se conserva la comparación estricta de allocation y snapshot"
+    },
+    "app/iacp/terraform/profiles.py": {
+      "anterior": "5e8a31ad76fc8cea3a64c11913732be1f4ebb236fca57fb0b71707c67b4004d0",
+      "candidata": "04ff3be5ce2bd5a5b42102509f7292b17f45a65169d1d9cf52a3a22f322e46ad",
+      "motivo": "Resolver la imagen autorizada por instancia, con configuración LAB acotada; se conserva la comparación estricta de allocation y snapshot"
+    }
+  }
+}

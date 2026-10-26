@@ -169,7 +169,7 @@
           const option = document.createElement('option');
           option.value = row[key];
           const label = row.vcpus ? `${row[key]} · ${row.vcpus} vCPU · ${row.memory_mb} MiB · ${row.disk_gb} GiB` : row[key];
-          option.textContent = label + (row.availability.available ? ' · disponible' : ' · no disponible: ' + row.availability.reasons.join(', '));
+          option.textContent = label + (row.status === 'pendiente' ? ' · certificación pendiente' : '') + (row.availability.available ? ' · disponible' : ' · no disponible: ' + row.availability.reasons.join(', '));
           option.disabled = !row.availability.available;
           select.append(option);
         }
@@ -179,7 +179,7 @@
       const usable = planSelect.selectedIndex >= 0 && imageSelect.selectedIndex >= 0;
       if (usable) updateRequest();
       catalogStatus.textContent = usable
-        ? 'JSON y cURL actualizados desde el catálogo. KVM 1/2 Ubuntu 24.04 tienen evidencia E2E; otros tamaños requieren certificación física.'
+        ? 'JSON y cURL actualizados desde el catálogo. Disponible para ejecución no equivale a certificado: consulta el estado de la imagen. KVM 1/2 Ubuntu 24.04 conservan evidencia E2E histórica.'
         : 'No hay una combinación disponible ahora. Consulta los motivos en el catálogo; el ejemplo visible no autoriza su ejecución.';
     } catch (_) { catalogStatus.textContent = 'No se pudo consultar el catálogo. Comprueba autorización, disponibilidad y la respuesta de GET /v1/plans en Swagger.'; }
   });

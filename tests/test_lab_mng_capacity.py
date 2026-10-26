@@ -110,3 +110,104 @@ def test_minimal_creation_keeps_idempotency_and_exact_plan(sessions, commercial_
             expected.vcpus, expected.memory_mb, expected.disk_gb)
         assert instance.commercial_context is None and instance.network_profile == 'lab-dhcp'
     assert capacity.call_count == publish.call_count == 1
+
+
+@pytest.mark.parametrize('image,vmid', [('ubuntu-2404',29000),('ubuntu-2604',29001),('almalinux-9',29010),('almalinux-10',29011)])
+@pytest.mark.parametrize('plan', ['kvm-1','kvm-2','kvm-3','kvm-4'])
+def test_four_images_resolve_internal_template_without_public_vmid(sessions, commercial_config, store, image, vmid, plan):
+    enable()
+    raw=json.loads(commercial_config.read_text())
+    raw['lab_images']={key:{'enabled':True,'cloudinit_username':'root'}
+        for key in ['ubuntu-2604','almalinux-9','almalinux-10']}
+    commercial_config.write_text(json.dumps(raw))
+    from iacp.commercial_contract import CommercialInstanceCreate
+    from iacp.models import Instance, TerraformExecution
+    # La parametrización se prueba con cuerpos mínimos y el mismo tenant LAB.
+    body=specification(plan).model_dump();body.pop('network');body.pop('commercial_context')
+    body['image_id']=image
+    spec=CommercialInstanceCreate.model_validate(body)
+    with sessions() as session:
+        result=commercial.create(session,Principal(BOOTSTRAP_TENANT_ID,'lab-swagger-postman','operator'),
+            spec,'images-'+image,Mock(),store,capacity=Mock())
+        instance=session.get(Instance,result.instance_id)
+        allocation=session.get(TerraformExecution,result.instance_id).allocation
+        assert instance.network_profile=='lab-dhcp' and instance.image==image
+        assert allocation['template_vm_id']==vmid
+        assert allocation['clone_datastore_id']=='DS_CYBERFUEL'
+
+
+def test_four_images_available_in_explicit_lab_configuration_only(sessions, commercial_config, monkeypatch):
+    enable()
+    raw=json.loads(commercial_config.read_text())
+    raw['lab_images']={key:{'enabled':True,'cloudinit_username':'root'}
+        for key in ['ubuntu-2604','almalinux-9','almalinux-10']}
+    commercial_config.write_text(json.dumps(raw))
+    from iacp.services import bootstrap_secrets
+    from iacp.services.catalog import images_for
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    monkeypatch.setattr(bootstrap_secrets,'configured_key',lambda:b'x'*32)
+    monkeypatch.setattr(commercial,'live_capacity',Mock())
+    with sessions() as session:
+        rows=images_for(BOOTSTRAP_TENANT_ID,session)
+        assert len(rows)==4
+        assert all(row['status']=='habilitada' and row['authorized'] and row['availability']['available'] for row in rows)
+        assert all(row['compatible_plans']==['kvm-1','kvm-2','kvm-3','kvm-4'] for row in rows)
+    raw['lab_images']['almalinux-9']['enabled']=False
+    commercial_config.write_text(json.dumps(raw))
+    with sessions() as session:
+        row=next(r for r in images_for(BOOTSTRAP_TENANT_ID,session) if r['image_id']=='almalinux-9')
+        assert row['status']=='habilitada' and not row['authorized'] and not row['availability']['available']
+
+
+def test_programs_are_fixed_and_specific_to_image():
+    from iacp.services.guest_identity import MODE,PROGRAM,PROGRAM_SHA256,program_for_mode
+    from iacp.services.guest_image_programs import MODES
+    import hashlib
+    assert program_for_mode(MODE)==(PROGRAM,PROGRAM_SHA256)
+    for mode in MODES:
+        program,digest=program_for_mode(mode)
+        compile(program,'guest-'+mode,'exec')
+        assert hashlib.sha256(program.encode()).hexdigest()==digest
+        assert mode in program and 'password' not in program.lower()
+        if mode.startswith('almalinux'):
+            assert 'nmcli' in program and 'dhcp-client-id=mac' in program and 'restorecon' in program
+        else:
+            assert 'VERSION_ID="26.04"' in program and 'VERSION_ID="24.04"' not in program
+    with pytest.raises(Conflict):program_for_mode('imagen-arbitraria')
+
+
+@pytest.mark.parametrize('mode', ['ubuntu-2604-lab-identity-v1','almalinux-9-lab-identity-v1','almalinux-10-lab-identity-v1'])
+def test_new_initializers_use_fixed_program_and_matching_evidence(mode):
+    import hashlib
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs,urlsplit
+    from iacp.services.guest_identity import GuestClient,program_for_mode,MARKER,NETWORK_FILE
+    from iacp.services.guest_image_programs import NETWORK_MANAGER_FILE
+    identifier='00000000-0000-4000-8000-000000000077';mac='bc:24:11:12:34:56'
+    program,digest=program_for_mode(mode)
+    machine,network='maquina-unica\n','configuracion-DHCP-fija\n'
+    marker=dict(instance_id=identifier,mac_address=mac,mode=mode,program_sha256=digest,ifindex=2,
+        machine_id_sha256=hashlib.sha256(machine.encode()).hexdigest(),
+        network_sha256=hashlib.sha256(network.encode()).hexdigest(),network_manager_dhcp=True)
+    seen=[]
+    def request(method,path,body=None):
+        seen.append((method,path,body))
+        if method=='POST':return {'pid':42}
+        if 'network-get-interfaces' in path:
+            return {'result':[{'hardware-address':mac,'ip-addresses':[{'ip-address-type':'ipv4','ip-address':'192.0.2.10','prefix':24}]}]}
+        file=parse_qs(urlsplit(path).query)['file'][0]
+        values={MARKER:json.dumps(marker),'/etc/machine-id':machine,
+                NETWORK_MANAGER_FILE if mode.startswith('almalinux') else NETWORK_FILE:network,
+                '/run/systemd/netif/leases/2':'CLIENTID=01bc2411123456\nADDRESS=192.0.2.10\n'}
+        return {'content':values[file]}
+    client=GuestClient(SimpleNamespace(_request=request))
+    target=SimpleNamespace(path='/nodes/mng01/qemu/30001')
+    assert client.submit_image(target,identifier,mac,mode)==42
+    command=seen[0][2]
+    assert command==[('command','/usr/bin/python3'),('command','-c'),('command',program),
+                     ('command',identifier),('command',mac),('command',digest)]
+    row=SimpleNamespace(pid=None,instance_id=identifier,mac_address=mac,mode=mode,program_sha256=digest)
+    assert client.observe(target,row)['network']['ip_addresses']==['192.0.2.10']
+    assert all(method=='GET' for method,_,_ in seen[1:])
+    marker['network_sha256']='0'*64
+    with pytest.raises(Conflict):client.observe(target,row)

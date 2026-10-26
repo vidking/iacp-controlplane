@@ -40,7 +40,7 @@ def catalog_profile(tmp_path, monkeypatch):
 def test_four_exact_plans_and_immutable_catalog():
     assert [(p.plan_id,p.vcpus,p.memory_mb,p.disk_gb) for p in PLANS] == [
         ('kvm-1',1,2048,50),('kvm-2',2,4096,100),('kvm-3',4,8192,200),('kvm-4',8,16384,400)]
-    assert catalog_digest() == '0deed2d15ffa283e75cf407bc9dde8ce8af268469cf21fc52c2fc4c9f3dbb3ff'
+    assert catalog_digest() == '38a7441379541871b50c24fbc6eebf88a9ca8f7425aedb16caf6839f66d1bf2b'
     with pytest.raises(AttributeError):
         PLANS[0].disk_gb = 20
     with pytest.raises(ValueError, match='PLAN_NOT_FOUND'):
@@ -50,30 +50,19 @@ def test_four_exact_plans_and_immutable_catalog():
         resolve_image('debian-no-certificada')
 
 
-def test_ubuntu_2604_pending_is_internal_and_cannot_provision(client, auth, catalog_profile):
-    pending = next(row for row in PENDING_IMAGES if row.image_id == 'ubuntu-2604')
-    assert (pending.image_id, pending.version, pending.template_vm_id, pending.status) == (
-        'ubuntu-2604', '26.04', 29001, 'pendiente')
-    with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
-        resolve_image('ubuntu-2604')
-    row = next(row for row in client.get('/v1/images', headers=auth).json() if row['image_id']=='ubuntu-2604')
-    assert row['status']=='pendiente' and not row['availability']['available']
-    assert row['root_access'] is None and row['minimum_requirements'] is None
-    with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
-        resolved_resources(CommercialInstanceCreate.model_validate({**EXAMPLES[0], 'image_id': 'ubuntu-2604'}))
-
-
-def test_almalinux_images_from_inventory_remain_pending_and_unselectable(client, auth, catalog_profile):
-    assert {(row.image_id, row.template_vm_id, row.status) for row in PENDING_IMAGES} == {
-        ('ubuntu-2604', 29001, 'pendiente'), ('almalinux-9', 29010, 'pendiente'),
-        ('almalinux-10', 29011, 'pendiente')}
-    for image_id in ('almalinux-9', 'almalinux-10'):
-        with pytest.raises(ValueError, match='IMAGE_NOT_AVAILABLE'):
-            resolve_image(image_id)
-    rows = client.get('/v1/images', headers=auth).json()
-    assert [row['image_id'] for row in rows] == ['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']
-    assert all(not row['authorized'] and not row['availability']['available']
-        and row['availability']['reasons']==['IMAGE_CERTIFICATION_PENDING'] for row in rows[1:])
+def test_four_templates_enabled_by_infrastructure_keep_tenant_authorization(client, auth, catalog_profile):
+    assert not PENDING_IMAGES
+    assert {(i.image_id,i.template_vm_id,i.status) for i in IMAGES}=={
+        ('ubuntu-2404',29000,'habilitada'),('ubuntu-2604',29001,'habilitada'),
+        ('almalinux-9',29010,'habilitada'),('almalinux-10',29011,'habilitada')}
+    rows=client.get('/v1/images',headers=auth).json()
+    assert len(rows)==4 and all(r['status']=='habilitada' for r in rows)
+    # El registro de producto no amplía derechos de un tenant sin el modo LAB.
+    for row in rows[1:]:
+        assert not row['authorized'] and not row['availability']['available']
+        assert row['availability']['reasons']==['TENANT_PROFILE_NOT_AUTHORIZED']
+        assert row['compatible_plans']==['kvm-1','kvm-2','kvm-3','kvm-4']
+        assert row['cloud_init'] and row['qemu_guest_agent']
 
 
 @pytest.mark.parametrize('status',['pendiente','certificada','retirada'])

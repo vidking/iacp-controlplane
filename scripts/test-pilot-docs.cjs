@@ -114,7 +114,7 @@ async function main() {
    await page.locator('a[href="#piloto-json"]').click();
    if (!bearerMode) {
     await context.route('**/v1/plans', route => route.fulfill({json:[1,2,3,4].map(n=>({plan_id:'kvm-'+n, availability:{available:true,reasons:[]}}))}));
-    await context.route('**/v1/images', route => route.fulfill({json:[{image_id:'ubuntu-2404',availability:{available:true,reasons:[]}},{image_id:'ubuntu-2604',availability:{available:false,reasons:['IMAGE_CERTIFICATION_PENDING']}}]}));
+    await context.route('**/v1/images', route => route.fulfill({json:['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10'].map(image_id=>({image_id,status:'habilitada',compatible_plans:['kvm-1','kvm-2','kvm-3','kvm-4'],availability:{available:true,reasons:[]}}))}));
    }
    await page.locator('#load-pilot-catalog').click();
    await expect(page.locator('#pilot-catalog-status')).not.toContainText('Pulsa Authorize');
@@ -125,7 +125,12 @@ async function main() {
      expect(JSON.parse(await page.locator('#pilot-json').textContent()).plan_id).toBe(plan);
      expect(await page.locator('#pilot-curl').textContent()).toContain("'plan_id': '"+plan+"'");
     }
-    await expect(page.locator('#pilot-image option[value="ubuntu-2604"]')).toHaveJSProperty('disabled',true);
+    for(const image of ['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']) {
+     await page.locator('#pilot-image').selectOption(image);
+     expect(JSON.parse(await page.locator('#pilot-json').textContent()).image_id).toBe(image);
+     expect(await page.locator('#pilot-curl').textContent()).toContain("'image_id': '"+image+"'");
+    }
+    await page.locator('#pilot-image').selectOption('ubuntu-2404');
     await page.locator('#pilot-plan').selectOption('kvm-1');
     await context.unroute('**/v1/plans'); await context.unroute('**/v1/images');
    }

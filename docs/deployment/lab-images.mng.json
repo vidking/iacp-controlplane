@@ -1,0 +1,16 @@
+{
+  "lab_images": {
+    "ubuntu-2604": {
+      "enabled": true,
+      "cloudinit_username": "root"
+    },
+    "almalinux-9": {
+      "enabled": true,
+      "cloudinit_username": "root"
+    },
+    "almalinux-10": {
+      "enabled": true,
+      "cloudinit_username": "root"
+    }
+  }
+}

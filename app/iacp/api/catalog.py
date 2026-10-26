@@ -53,13 +53,13 @@ class ImageResponse(BaseModel):
 
 IMAGE_RESPONSE_EXAMPLE = [
     {"image_id": image_id, "operating_system": system, "version": version,
-     "status": "habilitada" if enabled else "pendiente",
-     "cloud_init": True if enabled else None, "qemu_guest_agent": True if enabled else None,
-     "root_access": True if enabled else None, "ssh_access": True if enabled else None,
-     "minimum_requirements": {"vcpus": 1, "memory_mb": 512, "disk_gb": 20} if enabled else None,
-     "compatible_plans": ["kvm-1", "kvm-2", "kvm-3", "kvm-4"] if enabled else [],
+     "status": "habilitada",
+     "cloud_init": True, "qemu_guest_agent": True,
+     "root_access": True, "ssh_access": True,
+     "minimum_requirements": {"vcpus": 1, "memory_mb": 512 if image_id=="ubuntu-2404" else 2048, "disk_gb": 20},
+     "compatible_plans": ["kvm-1", "kvm-2", "kvm-3", "kvm-4"],
      "authorized": enabled, "availability": {"available": False, "capacity_verified": False,
-         "reasons": ["PHYSICAL_CAPACITY_NOT_VERIFIED" if enabled else "IMAGE_CERTIFICATION_PENDING"]}}
+         "reasons": ["PHYSICAL_CAPACITY_NOT_VERIFIED" if enabled else "TENANT_PROFILE_NOT_AUTHORIZED"]}}
     for image_id, system, version, enabled in [
         ("ubuntu-2404", "Ubuntu", "24.04", True), ("ubuntu-2604", "Ubuntu", "26.04", False),
         ("almalinux-9", "AlmaLinux", "9", False), ("almalinux-10", "AlmaLinux", "10", False)]
@@ -85,11 +85,11 @@ def plans(response: Response, principal: Annotated[Principal, Depends(authorize)
 @router.get("/v1/images", response_model=list[ImageResponse], operation_id="listGoldenImages",
     responses={200: {"description": "Inventario autorizado; consultar disponibilidad efectiva antes de crear",
         "content": {"application/json": {"examples": {"inventario_pendiente": {
-            "summary": "Cuatro imágenes; ejemplo de capacidad todavía no certificada",
+            "summary": "Cuatro imágenes; disponibilidad por tenant y capacidad real",
             "value": IMAGE_RESPONSE_EXAMPLE}}}}}},
     summary="Consultar Golden Images y su autorización",
     description="Inventario: ubuntu-2404, ubuntu-2604, almalinux-9 y almalinux-10. "
-    "Solo ubuntu-2404 está habilitada por su certificación histórica; las otras permanecen pendientes. "
+    "Las cuatro plantillas fueron validadas por Infraestructura y están habilitadas en LAB/MNG. La disponibilidad valida autorización, configuración y capacidad; no equivale a E2E IACP certificado. "
     "Capacidades null y compatible_plans vacío indican pruebas pendientes, no incompatibilidad demostrada. "
     "root_access/ssh_access describen esa capacidad histórica, no certifican G6. "
     "availability distingue habilitación, permiso y ejecución segura; no publica VMID, nodo ni almacenamiento interno.")

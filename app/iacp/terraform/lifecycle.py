@@ -92,7 +92,7 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
             allocation = Allocation.model_validate(execution.allocation) if execution.allocation else load_allocation(instance)
             if instance.network_profile:
                 from .profiles import load_profile, settings_for
-                profile=load_profile(instance.network_profile,instance.tenant_id)
+                profile=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image if instance.commercial_revision else None)
                 actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway'})
                 if actual != settings_for(profile, allocation.node_name).model_dump():
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')

@@ -1,6 +1,6 @@
 # Guía de integración CRM: catálogo comercial G
 
-Actualizada el 25/10/2026, America/Costa_Rica. Guía del piloto comercial G certificado para KVM 1/2 con Ubuntu 24.04.
+Actualizada el 25/10/2026, America/Costa_Rica. Guía del piloto LAB/MNG. Ubuntu 24.04 KVM 1/2 conserva su E2E histórico; las cuatro plantillas están validadas por Infraestructura y habilitadas en la candidata de integración.
 Comprobar siempre el OpenAPI y la disponibilidad realmente servidos. La documentación
 principal se consulta localmente en `https://iac.cyberfuel.com/docs`.
 
@@ -18,8 +18,10 @@ persistente autorizado; no se crea un tenant por solicitud ni se envía tenant_i
 HTTP Basic de documentación conserva su función y credencial separadas.
 
 Esta revisión permite omitir `network` y `commercial_context` **solo en el piloto
-LAB autorizado KVM 1/2 con Ubuntu 24.04**. IACP resuelve `lab-dhcp` y conserva cuotas,
-propiedad, catálogo, capacidad e idempotencia. No hay fallback automático a otra
+LAB/MNG autorizado, para KVM 1/2/3/4 e imágenes habilitadas**. IACP resuelve `lab-dhcp` y conserva
+propiedad, catálogo, capacidad e idempotencia. El modo persistente LAB elimina los presupuestos
+comerciales de número de instancias y recursos acumulados; conserva concurrencia técnica 1.
+Los demás tenants conservan sus cuotas. No hay fallback automático a otra
 red ni pedido CRM ficticio. Si se envía contexto, su order_id continúa siendo
 obligatorio. `null` no equivale a omitir; los cuerpos completos siguen siendo válidos.
 Verificar en el OpenAPI servido que esos dos campos ya no figuren en required
@@ -51,7 +53,7 @@ y explícitos es un cambio de representación y devuelve 409 con la misma clave.
 La intención almacena los valores efectivos y el perfil revisado; un retry no vuelve
 a reservar ni cambia esos valores porque posteriormente cambie la configuración.
 
-## Crear una VM piloto — Ubuntu 24.04
+## Crear máquina virtual
 
 La portada local de `/docs` contiene JSON válido, cURL completo, botones de copia,
 una respuesta real del E2E del 25/10/2026 (VM ya eliminada) y el recorrido hasta
@@ -59,8 +61,8 @@ DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
 
 1. Obtener Bearer autorizado del tenant por el canal existente; HTTP Basic solo
    permite leer documentación. Authorize recibe el token API y no amplía permisos.
-2. Confirmar `kvm-1`, `ubuntu-2404`, `lab-dhcp`, cuota y capacidad disponibles.
-3. Copiar JSON y reemplazar nombre y contraseña. Para SSH aportar una llave
+2. Pulsar Authorize, después Consultar catálogo autorizado. Seleccionar plan e imagen disponibles; la portada genera JSON y cURL. `lab-dhcp` se resuelve automáticamente.
+3. Copiar JSON, abrir POST /v1/instances, pulsar Try it out, pegarlo y completar Idempotency-Key. Reemplazar nombre y contraseña antes de Execute. Para SSH aportar una llave
    pública propia; nunca una privada. El cURL solicita los valores por terminal,
    genera el cuerpo temporal privado y lo elimina después del envío. Guardarlo
    como `crear-piloto.sh` y usar `source ./crear-piloto.sh` desde Bash, fuera de Git.
@@ -88,13 +90,13 @@ por IACP; copiar la versión completa desde `/docs`) y
 | image_id | Sistema | Estado de integración |
 |---|---|---|
 | ubuntu-2404 | Ubuntu 24.04 | KVM 1/2 y G6 validados en Fase G; comprobar disponibilidad actual |
-| ubuntu-2604 | Ubuntu 26.04 | Pendiente, no seleccionable |
-| almalinux-9 | AlmaLinux 9 | Pendiente, no seleccionable |
-| almalinux-10 | AlmaLinux 10 | Pendiente, no seleccionable |
+| ubuntu-2604 | Ubuntu 26.04 | Plantilla validada por Infraestructura; habilitada en LAB/MNG; E2E del orquestador por ejecutar |
+| almalinux-9 | AlmaLinux 9 | Plantilla validada por Infraestructura; habilitada en LAB/MNG; E2E del orquestador por ejecutar |
+| almalinux-10 | AlmaLinux 10 | Plantilla validada por Infraestructura; habilitada en LAB/MNG; E2E del orquestador por ejecutar |
 
 La presencia no concede permiso para crear. `available=false` expresa que no está
-disponible; capacidades `null` y planes compatibles vacíos en imágenes pendientes
-significan verificación incompleta. Guest Agent configurado no demuestra DHCP,
+disponible para esa identidad/configuración/capacidad. Las cuatro imágenes admiten los
+cuatro planes en LAB si la capacidad lo permite. Habilitada no significa E2E IACP certificado. Guest Agent configurado no demuestra DHCP,
 SSH o filesystem funcionales.
 
 ## Crear mediante plan_id
@@ -122,8 +124,9 @@ Envía `POST /v1/instances` mediante HTTPS, `Content-Type: application/json` e
 `Idempotency-Key: crm-pedido-1002-creacion`. Kvm-2 resuelve internamente
 2 vCPU, 4096 MiB y 100 GiB; no admite overrides. Para kvm-1 cambia el plan y las
 referencias de una nueva intención: 1 vCPU, 2048 MiB y 50 GiB. Kvm-3/kvm-4
-conservan 4/8192/200 y 8/16384/400, pero requieren presupuesto explícito;
-el laboratorio no obtiene esos derechos por existir los productos.
+conservan 4/8192/200 y 8/16384/400. El tenant LAB autorizado habilita expresamente
+los cuatro planes por capacidad física, sin cuotas comerciales ni aprobación por solicitud.
+Los tenants ajenos al modo LAB conservan su autorización y sus límites.
 
 No envíes tamaños libres, VMIDs ni `self_service_policy_id`. `profile_id`
 pertenece a `network`, no a la raíz. La misma intención conserva cuerpo, tenant y

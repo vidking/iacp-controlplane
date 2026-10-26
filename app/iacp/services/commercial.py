@@ -118,7 +118,7 @@ def member(session,instance,action,*,current_profiles=False,observation=False):
     limits=limits_for(instance.tenant_id)
     if row.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
     if current_profiles:
-        current=authorized_profile(instance.tenant_id)
+        current=authorized_profile(instance.tenant_id, instance.image)
         if current is None or current.model_dump()!=row.specification['profile_snapshot']:
             raise Conflict('COMMERCIAL_PROFILE_CHANGED')
     return row
@@ -128,8 +128,8 @@ def delegation(session,instance,action,*,current_profiles=False):
     row=member(session,instance,action,current_profiles=current_profiles)
     snapshot=dict(row.specification['profile_snapshot'])
     if snapshot.get('guest_initialization'):
-        from .guest_identity import PROGRAM_SHA256
-        snapshot['guest_initialization_program_sha256']=PROGRAM_SHA256
+        from .guest_identity import program_for_mode
+        snapshot['guest_initialization_program_sha256']=program_for_mode(snapshot['guest_initialization'])[1]
     return SimpleNamespace(id='commercial:'+row.catalog_sha256,
         profile_snapshots={instance.network_profile:snapshot},
         specification={'actions':['create','start','shutdown','reboot','delete']})
@@ -208,18 +208,20 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
                 return response
             if instance_executor()!='terraform':raise Conflict('COMMERCIAL_REAL_EXECUTOR_REQUIRED')
             if spec.network.profile_id!='lab-dhcp':raise Conflict('WAN_STATIC_EXECUTION_NOT_CERTIFIED')
-            resources=resolved_resources(spec)
             limits=limits_for(principal.tenant_id)
+            resources=resolved_resources(spec)
+            if spec.image_id!='ubuntu-2404' and not limits.lab_mng_physical_capacity_only:
+                raise Conflict('COMMERCIAL_IMAGE_NOT_AUTHORIZED')
             if spec.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
-            profile=authorized_profile(principal.tenant_id)
+            profile=authorized_profile(principal.tenant_id, spec.image_id)
             if profile is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
             if omitted and (profile.settings.environment != 'lab'
                     or profile.settings.network_mode != 'dhcp'
                     or (spec.plan_id not in {'kvm-1', 'kvm-2'} and not limits.lab_mng_physical_capacity_only)
-                    or spec.image_id != 'ubuntu-2404'):
+                    or (spec.image_id != 'ubuntu-2404' and not limits.lab_mng_physical_capacity_only)):
                 raise Conflict('COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED')
             if profile.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
-            if profile.guest_initialization!='ubuntu-2404-lab-identity-v1':
+            if profile.guest_initialization!=spec.image_id+'-lab-identity-v1':
                 raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
             if session.scalar(select(Instance.id).where(Instance.tenant_id==principal.tenant_id,Instance.name==spec.name)):
                 raise Conflict('COMMERCIAL_INSTANCE_NAME_CONFLICT')
