@@ -22,6 +22,11 @@ from iacp.terraform.runner import CommandRunner
 from tests.test_instances import SPEC, create, identities
 
 
+def test_source_revision_is_the_integrated_iac_main():
+    """El worker debe archivar la revisión IaC que contiene GoldenHardware."""
+    assert SOURCE_REVISION == "3a2fbecdb89f580e58502bd4ef9f968b167ca260"
+
+
 def allocation_data(vmid=21001, image="test-image"):
     # Fixtures sintéticos; no autorizan recursos reales ni se usan para acceder a red.
     return {"image": image, "environment": "lab", "allowed_nodes": ["mng01", "mng02"],

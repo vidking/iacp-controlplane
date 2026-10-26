@@ -7,9 +7,14 @@ from .proxmox import PowerError
 # Pinned hardware-fidelity source (iac-proxmox), preserving the lifecycle
 # ownership contract while removing provider disk defaults.
 # Runtime configuration cannot override the source contract.
-KVM_POWER_SOURCE_REVISION: str | None = "e701a0592d1caeda76faf7bdaa1e04c0b9bae5fc"
-KVM_POWER_SOURCE_ARCHIVE_SHA256 = "f5f45315d832861fd5d7f9e5a14aaf0c579bf2e476ea836f32c50af43d7dc733"
-PREVIOUS_POWER_SOURCE_REVISION = "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae"
+KVM_POWER_SOURCE_REVISION: str | None = "3a2fbecdb89f580e58502bd4ef9f968b167ca260"
+KVM_POWER_SOURCE_ARCHIVE_SHA256 = "8ac1e38c8095aada7d9e37e72ae939756517ef6ca69901f29a13afaa21e5a8e8"
+# Las revisiones previas permanecen observables para reconciliar operaciones ya
+# certificadas; nunca se utilizan para crear un plan nuevo.
+PREVIOUS_POWER_SOURCE_REVISIONS = frozenset({
+    "e701a0592d1caeda76faf7bdaa1e04c0b9bae5fc",
+    "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae",
+})
 LEGACY_TERRAFORM_POWER_SOURCE = "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4"
 
 
@@ -52,14 +57,14 @@ def instance_ownership(session, instance, approval):
     restricted = bool(scope) or os.environ.get("IACP_LAB_SELF_SERVICE_ENABLED") == "1"
     if restricted and instance.id not in scope.split(",") and not delegated:
         raise PowerError("POWER_INSTANCE_NOT_AUTHORIZED")
-    if execution.source_revision in {revision, PREVIOUS_POWER_SOURCE_REVISION}:
+    if execution.source_revision in ({revision} | PREVIOUS_POWER_SOURCE_REVISIONS):
         return None
     if execution.source_revision != LEGACY_TERRAFORM_POWER_SOURCE:
         raise PowerError("POWER_SOURCE_REVISION_UNSUPPORTED")
     certificate = session.scalar(select(PowerOwnershipCertificate).where(
         PowerOwnershipCertificate.instance_id == instance.id,
         PowerOwnershipCertificate.approval_id == approval.id,
-        PowerOwnershipCertificate.ownership_revision.in_([revision, PREVIOUS_POWER_SOURCE_REVISION])))
+        PowerOwnershipCertificate.ownership_revision.in_([revision, *PREVIOUS_POWER_SOURCE_REVISIONS])))
     if (certificate is None or certificate.source_revision != execution.source_revision
             or certificate.binding_sha256 != binding_digest(instance, execution, approval)):
         raise PowerError("POWER_OWNERSHIP_CERTIFICATION_REQUIRED")
