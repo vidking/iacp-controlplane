@@ -1,0 +1,28 @@
+{
+  "alcance": "Candidata local, no desplegada",
+  "baseline_runtime": "ab36a06db3cefb12cd3004cf7921e2af54333c28",
+  "baseline_main": "96118bfdb074906c5bee59f9cd728fa14e5d2131",
+  "required_antes": [
+    "name",
+    "plan_id",
+    "image_id",
+    "network",
+    "access",
+    "commercial_context"
+  ],
+  "required_despues": [
+    "name",
+    "plan_id",
+    "image_id",
+    "access"
+  ],
+  "campos_que_pasan_a_omitibles": [
+    "commercial_context",
+    "network"
+  ],
+  "endpoints_operationId_codigos_y_schemas_restantes": "IDENTICOS",
+  "autenticacion": "SIN_CAMBIOS",
+  "respuestas": "SIN_CAMBIOS",
+  "servers_fixture": "Loopback deliberado para evitar consultas a infraestructura real",
+  "otros_cambios": "Descripciones y ejemplos de creación; omisión solo autorizada en piloto LAB KVM 1/2; null sigue rechazado"
+}

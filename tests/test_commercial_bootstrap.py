@@ -25,11 +25,22 @@ class Delivery:
     def observe(self,*args):self.observations+=1;return {'status':'completed'}
 
 
+@pytest.fixture(params=['full','minimal'])
+def creation_shape(request):
+    return request.param
+
+
 @pytest.fixture
-def initialized(sessions,commercial_config,store):
+def initialized(sessions,commercial_config,store,creation_shape):
     p=Principal(BOOTSTRAP_TENANT_ID,'crm','operator')
     published=[]
-    with sessions() as s:accepted=create(s,p,specification(),'creation',published.append,store,capacity=lambda *_:None)
+    spec=specification()
+    if creation_shape=='minimal':
+        from iacp.commercial_contract import CommercialInstanceCreate
+        body=spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+        body['access']={'root_password':spec.access.root_password.get_secret_value(),'ssh_public_keys':spec.access.ssh_public_keys}
+        spec=CommercialInstanceCreate.model_validate(body)
+    with sessions() as s:accepted=create(s,p,spec,'creation',published.append,store,capacity=lambda *_:None)
     executor=FakeExecutor();execute_plan(accepted.job_id,1,sessions,executor)
     with sessions() as s:
         instance=s.get(Instance,accepted.instance_id);approval=advance(s,instance,lambda *_:None)
@@ -78,7 +89,14 @@ def test_expired_secret_is_recoverable_by_identical_https_intent_without_clone(s
     bootstrap_messages=[]
     monkeypatch.setattr(dependencies,'get_commercial_bootstrap_publisher',lambda:bootstrap_messages.append)
     with sessions() as s:
-        replay=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),specification(),'creation',published.append,store,
+        original=s.get(CommercialIntent,accepted.instance_id)
+        replay_spec=specification()
+        if original.specification.get('pilot_defaults'):
+            from iacp.commercial_contract import CommercialInstanceCreate
+            body=replay_spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+            body['access']={'root_password':replay_spec.access.root_password.get_secret_value(),'ssh_public_keys':replay_spec.access.ssh_public_keys}
+            replay_spec=CommercialInstanceCreate.model_validate(body)
+        replay=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),replay_spec,'creation',published.append,store,
             capacity=lambda *_:pytest.fail('No volver a reservar capacidad'))
         assert replay.instance_id==accepted.instance_id
     delivery=Delivery();execute(bootstrap.operation_id,sessions,store,delivery)

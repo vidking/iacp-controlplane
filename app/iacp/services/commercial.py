@@ -163,6 +163,14 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
     canonical={**values,'access_fingerprint':store.fingerprint(json.dumps({
         'password':spec.access.root_password.get_secret_value(),'keys':spec.access.ssh_public_keys},
         sort_keys=True,separators=(',',':')))}
+    omitted = sorted({'network', 'commercial_context'} - spec.model_fields_set)
+    if omitted:
+        # Huella de la intención recibida, independiente del default resuelto.
+        # El algoritmo de cuerpos completos preexistentes permanece exacto.
+        for field in omitted:
+            canonical.pop(field, None)
+        canonical['pilot_defaults_revision'] = 'lab-dhcp-v1'
+        canonical['omitted_fields'] = omitted
     digest=hashlib.sha256(json.dumps(canonical,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     query=select(Operation).where(Operation.tenant_id==principal.tenant_id,Operation.idempotency_key==key)
     reference=None
@@ -184,6 +192,11 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             if spec.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
             profile=authorized_profile(principal.tenant_id)
             if profile is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
+            if omitted and (profile.settings.environment != 'lab'
+                    or profile.settings.network_mode != 'dhcp'
+                    or spec.plan_id not in {'kvm-1', 'kvm-2'}
+                    or spec.image_id != 'ubuntu-2404'):
+                raise Conflict('COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED')
             if profile.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
             if profile.guest_initialization!='ubuntu-2404-lab-identity-v1':
                 raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
@@ -195,7 +208,7 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             quota(session,principal.tenant_id,limits,resources)
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,
-                commercial_context=spec.commercial_context.model_dump(exclude_none=True),commercial_revision='commercial-g',status='pending',executor='terraform')
+                commercial_context=spec.commercial_context.model_dump(exclude_none=True) if spec.commercial_context is not None else None,commercial_revision='commercial-g',status='pending',executor='terraform')
             try:
                 allocation=reserve_profile(session,instance)
             except PlanError as error:
@@ -212,7 +225,7 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             reference=sealed[0]
             row=CommercialIntent(instance_id=instance.id,revision='commercial-g',plan_id=spec.plan_id,
                 image_id=spec.image_id,catalog_sha256=catalog_digest(),request_fingerprint=digest,
-                specification={**values,'ssh_public_keys':spec.access.ssh_public_keys,'profile_snapshot':profile.model_dump()},
+                specification={**values,**({'pilot_defaults':{'revision':'lab-dhcp-v1','omitted_fields':omitted}} if omitted else {}),'ssh_public_keys':spec.access.ssh_public_keys,'profile_snapshot':profile.model_dump()},
                 secret_reference=reference,bootstrap_status='pending')
             row.execution_binding=binding(instance,session.get(TerraformExecution,instance.id),row)
             session.add(row);event(session,operation,'commercial_accepted',principal.subject);session.commit()

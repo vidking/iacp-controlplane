@@ -27,7 +27,7 @@
     const tag = match ? decodeURIComponent(match[1]) : null;
     return tag && document.querySelector(`.nav-link[data-tag-target="${CSS.escape(tag)}"]`) ? tag : null;
   }
-  function documentForHash() { const value = location.hash.replace(/^#\/?/, ""); return ["guia-crm", "guia-operaciones", "guia-despliegue"].includes(value) ? value : null; }
+  function documentForHash() { const value = location.hash.replace(/^#\/?/, ""); return ["inicio", "referencia-api", "guia-crm", "guia-operaciones", "guia-despliegue"].includes(value) ? value : null; }
   function anchorForHash() { const value = location.hash.replace(/^#\/?/, ""); return value && !operationForHash() && !documentForHash() ? document.getElementById(value) : null; }
   function markActive(operationId, tag) {
     document.querySelectorAll(".nav-link[data-doc-target]").forEach(link => link.classList.remove("active"));
@@ -76,7 +76,7 @@
   function revealDocument(documentId) {
     lastRevealKey = "";
     const target = document.getElementById(documentId); if (!target) return false;
-    const panel = target.tagName === "DETAILS" ? target : target.querySelector(":scope > details");
+    const panel = target.tagName === "DETAILS" ? target : target.querySelector(":scope > details, [data-document-root]");
     if (panel) panel.open = true;
     requestAnimationFrame(() => {
       const current = document.getElementById(documentId); if (!current) return;

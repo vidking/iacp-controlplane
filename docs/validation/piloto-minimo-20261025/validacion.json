@@ -1,0 +1,16 @@
+{
+  "fecha_local": "2026-10-25T20:31:09.983216-06:00",
+  "estado": "CANDIDATA_VALIDADA_NO_DESPLEGADA",
+  "regresion": {
+    "aprobadas": 1087,
+    "omitidas": 0
+  },
+  "focalizadas": 96,
+  "playwright_modos": 3,
+  "coordenadas": 123,
+  "autenticacion": "Bearer opaco existente; sin cambios",
+  "respuesta": "Sin cambios",
+  "migraciones": 0,
+  "aprovisionamientos_reales": 0,
+  "estado_vm104": "Sin modificaciones durante esta implementación"
+}
