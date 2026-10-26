@@ -94,8 +94,9 @@ def verify_plan(plan: dict, variables: dict) -> dict:
     if not correct:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
-    from .golden_hardware import verify_cpu, verify_disk_plan
+    from .golden_hardware import verify_base_plan, verify_cpu, verify_disk_plan
     verify_cpu(after,variables)
+    verify_base_plan(after,variables)
     if after.get('disk'):
         disk = next((item for item in after['disk']
                      if item.get('interface') == instance['boot_disk']['interface']), None)

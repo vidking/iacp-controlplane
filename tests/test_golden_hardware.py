@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 import json
 import pytest
-from iacp.terraform.golden_hardware import parse,verify_cpu,verify_live,verify_disk_plan
+from iacp.terraform.golden_hardware import parse,verify_base_plan,verify_cpu,verify_live,verify_disk_plan
 from iacp.terraform.config import PlanError,Allocation
 from iacp.terraform.golden_adapter import install,verify,DIGEST,FILES
 
@@ -18,6 +18,21 @@ def test_cpu_is_resolved_from_each_golden_not_global(cpu):
     assert h.cpu_type==cpu.split(',')[0]
     assert h.numa and h.sockets==1
     assert h.source_cpu==cpu
+
+
+@pytest.mark.parametrize('template,cpu,scsihw', [
+    (29000, 'x86-64-v4,flags=+aes', 'virtio-scsi-single'),
+    (29001, 'x86-64-v3,flags=+aes', 'virtio-scsi-pci'),
+    (29002, 'host,flags=+aes;-pcid', 'virtio-scsi-single'),
+    (29003, 'Haswell-v4', 'lsi'),
+])
+def test_each_catalog_golden_carries_its_own_hardware_contract(template, cpu, scsihw):
+    raw={**golden(cpu=cpu), 'scsihw': scsihw}
+    hardware=parse(raw, template, 'mng01', 1).model_dump()
+    variables={'instance': {'cpu_cores': 1}, 'iacp_golden_hardware': hardware}
+    verify_cpu({'cpu': [{'type': hardware['cpu_type'], 'flags': hardware['flags'],
+                         'numa': hardware['numa'], 'cores': 1, 'sockets': 1}]}, variables)
+    verify_base_plan(hardware['terraform_base'], variables)
 
 
 def test_memory_hotplug_without_numa_rejected_before_plan():
@@ -43,10 +58,16 @@ def test_sockets_are_preserved_when_compatible_and_adjusted_only_for_capacity():
 def test_adapter_is_versioned_sealed_and_cannot_enter_legacy_workspaces(tmp_path):
     from iacp.terraform.access_adapter import BASE_MAIN
     for path in FILES:(tmp_path/path).parent.mkdir(parents=True,exist_ok=True)
+    (tmp_path/'stacks/kvm-instance').mkdir(parents=True,exist_ok=True)
     (tmp_path/'stacks/kvm-instance/main.tf').write_text(BASE_MAIN)
     install(tmp_path);manifest={'golden_adapter_sha256':DIGEST};variables={'iacp_golden_hardware':{}}
     verify(tmp_path,manifest,variables)
     assert all('x86-64-v4' not in value and 'qemu64' not in value for value in FILES.values())
+    override=json.loads(FILES['modules/compute/kvm/iacp_golden_override.tf.json'])
+    resource=override['resource']['proxmox_virtual_environment_vm']['this']
+    assert resource['cpu'][0]['type']=='${var.golden_hardware.cpu_type}'
+    assert resource['bios']=='${try(var.golden_hardware.terraform_base.bios, null)}'
+    assert resource['scsi_hardware']=='${try(var.golden_hardware.terraform_base.scsi_hardware, null)}'
     with pytest.raises(PlanError):verify(tmp_path,{}, {})
     path=tmp_path/next(iter(FILES));path.write_text('{}')
     with pytest.raises(PlanError):verify(tmp_path,manifest,variables)
@@ -76,19 +97,66 @@ def test_golden_disk_snapshot_preserves_only_observed_options():
     assert disk['minimum_size_gb']==20
     assert disk['discard']=='on' and disk['iothread'] is True
     assert disk['aio'] is None and disk['backup'] is None and disk['replicate'] is None
+    assert h['terraform_base'] == {
+        'bios': 'ovmf', 'machine': 'q35', 'scsi_hardware': 'virtio-scsi-single',
+        'hotplug': 'disk,network,memory', 'boot_order': ['scsi0'],
+    }
 
 
-def test_disk_plan_rejects_provider_defaults_not_present_in_golden():
+def test_plan_barrier_rejects_firmware_controller_and_boot_defaults():
     hardware=parse(golden(),29001,'mng01',1).model_dump()
+    variables={'iacp_golden_hardware': hardware}
+    plan={
+        'bios': 'ovmf', 'machine': 'q35', 'scsi_hardware': 'virtio-scsi-single',
+        'hotplug': 'disk,network,memory', 'boot_order': ['scsi0'],
+    }
+    verify_base_plan(plan, variables)
+    for key, value in [('bios','seabios'), ('machine',None),
+                       ('scsi_hardware','virtio-scsi-pci'), ('boot_order',None)]:
+        wrong=dict(plan); wrong[key]=value
+        with pytest.raises(PlanError, match='PLAN_MISMATCH'):
+            verify_base_plan(wrong, variables)
+
+
+def test_disk_plan_allows_only_verified_rbd_defaults_not_present_in_golden():
+    hardware=parse(golden(),29001,'mng01',1).model_dump()
+    hardware['disk']['storage_type'] = 'rbd'
+    hardware['disk']['storage_krbd'] = False
     variables={'instance':{'boot_disk':{'interface':'scsi0','size_gb':50,'datastore_id':'DS_CYBERFUEL'}},
                'iacp_golden_hardware':hardware}
     plan={'interface':'scsi0','size':50,'datastore_id':'DS_CYBERFUEL',
           'file_format':None,'aio':None,'cache':None,'discard':'on','backup':None,
           'replicate':None,'iothread':True,'ssd':None,'serial':None,'queues':None}
     verify_disk_plan(plan,variables)
-    plan['iothread']=False
+    for key, value in {
+        'aio': 'io_uring', 'backup': True, 'cache': 'none',
+        'replicate': True, 'ssd': False, 'queues': 0,
+    }.items():
+        verified=dict(plan); verified[key]=value
+        verify_disk_plan(verified,variables)
+        hardware['disk']['storage_type'] = 'unknown'
+        with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
+            verify_disk_plan(verified,variables)
+        hardware['disk']['storage_type'] = 'rbd'
+    wrong=dict(plan); wrong['iothread']=False
     with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
-        verify_disk_plan(plan,variables)
+        verify_disk_plan(wrong,variables)
+
+
+def test_verified_defaults_never_relax_discard_or_iothread():
+    hardware=parse(golden(),29001,'mng01',1).model_dump()
+    hardware['disk']['storage_type'] = 'rbd'
+    hardware['disk']['storage_krbd'] = False
+    variables={'instance':{'boot_disk':{'interface':'scsi0','size_gb':50,'datastore_id':'DS_CYBERFUEL'}},
+               'iacp_golden_hardware':hardware}
+    for key, value in {'discard': None, 'iothread': False}.items():
+        wrong={'interface':'scsi0','size':50,'datastore_id':'DS_CYBERFUEL',
+               'file_format':None,'aio':'io_uring','cache':'none','discard':'on',
+               'backup':True,'replicate':True,'iothread':True,'ssd':False,
+               'serial':None,'queues':0}
+        wrong[key] = value
+        with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
+            verify_disk_plan(wrong,variables)
 
 
 @pytest.mark.parametrize('password',[False,True])
