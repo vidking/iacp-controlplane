@@ -23,6 +23,7 @@ from .catalog import authorized_profile
 from .instances import Conflict, accepted, event
 from .jobs import QueueUnavailable
 from .lab import usage
+from .contracts import COMMERCIAL_CONTRACT, CORE_CONTRACT, is_core_contract
 
 
 class Limits(BaseModel):
@@ -115,8 +116,9 @@ def member(session,instance,action,*,current_profiles=False,observation=False):
             or row.execution_binding!=binding(instance,execution,row)):
         raise Conflict('COMMERCIAL_OWNERSHIP_BINDING_CHANGED')
     if observation:return row
-    limits=limits_for(instance.tenant_id)
-    if row.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
+    if not is_core_contract() or row.revision == COMMERCIAL_CONTRACT:
+        limits=limits_for(instance.tenant_id)
+        if row.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
     if current_profiles:
         current=authorized_profile(instance.tenant_id, instance.image)
         if current is None or current.model_dump()!=row.specification['profile_snapshot']:
@@ -130,7 +132,8 @@ def delegation(session,instance,action,*,current_profiles=False):
     if snapshot.get('guest_initialization'):
         from .guest_identity import program_for_mode
         snapshot['guest_initialization_program_sha256']=program_for_mode(snapshot['guest_initialization'])[1]
-    return SimpleNamespace(id='commercial:'+row.catalog_sha256,
+    prefix='provisioning:' if row.revision == CORE_CONTRACT else 'commercial:'
+    return SimpleNamespace(id=prefix+row.catalog_sha256,
         profile_snapshots={instance.network_profile:snapshot},
         specification={'actions':['create','start','shutdown','reboot','delete']})
 
@@ -181,6 +184,7 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
     from ..terraform.lifecycle import initial_execution
     store=store or EphemeralSecrets.configured()
     capacity=capacity or live_capacity
+    core=is_core_contract()
     instance_id=str(uuid4())
     sealed=store.seal(principal.tenant_id,instance_id,spec.access.root_password.get_secret_value())
     values=spec.model_dump(mode='json',exclude={'access'})
@@ -209,32 +213,36 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
                     # intención original; no publica planificación ni clonación.
                     restore_expired(session,row.instance_id,principal,spec,store)
                 return response
-            if instance_executor()!='terraform':raise Conflict('COMMERCIAL_REAL_EXECUTOR_REQUIRED')
+            if instance_executor()!='terraform':raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_REAL_EXECUTOR_REQUIRED')
             if spec.network.profile_id!='lab-dhcp':raise Conflict('WAN_STATIC_EXECUTION_NOT_CERTIFIED')
-            limits=limits_for(principal.tenant_id)
+            limits=None if core else limits_for(principal.tenant_id)
             resources=resolved_resources(spec)
-            if spec.image_id!='ubuntu-2404' and not limits.lab_mng_physical_capacity_only:
-                raise Conflict('COMMERCIAL_IMAGE_NOT_AUTHORIZED')
-            if spec.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
+            if not core:
+                if spec.image_id!='ubuntu-2404' and not limits.lab_mng_physical_capacity_only:
+                    raise Conflict('COMMERCIAL_IMAGE_NOT_AUTHORIZED')
+                if spec.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
             profile=authorized_profile(principal.tenant_id, spec.image_id)
-            if profile is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
+            if profile is None:raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_PROFILE_NOT_AUTHORIZED')
             if omitted and (profile.settings.environment != 'lab'
                     or profile.settings.network_mode != 'dhcp'
-                    or (spec.plan_id not in {'kvm-1', 'kvm-2'} and not limits.lab_mng_physical_capacity_only)
-                    or (spec.image_id != 'ubuntu-2404' and not limits.lab_mng_physical_capacity_only)):
-                raise Conflict('COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED')
-            if profile.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
+                    or (not core and (spec.plan_id not in {'kvm-1', 'kvm-2'} and not limits.lab_mng_physical_capacity_only))
+                    or (not core and (spec.image_id != 'ubuntu-2404' and not limits.lab_mng_physical_capacity_only))):
+                raise Conflict(('PROVISIONING_DEFAULTS_NOT_AUTHORIZED' if core
+                    else 'COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED'))
+            if profile.root_password_bootstrap:raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
             if profile.guest_initialization!=spec.image_id+'-lab-identity-v1':
-                raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
+                raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_GUEST_INITIALIZATION_REQUIRED')
             if session.scalar(select(Instance.id).where(Instance.tenant_id==principal.tenant_id,Instance.name==spec.name)):
-                raise Conflict('COMMERCIAL_INSTANCE_NAME_CONFLICT')
+                raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_INSTANCE_NAME_CONFLICT')
             if spec.start_on_create:
                 from ..lifecycle.ownership import mutation_revision
                 mutation_revision()
-            quota(session,principal.tenant_id,limits,resources)
+            if not core:
+                quota(session,principal.tenant_id,limits,resources)
+            revision=CORE_CONTRACT if core else COMMERCIAL_CONTRACT
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,
-                commercial_context=spec.commercial_context.model_dump(exclude_none=True) if spec.commercial_context is not None else None,commercial_revision='commercial-g',status='pending',executor='terraform')
+                commercial_context=spec.commercial_context.model_dump(exclude_none=True) if spec.commercial_context is not None else None,commercial_revision=revision,status='pending',executor='terraform')
             try:
                 allocation=reserve_profile(session,instance)
             except PlanError as error:
@@ -249,12 +257,12 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             initial_execution(session,instance,operation,job,allocation)
             if not store.put_sealed(sealed):raise Conflict('BOOTSTRAP_REFERENCE_COLLISION')
             reference=sealed[0]
-            row=CommercialIntent(instance_id=instance.id,revision='commercial-g',plan_id=spec.plan_id,
+            row=CommercialIntent(instance_id=instance.id,revision=revision,plan_id=spec.plan_id,
                 image_id=spec.image_id,catalog_sha256=catalog_digest(),request_fingerprint=digest,
                 specification={**values,**({'pilot_defaults':{'revision':'lab-dhcp-v1','omitted_fields':omitted}} if omitted else {}),'ssh_public_keys':spec.access.ssh_public_keys,'profile_snapshot':profile.model_dump()},
                 secret_reference=reference,bootstrap_status='pending')
             row.execution_binding=binding(instance,session.get(TerraformExecution,instance.id),row)
-            session.add(row);event(session,operation,'commercial_accepted',principal.subject);session.commit()
+            session.add(row);event(session,operation,'provisioning_accepted' if core else 'commercial_accepted',principal.subject);session.commit()
     except Exception:
         session.rollback()
         # Una referencia de una transacción abortada solo contiene ciphertext y

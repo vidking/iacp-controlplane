@@ -1,4 +1,4 @@
-"""POST comercial activado únicamente en la ventana de migración declarada."""
+"""POST técnico del Provisioning API Core, con compatibilidad histórica."""
 from typing import Annotated
 import json
 import logging
@@ -19,9 +19,9 @@ router=APIRouter(tags=['instances'])
 
 
 @router.post('/v1/instances',status_code=202,response_model=InstanceAccepted,operation_id='createInstance',
-    summary='Crear una KVM del catálogo comercial',
-    description='Admisión automática por tenant, plan, imagen, red, cuota y capacidad. '
-        'Sin tamaños libres ni aprobación humana individual. Contraseña solo por HTTPS y Redis cifrado efímero. '
+    summary='Crear una máquina virtual del catálogo técnico',
+    description='Admisión automática autenticada por identidad técnica, catálogo, perfil autorizado y capacidad física. '
+        'IACP no decide pagos, pedidos, productos ni cuotas comerciales. Contraseña solo por HTTPS y Redis cifrado efímero. '
         'Idempotency-Key conserva los mismos identificadores ante una repetición idéntica.',
     responses={code:{'model':ErrorResponse} for code in [401,403,409,503]})
 def post(request:Request,spec:CommercialInstanceCreate,
@@ -32,12 +32,12 @@ def post(request:Request,spec:CommercialInstanceCreate,
     try:return create(session,principal,spec,key,publish)
     except Conflict as e:
         code=str(e)
-        safe=code if code.startswith(('COMMERCIAL_','WAN_STATIC_')) else 'COMMERCIAL_REQUEST_REJECTED'
+        safe=code if code.startswith(('COMMERCIAL_','PROVISIONING_','WAN_STATIC_')) else 'PROVISIONING_REQUEST_REJECTED'
         logging.getLogger('uvicorn.error').info(json.dumps({'event':'admission_policy_rejected',
             'request_id':getattr(request.state,'request_id',None),'reason':safe,'executed':False}))
         raise HTTPException(409,code) from None
-    except ValueError:raise HTTPException(409,'COMMERCIAL_PRODUCT_NOT_AVAILABLE') from None
+    except ValueError:raise HTTPException(409,'PROVISIONING_CATALOG_REQUEST_INVALID') from None
     except BootstrapSecretError as e:raise HTTPException(503,str(e)) from None
     except QueueUnavailable:
         request.state.admission_committed=True
-        raise HTTPException(503,'COMMERCIAL_DISPATCH_UNCONFIRMED; repeat the same key') from None
+        raise HTTPException(503,'PROVISIONING_DISPATCH_UNCONFIRMED; repeat the same key') from None

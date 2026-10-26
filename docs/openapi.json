@@ -2114,7 +2114,7 @@
     }
   },
   "info": {
-    "description": "API corporativa de IACP para integrar el ciclo de vida de instancias KVM con un CRM. Selecciona perfiles autorizados, conserva las intenciones idempotentes y sigue cada operación hasta su resultado.\n\n**Autenticación:** HTTP Basic permite consultar la documentación. Las llamadas a `/v1` requieren un token Bearer del tenant y el rol correspondiente. Introduce solo el token en **Authorize**; la contraseña de documentación no autoriza la API.\n\n**Flujo recomendado:** perfiles → creación → seguimiento por `operation_id` → acceso/Lifecycle → eliminación autorizada. Un 202 confirma admisión; no confirma disponibilidad ni eliminación. Conserva `Idempotency-Key`, UUID y cuerpo en reintentos. Ante `uncertain`, conserva la misma instancia y utiliza la reconciliación autorizada.\n\n**Alcance:** API privada por LAN/VPN, recursos propios del tenant, perfiles y cuotas vigentes. Los ejemplos son sintéticos y no constituyen autorizaciones. Las herramientas de diagnóstico y laboratorio se separan del recorrido CRM; las operaciones administrativas requieren su ámbito específico.\n\n**Precondiciones:** los perfiles DHCP y las cuotas proceden de la autorización vigente. Usa `power/shutdown` para apagar ordenadamente. DELETE requiere política o allowlist y autorización; VM 104, VM 106 y Golden Image 29000 permanecen protegidas. La admisión cerrada devuelve 503.",
+    "description": "API de aprovisionamiento y ciclo de vida de IACP para infraestructura KVM. Selecciona perfiles autorizados, conserva las intenciones idempotentes y sigue cada operación hasta su resultado.\n\n**Autenticación:** HTTP Basic permite consultar la documentación. Las llamadas a `/v1` requieren un token Bearer del tenant y el rol correspondiente. Introduce solo el token en **Authorize**; la contraseña de documentación no autoriza la API.\n\n**Flujo recomendado:** perfiles → creación → seguimiento por `operation_id` → acceso/Lifecycle → eliminación autorizada. Un 202 confirma admisión; no confirma disponibilidad ni eliminación. Conserva `Idempotency-Key`, UUID y cuerpo en reintentos. Ante `uncertain`, conserva la misma instancia y utiliza la reconciliación autorizada.\n\n**Alcance:** API privada por LAN/VPN, recursos propios del tenant, perfiles técnicos autorizados y capacidad física. IACP no determina pagos, pedidos, productos ni elegibilidad comercial. Los ejemplos son sintéticos y no constituyen autorizaciones. Las operaciones administrativas requieren su ámbito específico.\n\n**Precondiciones:** los perfiles DHCP y los destinos proceden de la autorización técnica vigente. Usa `power/shutdown` para apagar ordenadamente. DELETE requiere política o allowlist y autorización; VM 104, VM 106 y Golden Image 29000 permanecen protegidas. La admisión cerrada devuelve 503.",
     "title": "IACP Orchestrator",
     "version": "0.10.1"
   },
@@ -2745,7 +2745,7 @@
         ]
       },
       "post": {
-        "description": "Admite una intención idempotente bajo un perfil y una política vigentes. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.",
+        "description": "Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.",
         "operationId": "createInstance",
         "parameters": [
           {
@@ -6029,7 +6029,7 @@
     },
     "/v1/plans": {
       "get": {
-        "description": "Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; no reserva recursos. En modo comercial verifica capacidad física; en modo histórico informa que G no está activo.",
+        "description": "Catálogo técnico versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta autorización técnica y capacidad física; no reserva recursos ni evalúa pagos, pedidos o cuotas comerciales.",
         "operationId": "listKVMPlans",
         "responses": {
           "200": {

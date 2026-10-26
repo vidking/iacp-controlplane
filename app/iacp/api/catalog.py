@@ -73,9 +73,9 @@ def catalog_headers(response):
 
 @router.get("/v1/plans", response_model=list[PlanResponse], operation_id="listKVMPlans",
     summary="Consultar los cuatro planes KVMHOST-54",
-    description="Catálogo versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. "
-    "vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta límites y uso del tenant; "
-    "no reserva recursos. En modo comercial verifica capacidad física; en modo histórico informa que G no está activo.")
+    description="Catálogo técnico versionado por cabeceras X-IACP-Catalog-Version y X-IACP-Catalog-SHA256. "
+    "vcpus, memory_mb y disk_gb expresan CPU, MiB y GiB. La disponibilidad consulta autorización técnica y capacidad física; "
+    "no reserva recursos ni evalúa pagos, pedidos o cuotas comerciales.")
 def plans(response: Response, principal: Annotated[Principal, Depends(authorize)],
           session: Annotated[Session, Depends(get_session)]):
     catalog_headers(response)

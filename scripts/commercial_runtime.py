@@ -12,7 +12,7 @@ def normalize_commercial(current, candidate, review):
         raise ValueError('Revisión G6 incompleta o con campos no autorizados')
     contract = review['contract']
     ttl = review['ttl_seconds']
-    if contract not in {'historical', 'commercial-g'} or type(ttl) is not int or not 60 <= ttl <= 3600:
+    if contract not in {'historical', 'commercial-g', 'provisioning-api-core'} or type(ttl) is not int or not 60 <= ttl <= 3600:
         raise ValueError('Contrato o TTL G6 inválido')
     paths = {'bootstrap_aes_key': review['aes_key_path'],
         'guest_bootstrap_ssh_key': review['ssh_key_path'],
@@ -20,7 +20,7 @@ def normalize_commercial(current, candidate, review):
     for path in paths.values():
         if not isinstance(path, str) or not PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts:
             raise ValueError('Referencia absoluta de secreto G6 requerida')
-        if contract == 'commercial-g' and path == '/dev/null':
+        if contract in {'commercial-g', 'provisioning-api-core'} and path == '/dev/null':
             raise ValueError('El contrato comercial requiere secretos G6 reales')
     changed = []
     def field(old, new, key, value, prefix):

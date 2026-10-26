@@ -4,6 +4,7 @@ from ..catalog import IMAGES, PENDING_IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
 from .lab import usage
+from .contracts import is_managed_creation_contract, is_core_contract
 
 
 def authorized_profile(tenant_id, image_id="ubuntu-2404"):
@@ -53,7 +54,27 @@ def plans_for(session, tenant_id):
     result=[]
     for plan in PLANS:
         availability=plan_availability(plan,p,used)
-        if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g':
+        if is_core_contract():
+            from .commercial import live_capacity
+            from .bootstrap_secrets import configured_key, BootstrapSecretError
+            from .instances import Conflict
+            reasons=[]; verified=False
+            try:
+                configured_key()
+                if p is None: raise Conflict('PROVISIONING_PROFILE_NOT_AUTHORIZED')
+                if plan.vcpus > p.max_vcpus or plan.memory_mb > p.max_memory_mb or plan.disk_gb > p.max_disk_gb:
+                    raise Conflict('ENVIRONMENT_PLAN_LIMIT_EXCEEDED')
+                if plan.disk_gb < p.settings.boot_disk.minimum_size_gb:
+                    raise Conflict('DISK_SHRINK_FORBIDDEN')
+                if p.root_password_bootstrap:
+                    raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
+                if p.guest_initialization != 'ubuntu-2404-lab-identity-v1':
+                    raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
+                live_capacity(session,p,plan); verified=True
+            except (Conflict, BootstrapSecretError) as error:
+                reasons.append(str(error))
+            availability={'available':not reasons,'capacity_verified':verified,'reasons':reasons}
+        elif os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g':
             from .commercial import limits_for,quota,live_capacity
             from .bootstrap_secrets import configured_key,BootstrapSecretError
             from .instances import Conflict
@@ -79,7 +100,7 @@ def plans_for(session, tenant_id):
 
 def images_for(tenant_id,session=None):
     available_plans=(plans_for(session,tenant_id) if session is not None
-        and os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else [])
+        and is_managed_creation_contract() else [])
     result=[]
     for image in IMAGES:
         profile=authorized_profile(tenant_id,image.image_id)
