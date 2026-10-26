@@ -7,8 +7,8 @@ from .proxmox import PowerError
 # Pinned hardware-fidelity source (iac-proxmox), preserving the lifecycle
 # ownership contract while removing provider disk defaults.
 # Runtime configuration cannot override the source contract.
-KVM_POWER_SOURCE_REVISION: str | None = "80f2d310ee0d8fe85ca4f7aef5fbc1c70248df3b"
-KVM_POWER_SOURCE_ARCHIVE_SHA256 = "123384984925ccd2994c9eb0f41eead66a15898dfdbaa7d82b27e11459be9847"
+KVM_POWER_SOURCE_REVISION: str | None = "91fd5f4ffdbe88dd9a768c69e886cbffbeb84c8c"
+KVM_POWER_SOURCE_ARCHIVE_SHA256 = "ae1a3c5062144fc73319cbd86d25e65186941fe1746bc28d705e43db63ac0fd3"
 PREVIOUS_POWER_SOURCE_REVISION = "9aeb8ec846342d279a5d16be7c8e20157e9bf5ae"
 LEGACY_TERRAFORM_POWER_SOURCE = "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4"
 
