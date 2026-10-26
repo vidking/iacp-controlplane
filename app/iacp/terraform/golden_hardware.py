@@ -66,6 +66,31 @@ _DISK_TECHNICAL_FIELDS = (
 )
 
 
+def _storage_observation(client, node, storage_id):
+    """Read storage metadata using the Terraform identity's approved scope."""
+    encoded = quote(storage_id, safe="")
+    try:
+        # The global storage endpoint requires Datastore.Audit at the storage
+        # path.  The Terraform identity is intentionally scoped to the
+        # node-level read-only endpoint instead.
+        storage = client._request('GET', f'/storage/{encoded}')
+    except Exception as failure:
+        # Avoid importing the Proxmox client at module import time.  Only its
+        # stable permission error is eligible for the node-scoped fallback.
+        if getattr(failure, 'code', None) != 'POWER_PERMISSION_DENIED':
+            raise
+        storage = client._request(
+            'GET', f'/nodes/{quote(node, safe="")}/storage/{encoded}/status')
+    if not isinstance(storage, dict) or not isinstance(storage.get('type'), str):
+        raise ValueError()
+    # PVE omits the optional krbd field when it is disabled.  Treat that
+    # documented default as false; any other value is rejected by read().
+    krbd = storage.get('krbd', False)
+    if krbd not in (False, True, 0, 1, '0', '1'):
+        raise ValueError()
+    return storage['type'], bool(krbd in (True, 1, '1')) if storage['type'] == 'rbd' else None
+
+
 def _bool_option(value):
     if value not in {"0", "1"}:
         raise ValueError()
@@ -164,16 +189,15 @@ def read(env, allocation, vcpus):
         raw=client._request('GET',f'/nodes/{quote(node,safe="")}/qemu/{image.template_vm_id}/config?current=1')
         hardware = parse(raw,image.template_vm_id,node,vcpus)
         if hardware.disk is not None:
-            storage = client._request('GET', f'/storage/{quote(hardware.disk.source_datastore_id, safe="")}')
-            if not isinstance(storage, dict) or not isinstance(storage.get('type'), str):
-                raise PowerError('invalid storage observation')
-            krbd = storage.get('krbd', False)
-            if krbd not in (False, True, 0, 1, '0', '1'):
-                raise PowerError('invalid krbd observation')
+            try:
+                storage_type, storage_krbd = _storage_observation(
+                    client, node, hardware.disk.source_datastore_id)
+            except (PowerError, ValueError):
+                raise PowerError('invalid storage observation') from None
             hardware = hardware.model_copy(update={
                 'disk': hardware.disk.model_copy(update={
-                    'storage_type': storage['type'],
-                    'storage_krbd': bool(krbd in (True, 1, '1')) if storage['type'] == 'rbd' else None,
+                    'storage_type': storage_type,
+                    'storage_krbd': storage_krbd,
                 })
             })
         return hardware

@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 import json
 import pytest
-from iacp.terraform.golden_hardware import parse,verify_base_plan,verify_cpu,verify_live,verify_disk_plan
+from iacp.terraform.golden_hardware import parse,verify_base_plan,verify_cpu,verify_live,verify_disk_plan,_storage_observation
 from iacp.terraform.config import PlanError,Allocation
 from iacp.terraform.golden_adapter import install,verify,DIGEST,FILES
 
@@ -101,6 +101,25 @@ def test_golden_disk_snapshot_preserves_only_observed_options():
         'bios': 'ovmf', 'machine': 'q35', 'scsi_hardware': 'virtio-scsi-single',
         'hotplug': 'disk,network,memory', 'boot_order': ['scsi0'],
     }
+
+
+def test_storage_observation_falls_back_to_authorized_node_scope():
+    from iacp.lifecycle.proxmox import PowerError
+
+    class Client:
+        def __init__(self):
+            self.paths = []
+
+        def _request(self, method, path):
+            self.paths.append(path)
+            if path == '/storage/DS_CYBERFUEL':
+                raise PowerError('POWER_PERMISSION_DENIED')
+            assert path == '/nodes/mng01/storage/DS_CYBERFUEL/status'
+            return {'type': 'rbd', 'active': 1, 'enabled': 1}
+
+    client = Client()
+    assert _storage_observation(client, 'mng01', 'DS_CYBERFUEL') == ('rbd', False)
+    assert client.paths == ['/storage/DS_CYBERFUEL', '/nodes/mng01/storage/DS_CYBERFUEL/status']
 
 
 def test_plan_barrier_rejects_firmware_controller_and_boot_defaults():
