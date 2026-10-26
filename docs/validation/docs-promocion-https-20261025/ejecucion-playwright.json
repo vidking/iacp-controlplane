@@ -1,0 +1,11 @@
+{
+  "fecha_local": "2026-10-25T19:07:04.002974-06:00",
+  "base_url": "https://iac.cyberfuel.com",
+  "script": "scripts/test-pilot-docs.cjs",
+  "script_release": "ab36a06db3cefb12cd3004cf7921e2af54333c28",
+  "identidad": "Bearer operativo existente por stdin privado",
+  "tls_verificado": true,
+  "modos_pass": 3,
+  "coordenadas": 102,
+  "aprovisionamientos_repetidos": 0
+}

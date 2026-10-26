@@ -1,0 +1,550 @@
+{
+  "fecha_local": "25/10/2026, 7:03:43 p. m.",
+  "zona": "America/Costa_Rica",
+  "alcance": "HTTPS real; registrar por separado SHA efectivamente ejecutado",
+  "results": [
+    {
+      "mode": "chromium-escritorio",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "operations-tag-instances",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.578125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.578125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.578125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.75,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.75,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.75,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 108.3125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 108.3125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 108.3125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.703125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.703125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.703125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 108.265625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 108.265625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 108.265625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 107.546875,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 108.375,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 107.609375,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.921875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.53125,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.921875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.53125,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.96875,
+          "header_bottom": 88
+        }
+      ],
+      "clipboard": "Lectura real del portapapeles coincide exactamente",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    },
+    {
+      "mode": "chromium-movil",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "operations-tag-instances",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 94.328125,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 93.875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.921875,
+          "header_bottom": 74
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 94.3125,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 94.1875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 94.078125,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 94.1875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 94.078125,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 93.921875,
+          "header_bottom": 74
+        }
+      ],
+      "clipboard": "Lectura real del portapapeles coincide exactamente",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    },
+    {
+      "mode": "firefox-escritorio",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "operations-tag-instances",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.30000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 108.10000610351562,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.30000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 108.5,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 108.5,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        }
+      ],
+      "clipboard": "writeText nativo completado; lectura no soportada por permisos Playwright Firefox",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    }
+  ]
+}
