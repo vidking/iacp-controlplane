@@ -22,7 +22,7 @@ class Profile(StrictModel):
     max_disk_gb: int = Field(default=100, ge=8)
     target_nodes: list[str] | None = Field(default=None, min_length=1)
     self_service_enabled: bool = False
-    guest_initialization: Literal['ubuntu-2404-lab-identity-v1'] | None = None
+    guest_initialization: Literal['ubuntu-2404-lab-identity-v1', 'ubuntu-2604-lab-identity-v1', 'almalinux-9-lab-identity-v1', 'almalinux-10-lab-identity-v1'] | None = None
     root_password_bootstrap: bool = False
     max_total_vcpus: int = Field(default=8, ge=1, le=4096)
     max_total_memory_mb: int = Field(default=8192, ge=512, le=1048576)
@@ -40,8 +40,8 @@ class Profile(StrictModel):
             raise ValueError('Explicit authorized target nodes required')
         if self.guest_initialization and (not self.self_service_enabled or self.settings.network_mode!='dhcp'
                 or self.settings.network_bridge!='vmbr0' or self.settings.vlan_id is not None
-                or self.settings.image!='ubuntu-2404' or not self.settings.guest_agent_enabled):
-            raise ValueError('Guest identity initialization requires the bounded Ubuntu DHCP lab profile')
+                or self.guest_initialization != self.settings.image+'-lab-identity-v1' or not self.settings.guest_agent_enabled):
+            raise ValueError('La inicialización requiere un perfil DHCP LAB e imagen coherentes')
         if self.root_password_bootstrap and (self.guest_initialization is None
                 or self.settings.template_vm_id != 29000 or self.settings.cloudinit_username != 'root'
                 or self.settings.started):
@@ -58,10 +58,35 @@ def settings_for(profile, node):
     return profile.settings.model_copy(update=updates)
 
 
-def load_profile(name, tenant_id):
+def load_profile(name, tenant_id, *, image_id=None):
     try:
         data=json.loads(Path(os.environ['IACP_TERRAFORM_PROFILES_FILE']).read_text())
-        profile=Profile.model_validate(data['profiles'][name])
+        raw=data['profiles'][name]
+        if image_id is not None and image_id != raw['settings']['image']:
+            from ..catalog import resolve_image
+            from ..services.commercial import limits_for
+            if image_id == 'ubuntu-2404':
+                raise ValueError('Base image profile changed')
+            from ..services.instances import Conflict
+            try:
+                allowed=limits_for(tenant_id).lab_mng_physical_capacity_only
+            except Conflict:
+                raise ValueError('Image outside laboratory scope') from None
+            if name != 'lab-dhcp' or not allowed:
+                raise ValueError('Image outside laboratory scope')
+            registry=data.get('lab_images',{})
+            if not isinstance(registry,dict):raise ValueError('Invalid laboratory image configuration')
+            config=registry.get(image_id,{})
+            if (not isinstance(config,dict) or set(config)!={'enabled','cloudinit_username'}
+                    or config.get('cloudinit_username') not in {'root','ubuntu'}
+                    or config.get('enabled') is not True):
+                raise ValueError('Image not enabled in laboratory configuration')
+            image=resolve_image(image_id)
+            raw={**raw,'guest_initialization':image.image_id+'-lab-identity-v1',
+                'settings':{**raw['settings'],'image':image.image_id,
+                    'template_vm_id':image.template_vm_id,'template_node_name':image.source_node,
+                    'cloudinit_username':config['cloudinit_username']}}
+        profile=Profile.model_validate(raw)
         if tenant_id not in profile.allowed_tenants:
             raise ValueError('Profile not authorized')
         return profile
@@ -72,7 +97,7 @@ def load_profile(name, tenant_id):
 def reserve_profile(session, instance):
     """Caller holds the existing profile advisory lock through commit/rollback."""
     from ..models import Instance, TerraformExecution
-    p=load_profile(instance.network_profile,instance.tenant_id)
+    p=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image if instance.commercial_revision else None)
     if instance.image != p.settings.image:
         raise PlanError('AUTHORIZED_IMAGE_MISMATCH')
     commercial = getattr(instance, 'commercial_revision', None)

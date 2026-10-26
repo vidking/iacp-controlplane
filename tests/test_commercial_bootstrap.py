@@ -119,7 +119,8 @@ def test_lost_delivery_response_only_observes_even_after_secret_expiry(sessions,
     assert specification().access.root_password.get_secret_value() not in caplog.text
 
 
-def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_path,monkeypatch):
+@pytest.mark.parametrize('image,username',[('ubuntu-2404','ubuntu'),('ubuntu-2604','root'),('almalinux-9','root'),('almalinux-10','root')])
+def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_path,monkeypatch,image,username):
     import paramiko
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives import serialization
@@ -142,12 +143,14 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     ssh.exec_command.return_value=(stdin,stdout,stderr)
     monkeypatch.setattr(paramiko,'SSHClient',lambda:ssh)
     secret=specification().access.root_password.get_secret_value()
-    result=SecureSSHBootstrap().apply(SimpleNamespace(id='iid',ip_addresses=['192.0.2.10']),
-        SimpleNamespace(path='/fixture'),'R'*43,secret,[],'ubuntu')
+    result=SecureSSHBootstrap().apply(SimpleNamespace(id='iid',ip_addresses=['192.0.2.10'],image=image),
+        SimpleNamespace(path='/fixture'),'R'*43,secret,[],username)
     assert result['status']=='completed'
     assert secret not in COMMAND and secret not in str(ssh.connect.call_args)
     assert 'password' not in ssh.connect.call_args.kwargs
     assert json.loads(stdin.write.call_args.args[0])['password']==secret
+    assert json.loads(stdin.write.call_args.args[0])['image_id']==image
+    assert secret not in str(ssh.exec_command.call_args)
     assert isinstance(ssh.set_missing_host_key_policy.call_args.args[0],paramiko.RejectPolicy)
 
 

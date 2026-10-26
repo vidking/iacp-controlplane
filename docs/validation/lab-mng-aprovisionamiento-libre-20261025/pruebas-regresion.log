@@ -1,0 +1,52 @@
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 52%]
+........................................................................ [ 58%]
+........................................................................ [ 65%]
+........................................................................ [ 71%]
+........................................................................ [ 78%]
+........................................................................ [ 84%]
+........................................................................ [ 91%]
+........................................................................ [ 97%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+../usr/local/lib/python3.12/site-packages/starlette/testclient.py:37
+  /usr/local/lib/python3.12/site-packages/starlette/testclient.py:37: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = typing.Callable[[], typing.ContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_commercial_catalog.py:9
+tests/test_commercial_catalog.py:9
+  /workspace/tests/test_commercial_catalog.py:9: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft202012Validator, RefResolver
+
+tests/test_documentation.py:8
+tests/test_documentation.py:8
+  /workspace/tests/test_documentation.py:8: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft202012Validator, RefResolver
+
+tests/integration/test_power_certification.py: 4 warnings
+tests/integration/test_readonly_state.py: 16 warnings
+tests/integration/test_resilience.py: 3 warnings
+  /usr/local/lib/python3.12/site-packages/botocore/auth.py:425: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    datetime_now = datetime.datetime.utcnow()
+
+tests/integration/test_resilience.py::test_c05_temporary_state_outage_is_not_absence_and_retry_is_readonly
+  /usr/local/lib/python3.12/site-packages/botocore/endpoint.py:170: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    response_received_timestamp = datetime.datetime.utcnow()
+
+tests/integration/test_resilience.py::test_c05_temporary_state_outage_is_not_absence_and_retry_is_readonly
+  /usr/local/lib/python3.12/site-packages/botocore/endpoint.py:153: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    local_timestamp = datetime.datetime.utcnow()
+
+tests/test_pilot_minimal.py::test_openapi_change_is_only_compatible_omission_and_documentation
+tests/test_pilot_minimal.py::test_openapi_change_is_only_compatible_omission_and_documentation
+  /workspace/tests/test_pilot_minimal.py:152: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft202012Validator, RefResolver
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1103 passed, 32 warnings in 323.90s (0:05:23)

@@ -2300,7 +2300,7 @@
     },
     "/v1/images": {
       "get": {
-        "description": "Inventario: ubuntu-2404, ubuntu-2604, almalinux-9 y almalinux-10. Solo ubuntu-2404 está habilitada por su certificación histórica; las otras permanecen pendientes. Capacidades null y compatible_plans vacío indican pruebas pendientes, no incompatibilidad demostrada. root_access/ssh_access describen esa capacidad histórica, no certifican G6. availability distingue habilitación, permiso y ejecución segura; no publica VMID, nodo ni almacenamiento interno.",
+        "description": "Inventario: ubuntu-2404, ubuntu-2604, almalinux-9 y almalinux-10. Las cuatro plantillas fueron validadas por Infraestructura y están habilitadas en LAB/MNG. La disponibilidad valida autorización, configuración y capacidad; no equivale a E2E IACP certificado. Capacidades null y compatible_plans vacío indican pruebas pendientes, no incompatibilidad demostrada. root_access/ssh_access describen esa capacidad histórica, no certifican G6. availability distingue habilitación, permiso y ejecución segura; no publica VMID, nodo ni almacenamiento interno.",
         "operationId": "listGoldenImages",
         "responses": {
           "200": {
@@ -2345,18 +2345,27 @@
                           "available": false,
                           "capacity_verified": false,
                           "reasons": [
-                            "IMAGE_CERTIFICATION_PENDING"
+                            "TENANT_PROFILE_NOT_AUTHORIZED"
                           ]
                         },
-                        "cloud_init": null,
-                        "compatible_plans": [],
+                        "cloud_init": true,
+                        "compatible_plans": [
+                          "kvm-1",
+                          "kvm-2",
+                          "kvm-3",
+                          "kvm-4"
+                        ],
                         "image_id": "ubuntu-2604",
-                        "minimum_requirements": null,
+                        "minimum_requirements": {
+                          "disk_gb": 20,
+                          "memory_mb": 2048,
+                          "vcpus": 1
+                        },
                         "operating_system": "Ubuntu",
-                        "qemu_guest_agent": null,
-                        "root_access": null,
-                        "ssh_access": null,
-                        "status": "pendiente",
+                        "qemu_guest_agent": true,
+                        "root_access": true,
+                        "ssh_access": true,
+                        "status": "habilitada",
                         "version": "26.04"
                       },
                       {
@@ -2365,18 +2374,27 @@
                           "available": false,
                           "capacity_verified": false,
                           "reasons": [
-                            "IMAGE_CERTIFICATION_PENDING"
+                            "TENANT_PROFILE_NOT_AUTHORIZED"
                           ]
                         },
-                        "cloud_init": null,
-                        "compatible_plans": [],
+                        "cloud_init": true,
+                        "compatible_plans": [
+                          "kvm-1",
+                          "kvm-2",
+                          "kvm-3",
+                          "kvm-4"
+                        ],
                         "image_id": "almalinux-9",
-                        "minimum_requirements": null,
+                        "minimum_requirements": {
+                          "disk_gb": 20,
+                          "memory_mb": 2048,
+                          "vcpus": 1
+                        },
                         "operating_system": "AlmaLinux",
-                        "qemu_guest_agent": null,
-                        "root_access": null,
-                        "ssh_access": null,
-                        "status": "pendiente",
+                        "qemu_guest_agent": true,
+                        "root_access": true,
+                        "ssh_access": true,
+                        "status": "habilitada",
                         "version": "9"
                       },
                       {
@@ -2385,18 +2403,27 @@
                           "available": false,
                           "capacity_verified": false,
                           "reasons": [
-                            "IMAGE_CERTIFICATION_PENDING"
+                            "TENANT_PROFILE_NOT_AUTHORIZED"
                           ]
                         },
-                        "cloud_init": null,
-                        "compatible_plans": [],
+                        "cloud_init": true,
+                        "compatible_plans": [
+                          "kvm-1",
+                          "kvm-2",
+                          "kvm-3",
+                          "kvm-4"
+                        ],
                         "image_id": "almalinux-10",
-                        "minimum_requirements": null,
+                        "minimum_requirements": {
+                          "disk_gb": 20,
+                          "memory_mb": 2048,
+                          "vcpus": 1
+                        },
                         "operating_system": "AlmaLinux",
-                        "qemu_guest_agent": null,
-                        "root_access": null,
-                        "ssh_access": null,
-                        "status": "pendiente",
+                        "qemu_guest_agent": true,
+                        "root_access": true,
+                        "ssh_access": true,
+                        "status": "habilitada",
                         "version": "10"
                       }
                     ]

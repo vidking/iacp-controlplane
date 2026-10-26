@@ -6,10 +6,10 @@ from ..terraform.profiles import load_profile
 from .lab import usage
 
 
-def authorized_profile(tenant_id):
+def authorized_profile(tenant_id, image_id="ubuntu-2404"):
     try:
-        profile = load_profile("lab-dhcp", tenant_id)
-        image = resolve_image("ubuntu-2404")
+        profile = load_profile("lab-dhcp", tenant_id, image_id=image_id)
+        image = resolve_image(image_id)
     except (PlanError, ValueError):
         return None
     settings = profile.settings
@@ -78,26 +78,24 @@ def plans_for(session, tenant_id):
 
 
 def images_for(tenant_id,session=None):
-    authorized = authorized_profile(tenant_id) is not None
     available_plans=(plans_for(session,tenant_id) if session is not None
         and os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else [])
-    available=any(p['availability']['available'] for p in available_plans)
-    result = [{"image_id": i.image_id, "operating_system": i.operating_system, "version": i.version,
-             "status": i.status, "cloud_init": i.cloud_init, "qemu_guest_agent": i.qemu_guest_agent,
-             "root_access": i.root_access, "ssh_access": i.ssh_access,
-             "minimum_requirements": {"vcpus": i.minimum_vcpus, "memory_mb": i.minimum_memory_mb,
-                                      "disk_gb": i.minimum_disk_gb},
-             "compatible_plans": [p.plan_id for p in PLANS if p.vcpus >= i.minimum_vcpus
-                 and p.memory_mb >= i.minimum_memory_mb and p.disk_gb >= i.minimum_disk_gb],
-             "authorized": authorized, "availability": {"available": authorized and available, "capacity_verified": available,
-                 "reasons": (["TENANT_PROFILE_NOT_AUTHORIZED"] if not authorized else [])
-                    + ([] if available else ['PHYSICAL_CAPACITY_NOT_VERIFIED'])}}
-            for i in IMAGES]
-    result.extend({"image_id": i.image_id, "operating_system": i.operating_system,
-        "version": i.version, "status": i.status, "cloud_init": None,
-        "qemu_guest_agent": None, "root_access": None, "ssh_access": None,
-        "minimum_requirements": None, "compatible_plans": [], "authorized": False,
-        "availability": {"available": False, "capacity_verified": False,
-            "reasons": ["IMAGE_CERTIFICATION_PENDING"]}}
-        for i in PENDING_IMAGES)
+    result=[]
+    for image in IMAGES:
+        profile=authorized_profile(tenant_id,image.image_id)
+        authorized=profile is not None
+        compatible=[plan.plan_id for plan in PLANS if plan.vcpus>=image.minimum_vcpus
+            and plan.memory_mb>=image.minimum_memory_mb and plan.disk_gb>=image.minimum_disk_gb]
+        available=authorized and any(plan['plan_id'] in compatible
+            and plan['availability']['available'] for plan in available_plans)
+        reasons=[]
+        if not authorized:reasons.append('TENANT_PROFILE_NOT_AUTHORIZED')
+        elif not available:reasons.append('PHYSICAL_CAPACITY_NOT_VERIFIED')
+        result.append({'image_id':image.image_id,'operating_system':image.operating_system,
+            'version':image.version,'status':image.status,'cloud_init':image.cloud_init,
+            'qemu_guest_agent':image.qemu_guest_agent,'root_access':image.root_access,
+            'ssh_access':image.ssh_access,'minimum_requirements':{'vcpus':image.minimum_vcpus,
+                'memory_mb':image.minimum_memory_mb,'disk_gb':image.minimum_disk_gb},
+            'compatible_plans':compatible,'authorized':authorized,
+            'availability':{'available':available,'capacity_verified':available,'reasons':reasons}})
     return result

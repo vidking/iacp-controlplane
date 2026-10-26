@@ -1,0 +1,8 @@
+{
+  "fecha_local": "25/10/2026 America/Costa_Rica",
+  "openapi": "3.1.0",
+  "campos_tipos_rutas_respuestas_y_autenticacion_equivalentes": true,
+  "cambios_documentales": "Descripciones y ejemplos de catálogo/creación con cuatro imágenes",
+  "cambio_funcional_configurado": "Modo libre LAB/MNG y selección autorizada de cuatro Golden Images; otros tenants conservan sus límites",
+  "certificacion_fisica_candidata": "NO_EJECUTADA"
+}

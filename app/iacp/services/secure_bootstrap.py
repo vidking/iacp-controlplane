@@ -14,8 +14,13 @@ import json,os,subprocess,sys,tempfile
 from pathlib import Path
 p=json.load(sys.stdin)
 assert os.getuid()==0
-assert 'ID=ubuntu\n' in Path('/etc/os-release').read_text()
-assert 'VERSION_ID="24.04"' in Path('/etc/os-release').read_text()
+release=dict(line.split('=',1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
+expected={'ubuntu-2404':('ubuntu','24.04'),'ubuntu-2604':('ubuntu','26.04'),
+ 'almalinux-9':('almalinux','9'),'almalinux-10':('almalinux','10')}
+os_id,version=expected[p['image_id']]
+assert release['ID'].strip('"')==os_id
+actual=release['VERSION_ID'].strip('"')
+assert (actual==version if os_id=='ubuntu' else actual.split('.')[0]==version)
 assert Path('/var/lib/cloud/instance/boot-finished').is_file()
 assert json.loads(Path('/var/lib/cloud/data/result.json').read_text()).get('v1',{}).get('errors')==[]
 marker=Path('/var/lib/iacp/commercial-bootstrap.json')
@@ -45,7 +50,10 @@ effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,a
 assert ('permitrootlogin without-password\n' in effective or 'permitrootlogin prohibit-password\n' in effective)
 subprocess.run(['/usr/sbin/chpasswd'],input=('root:'+p['password']+'\n').encode(),
  check=True,capture_output=True,timeout=15)
-subprocess.run(['/usr/bin/systemctl','reload-or-restart','ssh'],check=True,capture_output=True,timeout=20)
+if os_id=='almalinux':
+ for path in ['/root/.ssh','/etc/ssh/sshd_config.d/00-iacp-commercial-root.conf']:
+  if Path(path).exists():subprocess.run(['/usr/sbin/restorecon','-RF',path],check=True,capture_output=True,timeout=15)
+subprocess.run(['/usr/bin/systemctl','reload-or-restart','ssh' if os_id=='ubuntu' else 'sshd'],check=True,capture_output=True,timeout=20)
 write(marker,json.dumps(identity,sort_keys=True)+'\n',0o600)
 print('COMPLETED')
 '''
@@ -99,9 +107,9 @@ class SecureSSHBootstrap:
                 ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
                 ssh.connect(address,username=username,pkey=key,timeout=10,auth_timeout=10,
                     banner_timeout=10,allow_agent=False,look_for_keys=False)
-                stdin,stdout,stderr=ssh.exec_command(COMMAND,timeout=60)
+                stdin,stdout,stderr=ssh.exec_command(COMMAND if username!='root' else '/usr/bin/python3 -c '+shlex.quote(PROGRAM),timeout=60)
                 stdin.write(json.dumps({'instance_id':instance.id,'reference':reference,
-                    'password':password,'ssh_public_keys':public_keys}))
+                    'password':password,'ssh_public_keys':public_keys,'image_id':getattr(instance,'image','ubuntu-2404')}))
                 stdin.flush();stdin.channel.shutdown_write()
                 output=stdout.read(128)
                 if stdout.channel.recv_exit_status()!=0 or output.strip() not in {b'COMPLETED',b'ALREADY_COMPLETED'}:

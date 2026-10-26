@@ -101,20 +101,26 @@ MINIMAL_EXAMPLE = {k: v for k, v in EXAMPLES[0].items()
                    if k not in {'network', 'commercial_context', 'start_on_create'}}
 
 
+# Ejemplos derivados del registro real; la autorización depende del tenant LAB.
+from .catalog import IMAGES
+LAB_IMAGE_EXAMPLES = [{**MINIMAL_EXAMPLE, 'image_id':image.image_id}
+    for image in IMAGES if image.image_id!='ubuntu-2404']
+
+
 class CommercialInstanceCreate(CommercialModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True,
-        json_schema_extra={"examples": [MINIMAL_EXAMPLE, *EXAMPLES]})
+        json_schema_extra={"examples": [MINIMAL_EXAMPLE, *EXAMPLES, *LAB_IMAGE_EXAMPLES]})
     name: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
     plan_id: Literal["kvm-1", "kvm-2", "kvm-3", "kvm-4"]
     image_id: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$")
     network: Network = Field(default_factory=lambda: DHCPNetwork(profile_id='lab-dhcp'),
-        description="Omitible solo en piloto LAB autorizado KVM 1/2; resuelve lab-dhcp. Sin fallback de red.")
+        description="Omitible solo en piloto LAB autorizado; KVM 3/4 requieren la excepción MNG explícita; resuelve lab-dhcp. Sin fallback de red.")
     access: CommercialAccess
     start_on_create: bool = True
     # Omitible, no nullable: una entrada explícita null conserva el rechazo 422.
     # La ausencia se representa internamente por None sin inventar order_id.
     commercial_context: OrderContext = Field(default_factory=lambda: None,
-        description="Omitible solo en piloto LAB autorizado KVM 1/2. Si se envía, order_id sigue siendo obligatorio.")
+        description="Omitible solo en piloto LAB autorizado; KVM 3/4 requieren la excepción MNG explícita. Si se envía, order_id sigue siendo obligatorio.")
 
 
 def resolved_resources(spec: CommercialInstanceCreate) -> dict:

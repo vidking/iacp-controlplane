@@ -89,7 +89,7 @@ def test_defaults_never_authorize_bigger_plans_or_non_lab(sessions,commercial_co
     else:
         p=commercial.authorized_profile(BOOTSTRAP_TENANT_ID)
         p=p.model_copy(update={'settings':p.settings.model_copy(update={'environment':'production'})})
-        monkeypatch.setattr(commercial,'authorized_profile',lambda _:p)
+        monkeypatch.setattr(commercial,'authorized_profile',lambda *args:p)
     with sessions() as s:
         with pytest.raises(Conflict,match='PILOT_DEFAULTS_NOT_AUTHORIZED'):
             create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),minimal(plan_id='kvm-3' if scope=='big-plan' else 'kvm-1'),'big',Mock(side_effect=AssertionError()),store)

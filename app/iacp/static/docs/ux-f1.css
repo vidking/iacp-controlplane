@@ -37,3 +37,5 @@
 .pilot summary:focus-visible{outline:3px solid #9bd9cc;outline-offset:3px}
 
 .pilot-summary>.eyebrow{font-size:10px}
+/* Controles locales del recorrido: la referencia conserva su layout aprobado. */
+#step-piloto-json select { display:block; max-width:100%; width:100%; margin:8px 0; padding:8px; font:inherit; }

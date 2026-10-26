@@ -1,0 +1,18 @@
+{
+  "tenants": {
+    "00000000-0000-0000-0000-000000000001": {
+      "allowed_plans": [
+        "kvm-1",
+        "kvm-2",
+        "kvm-3",
+        "kvm-4"
+      ],
+      "lab_mng_physical_capacity_only": true,
+      "max_instances": 2,
+      "max_vcpus": 4,
+      "max_memory_mb": 6144,
+      "max_disk_gb": 120,
+      "max_concurrent_operations": 1
+    }
+  }
+}

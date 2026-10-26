@@ -122,7 +122,7 @@ from iacp.terraform.state import S3StateReader
 from iacp.terraform.executor import state_resource
 with get_session_factory()() as s:
  i=s.get(Instance,P['instance_id']);e=s.get(TerraformExecution,i.id);c=s.get(CommercialIntent,i.id)
- assert c.plan_id==P['plan_id'] and i.image=='ubuntu-2404' and e.vmid>=30000
+ assert c.plan_id==P['plan_id'] and i.image==P.get('image_id','ubuntu-2404') and e.vmid>=30000
  assert e.vmid not in (104,106,29000,29001,29010,29011)
  a=Allocation.model_validate(e.allocation);v=a.variables(i)
 client=GuestClient.configured().client
@@ -169,12 +169,20 @@ root=str(Path(output(['findmnt','-n','-o','SOURCE','/'])).resolve())
 disk='/dev/'+output(['lsblk','-n','-o','PKNAME',root])
 table=json.loads(output(['sfdisk','--json',disk]))['partitiontable']
 partition=next(p for p in table['partitions'] if p['node']==root)
-header=output(['dumpe2fs','-h',root]);block=int(re.search(r'^Block size:\\s+(\\d+)',header,re.M).group(1))
-blocks=int(re.search(r'^Block count:\\s+(\\d+)',header,re.M).group(1));sector=table['sectorsize']
+filesystem=output(['findmnt','-n','-o','FSTYPE','/'])
+if filesystem=='ext4':
+ header=output(['dumpe2fs','-h',root]);block=int(re.search(r'^Block size:\\s+(\\d+)',header,re.M).group(1))
+ blocks=int(re.search(r'^Block count:\\s+(\\d+)',header,re.M).group(1))
+elif filesystem=='xfs':
+ info=output(['xfs_info','/'])
+ block,blocks=map(int,re.search(r'^data\\s+=\\s+bsize=(\\d+)\\s+blocks=(\\d+)',info,re.M).groups())
+else:raise RuntimeError('Filesystem no compatible con la sonda: '+filesystem)
+sector=table['sectorsize']
 v=os.statvfs('/');r=subprocess.run(['cloud-init','status','--format','json'],capture_output=True)
 c=json.loads(r.stdout)
 assert r.returncode in (0,2) and not c.get('errors') and set(c.get('recoverable_errors',{}))<={'DEPRECATED'}
-print(json.dumps({'root_fs_bytes':v.f_frsize*v.f_blocks,'cloud_init':c.get('status'),
+release=dict(line.split('=',1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
+print(json.dumps({'os_id':release['ID'].strip('\"'),'os_version':release['VERSION_ID'].strip('\"'),'filesystem':filesystem,'root_fs_bytes':v.f_frsize*v.f_blocks,'cloud_init':c.get('status'),
  'cloud_init_rc':r.returncode,'cloud_init_warnings':c.get('recoverable_errors',{}),'cpus':os.cpu_count(),
  'disk_bytes':int(output(['blockdev','--getsize64',disk])),
  'root_partition_bytes':partition['size']*sector,'root_partition_end_bytes':(partition['start']+partition['size'])*sector,
@@ -184,6 +192,8 @@ print(json.dumps({'root_fs_bytes':v.f_frsize*v.f_blocks,'cloud_init':c.get('stat
   cmd='LC_ALL=C python3 -c '+shlex.quote(program)
   _,stdout,_=ssh.exec_command(cmd,timeout=30);guest=json.loads(stdout.read());assert stdout.channel.recv_exit_status()==0
   assert guest['cpus']==P['cpus'] and guest['cloud_init']=='done'
+  expected={'ubuntu-2404':('ubuntu','24.04'),'ubuntu-2604':('ubuntu','26.04'),'almalinux-9':('almalinux','9'),'almalinux-10':('almalinux','10')}[P.get('image_id','ubuntu-2404')]
+  assert guest['os_id']==expected[0] and (guest['os_version']==expected[1] if expected[0]=='ubuntu' else guest['os_version'].split('.')[0]==expected[1])
   assert guest['disk_bytes']==P['disk_gb']*1024**3
   assert 0<=guest['disk_bytes']-guest['root_partition_end_bytes']<=4*1024**2
   assert 0<=guest['root_partition_bytes']-guest['filesystem_raw_bytes']<guest['filesystem_block_bytes']
@@ -245,28 +255,42 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute',action='store_true');parser.add_argument('--evidence-dir',type=Path,required=True)
     parser.add_argument('--resume-instance');parser.add_argument('--accepted-file',type=Path)
-    parser.add_argument('--plan',choices=['kvm-1','kvm-2'])
+    parser.add_argument('--plan',choices=['kvm-1','kvm-2','kvm-3','kvm-4'])
+    parser.add_argument('--image',choices=['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10'],default='ubuntu-2404')
+    parser.add_argument('--token-file',type=Path)
+    parser.add_argument('--minimal',action='store_true',help='Cuerpo mínimo del piloto; exige token de integración explícito')
     args=parser.parse_args()
     if not args.execute:print('Preparado: requiere --execute explícito; no se ejecutaron solicitudes.');return
     assert socket.gethostname()=='iacp-controlplane-01'
     os.umask(0o077);OUT=args.evidence_dir;OUT.mkdir(mode=0o700,parents=True,exist_ok=False)
     containers=json.loads(subprocess.check_output(['docker','inspect','iacp-controlplane-api-1'],text=True))
-    tokenpath=next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
+    assert not args.minimal or args.token_file, 'El piloto requiere identidad de integración explícita'
+    tokenpath=args.token_file or next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
     TOKEN=Path(tokenpath).read_text().strip()
     key=worker("import os,paramiko\nk=paramiko.PKey.from_path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE']);print(json.dumps({'public':k.get_name()+' '+k.get_base64()}))")['public']
     live=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
-    assert live['live']==(1 if args.resume_instance else 0)
+    baseline_live=live['live']
+    if not args.minimal:assert live['live']==(1 if args.resume_instance else 0)
     _,contract,_=api('/openapi.json')
     assert contract['openapi']=='3.1.0' and 'plan_id' in json.dumps(contract['paths']['/v1/instances']['post'])+json.dumps(contract['components']['schemas']['CommercialInstanceCreate'])
     save('openapi',contract);save('planes',api('/v1/plans')[1]);save('imagenes',api('/v1/images')[1])
     run=datetime.now(ZoneInfo('America/Costa_Rica')).strftime('%Y%m%d-%H%M%S')
-    for n,cpus,ram,disk in [(1,1,2048,50),(2,2,4096,100)]:
+    sizes=[(1,1,2048,50),(2,2,4096,100),(3,4,8192,200),(4,8,16384,400)]
+    for n,cpus,ram,disk in sizes:
+        if n>2 and not args.plan:continue
         if args.plan and args.plan!='kvm-'+str(n):continue
         plan='kvm-'+str(n);PASSWORD=secrets.token_urlsafe(28)+'A9!'
-        body={'name':'e2e-g-kvm'+str(n)+'-'+run,'plan_id':plan,'image_id':'ubuntu-2404',
+        body={'name':'e2e-g-kvm'+str(n)+'-'+run,'plan_id':plan,'image_id':args.image,
               'network':{'profile_id':'lab-dhcp'},'access':{'root_password':PASSWORD,'ssh_public_keys':[key]},
               'start_on_create':True,'commercial_context':{'order_id':'E2E-G-'+run+'-'+str(n),'product_id':'CRM-KVM-'+str(n)}}
-        idem='e2e-g-'+run+'-'+plan
+        if args.minimal:
+            body.pop('network');body.pop('commercial_context');body.pop('start_on_create')
+        if not args.resume_instance:
+            available=api('/v1/plans')[1]
+            assert next(p for p in available if p['plan_id']==plan)['availability']['available'], 'Plan no disponible; no enviar creación'
+            image=next(i for i in api('/v1/images')[1] if i['image_id']==args.image)
+            assert image['authorized'] and image['availability']['available'] and plan in image['compatible_plans'], 'Imagen no disponible para este plan'
+        idem='e2e-g-'+run+'-'+plan+'-'+args.image
         if n==1 and args.resume_instance:
             recovered=worker("from sqlalchemy import select\nfrom iacp.db import get_session_factory\nfrom iacp.models import CommercialIntent,TerraformExecution,Operation,TerraformApply\nfrom iacp.services.bootstrap_secrets import EphemeralSecrets\nwith get_session_factory()() as s:\n c=s.get(CommercialIntent,P['id']);e=s.get(TerraformExecution,P['id']);o=s.get(Operation,e.operation_id)\n approval=s.scalar(select(TerraformApply).where(TerraformApply.instance_id==c.instance_id,TerraformApply.attempt==e.attempt))\n mode='reconcile' if approval and approval.status=='uncertain' and approval.started_at else 'retry-provision'\n assert c.plan_id=='kvm-1' and c.bootstrap_started_at is None and (mode=='reconcile' or e.status=='failed' and e.error_code=='SOURCE_UNAVAILABLE')\n password=EphemeralSecrets.configured().read(c.secret_reference,o.tenant_id,c.instance_id)\n print(json.dumps({'password':password,'attempt':e.attempt,'key':o.idempotency_key,'mode':mode}))",{'id':args.resume_instance})
             PASSWORD=recovered.pop('password');idem=recovered['key']
@@ -287,7 +311,7 @@ def main():
         # Solo referencia opaca en archivo privado; nunca exportar este archivo a Git.
         save(plan+'-client-canary-fixture',fixture)
         save(plan+'-creacion',wait_operation(accepted['operation_id'],fulfillment=True))
-        identifier=accepted['instance_id'];data={'instance_id':identifier,'plan_id':plan,'cpus':cpus,'memory_mb':ram,'disk_gb':disk,'password':PASSWORD}
+        identifier=accepted['instance_id'];data={'instance_id':identifier,'image_id':args.image,'plan_id':plan,'cpus':cpus,'memory_mb':ram,'disk_gb':disk,'password':PASSWORD}
         wait_instance_idle(identifier)
         wait_guest(data)
         save(plan+'-proxmox-guest-state',worker(PROBE,data))
@@ -306,9 +330,12 @@ def main():
             if PASSWORD.encode() in logs.stdout+logs.stderr:raise RuntimeError('SECRET_IN_LOGS')
         cleaned=worker("from iacp.services.bootstrap_secrets import EphemeralSecrets\ns=EphemeralSecrets.configured();s.delete(P['reference']);print(json.dumps({'removed':not s.redis.exists('iacp:bootstrap:v1:'+P['reference'])}))",fixture)
         assert cleaned['removed'];save(plan+'-client-fixture-cleanup',cleaned)
+        if args.minimal:
+            remaining=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
+            assert remaining['live']==baseline_live, 'No se restauró la ocupación inicial'
         save(plan+'-resultado',{'estado':'PASS','fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
         print(json.dumps({'plan':plan,'estado':'PASS','instance_id':identifier}),flush=True)
-    save('resultado',{'estado':'PASS','planes':[args.plan] if args.plan else ['kvm-1','kvm-2'],'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
+    save('resultado',{'estado':'PASS','image_id':args.image,'planes':[args.plan] if args.plan else ['kvm-1','kvm-2'],'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
 
 
 if __name__=='__main__':
