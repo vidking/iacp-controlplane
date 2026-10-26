@@ -72,9 +72,14 @@ def verify_cpu(actual, variables):
 
 def verify_live(config, hardware, expected):
     try:
-        parts=config['cpu'].split(',');options=dict(part.split('=',1) for part in parts[1:])
+        parts=config['cpu'].split(',')
+        # Proxmox devuelve el tipo de CPU en dos formas según el endpoint/
+        # versión: ``x86-64-v4,...`` o ``cputype=x86-64-v4,...``. Ambas
+        # representan el mismo hardware efectivo y deben validar igual.
+        cpu_type=parts[0].split('=',1)[1] if parts[0].startswith('cputype=') else parts[0]
+        options=dict(part.split('=',1) for part in parts[1:] if '=' in part)
         flags=options.get('flags','').split(';') if options.get('flags') else []
-        if (parts[0]!=hardware['cpu_type'] or sorted(flags)!=sorted(hardware['flags'])
+        if (cpu_type!=hardware['cpu_type'] or sorted(flags)!=sorted(hardware['flags'])
                 or int(config.get('numa',0)) not in (0,1) or bool(int(config.get('numa',0)))!=hardware['numa']
                 or int(config.get('sockets',1))!=hardware['sockets']
                 or int(config.get('cores',1))*hardware['sockets']!=expected['cpu_cores']):
