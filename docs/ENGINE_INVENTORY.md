@@ -11,7 +11,7 @@ avisos del [LICENSE oficial de esa versión](https://github.com/hashicorp/terraf
 La denominación comercial IaC Worker no renombra el binario ni cambia su licencia.
 
 El stack fijado de `CyberFuel/iac-proxmox`, revisión
-`91fd5f4ffdbe88dd9a768c69e886cbffbeb84c8c`, usa el provider
+`e701a0592d1caeda76faf7bdaa1e04c0b9bae5fc`, usa el provider
 **bpg/proxmox 0.116.1**, bajo [Mozilla Public License 2.0 en su versión fijada](https://github.com/bpg/terraform-provider-proxmox/blob/v0.116.1/LICENSE).
 Los checks del driver conservan revisión y SHA-256 del archivo Git autorizado.
 El contrato de propiedad started continúa separado de la energía imperativa.
