@@ -118,8 +118,10 @@ def test_plan_barrier_rejects_firmware_controller_and_boot_defaults():
             verify_base_plan(wrong, variables)
 
 
-def test_disk_plan_rejects_provider_defaults_not_present_in_golden():
+def test_disk_plan_allows_only_verified_rbd_defaults_not_present_in_golden():
     hardware=parse(golden(),29001,'mng01',1).model_dump()
+    hardware['disk']['storage_type'] = 'rbd'
+    hardware['disk']['storage_krbd'] = False
     variables={'instance':{'boot_disk':{'interface':'scsi0','size_gb':50,'datastore_id':'DS_CYBERFUEL'}},
                'iacp_golden_hardware':hardware}
     plan={'interface':'scsi0','size':50,'datastore_id':'DS_CYBERFUEL',
@@ -130,12 +132,31 @@ def test_disk_plan_rejects_provider_defaults_not_present_in_golden():
         'aio': 'io_uring', 'backup': True, 'cache': 'none',
         'replicate': True, 'ssd': False, 'queues': 0,
     }.items():
-        wrong=dict(plan); wrong[key]=value
+        verified=dict(plan); verified[key]=value
+        verify_disk_plan(verified,variables)
+        hardware['disk']['storage_type'] = 'unknown'
         with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
-            verify_disk_plan(wrong,variables)
+            verify_disk_plan(verified,variables)
+        hardware['disk']['storage_type'] = 'rbd'
     wrong=dict(plan); wrong['iothread']=False
     with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
         verify_disk_plan(wrong,variables)
+
+
+def test_verified_defaults_never_relax_discard_or_iothread():
+    hardware=parse(golden(),29001,'mng01',1).model_dump()
+    hardware['disk']['storage_type'] = 'rbd'
+    hardware['disk']['storage_krbd'] = False
+    variables={'instance':{'boot_disk':{'interface':'scsi0','size_gb':50,'datastore_id':'DS_CYBERFUEL'}},
+               'iacp_golden_hardware':hardware}
+    for key, value in {'discard': None, 'iothread': False}.items():
+        wrong={'interface':'scsi0','size':50,'datastore_id':'DS_CYBERFUEL',
+               'file_format':None,'aio':'io_uring','cache':'none','discard':'on',
+               'backup':True,'replicate':True,'iothread':True,'ssd':False,
+               'serial':None,'queues':0}
+        wrong[key] = value
+        with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
+            verify_disk_plan(wrong,variables)
 
 
 @pytest.mark.parametrize('password',[False,True])

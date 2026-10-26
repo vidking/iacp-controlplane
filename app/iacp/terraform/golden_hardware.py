@@ -39,6 +39,10 @@ class GoldenDisk(StrictModel):
 
     interface: str = Field(pattern=r"^(scsi([0-9]|[12][0-9]|30)|sata[0-5]|virtio([0-9]|1[0-5]))$")
     source_datastore_id: str = Field(min_length=1)
+    # Evidencia del backend de almacenamiento observada en Proxmox. Las
+    # equivalencias de defaults solo se admiten para backends verificados.
+    storage_type: str | None = None
+    storage_krbd: bool | None = None
     minimum_size_gb: int = Field(ge=1)
     file_format: Literal["raw", "qcow2", "vmdk"] | None = None
     aio: Literal["io_uring", "native", "threads"] | None = None
@@ -68,7 +72,7 @@ def _bool_option(value):
     return value == "1"
 
 
-def _disk(raw_value, interface):
+def _disk(raw_value, interface, *, allow_default_queues=False):
     if not isinstance(raw_value, str):
         raise ValueError()
     parts = raw_value.split(",")
@@ -99,7 +103,9 @@ def _disk(raw_value, interface):
     queues = options.pop("queues", None)
     if queues is not None:
         queues = int(queues)
-        if queues < 1:
+        if queues == 0 and allow_default_queues:
+            queues = None
+        elif queues < 1:
             raise ValueError()
     return GoldenDisk(
         interface=interface,
@@ -156,7 +162,18 @@ def read(env, allocation, vcpus):
         build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context(cafile=env.get('SSL_CERT_FILE'))),NoRedirect()))
     try:
         raw=client._request('GET',f'/nodes/{quote(node,safe="")}/qemu/{image.template_vm_id}/config?current=1')
-        return parse(raw,image.template_vm_id,node,vcpus)
+        hardware = parse(raw,image.template_vm_id,node,vcpus)
+        if hardware.disk is not None:
+            storage = client._request('GET', f'/storage/{quote(hardware.disk.source_datastore_id, safe="")}')
+            if not isinstance(storage, dict) or not isinstance(storage.get('type'), str):
+                raise PowerError('invalid storage observation')
+            hardware = hardware.model_copy(update={
+                'disk': hardware.disk.model_copy(update={
+                    'storage_type': storage['type'],
+                    'storage_krbd': bool(storage.get('krbd', False)) if storage['type'] == 'rbd' else None,
+                })
+            })
+        return hardware
     except PowerError:
         raise PlanError('GOLDEN_HARDWARE_READ_UNAVAILABLE') from None
 
@@ -218,6 +235,30 @@ def verify_base_plan(actual, variables):
         raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH') from None
 
 
+def _verified_implicit_disk_default(key, observed, expected):
+    """Acepta solo defaults cuya equivalencia está demostrada para Ceph/RBD.
+
+    Proxmox omite estos valores en ``qm config`` cuando representan el valor
+    efectivo por defecto. No se ignoran diferencias: cada atributo tiene una
+    equivalencia explícita y exige que la Golden Image haya sido observada en
+    un backend RBD. ``discard`` e ``iothread`` nunca pasan por esta ruta.
+    """
+    if expected.get('storage_type') != 'rbd' or not isinstance(expected.get('storage_krbd'), bool):
+        return False
+    equivalent = {
+        # Sin cache explícita, Proxmox genera cache=none para el camino directo
+        # de almacenamiento y QEMU usa io_uring cuando el backend lo permite.
+        'aio': 'io_uring',
+        'cache': 'none',
+        # Los valores omitidos por qm.conf son los defaults operativos de PVE.
+        'backup': True,
+        'replicate': True,
+        'ssd': False,
+        'queues': 0,
+    }
+    return key in equivalent and observed == equivalent[key]
+
+
 def verify_disk_plan(actual, variables):
     hardware = variables.get('iacp_golden_hardware')
     if not hardware or not hardware.get('disk'):
@@ -230,8 +271,13 @@ def verify_disk_plan(actual, variables):
                 or actual['datastore_id'] != requested['datastore_id']):
             raise ValueError()
         for key in _DISK_TECHNICAL_FIELDS:
-            if actual.get(key) != expected.get(key):
-                raise ValueError()
+            observed = actual.get(key)
+            source = expected.get(key)
+            if observed == source:
+                continue
+            if source is None and _verified_implicit_disk_default(key, observed, expected):
+                continue
+            raise ValueError()
     except (KeyError, TypeError, ValueError):
         raise PlanError('GOLDEN_DISK_PLAN_MISMATCH') from None
 
@@ -258,13 +304,18 @@ def verify_live(config, hardware, expected):
             elif actual!=value:raise ValueError()
         if hardware.get('disk'):
             disk = hardware['disk']
-            actual_disk = _disk(config.get(disk['interface']), disk['interface'])
+            actual_disk = _disk(config.get(disk['interface']), disk['interface'], allow_default_queues=True)
             requested = expected['boot_disk']
             if (actual_disk.source_datastore_id != requested['datastore_id']
                     or actual_disk.minimum_size_gb != requested['size_gb']):
                 raise ValueError()
             for key in _DISK_TECHNICAL_FIELDS:
-                if getattr(actual_disk, key) != disk.get(key):
-                    raise ValueError()
+                observed = getattr(actual_disk, key)
+                source = disk.get(key)
+                if observed == source:
+                    continue
+                if source is None and _verified_implicit_disk_default(key, observed, disk):
+                    continue
+                raise ValueError()
     except (KeyError,ValueError,TypeError):
         raise PlanError('GOLDEN_HARDWARE_POSTCONDITION_MISMATCH') from None
