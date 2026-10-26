@@ -1,6 +1,7 @@
 """Regresiones del contrato técnico sin decisiones comerciales."""
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from iacp.commercial_contract import CommercialInstanceCreate, MINIMAL_EXAMPLE
 from iacp.models import BOOTSTRAP_TENANT_ID, CommercialIntent, Instance, OperationEvent
 from iacp.security import Principal
 from iacp.services import commercial
+from iacp.services import lab
 from iacp.services.catalog import authorized_profile
 from tests.test_commercial_admission import commercial_config, store
 from tests.test_commercial_catalog import catalog_profile
@@ -53,3 +55,19 @@ def test_core_catalog_resolves_all_authorized_golden_images_without_limits(
     monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('no commercial limits')))
     for image_id in ['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']:
         assert authorized_profile(BOOTSTRAP_TENANT_ID, image_id) is not None
+
+
+def test_core_lifecycle_delegation_does_not_consult_commercial_limits(monkeypatch):
+    monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
+    monkeypatch.setattr(commercial, 'member', lambda *args, **kwargs: object())
+    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('no commercial limits')))
+    monkeypatch.setattr(commercial, 'quota', Mock(side_effect=AssertionError('no commercial quota')))
+    instance = SimpleNamespace(commercial_revision='provisioning-api-core', tenant_id=BOOTSTRAP_TENANT_ID)
+    lab.authorize_operation(None, instance, 'start')
+
+
+def test_core_public_errors_are_technical_codes(monkeypatch):
+    monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
+    from iacp.api.presentation import public_code
+    assert public_code('COMMERCIAL_OWNERSHIP_BINDING_CHANGED') == 'PROVISIONING_OWNERSHIP_BINDING_CHANGED'
+    assert public_code('POWER_INSTANCE_NOT_AUTHORIZED') == 'POWER_INSTANCE_NOT_AUTHORIZED'
