@@ -1,0 +1,655 @@
+{
+  "fecha_local": "25/10/2026, 8:28:58 p. m.",
+  "zona": "America/Costa_Rica",
+  "alcance": "Candidata local; no certifica despliegue VM 104",
+  "results": [
+    {
+      "mode": "chromium-escritorio",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "piloto-json",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-curl",
+          "top": 108.28125,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-respuesta",
+          "top": 108.1875,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 108.203125,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-ssh",
+          "top": 108.484375,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-lifecycle",
+          "top": 107.609375,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-delete",
+          "top": 107.859375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.71875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.71875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.921875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.921875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.921875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 108.09375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 108.09375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 108.09375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.65625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.65625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.65625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 108.046875,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.609375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.609375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.609375,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.390625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.390625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 108.390625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 107.890625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.71875,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 107.625,
+          "header_bottom": 88
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 107.953125,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 108.0625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.765625,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 108.0625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.765625,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 108.3125,
+          "header_bottom": 88
+        }
+      ],
+      "clipboard": "Lectura real del portapapeles coincide exactamente",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    },
+    {
+      "mode": "chromium-movil",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "piloto-json",
+          "top": 93.890625,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-curl",
+          "top": 93.859375,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-respuesta",
+          "top": 93.71875,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 94.078125,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-ssh",
+          "top": 94.265625,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-lifecycle",
+          "top": 94.34375,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-delete",
+          "top": 94.328125,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 94.484375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 94.484375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 94.390625,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 93.9375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "guia-crm",
+          "top": 93.984375,
+          "header_bottom": 74
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 94.375,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 93.640625,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 93.546875,
+          "header_bottom": 74
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 93.640625,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 93.546875,
+          "header_bottom": 74
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 93.984375,
+          "header_bottom": 74
+        }
+      ],
+      "clipboard": "Lectura real del portapapeles coincide exactamente",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    },
+    {
+      "mode": "firefox-escritorio",
+      "estado": "PASS",
+      "positions": [
+        {
+          "id": "piloto-json",
+          "top": 107.60000610351562,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-curl",
+          "top": 108,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-respuesta",
+          "top": 108.39999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.60000610351562,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-ssh",
+          "top": 108,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-lifecycle",
+          "top": 108.19999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-delete",
+          "top": 107.60000610351562,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-instances",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-operations",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-kvm-lifecycle",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-disposable-deletion",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-observability",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-jobs",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-tag-lab-administration",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.30000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 108.10000610351562,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-operaciones",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.89999389648438,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-despliegue",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "guia-crm",
+          "top": 108.30000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "crm-idempotencia",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.80000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 108.5,
+          "header_bottom": 88
+        },
+        {
+          "id": "piloto-seguimiento",
+          "top": 107.80000305175781,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 108.5,
+          "header_bottom": 88
+        },
+        {
+          "id": "operations-operations-getOperation",
+          "top": 107.69999694824219,
+          "header_bottom": 88
+        }
+      ],
+      "clipboard": "writeText nativo completado; lectura no soportada por permisos Playwright Firefox",
+      "try_it_out": "GET /v1/images HTTP 200",
+      "errors": [],
+      "external": [],
+      "mutations": []
+    }
+  ]
+}

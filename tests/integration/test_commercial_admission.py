@@ -20,14 +20,21 @@ from tests.test_commercial_catalog import catalog_profile
 pytestmark=pytest.mark.integration
 
 
-def test_global_quota_serializes_two_commercial_requests(pg_engine,commercial_config,store):
+@pytest.mark.parametrize('minimal_body',[False,True])
+def test_global_quota_serializes_two_commercial_requests(pg_engine,commercial_config,store,minimal_body):
     upgrade(pg_engine);sessions=sessionmaker(bind=pg_engine,autoflush=False,expire_on_commit=False)
     barrier=Barrier(2)
     def submit(n):
+        spec=specification(name='concurrent-'+str(n))
+        if minimal_body:
+            from iacp.commercial_contract import CommercialInstanceCreate
+            body=spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+            body['access']={'root_password':spec.access.root_password.get_secret_value(),'ssh_public_keys':spec.access.ssh_public_keys}
+            spec=CommercialInstanceCreate.model_validate(body)
         barrier.wait(timeout=10)
         with sessions() as s:
             try:return create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),
-                specification(name='concurrent-'+str(n)),'concurrent-'+str(n),lambda _:None,store,
+                spec,'concurrent-'+str(n),lambda _:None,store,
                 capacity=lambda *_:None).instance_id
             except Conflict:return None
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(submit,[1,2]))
@@ -55,12 +62,19 @@ def test_bootstrap_queue_transports_only_opaque_operation_reference(runtime):
         finally:queue.clear();queue.close()
 
 
-def test_rollback_to_historical_contract_keeps_schema_0012_and_commercial_rows_readable(pg_engine,runtime,commercial_config,store,monkeypatch):
+@pytest.mark.parametrize('minimal_body',[False,True])
+def test_rollback_to_historical_contract_keeps_schema_0012_and_commercial_rows_readable(pg_engine,runtime,commercial_config,store,monkeypatch,minimal_body):
     from fastapi.testclient import TestClient
     from iacp.main import create_app
     upgrade(pg_engine);sessions=sessionmaker(bind=pg_engine,autoflush=False,expire_on_commit=False)
+    spec=specification()
+    if minimal_body:
+        from iacp.commercial_contract import CommercialInstanceCreate
+        body=spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+        body['access']={'root_password':spec.access.root_password.get_secret_value(),'ssh_public_keys':spec.access.ssh_public_keys}
+        spec=CommercialInstanceCreate.model_validate(body)
     with sessions() as s:
-        accepted=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),specification(),
+        accepted=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),spec,
             'before-rollback',lambda _:None,store,capacity=lambda *_:None)
     monkeypatch.setenv('IACP_CREATION_CONTRACT','historical')
     monkeypatch.setenv('IACP_ADMISSION_ENABLED','0')
@@ -68,6 +82,27 @@ def test_rollback_to_historical_contract_keeps_schema_0012_and_commercial_rows_r
         assert client.get('/health/ready').status_code==200
         row=client.get('/v1/instances/'+accepted.instance_id,headers=runtime)
         assert row.status_code==200
-        assert row.json()['commercial_context']['order_id']==specification().commercial_context.order_id
+        if minimal_body:assert row.json()['commercial_context'] is None
+        else:assert row.json()['commercial_context']['order_id']==specification().commercial_context.order_id
         assert client.post('/v1/instances',headers=runtime,json={}).status_code==503
     with sessions() as s:assert s.get(CommercialIntent,accepted.instance_id).bootstrap_status=='pending'
+
+
+def test_concurrent_minimal_retries_publish_only_one_job(pg_engine,commercial_config,store):
+    from iacp.commercial_contract import CommercialInstanceCreate
+    from iacp.models import Job,Operation
+    upgrade(pg_engine);sessions=sessionmaker(bind=pg_engine,autoflush=False,expire_on_commit=False)
+    spec=specification();body=spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+    body['access']={'root_password':spec.access.root_password.get_secret_value(),'ssh_public_keys':spec.access.ssh_public_keys}
+    spec=CommercialInstanceCreate.model_validate(body)
+    barrier=Barrier(2);published=[]
+    def submit(_):
+        barrier.wait(timeout=10)
+        with sessions() as s:
+            return create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),spec,'same-minimal',published.append,
+                store,capacity=lambda *_:None).model_dump()
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(submit,[1,2]))
+    assert results[0]==results[1] and len(published)==1
+    with sessions() as s:
+        for model in (Instance,CommercialIntent,Job,Operation):assert len(s.scalars(select(model)).all())==1
+    assert len(store.redis.values)==1

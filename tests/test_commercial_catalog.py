@@ -161,7 +161,7 @@ def test_obsolete_and_privileged_fields_explicitly_rejected(field,value):
     assert any(x['type']=='extra_forbidden' and x['loc']==(field,) for x in e.value.errors())
 
 
-@pytest.mark.parametrize('field', ['name','plan_id','image_id','network','access','commercial_context'])
+@pytest.mark.parametrize('field', ['name','plan_id','image_id','access'])
 def test_required_fields(field):
     data=deepcopy(EXAMPLES[0]);data.pop(field)
     with pytest.raises(ValidationError): CommercialInstanceCreate.model_validate(data)

@@ -3,17 +3,9 @@
     "name": "piloto-kvm-1",
     "plan_id": "kvm-1",
     "image_id": "ubuntu-2404",
-    "network": {
-      "profile_id": "lab-dhcp"
-    },
     "access": {
       "root_password": "REEMPLAZAR_POR_CONTRASENA_UNICA",
       "ssh_public_keys": []
-    },
-    "start_on_create": true,
-    "commercial_context": {
-      "order_id": "piloto-kvm-1",
-      "product_id": "CRM-KVM-1"
     }
   },
   "accepted": {

@@ -9,6 +9,48 @@ HTTP Basic protege la documentación. Para API utiliza `Authorization: Bearer
 El tenant procede de esa identidad, nunca del cuerpo. No envíes VMID, nodo,
 storage ni credenciales de infraestructura.
 
+## Token y JSON mínimo del piloto
+
+El backend consumidor configura `IACP_API_TOKEN` como secreto de entorno y envía
+`Authorization: Bearer` con la credencial opaca existente. No introducir tokens en
+el frontend, Git, logs ni capturas. La identidad de servicio se asocia al tenant
+persistente autorizado; no se crea un tenant por solicitud ni se envía tenant_id.
+HTTP Basic de documentación conserva su función y credencial separadas.
+
+Esta revisión permite omitir `network` y `commercial_context` **solo en el piloto
+LAB autorizado KVM 1/2 con Ubuntu 24.04**. IACP resuelve `lab-dhcp` y conserva cuotas,
+propiedad, catálogo, capacidad e idempotencia. No hay fallback automático a otra
+red ni pedido CRM ficticio. Si se envía contexto, su order_id continúa siendo
+obligatorio. `null` no equivale a omitir; los cuerpos completos siguen siendo válidos.
+Verificar en el OpenAPI servido que esos dos campos ya no figuren en required
+antes de usar el mínimo contra una instalación anterior.
+
+```json
+{
+  "name": "piloto-001",
+  "plan_id": "kvm-1",
+  "image_id": "ubuntu-2404",
+  "access": {
+    "root_password": "REEMPLAZAR_POR_CONTRASENA_UNICA",
+    "ssh_public_keys": []
+  }
+}
+```
+
+La contraseña es un marcador: sustituirla por una única del consumidor. La llave
+pública es opcional para crear; es necesaria para acceso SSH con la llave propia.
+El cURL local acepta IACP_API_TOKEN ya configurado o lo solicita sin eco.
+
+La respuesta 202 conserva todos sus campos por compatibilidad. Para el recorrido
+normal destacar `instance_id` y `status`, y consultar `GET /v1/instances/{instance_id}`.
+Esperar también access.status=completed e IP observada antes de SSH; ready no basta.
+operation_id y job_id continúan disponibles para diagnóstico, auditoría y soporte.
+
+Conservar exactamente clave y cuerpo en reintentos: cambiar entre campos omitidos
+y explícitos es un cambio de representación y devuelve 409 con la misma clave.
+La intención almacena los valores efectivos y el perfil revisado; un retry no vuelve
+a reservar ni cambia esos valores porque posteriormente cambie la configuración.
+
 ## Crear una VM piloto — Ubuntu 24.04
 
 La portada local de `/docs` contiene JSON válido, cURL completo, botones de copia,
@@ -18,7 +60,7 @@ DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
 1. Obtener Bearer autorizado del tenant por el canal existente; HTTP Basic solo
    permite leer documentación. Authorize recibe el token API y no amplía permisos.
 2. Confirmar `kvm-1`, `ubuntu-2404`, `lab-dhcp`, cuota y capacidad disponibles.
-3. Copiar JSON y reemplazar nombre/pedido y contraseña. Para SSH aportar una llave
+3. Copiar JSON y reemplazar nombre y contraseña. Para SSH aportar una llave
    pública propia; nunca una privada. El cURL solicita los valores por terminal,
    genera el cuerpo temporal privado y lo elimina después del envío. Guardarlo
    como `crear-piloto.sh` y usar `source ./crear-piloto.sh` desde Bash, fuera de Git.

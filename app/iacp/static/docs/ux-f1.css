@@ -27,3 +27,13 @@
 .copy-toolbar button:focus-visible{outline:3px solid #9bd9cc;outline-offset:2px}
 #copy-status{min-height:1.8em;color:var(--accent)}
 .workspace>main::after{content:"";display:block;height:var(--navigation-tail,0px)}
+/* Recorrido plegable nativo; conserva identidad, tipografía y ancho. */
+.pilot-summary{cursor:pointer;list-style:none;padding:0 0 16px}
+.pilot-summary>span{font-size:12px;color:var(--accent)}
+.pilot-step{border:1px solid var(--line);border-radius:6px;margin:12px 0;background:#fff}
+.pilot-step>summary{cursor:pointer;padding:14px 16px;list-style-position:inside}
+.pilot-step>summary h2{display:inline;margin:0;font-size:18px}
+.pilot-step-content{padding:0 16px 12px;min-width:0}
+.pilot summary:focus-visible{outline:3px solid #9bd9cc;outline-offset:3px}
+
+.pilot-summary>.eyebrow{font-size:10px}

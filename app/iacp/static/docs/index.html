@@ -37,66 +37,78 @@
 </aside>
 <main id="inicio">
   <section class="intro pilot guide-content" aria-labelledby="pilot-title">
-    <p class="eyebrow">INICIO RÁPIDO · MVP CERTIFICADO</p>
-    <h1 id="pilot-title">Crear una VM piloto — Ubuntu 24.04</h1>
+<details id="pilot-panel" data-document-root open>
+    <summary class="pilot-summary"><span class="eyebrow">INICIO RÁPIDO · MVP CERTIFICADO</span>
+    <h1 id="pilot-title">Crear una VM piloto — Ubuntu 24.04</h1><span>Minimizar / expandir recorrido</span></summary>
     {{pilot_contract_note}}
     <p>Recorrido probado con <b>KVM 1: 1 vCPU, 2048 MiB RAM y 50 GiB</b>, red <code>lab-dhcp</code>. Base real: <code>https://iac.cyberfuel.com</code>. Cada creación consume recursos del laboratorio.</p>
-    <nav class="guide-toc" aria-label="Recorrido piloto"><a href="#piloto-acceso">1. Acceso</a><a href="#piloto-json">2. JSON y cURL</a><a href="#piloto-respuesta">3. Respuesta</a><a href="#piloto-seguimiento">4. Progreso e IP</a><a href="#piloto-ssh">5. SSH</a><a href="#piloto-lifecycle">6. Lifecycle</a><a href="#piloto-delete">7. Eliminar</a></nav>
-    <h2 id="piloto-acceso">1. Acceso autorizado</h2>
-    <p>HTTP Basic protege esta documentación. La API requiere el <b>Bearer opaco del tenant</b>; en Swagger pulsa <a href="#referencia-api" data-authorize>Authorize</a> e introduce solo ese token. Al finalizar usa Logout en Authorize. No es un JWT ni la contraseña de documentación.</p>
+    <nav class="guide-toc" aria-label="Recorrido piloto"><a href="#piloto-acceso">1. Acceso</a><a href="#piloto-json">2. JSON mínimo</a><a href="#piloto-curl">3. cURL</a><a href="#piloto-respuesta">4. Respuesta</a><a href="#piloto-seguimiento">5. Progreso e IP</a><a href="#piloto-ssh">6. SSH</a><a href="#piloto-lifecycle">7. Lifecycle</a><a href="#piloto-delete">8. Eliminar</a></nav>
+    <p id="copy-status" role="status" aria-live="polite"></p>
+
+    <details class="pilot-step" id="step-piloto-acceso"><summary><h2 id="piloto-acceso">1. Acceso autorizado</h2></summary><div class="pilot-step-content">
+    <p>El backend consumidor configura <code>IACP_API_TOKEN</code> como secreto de entorno y envía <code>Authorization: Bearer</code>. IACP reutiliza el tenant persistente asociado; no crea un tenant por solicitud. HTTP Basic protege esta documentación. La API requiere el <b>Bearer opaco del tenant</b>; en Swagger pulsa <a href="#referencia-api" data-authorize>Authorize</a> e introduce solo ese token. Al finalizar usa Logout en Authorize. No es un JWT ni la contraseña de documentación.</p>
     <p>El token debe pertenecer a un tenant activo con permiso de creación, KVM 1 autorizado y cuota libre. Comprueba <a href="#/instances/listKVMPlans" data-operation-id="listKVMPlans">planes</a>, <a href="#/instances/listGoldenImages" data-operation-id="listGoldenImages">imágenes</a> y <a href="#/instances/listAuthorizedProfiles" data-operation-id="listAuthorizedProfiles">perfiles</a>: exige disponibilidad efectiva de <code>kvm-1</code>, <code>ubuntu-2404</code> y <code>lab-dhcp</code>. Si falta un derecho, solicita a Infraestructura la identidad o habilitación LAB mediante el procedimiento existente; no se crea una política por VM ni se envía su UUID.</p>
-    <h2 id="piloto-json">2. JSON completo y creación</h2>
-    <p>Modelo del contrato vigente de <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>. Cambia nombre/pedido por los tuyos y la contraseña por una única de 16–128 caracteres ASCII imprimibles. Para entrar por SSH agrega tu llave <b>pública</b> a <code>ssh_public_keys</code>; es opcional para la API. Nunca envíes la llave privada. El cURL inferior solicita esos datos y sustituye el marcador de contraseña.</p>
+</div></details>
+    <details class="pilot-step" id="step-piloto-json" open><summary><h2 id="piloto-json">2. JSON mínimo</h2></summary><div class="pilot-step-content">
+    <p>JSON mínimo del piloto LAB KVM 1/2 para <a href="#/instances/createInstance" data-operation-id="createInstance">POST /v1/instances</a>. Cambia el nombre por el tuyo y la contraseña por una única de 16–128 caracteres ASCII imprimibles. Para entrar por SSH agrega tu llave <b>pública</b> a <code>ssh_public_keys</code>; es opcional para la API. Nunca envíes la llave privada. El cURL inferior solicita esos datos y sustituye el marcador de contraseña. IACP resuelve <code>lab-dhcp</code> solo si está autorizado; puedes omitir <code>commercial_context</code> en este piloto sin generar un pedido ficticio. Las solicitudes completas existentes siguen siendo válidas.</p>
     <div class="copy-toolbar"><b>Solicitud KVM 1</b><button type="button" data-copy-target="pilot-json">Copiar JSON</button></div>
     <pre><code id="pilot-json">{{pilot_json}}</code></pre>
+</div></details>
+    <details class="pilot-step" id="step-piloto-curl"><summary><h2 id="piloto-curl">3. cURL de creación</h2></summary><div class="pilot-step-content">
     <p>Guarda el siguiente bloque como <code>crear-piloto.sh</code> en un directorio privado fuera de Git y ejecuta <code>source ./crear-piloto.sh</code> desde Bash para conservar las variables de seguimiento. Requiere cURL y Python 3. El token y la contraseña se introducen sin eco; el cuerpo temporal se elimina. Conserva <code>respuesta.json</code>, <code>respuesta.headers</code> y la misma <code>IACP_KEY</code> para recuperar un timeout. No actives <code>set -x</code>.</p>
     <div class="copy-toolbar"><b>Crear mediante HTTPS</b><button type="button" data-copy-target="pilot-curl">Copiar cURL</button></div>
     <pre><code id="pilot-curl">{{pilot_curl}}</code></pre>
-    <p id="copy-status" role="status" aria-live="polite"></p>
-    <h2 id="piloto-respuesta">3. Respuesta real: HTTP 202</h2>
-    <p>Respuesta de la prueba KVM 1 del <b>25/10/2026, Costa Rica</b>. Esa VM ya fue eliminada: estos identificadores son evidencia, <b>no los de tu solicitud</b>. Un 202 confirma admisión, no SSH listo.</p>
+</div></details>
+    <details class="pilot-step" id="step-piloto-respuesta"><summary><h2 id="piloto-respuesta">4. Respuesta real: HTTP 202</h2></summary><div class="pilot-step-content">
+    <p>Para integrar basta conservar <code>instance_id</code> y <code>status</code> y consultar <code>GET /v1/instances/{instance_id}</code>. Los identificadores técnicos permanecen disponibles para compatibilidad y soporte. Respuesta completa de la prueba KVM 1 del <b>25/10/2026, Costa Rica</b>. Esa VM ya fue eliminada: estos identificadores son evidencia, <b>no los de tu solicitud</b>. Un 202 confirma admisión, no SSH listo.</p>
     <pre><code id="pilot-response">{{pilot_response}}</code></pre>
     <p>Extrae tus identificadores del archivo recibido y conserva <code>X-Request-ID</code> de <code>respuesta.headers</code>:</p>
     <pre><code>INSTANCE_ID="$(python3 -c 'import json; print(json.load(open("respuesta.json"))["instance_id"])')"
 OPERATION_ID="$(python3 -c 'import json; print(json.load(open("respuesta.json"))["operation_id"])')"
 export INSTANCE_ID OPERATION_ID</code></pre>
-    <h2 id="piloto-seguimiento">4. Consultar progreso, resultado e IP</h2>
-    <p>Puedes <a href="#/operations/listOperations" data-operation-id="listOperations">listar operaciones</a> o consultar la <a href="#/operations/getOperation" data-operation-id="getOperation">operación</a> y la <a href="#/instances/getInstance" data-operation-id="getInstance">instancia</a>. Repite las consultas mientras el estado normalizado sea queued/running. Revisa <code>normalized_status</code>, <code>error_code</code> y <code>fulfillment</code>; no confundas un paso terminado con el acceso listo. Ante failed/uncertain detente, conserva IDs e intención y consulta a Infraestructura; no crees otra VM.</p>
-    <pre><code>curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Authorization: Bearer $IACP_TOKEN"
-curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" -H "Authorization: Bearer $IACP_TOKEN" -o instancia.json
+</div></details>
+    <details class="pilot-step" id="step-piloto-seguimiento"><summary><h2 id="piloto-seguimiento">5. Consultar progreso, resultado e IP</h2></summary><div class="pilot-step-content">
+    <p>Consulta tu <a href="#/instances/getInstance" data-operation-id="getInstance">instancia</a> con el <code>instance_id</code> recibido. Repite GET mientras <code>status</code> sea pending/provisioning. Para acceso, comprueba además <code>access.status=completed</code> e <code>ip_addresses</code>: ready por sí solo no confirma SSH. Ante failed o acceso failed/uncertain, detente y conserva la intención; no crees otra VM.</p>
+    <pre><code>curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" -H "Authorization: Bearer $IACP_API_TOKEN" -o instancia.json
 python3 -m json.tool instancia.json</code></pre>
+    <p>Para diagnóstico puedes <a href="#/operations/listOperations" data-operation-id="listOperations">listar operaciones</a> o consultar la <a href="#/operations/getOperation" data-operation-id="getOperation">operación original</a>, su <code>normalized_status</code>, <code>error_code</code> y <code>fulfillment</code>. Los IDs técnicos siguen disponibles para soporte y conciliación.</p>
     <p>La dirección observada está en <code>ip_addresses</code>. Si la lista está vacía, solicita <a href="#/instances/discoverInstanceNetwork" data-operation-id="discoverInstanceNetwork">descubrimiento de red</a> y sigue su operation_id antes de consultar de nuevo:</p>
     <pre><code>curl --fail-with-body -sS -X POST "$IACP_BASE_URL/v1/instances/$INSTANCE_ID/network/discover" \
-  -H "Authorization: Bearer $IACP_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $IACP_API_TOKEN" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $IACP_KEY-network" -d '{}'</code></pre>
-    <h2 id="piloto-ssh">5. Acceder por SSH</h2>
+</div></details>
+    <details class="pilot-step" id="step-piloto-ssh"><summary><h2 id="piloto-ssh">6. Acceder por SSH</h2></summary><div class="pilot-step-content">
     <p>Espera DHCP, Guest Agent y Cloud-Init; una VM running aún puede no estar lista. La contraseña inicial root sirve para consola del guest; <b>root SSH por contraseña no se habilita</b>. Este recorrido pide tu llave pública para verificar SSH; selecciona su llave privada correspondiente al conectar. Verifica la huella del host mediante el canal autorizado, no desactives la comprobación.</p>
     <pre><code>IACP_IP="$(python3 -c 'import json; a=json.load(open("instancia.json"))["ip_addresses"]; assert a, "Sin IP observada"; print(a[0])')"
 read -r -p 'Ruta de tu llave privada correspondiente: ' IACP_SSH_PRIVATE_KEY_FILE
 ssh -i "$IACP_SSH_PRIVATE_KEY_FILE" "root@$IACP_IP"</code></pre>
-    <h2 id="piloto-lifecycle">6. Consultar energía y ejecutar Lifecycle</h2>
+</div></details>
+    <details class="pilot-step" id="step-piloto-lifecycle"><summary><h2 id="piloto-lifecycle">7. Consultar energía y ejecutar Lifecycle</h2></summary><div class="pilot-step-content">
     <p><a href="#/kvm-lifecycle/getInstancePower" data-operation-id="getInstancePower">Consultar energía</a>. Para <a href="#/kvm-lifecycle/shutdownInstancePower" data-operation-id="shutdownInstancePower">shutdown</a>, <a href="#/kvm-lifecycle/startInstancePower" data-operation-id="startInstancePower">start</a> o <a href="#/kvm-lifecycle/rebootInstancePower" data-operation-id="rebootInstancePower">reboot</a>, ejecuta <b>una sola acción cada vez</b> y sigue su operación hasta terminar. Antes de reboot confirma que el guest está listo.</p>
-    <pre><code>curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID/power" -H "Authorization: Bearer $IACP_TOKEN"
+    <pre><code>curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID/power" -H "Authorization: Bearer $IACP_API_TOKEN"
 read -r -p 'Acción (shutdown, start o reboot): ' IACP_ACTION
 case "$IACP_ACTION" in shutdown|start|reboot) ;; *) echo 'Acción inválida'; exit 1 ;; esac
 IACP_ACTION_KEY="$IACP_KEY-$IACP_ACTION-$(python3 -c 'import uuid; print(uuid.uuid4())')"
 curl --fail-with-body -sS -X POST "$IACP_BASE_URL/v1/instances/$INSTANCE_ID/power/$IACP_ACTION" \
-  -H "Authorization: Bearer $IACP_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $IACP_API_TOKEN" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $IACP_ACTION_KEY" -d '{}' -o accion.json
 OPERATION_ID="$(python3 -c 'import json; print(json.load(open("accion.json"))["operation_id"])')"
-curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Authorization: Bearer $IACP_TOKEN"</code></pre>
+curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Authorization: Bearer $IACP_API_TOKEN"</code></pre>
     <p>Una clave por intención. Ante timeout conserva la misma clave y cuerpo; no vuelvas a generar <code>IACP_ACTION_KEY</code> indiscriminadamente. No envíes la siguiente acción mientras exista una operación incierta o activa.</p>
-    <h2 id="piloto-delete">7. Eliminar correctamente</h2>
+</div></details>
+    <details class="pilot-step" id="step-piloto-delete"><summary><h2 id="piloto-delete">8. Eliminar correctamente</h2></summary><div class="pilot-step-content">
     <p>Solo una instancia propia autorizada, apagada y sin operaciones activas. Espera el shutdown terminal antes del <a href="#/disposable-deletion/deleteDisposableInstance" data-operation-id="deleteDisposableInstance">DELETE comercial con cuerpo {}</a>. Los recursos protegidos quedan excluidos. No necesitas un UUID de aprobación comercial.</p>
     <pre><code>curl --fail-with-body -sS -X DELETE "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" \
-  -H "Authorization: Bearer $IACP_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $IACP_API_TOKEN" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $IACP_KEY-delete" -d '{}' -o eliminacion.json
 OPERATION_ID="$(python3 -c 'import json; print(json.load(open("eliminacion.json"))["operation_id"])')"
-curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Authorization: Bearer $IACP_TOKEN"
-curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" -H "Authorization: Bearer $IACP_TOKEN"
+curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Authorization: Bearer $IACP_API_TOKEN"
+curl --fail-with-body -sS "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" -H "Authorization: Bearer $IACP_API_TOKEN"
 </code></pre>
-    <p>Repite GET hasta confirmar resultado terminal y estado deleted; la liberación real y conciliación del state se verifican por el flujo de IACP. Un 202 no demuestra eliminación. Si falla o queda uncertain, escala con los IDs, sin borrar state ni forzar locks. Solo después de terminar, limpia el token de la sesión con <code>unset IACP_TOKEN</code>.</p>
+    <p>Repite GET hasta confirmar resultado terminal y estado deleted; la liberación real y conciliación del state se verifican por el flujo de IACP. Un 202 no demuestra eliminación. Si falla o queda uncertain, escala con los IDs, sin borrar state ni forzar locks. Solo después de terminar, limpia el token de la sesión con <code>unset IACP_API_TOKEN</code>.</p>
     <p><b>Errores:</b> 401 identidad; 403 permisos; 409 conflicto, cuota o estado; 422 JSON inválido; 429 límite temporal del proxy; 503 admisión/dependencia. Conserva la intención en reintentos. <a href="#referencia-api" data-doc-target="referencia-api">Abrir referencia Swagger y Try it out</a>.</p>
+</div></details>
+  </details>
   </section>
   <section class="integration" id="guia-crm" aria-label="Referencia avanzada de integración">
     <details><summary><span class="guide-icon">↳</span><span><b>Referencia avanzada de integración</b><small>Contrato, idempotencia, límites y recuperación</small></span><span class="guide-open">Abrir guía</span></summary><div class="guide-content">

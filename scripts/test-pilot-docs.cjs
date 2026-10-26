@@ -35,13 +35,31 @@ async function main() {
     await expect.poll(()=>page.locator(selector).evaluate(e=>{const r=e.getBoundingClientRect(),h=document.querySelector('.masthead').getBoundingClientRect();return r.top>=h.bottom+15&&r.top<=h.bottom+32;})).toBe(true).catch(async e=>{console.error(JSON.stringify({selector,url:page.url(),bounds:await page.locator(selector).boundingBox(),header:await page.locator('.masthead').boundingBox()}));throw e;});
     positions.push(await page.locator(selector).evaluate(e=>({id:e.id,top:e.getBoundingClientRect().top,header_bottom:document.querySelector('.masthead').getBoundingClientRect().bottom})));
    };
+   const root=page.locator('#pilot-panel');
+   await expect(root).toHaveAttribute('open','');
+   await root.locator(':scope > summary').click();
+   await expect(page.locator('#pilot-json')).toBeHidden();
+   await page.screenshot({path:path.join(output,mode+'-piloto-minimizado.png')});
+   await sidebar('[data-doc-target="inicio"]');
+   await expect(root).toHaveAttribute('open','');
+   for(const step of ['piloto-json','piloto-curl','piloto-respuesta','piloto-seguimiento','piloto-ssh','piloto-lifecycle','piloto-delete']) {
+    const panel=page.locator('#step-'+step);
+    if(await panel.getAttribute('open')!==null)await panel.locator(':scope > summary').click();
+    await expect(panel.locator('.pilot-step-content')).toBeHidden();
+    await page.locator(`.pilot .guide-toc a[href="#${step}"]`).click();
+    await expect(panel).toHaveAttribute('open','');await positioned('#'+step);
+   }
    for(const id of ['pilot-json','pilot-curl']){
+    const step=id==='pilot-json'?'piloto-json':'piloto-curl';
+    await page.locator(`.pilot .guide-toc a[href="#${step}"]`).click();
+
     await page.locator(`[data-copy-target="${id}"]`).click();
     await expect(page.locator('#copy-status')).toContainText('copiado completo');
     if(engine===chromium)expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(await page.locator('#'+id).textContent());
    }
    const body=JSON.parse(await page.locator('#pilot-json').textContent());
    expect(body.plan_id).toBe('kvm-1');expect(body.image_id).toBe('ubuntu-2404');
+   expect(Object.keys(body).sort()).toEqual(['access','image_id','name','plan_id']);
    await page.locator('#pilot-json').scrollIntoViewIfNeeded();
    await expect(page.locator('#pilot-json')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
    await page.screenshot({path:path.join(output,mode+'-json.png')});
