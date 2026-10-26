@@ -1,0 +1,17 @@
+{
+  "fecha_local": "2026-10-25T21:23:15.982837-06:00",
+  "release": "54d418119200710ee00eb7a9d406b9322fe8e40c",
+  "anterior": "ab36a06db3cefb12cd3004cf7921e2af54333c28",
+  "dictamen_promocion": "GO_CONTRATO_Y_UX_SIN_E2E_FISICO_NUEVO",
+  "pruebas_main": 104,
+  "suite_previa_pr78": 1087,
+  "playwright_modos": 3,
+  "coordenadas": 123,
+  "aprovisionamientos_reales": 0,
+  "terraform_apply": 0,
+  "identidades_o_tokens_nuevos": 0,
+  "rol_propuesto": "operator",
+  "administration_propuesta": false,
+  "alta_iam": "PENDIENTE_APROBACION",
+  "resiliencia_integral": "NO_GO"
+}
