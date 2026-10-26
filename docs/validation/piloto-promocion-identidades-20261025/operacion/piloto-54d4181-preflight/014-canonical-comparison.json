@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-26T02:57:58.778890+00:00",
+  "data": {
+    "changed_paths": [
+      "/services/api/image",
+      "/services/lifecycle-worker/image",
+      "/services/migrate/image",
+      "/services/ownership-certifier/image",
+      "/services/terraform-worker/image",
+      "/services/worker/image"
+    ],
+    "ignored_build_metadata": [],
+    "note": "No secret values included; certifier-only executable tmpfs is an explicit regression fix.",
+    "passed": true,
+    "unexpected_paths": []
+  }
+}

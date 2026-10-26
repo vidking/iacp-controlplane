@@ -1,0 +1,20 @@
+{
+  "tablas_comparadas": 15,
+  "counts_y_hashes_identicos": true,
+  "terraform_applies_historicos": 30,
+  "nuevos_applies": 0,
+  "nuevas_operaciones": 0,
+  "schema": [
+    "0012_commercial_intents"
+  ],
+  "nonterminal": {
+    "deletion_executions": [],
+    "guest_initializations": [],
+    "jobs": [],
+    "operations": [],
+    "power_executions": [],
+    "terraform_applies": []
+  },
+  "queues": {},
+  "unacked": 0
+}

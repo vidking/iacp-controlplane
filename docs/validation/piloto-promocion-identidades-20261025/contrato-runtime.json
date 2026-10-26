@@ -1,0 +1,30 @@
+{
+  "url": "https://iac.cyberfuel.com/docs",
+  "minimo_validado_por_modelo_del_runtime": true,
+  "red_resuelta": "lab-dhcp",
+  "contexto_omitido": null,
+  "solicitudes_completas_kvm1_kvm2": "PASS",
+  "null_explicito_rechazado": true,
+  "respuesta_sin_cambios": "PASS",
+  "curl_servido_bash_n": "PASS",
+  "smoke": [
+    {
+      "path": "/health/live",
+      "http": 200
+    },
+    {
+      "path": "/health/ready",
+      "http": 200
+    },
+    {
+      "path": "/docs",
+      "http": 401
+    },
+    {
+      "path": "/v1/plans",
+      "http": 401
+    }
+  ],
+  "post_creacion_ejecutados": 0,
+  "terraform_apply_ejecutados": 0
+}

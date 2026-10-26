@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-26T03:01:41.428694+00:00",
+  "data": {
+    "commercial_tenants": [
+      "00000000-0000-0000-0000-000000000001"
+    ],
+    "historical_instances_authorized": false,
+    "policies": []
+  }
+}

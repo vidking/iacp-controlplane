@@ -1,0 +1,33 @@
+{
+  "alcance": "Funciones de permisos del código activo; sin autenticar, registrar ni emitir identidades",
+  "resultados": [
+    {
+      "role": "operator",
+      "administration_configurada": false,
+      "write": true,
+      "approve": false,
+      "administration": false
+    },
+    {
+      "role": "reader",
+      "administration_configurada": false,
+      "write": false,
+      "approve": false,
+      "administration": false
+    },
+    {
+      "role": "approver",
+      "administration_configurada": false,
+      "write": false,
+      "approve": true,
+      "administration": true
+    },
+    {
+      "role": "docs",
+      "administration_configurada": false,
+      "write": false,
+      "approve": false,
+      "administration": false
+    }
+  ]
+}
