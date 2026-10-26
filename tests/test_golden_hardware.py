@@ -60,6 +60,13 @@ def test_native_verification_preserves_firmware_controller_and_hotplug():
         with pytest.raises(PlanError):verify_live(wrong,h,{'cpu_cores':2})
 
 
+def test_live_verification_accepts_proxmox_cputype_prefix():
+    h=parse(golden(hotplug='disk,network,memory'),29001,'mng01',2).model_dump()
+    clone=golden(hotplug='disk,network,memory')
+    clone.update(cpu='cputype=x86-64-v4,flags=+aes',cores=2,sockets=1)
+    verify_live(clone,h,{'cpu_cores':2})
+
+
 @pytest.mark.parametrize('password',[False,True])
 def test_golden_and_access_adapters_compose_and_seal_the_module_argument(tmp_path,password):
     from iacp.terraform import access_adapter
