@@ -38,16 +38,16 @@ def write(path,content,mode):
   os.replace(tmp,path)
  finally:
   if os.path.exists(tmp):os.unlink(tmp)
-# La llave pública es independiente de la contraseña de consola.
+# La contraseña root autoriza también SSH en el piloto LAB aprobado.
 if p['ssh_public_keys']:
  write(Path('/root/.ssh/authorized_keys'),'\n'.join(p['ssh_public_keys'])+'\n',0o600)
 write(Path('/etc/ssh/sshd_config.d/00-iacp-commercial-root.conf'),
- 'PermitRootLogin prohibit-password\n',0o600)
+ 'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n',0o600)
 Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)
 subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
 effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],
  check=True,capture_output=True,text=True,timeout=10).stdout
-assert ('permitrootlogin without-password\n' in effective or 'permitrootlogin prohibit-password\n' in effective)
+assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
 subprocess.run(['/usr/sbin/chpasswd'],input=('root:'+p['password']+'\n').encode(),
  check=True,capture_output=True,timeout=15)
 if os_id=='almalinux':
@@ -116,4 +116,4 @@ class SecureSSHBootstrap:
                     raise ValueError()
         except Exception:
             raise BootstrapSecretError('BOOTSTRAP_SSH_DELIVERY_UNCONFIRMED') from None
-        return {'status':'completed','console_password_configured':True,'root_ssh_password_enabled':False}
+        return {'status':'completed','console_password_configured':True,'root_ssh_password_enabled':True}

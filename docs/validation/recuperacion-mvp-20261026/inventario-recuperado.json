@@ -1,0 +1,338 @@
+{
+  "fecha_utc": "2026-10-26T08:02:37.941656+00:00",
+  "identidad": "lab-swagger-postman",
+  "servicios": [
+    {
+      "nombre": "/iacp-controlplane-api-1",
+      "imagen": "iacp/controlplane-api:lab-libre-47f5fd2",
+      "image_id": "sha256:22cc01cf097377b630d1ea552cf595cb8cb3eb02abf872ce14cc0e84fb34ecdb",
+      "running": true,
+      "health": "healthy"
+    },
+    {
+      "nombre": "/iacp-controlplane-worker-1",
+      "imagen": "iacp/controlplane-api:lab-libre-47f5fd2",
+      "image_id": "sha256:22cc01cf097377b630d1ea552cf595cb8cb3eb02abf872ce14cc0e84fb34ecdb",
+      "running": true,
+      "health": null
+    },
+    {
+      "nombre": "/iacp-controlplane-terraform-worker-1",
+      "imagen": "iacp/terraform-worker:lab-libre-47f5fd2",
+      "image_id": "sha256:cf399311a0842ce06438d30ee84010a6ed74b373d3b3a7108afd5ca46bd8e048",
+      "running": true,
+      "health": null
+    },
+    {
+      "nombre": "/iacp-controlplane-lifecycle-worker-1",
+      "imagen": "iacp/controlplane-api:lab-libre-47f5fd2",
+      "image_id": "sha256:22cc01cf097377b630d1ea552cf595cb8cb3eb02abf872ce14cc0e84fb34ecdb",
+      "running": true,
+      "health": null
+    },
+    {
+      "nombre": "/iacp-controlplane-db-1",
+      "imagen": "postgres:17-alpine",
+      "image_id": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+      "running": true,
+      "health": "healthy"
+    },
+    {
+      "nombre": "/iacp-controlplane-redis-1",
+      "imagen": "redis:7-alpine",
+      "image_id": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "running": true,
+      "health": "healthy"
+    },
+    {
+      "nombre": "/iacp-controlplane-traefik-1",
+      "imagen": "traefik@sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56",
+      "image_id": "sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56",
+      "running": true,
+      "health": null
+    }
+  ],
+  "consultas": {
+    "/health/ready": {
+      "http": 200,
+      "datos": {
+        "status": "ready"
+      }
+    },
+    "/v1/plans": {
+      "http": 200,
+      "datos": [
+        {
+          "plan_id": "kvm-1",
+          "name": "KVM 1",
+          "vcpus": 1,
+          "memory_mb": 2048,
+          "disk_gb": 50,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "plan_id": "kvm-2",
+          "name": "KVM 2",
+          "vcpus": 2,
+          "memory_mb": 4096,
+          "disk_gb": 100,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "plan_id": "kvm-3",
+          "name": "KVM 3",
+          "vcpus": 4,
+          "memory_mb": 8192,
+          "disk_gb": 200,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "plan_id": "kvm-4",
+          "name": "KVM 4",
+          "vcpus": 8,
+          "memory_mb": 16384,
+          "disk_gb": 400,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        }
+      ]
+    },
+    "/v1/images": {
+      "http": 200,
+      "datos": [
+        {
+          "image_id": "ubuntu-2404",
+          "operating_system": "Ubuntu",
+          "version": "24.04",
+          "status": "habilitada",
+          "cloud_init": true,
+          "qemu_guest_agent": true,
+          "root_access": true,
+          "ssh_access": true,
+          "minimum_requirements": {
+            "vcpus": 1,
+            "memory_mb": 512,
+            "disk_gb": 20
+          },
+          "compatible_plans": [
+            "kvm-1",
+            "kvm-2",
+            "kvm-3",
+            "kvm-4"
+          ],
+          "authorized": true,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "image_id": "ubuntu-2604",
+          "operating_system": "Ubuntu",
+          "version": "26.04",
+          "status": "habilitada",
+          "cloud_init": true,
+          "qemu_guest_agent": true,
+          "root_access": true,
+          "ssh_access": true,
+          "minimum_requirements": {
+            "vcpus": 1,
+            "memory_mb": 2048,
+            "disk_gb": 20
+          },
+          "compatible_plans": [
+            "kvm-1",
+            "kvm-2",
+            "kvm-3",
+            "kvm-4"
+          ],
+          "authorized": true,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "image_id": "almalinux-9",
+          "operating_system": "AlmaLinux",
+          "version": "9",
+          "status": "habilitada",
+          "cloud_init": true,
+          "qemu_guest_agent": true,
+          "root_access": true,
+          "ssh_access": true,
+          "minimum_requirements": {
+            "vcpus": 1,
+            "memory_mb": 2048,
+            "disk_gb": 20
+          },
+          "compatible_plans": [
+            "kvm-1",
+            "kvm-2",
+            "kvm-3",
+            "kvm-4"
+          ],
+          "authorized": true,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        },
+        {
+          "image_id": "almalinux-10",
+          "operating_system": "AlmaLinux",
+          "version": "10",
+          "status": "habilitada",
+          "cloud_init": true,
+          "qemu_guest_agent": true,
+          "root_access": true,
+          "ssh_access": true,
+          "minimum_requirements": {
+            "vcpus": 1,
+            "memory_mb": 2048,
+            "disk_gb": 20
+          },
+          "compatible_plans": [
+            "kvm-1",
+            "kvm-2",
+            "kvm-3",
+            "kvm-4"
+          ],
+          "authorized": true,
+          "availability": {
+            "available": true,
+            "capacity_verified": true,
+            "reasons": []
+          }
+        }
+      ]
+    },
+    "/v1/lab/usage": {
+      "http": 200,
+      "datos": {
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "usage": {
+          "instances": 2,
+          "vcpus": 3,
+          "memory_mb": 4096,
+          "disk_gb": 70,
+          "concurrent_operations": 0
+        },
+        "description": "Incluye reservas fallidas e inciertas y todos los perfiles del tenant; se libera capacidad solo con deleted verificado."
+      }
+    },
+    "/v1/instances/6cd6649f-71ce-4950-b2fa-16bb5cad66e3": {
+      "http": 200,
+      "datos": {
+        "instance_id": "6cd6649f-71ce-4950-b2fa-16bb5cad66e3",
+        "name": "e2e-g-kvm1-20261026-010055",
+        "status": "ready",
+        "ip_addresses": [],
+        "vmid": 30029,
+        "node": "mng01",
+        "access": {
+          "username": "root",
+          "status": "pending",
+          "cloud_init_complete": null,
+          "ssh_authenticated": null,
+          "observed_at": null,
+          "error_code": null
+        }
+      }
+    }
+  },
+  "infraestructura": {
+    "plantillas": [
+      {
+        "vmid": 29000,
+        "name": "iacp-ubuntu-2404-golden",
+        "template": 1,
+        "cpu": "x86-64-v4,flags=+aes",
+        "numa": 1,
+        "cores": 2,
+        "sockets": 1,
+        "bios": "ovmf",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "hotplug": null,
+        "boot": "order=scsi0"
+      },
+      {
+        "vmid": 29001,
+        "name": "iacp-ubuntu-2604-golden",
+        "template": 1,
+        "cpu": "x86-64-v4,flags=+aes",
+        "numa": 1,
+        "cores": 2,
+        "sockets": 1,
+        "bios": "ovmf",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "hotplug": "disk,network,usb,memory,cpu",
+        "boot": "order=scsi0"
+      },
+      {
+        "vmid": 29010,
+        "name": "iacp-almalinux-9-golden",
+        "template": 1,
+        "cpu": "x86-64-v4,flags=+aes",
+        "numa": 1,
+        "cores": 2,
+        "sockets": 1,
+        "bios": "ovmf",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "hotplug": null,
+        "boot": "order=scsi0"
+      },
+      {
+        "vmid": 29011,
+        "name": "iacp-almalinux-10-golden",
+        "template": 1,
+        "cpu": "x86-64-v4,flags=+aes",
+        "numa": 1,
+        "cores": 2,
+        "sockets": 1,
+        "bios": "ovmf",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "hotplug": null,
+        "boot": "order=scsi0"
+      }
+    ],
+    "vm30029": {
+      "instance_id": "6cd6649f-71ce-4950-b2fa-16bb5cad66e3",
+      "iacp_status": "ready",
+      "terraform_present": true,
+      "state_metadata": {
+        "version_id": "001792998083373734888-5TiXY6tyq2",
+        "lineage": "c754294e-e0cc-7633-6c66-157997e0ecd0",
+        "serial": 1,
+        "sha256": "928eb750e98d0f738696578a9cb4253cf6939d1abcd522e4965c7b8ffad2afe3",
+        "content_sha256": "65c865960b8b0354e3028894421e4c4bc9c4a7e0b772686c7ff301ad46aa27bd"
+      },
+      "proxmox": {
+        "present": false
+      },
+      "causa": "Eliminación manual comunicada por el responsable; pendiente de conciliación controlada si state conserva el recurso."
+    }
+  }
+}

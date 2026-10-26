@@ -33,7 +33,7 @@ def deletion_executor(tmp_path,monkeypatch):
     destroy['prior_state']['values']['root_module']['resources'][0]['values']=values
     state={'version':4,'lineage':'synthetic-lineage','serial':1,'resources':[{'mode':'managed','module':'module.kvm',
         'type':'proxmox_virtual_environment_vm','name':'this','instances':[{'attributes':values}]}]}
-    store=SimpleNamespace(state=state,version='v1',reader_calls=0,stopped=0)
+    store=SimpleNamespace(state=state,version='v1',reader_calls=0,stopped=0,absent=False,plan=destroy)
     class Reader:
         def __init__(self,*args):pass
         def read(self,cancelled):
@@ -61,7 +61,7 @@ def deletion_executor(tmp_path,monkeypatch):
     def stopped(*args):store.stopped+=1
     monkeypatch.setattr(module,'stopped',stopped)
     monkeypatch.setattr(module,'S3StateReader',Reader)
-    monkeypatch.setattr(module,'proxmox_resource',lambda *args:{'present':False})
+    monkeypatch.setattr(module,'proxmox_resource',lambda *args:{'present':not store.absent and store.state['serial']<2})
     return executor,ctx,store
 
 
@@ -166,3 +166,41 @@ def test_only_power_ownership_is_ignored_for_delete_not_provisioning():
     current['started']=not current['started']
     verify_topology(approved,current)
     assert approved==original
+
+
+@pytest.mark.parametrize('reappears',[False,True])
+@pytest.mark.parametrize('drift_present',[False,True])
+def test_external_deletion_uses_saved_refresh_without_repeating_provider_destroy(deletion_executor,monkeypatch,reappears,drift_present):
+    executor,ctx,store=deletion_executor
+    store.absent=True
+    store.plan['variables']={k:{'value':v} for k,v in ctx['variables'].items()}
+    original=deepcopy(store.plan['resource_changes'][0])
+    store.plan['resource_drift']=[original] if drift_present else []
+    store.plan['resource_changes']=[]
+    store.plan['prior_state']={'values':{}}
+    plan=executor.plan_deletion(ctx,lambda:False)
+    workspace=executor.deletion_workspace(ctx['instance_id'],ctx['operation_id'])
+    manifest=json.loads((workspace/'deletion-manifest.json').read_text())
+    assert manifest['absence_only'] is True
+    if reappears:
+        store.absent=False
+        with pytest.raises(PlanError,match='ABSENCE_CHANGED'):
+            executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:pytest.fail('No consumir'))
+        assert ['apply_destroy'] not in executor.runner.calls
+    else:
+        assert executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:None)['deleted']
+        assert store.stopped==0 and store.state['serial']==2
+
+
+@pytest.mark.parametrize('mutation',['foreign-vmid','wrong-variables','extra-resource','foreign-provider','creates'])
+def test_external_absence_plan_rejects_unrelated_or_ambiguous_changes(mutation):
+    variables=Allocation.model_validate(allocation_data(30000)).variables(SimpleNamespace(name='disposable',image='test-image',disk_gb=20,vcpus=2,memory_mb=2048))
+    plan=deletion_plan();drift=plan.pop('resource_changes')
+    drift[0]['change']['before']=plan_json(variables)['resource_changes'][0]['change']['after']
+    plan.update(resource_drift=drift,resource_changes=[],prior_state={'values':{}},variables={k:{'value':v} for k,v in variables.items()})
+    if mutation=='foreign-vmid':drift[0]['change']['before']['vm_id']=30001
+    elif mutation=='wrong-variables':plan['variables']={}
+    elif mutation=='extra-resource':plan['resource_drift'].append(deepcopy(drift[0]))
+    elif mutation=='foreign-provider':drift[0]['provider_name']='fixture/foreign'
+    else:plan['resource_changes']=deepcopy(drift)
+    with pytest.raises(PlanError):module.verify_delete_plan(plan,variables,absence_only=True)

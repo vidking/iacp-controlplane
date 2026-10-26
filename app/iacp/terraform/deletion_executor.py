@@ -19,7 +19,7 @@ from .observation import proxmox_resource
 from .state import S3StateReader
 
 
-def verify_delete_plan(plan, variables):
+def verify_delete_plan(plan, variables, *, absence_only=False):
     if variables['instance']['vm_id'] < 30000 or variables['instance']['vm_id'] in {104, 106}:
         raise PlanError('DELETE_UNSAFE_PLAN')
     if (plan.get('errored') is not False or plan.get('complete') is not True
@@ -27,6 +27,24 @@ def verify_delete_plan(plan, variables):
             or plan.get('deferred_action_invocations')):
         raise PlanError('DELETE_UNSAFE_PLAN')
     changes = plan.get('resource_changes', [])
+    if absence_only:
+        # Terraform puede certificar una eliminación externa mediante el refresh
+        # del plan guardado. Apply publica una nueva versión; nunca state rm.
+        drift=plan.get('resource_drift',[])
+        if changes or len(drift)>1 or managed_resources(plan.get('prior_state',{}).get('values',{})) or managed_resources(plan.get('planned_values',{})):
+            raise PlanError('DELETE_UNSAFE_ABSENCE_PLAN')
+        if {key:value.get('value') for key,value in plan.get('variables',{}).items()}!=variables:
+            raise PlanError('DELETE_UNSAFE_ABSENCE_PLAN')
+        if not drift:
+            return  # Terraform 1.16.6 omite resource_drift en planes -destroy.
+        resource=drift[0];detail=resource.get('change',{})
+        if (resource.get('address')!=ADDRESS or resource.get('mode')!='managed'
+                or resource.get('provider_name')!='registry.terraform.io/bpg/proxmox'
+                or detail.get('actions')!=['delete'] or detail.get('after') is not None
+                or detail.get('importing') or resource.get('deposed') or resource.get('index') is not None):
+            raise PlanError('DELETE_UNSAFE_ABSENCE_PLAN')
+        verify_identity(detail.get('before') or {},variables['instance'])
+        return
     if len(changes) != 1:
         raise PlanError('DELETE_UNSAFE_PLAN')
     change = changes[0]
@@ -65,6 +83,17 @@ def stopped(env, variables, cancelled):
     if cancelled():
         raise PlanError('CANCELLED')
 
+
+def require_absent(env, variables, cancelled):
+    if proxmox_resource(env,variables['instance'],cancelled)['present']:
+        raise PlanError('DELETE_EXTERNAL_ABSENCE_CHANGED')
+
+
+def deletion_before(plan, absence_only, persisted):
+    changes=plan.get('resource_drift' if absence_only else 'resource_changes',[])
+    return changes[0]['change']['before'] if changes else persisted
+
+
 def verify_topology(approved, current, *, persisted=None):
     """Retain provisioning checks; only started belongs to Lifecycle after create.
 
@@ -82,7 +111,22 @@ def verify_topology(approved, current, *, persisted=None):
     if not isinstance(unknown, dict):
         raise PlanError('DELETE_UNSAFE_PLAN')
     unknown['started'] = True
-    verify_postconditions(checked, current, source='delete.topology', persisted=persisted)
+    # NUMA afecta el arranque, no la pertenencia de VM/discos. El destroy sigue
+    # sellando el estado observado; solo se tolera esta diferencia booleana aquí.
+    # El plan de creación y sus comprobaciones de apply permanecen intactos.
+    observed=deepcopy(current);previous=deepcopy(persisted) if persisted is not None else None
+    technical_drift=[]
+    expected_cpu=change['after'].get('cpu') or []
+    if len(expected_cpu)==1 and len(observed.get('cpu') or [])==1:
+        expected_numa=expected_cpu[0].get('numa')
+        actual_numa=observed['cpu'][0].get('numa')
+        if type(expected_numa) is bool and type(actual_numa) is bool:
+            if actual_numa!=expected_numa:technical_drift.append('cpu.numa')
+            observed['cpu'][0]['numa']=expected_numa
+            if previous is not None and len(previous.get('cpu') or [])==1 and type(previous['cpu'][0].get('numa')) is bool:
+                previous['cpu'][0]['numa']=expected_numa
+    verify_postconditions(checked, observed, source='delete.topology', persisted=previous)
+    return technical_drift
 
 
 class DeletionExecutor(TerraformExecutor):
@@ -93,6 +137,8 @@ class DeletionExecutor(TerraformExecutor):
         workspace = self.deletion_workspace(context['instance_id'], context['operation_id'])
         try:
             manifest = json.loads((workspace / 'deletion-manifest.json').read_text())
+            from .golden_adapter import verify as verify_golden_adapter
+            verify_golden_adapter(workspace / 'source',manifest,context['variables'])
             if (manifest['context'] != context or manifest['source_revision'] != SOURCE_REVISION
                     or digest_file(workspace / 'source/stacks/kvm-instance/deletion.tfplan') != manifest['plan_sha256']):
                 raise ValueError()
@@ -125,6 +171,9 @@ class DeletionExecutor(TerraformExecutor):
                 raise PlanError('INVALID_SOURCE')
             source.extractall(workspace / 'source', filter='data')
         root = workspace / 'source/stacks/kvm-instance'
+        if 'iacp_golden_hardware' in context['variables']:
+            from .golden_adapter import install
+            install(workspace / 'source')
         write_private(root / 'iacp.auto.tfvars.json', context['variables'])
         write_private(root / 'backend.tfbackend.json', context['backend'])
         env = self.environment(workspace)
@@ -134,21 +183,28 @@ class DeletionExecutor(TerraformExecutor):
             resource = state_resource(state.state, context['variables'])
             if resource is None:
                 raise PlanError('DELETE_OWNED_STATE_REQUIRED')
-            stopped(env, context['variables'], cancelled)
+            absence_only=not proxmox_resource(env,context['variables']['instance'],cancelled)['present']
+            precondition=require_absent if absence_only else stopped
+            precondition(env, context['variables'], cancelled)
             self.initialize(root, env, cancelled, 'delete.plan')
             approved = self.provisioning_plan(context, root, env, cancelled)
             verify_topology(approved, resource)
             self.runner.plan_destroy(root, env, cancelled)
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.inspect')
-            verify_delete_plan(plan, context['variables'])
-            verify_topology(approved, plan['resource_changes'][0]['change']['before'], persisted=resource)
+            verify_delete_plan(plan, context['variables'],absence_only=absence_only)
+            technical_drift=verify_topology(approved, deletion_before(plan,absence_only,resource), persisted=resource)
             state.verify(reader.read(cancelled))
-            stopped(env, context['variables'], cancelled)
+            precondition(env, context['variables'], cancelled)
             saved = root / 'deletion.tfplan'; saved.chmod(0o600)
             salt = secrets.token_hex(32)
             manifest = {'context': context, 'source_revision': SOURCE_REVISION, 'plan_sha256': digest_file(saved),
                         'state_before': state.metadata(), 'execution_context_salt': salt,
                         'execution_context_sha256': self.context_digest(env, salt)}
+            manifest['technical_drift']=technical_drift
+            manifest['absence_only']=absence_only
+            if 'iacp_golden_hardware' in context['variables']:
+                from .golden_adapter import DIGEST
+                manifest['golden_adapter_sha256']=DIGEST
             write_private(workspace / 'deletion-manifest.json', manifest)
             return {'plan_sha256': manifest['plan_sha256'], 'state_before': manifest['state_before']}
         finally:
@@ -161,21 +217,23 @@ class DeletionExecutor(TerraformExecutor):
                 != manifest['execution_context_sha256']):
             raise PlanError('DELETE_PLAN_INTEGRITY_FAILED')
         reader = S3StateReader(context['backend'], env)
+        absence_only=manifest.get('absence_only') is True
+        precondition=require_absent if absence_only else stopped
         try:
             current = reader.read(cancelled)
             if current.metadata() != manifest['state_before'] or state_resource(current.state, context['variables']) is None:
                 raise PlanError('DELETE_STATE_CHANGED')
-            stopped(env, context['variables'], cancelled)
+            precondition(env, context['variables'], cancelled)
             root = workspace / 'source/stacks/kvm-instance'
             self.initialize(root, env, cancelled, 'delete.apply')
             approved = self.provisioning_plan(context, root, env, cancelled)
             verify_topology(approved, state_resource(current.state, context['variables']))
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.reinspect')
-            verify_delete_plan(plan, context['variables'])
-            verify_topology(approved, plan['resource_changes'][0]['change']['before'],
-                            persisted=state_resource(current.state, context['variables']))
+            verify_delete_plan(plan, context['variables'],absence_only=absence_only)
+            persisted=state_resource(current.state, context['variables'])
+            verify_topology(approved, deletion_before(plan,absence_only,persisted),persisted=persisted)
             current.verify(reader.read(cancelled))
-            stopped(env, context['variables'], cancelled)
+            precondition(env, context['variables'], cancelled)
             if digest_file(root / 'deletion.tfplan') != sha256:
                 raise PlanError('DELETE_PLAN_INTEGRITY_FAILED')
             before_mutation()  # Durable consumption fence BEFORE spawning Terraform.

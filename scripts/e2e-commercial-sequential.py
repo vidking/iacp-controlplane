@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Certificación LAB explícita: kvm-1/2 por HTTPS, secuencial y sin secretos en evidencias."""
+"""Certificación LAB explícita de planes e imágenes por HTTPS, secuencial y sin secretos en evidencias."""
 import argparse
 import base64
 from datetime import datetime
@@ -148,9 +148,27 @@ result={'vmid':e.vmid,'node':a.node_name,'instance_status':i.status,'bootstrap_s
         'secret_reference_removed':c.secret_reference is None,'proxmox':observation,'state':state_result}
 if P.get('deleted'):
  assert i.status=='deleted' and not observation['present'] and resource is None
+ stores={a.boot_disk.datastore_id,a.cloudinit_datastore_id,a.clone_datastore_id}-{None}
+ residual=[]
+ for storage in sorted(stores):
+  for entry in client._request('GET',f'/nodes/{a.node_name}/storage/{storage}/content'):
+   if str(entry.get('vmid',''))==str(e.vmid) or ('vm-'+str(e.vmid)+'-') in entry.get('volid',''):
+    residual.append(entry['volid'])
+ assert not residual
+ result['residual_disks']=residual
 else:
  assert c.bootstrap_status=='completed' and c.secret_reference is None and observation['present'] and resource
  cfg=client._request('GET',target.path+'/config')
+ from iacp.terraform.golden_hardware import verify_live,verify_cpu
+ from iacp.terraform.executor import verify_plan
+ hardware=v['iacp_golden_hardware']
+ verify_live(cfg,hardware,v['instance']);verify_cpu(resource,v)
+ executor=build_executor(observation=True)
+ saved=executor.workspace(i.id,e.attempt)/'source/stacks/kvm-instance'
+ plan=executor.read_json(['show','-json','saved.tfplan'],saved,executor.environment(executor.workspace(i.id,e.attempt)),lambda:False,'e2e.inspect')
+ verify_plan(plan,v)
+ result['golden_hardware']={'source':hardware,'terraform_plan_cpu':plan['resource_changes'][0]['change']['after']['cpu'],
+  'effective':{k:cfg.get(k) for k in ['cpu','numa','sockets','cores','bios','machine','scsihw','hotplug','boot']},'status':'PASS'}
  assert int(cfg['cores'])*int(cfg.get('sockets',1))==P['cpus'] and int(cfg['memory'])==P['memory_mb']
  result['proxmox_resources']={'cores':cfg['cores'],'memory_mb':cfg['memory'],'boot_disk':cfg[a.boot_disk.interface],'cloud_init_network':cfg.get('ipconfig0')}
  host=client._request('GET',target.path+'/agent/file-read?'+urlencode({'file':'/etc/ssh/ssh_host_ed25519_key.pub','count':8192}))['content'].split()
@@ -201,11 +219,18 @@ print(json.dumps({'os_id':release['ID'].strip('\"'),'os_version':release['VERSIO
   result.update(guest=guest,ip=address,ssh_root_key=True)
   _,policy,_=ssh.exec_command('sshd -T -C user=root,host=localhost,addr=127.0.0.1',timeout=15)
   text=policy.read().decode();assert policy.channel.recv_exit_status()==0
-  assert 'permitrootlogin without-password\n' in text or 'permitrootlogin prohibit-password\n' in text
-  result['root_ssh_password_enabled']=False
+  assert 'permitrootlogin yes\n' in text and 'passwordauthentication yes\n' in text
+  result['root_ssh_password_enabled']=True
   if P.get('without_password'):
    result['root_password_pam']='NO_EJECUTADO_CLIENTE_SIN_SECRETO'
    print(json.dumps(result,default=str));raise SystemExit(0)
+  with paramiko.SSHClient() as password_ssh:
+   password_ssh.get_host_keys().add(address,'ssh-ed25519',paramiko.Ed25519Key(data=base64.b64decode(host[1])))
+   password_ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+   password_ssh.connect(address,username='root',password=P['password'],allow_agent=False,look_for_keys=False,timeout=15,auth_timeout=15)
+   _,identity,_=password_ssh.exec_command('id -u',timeout=10)
+   assert identity.read().strip()==b'0' and identity.channel.recv_exit_status()==0
+  result['ssh_root_password']=True
   channel=ssh.get_transport().open_session();channel.get_pty()
   channel.exec_command("stty -echo; LC_ALL=C runuser -u nobody -- su - root -c 'id -u'")
   received=b'';deadline=time.monotonic()+30
