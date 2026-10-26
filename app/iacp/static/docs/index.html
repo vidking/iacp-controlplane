@@ -39,11 +39,11 @@
   <section class="intro pilot guide-content" aria-labelledby="pilot-title">
 <details id="pilot-panel" data-document-root open>
     <summary class="pilot-summary"><span class="eyebrow">APROVISIONAMIENTO · CATÁLOGO AUTORIZADO</span>
-    <h1 id="pilot-title">Crear máquina virtual</h1><span>Minimizar / expandir recorrido</span></summary>
+    <h1 id="pilot-title">Crear y administrar máquinas virtuales</h1><span>Minimizar / expandir recorrido</span></summary>
     {{pilot_contract_note}}
     <p>Selecciona un plan y un sistema operativo del catálogo real, introduce nombre y acceso y crea la VM con tu identidad autorizada. Base: <code>https://iac.cyberfuel.com</code>. Cada solicitud utiliza recursos reales de MNG.</p>
     <nav class="guide-toc" aria-label="Recorrido piloto"><a href="#piloto-acceso">1. Acceso</a><a href="#piloto-json">2. Configurar máquina virtual</a><a href="#piloto-curl">3. cURL</a><a href="#piloto-respuesta">4. Respuesta</a><a href="#piloto-seguimiento">5. Progreso e IP</a><a href="#piloto-ssh">6. SSH</a><a href="#piloto-lifecycle">7. Lifecycle</a><a href="#piloto-delete">8. Eliminar</a></nav>
-    <p>El tenant LAB autorizado de MNG puede usar el modo explícito sin presupuesto comercial acumulado; conserva capacidad física y concurrencia. Otros tenants mantienen sus cuotas. Un rechazo 409 debe resolverse por su código, no repitiendo con claves nuevas.</p>
+    <p>El tenant LAB autorizado de MNG no usa cuotas comerciales acumuladas; IACP mantiene capacidad física, locks y serialización técnica. Otros tenants mantienen sus cuotas. Un rechazo 409 se resuelve por su código, no repitiendo con claves nuevas.</p>
     <p id="copy-status" role="status" aria-live="polite"></p>
 
     <details class="pilot-step" id="step-piloto-acceso"><summary><h2 id="piloto-acceso">1. Acceso autorizado</h2></summary><div class="pilot-step-content">
@@ -63,7 +63,7 @@
       <small>16–128 caracteres ASCII imprimibles. Se entrega por bootstrap seguro y permite acceso root por SSH y consola.</small>
       <label>Llave pública SSH opcional <textarea id="pilot-ssh" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea></label>
       <small>Una llave pública por línea, máximo 16. Puedes acceder con contraseña; añade tu llave pública si también quieres autenticarte con llave. Nunca envíes una privada.</small>
-      <label>Idempotency-Key automática <input id="pilot-key" readonly></label>
+      <details><summary>Intención técnica gestionada automáticamente</summary><label>Idempotency-Key de CREATE (solo lectura) <input id="pilot-key" readonly></label><small>La consola genera una clave distinta para CREATE, START, SHUTDOWN, REBOOT y DELETE. Nunca debes copiarla entre acciones.</small></details>
       <button type="button" id="pilot-new-intent">Nueva intención</button>
       <small>Un reintento conserva la clave y el cuerpo. Nueva intención prepara otra VM. Si recargas, introduce la misma contraseña para reanudar.</small>
       <p id="pilot-validation" role="status"></p>
@@ -84,7 +84,8 @@
     <pre><code id="pilot-curl">Completa el formulario para generar el cURL de la misma intención.</code></pre>
 </div></details>
     <section aria-label="Resultado de la solicitud" class="pilot-live">
-      <h2>Resultado y seguimiento</h2><p id="pilot-live-status" role="status">Todavía no se ha enviado una solicitud desde este formulario.</p>
+      <h2>Seguimiento y administración</h2><p id="pilot-live-status" role="status">Todavía no se ha enviado una solicitud desde este formulario.</p>
+      <div class="pilot-instance-picker"><label>Mis instancias del tenant LAB <select id="pilot-instance-select"><option value="">Autoriza y carga tus instancias</option></select></label><button type="button" id="pilot-load-instances">Cargar instancias</button><p id="pilot-instance-status" role="status"></p></div>
       <pre><code id="pilot-live-result"></code></pre>
       <button type="button" id="pilot-refresh" disabled>Actualizar estado e IP</button>
       <p id="pilot-power-status">Consulta el estado para habilitar las acciones de esta VM.</p>
@@ -93,7 +94,7 @@
       <button type="button" data-pilot-action="reboot" disabled>Reiniciar</button>
       <button type="button" data-pilot-action="delete" disabled>Eliminar esta VM</button>
       <p id="pilot-operation-links"></p>
-      <p>202 significa admitida. Consulta estado, acceso e IP; verifica SSH con tu contraseña o llave antes de considerarla accesible. Las acciones Lifecycle y DELETE están en los pasos siguientes y en la referencia API.</p>
+      <p>La ficha usa los identificadores reales devueltos por IACP y consulta la operación sin crear trabajos nuevos. 202 significa admitida, no lista. Las acciones solo se habilitan cuando el estado de energía y la operación anterior son compatibles.</p>
     </section>
     <details class="pilot-step" id="step-piloto-respuesta"><summary><h2 id="piloto-respuesta">4. Respuesta real: HTTP 202</h2></summary><div class="pilot-step-content">
     <p>Para integrar basta conservar <code>instance_id</code> y <code>status</code> y consultar <code>GET /v1/instances/{instance_id}</code>. Los identificadores técnicos permanecen disponibles para compatibilidad y soporte. Respuesta completa de la prueba KVM 1 del <b>25/10/2026, Costa Rica</b>. Esa VM ya fue eliminada: estos identificadores son evidencia, <b>no los de tu solicitud</b>. Un 202 confirma admisión, no SSH listo.</p>

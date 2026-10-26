@@ -142,7 +142,10 @@ def quota(session,tenant_id,limits,resources=None):
         'memory_mb':resources['memory_mb'] if resources else 0,'disk_gb':resources['disk_gb'] if resources else 0,
         'concurrent_operations':1}
     for name in additions:
-        if limits.lab_mng_physical_capacity_only and name != 'concurrent_operations':
+        # LAB/MNG autorizado no tiene presupuesto comercial acumulado,
+        # incluida la concurrencia. La serialización técnica por state/VMID
+        # sigue siendo obligatoria en los locks de Terraform y Proxmox.
+        if limits.lab_mng_physical_capacity_only:
             continue
         if used[name]+additions[name]>getattr(limits,'max_'+name):
             raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:'+name)

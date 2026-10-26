@@ -224,6 +224,10 @@ def authorize_operation(session, instance, action):
         from .commercial import member as commercial_member,limits_for,quota
         commercial_member(session,instance,action)
         limit=limits_for(instance.tenant_id)
+        if limit.lab_mng_physical_capacity_only:
+            # La excepción LAB elimina la cuota comercial; no elimina los
+            # locks por instancia/state ni la serialización del executor.
+            return
         used=usage(session,instance.tenant_id)
         if used['concurrent_operations']>=limit.max_concurrent_operations:
             raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:concurrent_operations')

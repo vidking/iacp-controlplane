@@ -24,7 +24,7 @@ def enable():
     return commercial.limits_for(BOOTSTRAP_TENANT_ID)
 
 
-def test_exception_survives_reload_and_skips_only_commercial_budget(commercial_config, monkeypatch):
+def test_exception_survives_reload_and_skips_commercial_budget_including_concurrency(commercial_config, monkeypatch):
     limits = enable()
     used = dict(instances=10000, vcpus=10000, memory_mb=1000000, disk_gb=1000000,
                 concurrent_operations=0)
@@ -33,8 +33,7 @@ def test_exception_survives_reload_and_skips_only_commercial_budget(commercial_c
                      dict(vcpus=8, memory_mb=16384, disk_gb=400))
     assert commercial.limits_for(BOOTSTRAP_TENANT_ID) == limits
     used['concurrent_operations'] = 1
-    with pytest.raises(Conflict, match='QUOTA_EXCEEDED:concurrent_operations'):
-        commercial.quota(None, BOOTSTRAP_TENANT_ID, limits)
+    commercial.quota(None, BOOTSTRAP_TENANT_ID, limits)
 
 
 def test_existing_quotas_unchanged_without_explicit_exception(commercial_config, monkeypatch):

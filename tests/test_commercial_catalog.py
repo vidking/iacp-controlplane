@@ -242,7 +242,7 @@ def test_candidate_openapi_valid_examples_and_active_contract_is_historical():
 
 def test_local_configurator_requires_live_catalog_and_user_values(client,auth):
     page=client.get('/docs',headers=auth).text
-    assert '<h1 id="pilot-title">Crear máquina virtual</h1>' in page
+    assert '<h1 id="pilot-title">Crear y administrar máquinas virtuales</h1>' in page
     assert 'id="load-pilot-catalog"' in page
     assert 'id="pilot-execute" disabled' in page
     assert 'asset=provisioning-v1.js' in page
