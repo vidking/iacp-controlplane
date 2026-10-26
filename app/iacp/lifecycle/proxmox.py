@@ -151,4 +151,13 @@ class ProxmoxPower:
         exitstatus = data.get("exitstatus")
         if not isinstance(exitstatus, str):
             raise PowerError("POWER_PROXMOX_UNAVAILABLE")
-        return "completed" if exitstatus == "OK" else "timeout" if "timeout" in exitstatus.lower() else "failed"
+        if exitstatus == "OK":
+            return "completed"
+        # Proxmox includes the decisive guest-side cause in the UPID exit
+        # status. Preserve that distinction so a missing QEMU Guest Agent is
+        # not reported as an opaque ACPI timeout by the Lifecycle state
+        # machine. The command was consumed and must never be replayed.
+        normalized = exitstatus.lower()
+        if "qemu guest agent" in normalized and "timeout" in normalized:
+            return "guest_agent_timeout"
+        return "timeout" if "timeout" in normalized else "failed"

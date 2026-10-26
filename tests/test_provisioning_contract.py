@@ -219,7 +219,12 @@ def test_phase_g_core_changes_are_explicit_and_other_invariants_remain_identical
         'app/iacp/terraform/lifecycle.py','app/iacp/terraform/observation.py',
         'app/iacp/terraform/golden_adapter.py','app/iacp/terraform/golden_hardware.py',
         'app/iacp/services/secure_bootstrap.py'}
-    for path, digest in (checksums | reviewed | golden).items():
+    core=json.loads((ROOT/'docs/contracts/provisioning-api-core-reviewed.json').read_text())
+    assert set(core)=={'app/iacp/models.py','app/iacp/terraform/access_adapter.py','app/iacp/terraform/apply.py',
+        'app/iacp/terraform/config.py','app/iacp/terraform/deletion.py','app/iacp/terraform/deletion_executor.py',
+        'app/iacp/terraform/executor.py','app/iacp/terraform/lifecycle.py','app/iacp/terraform/observation.py',
+        'app/iacp/terraform/profiles.py','app/iacp/terraform/worker.py','deploy/mng/compose.yaml'}
+    for path, digest in (checksums | reviewed | golden | core).items():
         assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest, path
 
 
