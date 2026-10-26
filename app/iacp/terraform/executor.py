@@ -94,8 +94,14 @@ def verify_plan(plan: dict, variables: dict) -> dict:
     if not correct:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
-    from .golden_hardware import verify_cpu
+    from .golden_hardware import verify_cpu, verify_disk_plan
     verify_cpu(after,variables)
+    if after.get('disk'):
+        disk = next((item for item in after['disk']
+                     if item.get('interface') == instance['boot_disk']['interface']), None)
+        if disk is None:
+            raise PlanError('GOLDEN_DISK_PLAN_MISMATCH')
+        verify_disk_plan(disk, variables)
     if 'iacp_root_password' in variables:
         import hmac
         try:

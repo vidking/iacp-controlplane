@@ -3,13 +3,13 @@ from copy import deepcopy
 from types import SimpleNamespace
 import json
 import pytest
-from iacp.terraform.golden_hardware import parse,verify_cpu,verify_live
+from iacp.terraform.golden_hardware import parse,verify_cpu,verify_live,verify_disk_plan
 from iacp.terraform.config import PlanError,Allocation
 from iacp.terraform.golden_adapter import install,verify,DIGEST,FILES
 
 
-def golden(cpu='x86-64-v4,flags=+aes',numa=1,hotplug='disk,network,memory'):
-    return dict(template=1,cpu=cpu,numa=numa,sockets=1,bios='ovmf',machine='q35',scsihw='virtio-scsi-single',hotplug=hotplug,boot='order=scsi0')
+def golden(cpu='x86-64-v4,flags=+aes',numa=1,hotplug='disk,network,memory',disk='DS_CYBERFUEL:base-29001-disk-1,discard=on,iothread=1,size=20G'):
+    return dict(template=1,cpu=cpu,numa=numa,sockets=1,bios='ovmf',machine='q35',scsihw='virtio-scsi-single',hotplug=hotplug,boot='order=scsi0',scsi0=disk)
 
 
 @pytest.mark.parametrize('cpu',['x86-64-v4,flags=+aes','host,flags=+aes;-vmx','Haswell-v4'])
@@ -54,17 +54,41 @@ def test_adapter_is_versioned_sealed_and_cannot_enter_legacy_workspaces(tmp_path
 
 def test_native_verification_preserves_firmware_controller_and_hotplug():
     raw=golden();h=parse(raw,29001,'mng01',2).model_dump();clone={**raw,'cores':2,'sockets':1}
-    verify_live(clone,h,{'cpu_cores':2})
+    expected={'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}}
+    verify_live(clone,h,expected)
     for field in ['cpu','numa','bios','machine','scsihw','hotplug']:
         wrong=deepcopy(clone);wrong[field]='qemu64' if field=='cpu' else (0 if field=='numa' else 'incorrecto')
-        with pytest.raises(PlanError):verify_live(wrong,h,{'cpu_cores':2})
+        with pytest.raises(PlanError):verify_live(wrong,h,expected)
 
 
-def test_live_verification_accepts_proxmox_cputype_prefix():
+def test_live_verification_rejects_provider_cputype_prefix():
     h=parse(golden(hotplug='disk,network,memory'),29001,'mng01',2).model_dump()
     clone=golden(hotplug='disk,network,memory')
     clone.update(cpu='cputype=x86-64-v4,flags=+aes',cores=2,sockets=1)
-    verify_live(clone,h,{'cpu_cores':2})
+    with pytest.raises(PlanError,match='POSTCONDITION_MISMATCH'):
+        verify_live(clone,h,{'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}})
+
+
+def test_golden_disk_snapshot_preserves_only_observed_options():
+    h=parse(golden(),29001,'mng01',2).model_dump()
+    disk=h['disk']
+    assert disk['interface']=='scsi0'
+    assert disk['minimum_size_gb']==20
+    assert disk['discard']=='on' and disk['iothread'] is True
+    assert disk['aio'] is None and disk['backup'] is None and disk['replicate'] is None
+
+
+def test_disk_plan_rejects_provider_defaults_not_present_in_golden():
+    hardware=parse(golden(),29001,'mng01',1).model_dump()
+    variables={'instance':{'boot_disk':{'interface':'scsi0','size_gb':50,'datastore_id':'DS_CYBERFUEL'}},
+               'iacp_golden_hardware':hardware}
+    plan={'interface':'scsi0','size':50,'datastore_id':'DS_CYBERFUEL',
+          'file_format':None,'aio':None,'cache':None,'discard':'on','backup':None,
+          'replicate':None,'iothread':True,'ssd':None,'serial':None,'queues':None}
+    verify_disk_plan(plan,variables)
+    plan['iothread']=False
+    with pytest.raises(PlanError,match='DISK_PLAN_MISMATCH'):
+        verify_disk_plan(plan,variables)
 
 
 @pytest.mark.parametrize('password',[False,True])

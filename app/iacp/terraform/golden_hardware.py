@@ -1,6 +1,7 @@
 """Hardware heredado de la Golden Image, observado y sellado antes del plan."""
 import re
 import ssl
+from typing import Literal
 from urllib.parse import quote
 from urllib.request import build_opener, ProxyHandler, HTTPSHandler
 
@@ -19,6 +20,112 @@ class GoldenHardware(StrictModel):
     source_sockets: int = Field(ge=1)
     source_cpu: str
     base: dict
+    # Snapshot técnico del disco de arranque. Es opcional únicamente para
+    # snapshots históricos anteriores a la captura de hardware de disco.
+    disk: "GoldenDisk | None" = None
+
+
+class GoldenDisk(StrictModel):
+    """Atributos del disco realmente presentes en la Golden Image.
+
+    Los ``None`` son significativos: indican que Proxmox no publicó el
+    atributo en la plantilla y, por tanto, Terraform no debe introducir un
+    valor por defecto del provider.
+    """
+
+    interface: str = Field(pattern=r"^(scsi([0-9]|[12][0-9]|30)|sata[0-5]|virtio([0-9]|1[0-5]))$")
+    source_datastore_id: str = Field(min_length=1)
+    minimum_size_gb: int = Field(ge=1)
+    file_format: Literal["raw", "qcow2", "vmdk"] | None = None
+    aio: Literal["io_uring", "native", "threads"] | None = None
+    cache: Literal["none", "writethrough", "writeback", "directsync", "unsafe"] | None = None
+    discard: Literal["on", "ignore"] | None = None
+    backup: bool | None = None
+    replicate: bool | None = None
+    iothread: bool | None = None
+    ssd: bool | None = None
+    serial: str | None = None
+    queues: int | None = Field(default=None, ge=1)
+
+
+_DISK_OPTION_KEYS = {
+    "aio", "backup", "cache", "discard", "iothread", "replicate", "ssd",
+    "serial", "queues", "size", "format",
+}
+_DISK_TECHNICAL_FIELDS = (
+    "file_format", "aio", "cache", "discard", "backup", "replicate",
+    "iothread", "ssd", "serial", "queues",
+)
+
+
+def _bool_option(value):
+    if value not in {"0", "1"}:
+        raise ValueError()
+    return value == "1"
+
+
+def _disk(raw_value, interface):
+    if not isinstance(raw_value, str):
+        raise ValueError()
+    parts = raw_value.split(",")
+    if not parts or ":" not in parts[0]:
+        raise ValueError()
+    source_datastore_id = parts[0].split(":", 1)[0]
+    if not source_datastore_id:
+        raise ValueError()
+    options = {}
+    for item in parts[1:]:
+        if "=" not in item:
+            raise ValueError()
+        key, value = item.split("=", 1)
+        if key not in _DISK_OPTION_KEYS or key in options:
+            # No ignorar silenciosamente una opción técnica que el provider
+            # no sabe materializar.
+            raise ValueError()
+        options[key] = value
+    size = options.pop("size", None)
+    if size is None:
+        raise ValueError()
+    match = re.fullmatch(r"([1-9][0-9]*)G", size)
+    if not match:
+        raise ValueError()
+    fmt = options.pop("format", None)
+    if fmt is not None and fmt not in {"raw", "qcow2", "vmdk"}:
+        raise ValueError()
+    queues = options.pop("queues", None)
+    if queues is not None:
+        queues = int(queues)
+        if queues < 1:
+            raise ValueError()
+    return GoldenDisk(
+        interface=interface,
+        source_datastore_id=source_datastore_id,
+        minimum_size_gb=int(match.group(1)),
+        file_format=fmt,
+        aio=options.pop("aio", None),
+        cache=options.pop("cache", None),
+        discard=options.pop("discard", None),
+        backup=_bool_option(options.pop("backup")) if "backup" in options else None,
+        replicate=_bool_option(options.pop("replicate")) if "replicate" in options else None,
+        iothread=_bool_option(options.pop("iothread")) if "iothread" in options else None,
+        ssd=_bool_option(options.pop("ssd")) if "ssd" in options else None,
+        serial=options.pop("serial", None),
+        queues=queues,
+    )
+
+
+def _boot_disk_interface(raw):
+    boot = raw.get("boot")
+    if isinstance(boot, str):
+        match = re.search(r"(?:^|,)order=([^,]+)", boot)
+        if match:
+            candidate = match.group(1).split(";", 1)[0]
+            if re.fullmatch(r"(?:scsi([0-9]|[12][0-9]|30)|sata[0-5]|virtio([0-9]|1[0-5]))", candidate):
+                return candidate
+    candidates = sorted(key for key in raw if re.fullmatch(r"(?:scsi([0-9]|[12][0-9]|30)|sata[0-5]|virtio([0-9]|1[0-5]))", key))
+    if not candidates:
+        raise ValueError()
+    return candidates[0]
 
 
 def read(env, allocation, vcpus):
@@ -54,8 +161,11 @@ def parse(raw, vmid, node, vcpus):
         if 'memory' in (raw.get('hotplug') or '').split(',') and not numa:
             raise PlanError('GOLDEN_MEMORY_HOTPLUG_REQUIRES_NUMA')
         base={key:raw.get(key) for key in ['bios','machine','scsihw','hotplug','boot']}
+        interface = _boot_disk_interface(raw)
+        disk = _disk(raw.get(interface), interface)
         return GoldenHardware(template_vm_id=vmid,template_node=node,cpu_type=parts[0],flags=flags,
-            numa=bool(numa),sockets=sockets,source_sockets=source_sockets,source_cpu=raw['cpu'],base=base)
+            numa=bool(numa),sockets=sockets,source_sockets=source_sockets,source_cpu=raw['cpu'],base=base,
+            disk=disk)
     except (KeyError,TypeError,ValueError):
         raise PlanError('GOLDEN_HARDWARE_UNSUPPORTED') from None
 
@@ -64,19 +174,38 @@ def verify_cpu(actual, variables):
     hardware=variables.get('iacp_golden_hardware')
     if not hardware:return
     cpu=actual.get('cpu',[{}])[0]
-    if (cpu.get('type')!=hardware['cpu_type'] or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
+    if (cpu.get('type') not in (None, hardware['cpu_type']) or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
             or cpu.get('numa') is not hardware['numa'] or cpu.get('sockets',1)!=hardware['sockets']
             or cpu.get('cores',0)*cpu.get('sockets',1)!=variables['instance']['cpu_cores']):
         raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH')
 
 
+def verify_disk_plan(actual, variables):
+    hardware = variables.get('iacp_golden_hardware')
+    if not hardware or not hardware.get('disk'):
+        return
+    try:
+        expected = hardware['disk']
+        requested = variables['instance']['boot_disk']
+        if (actual['interface'] != expected['interface']
+                or actual['size'] != requested['size_gb']
+                or actual['datastore_id'] != requested['datastore_id']):
+            raise ValueError()
+        for key in _DISK_TECHNICAL_FIELDS:
+            if actual.get(key) != expected.get(key):
+                raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise PlanError('GOLDEN_DISK_PLAN_MISMATCH') from None
+
+
 def verify_live(config, hardware, expected):
     try:
+        if hardware.get('source_cpu') != config.get('cpu'):
+            # La representación cruda también forma parte del contrato. En
+            # particular, ``cputype=`` no es equivalente para esta validación.
+            raise ValueError()
         parts=config['cpu'].split(',')
-        # Proxmox devuelve el tipo de CPU en dos formas según el endpoint/
-        # versión: ``x86-64-v4,...`` o ``cputype=x86-64-v4,...``. Ambas
-        # representan el mismo hardware efectivo y deben validar igual.
-        cpu_type=parts[0].split('=',1)[1] if parts[0].startswith('cputype=') else parts[0]
+        cpu_type=parts[0]
         options=dict(part.split('=',1) for part in parts[1:] if '=' in part)
         flags=options.get('flags','').split(';') if options.get('flags') else []
         if (cpu_type!=hardware['cpu_type'] or sorted(flags)!=sorted(hardware['flags'])
@@ -89,5 +218,15 @@ def verify_live(config, hardware, expected):
             if name=='hotplug' and actual is not None and value is not None:
                 if set(actual.split(','))!=set(value.split(',')):raise ValueError()
             elif actual!=value:raise ValueError()
+        if hardware.get('disk'):
+            disk = hardware['disk']
+            actual_disk = _disk(config.get(disk['interface']), disk['interface'])
+            requested = expected['boot_disk']
+            if (actual_disk.source_datastore_id != requested['datastore_id']
+                    or actual_disk.minimum_size_gb != requested['size_gb']):
+                raise ValueError()
+            for key in _DISK_TECHNICAL_FIELDS:
+                if getattr(actual_disk, key) != disk.get(key):
+                    raise ValueError()
     except (KeyError,ValueError,TypeError):
         raise PlanError('GOLDEN_HARDWARE_POSTCONDITION_MISMATCH') from None

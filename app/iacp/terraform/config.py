@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import model_serializer, BaseModel, ConfigDict, Field, model_validator
 
-SOURCE_REVISION = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
+SOURCE_REVISION = "80f2d310ee0d8fe85ca4f7aef5fbc1c70248df3b"
 TERRAFORM_VERSION = "1.16.6"
 
 
@@ -158,6 +158,19 @@ class Allocation(MachineSettings):
             hardware=GoldenHardware.model_validate(self.golden_hardware)
             if hardware.template_vm_id!=self.template_vm_id or hardware.template_node!=(self.template_node_name or self.node_name):
                 raise PlanError('GOLDEN_HARDWARE_BINDING_CHANGED')
+            if hardware.disk is not None:
+                if values['boot_disk']['interface'] != hardware.disk.interface:
+                    raise PlanError('GOLDEN_DISK_INTERFACE_CHANGED')
+                if instance.disk_gb < hardware.disk.minimum_size_gb:
+                    raise PlanError('DISK_SHRINK_FORBIDDEN')
+                # La capacidad es la única mutación técnica que autoriza el
+                # plan. Todas las demás opciones se toman de la plantilla;
+                # None significa que el atributo no existía y evita defaults
+                # silenciosos del provider.
+                for key in ('file_format', 'aio', 'cache', 'discard', 'backup',
+                            'replicate', 'iothread', 'ssd', 'serial', 'queues'):
+                    values['boot_disk'][key] = getattr(hardware.disk, key)
+                values['boot_disk']['minimum_size_gb'] = hardware.disk.minimum_size_gb
             result['iacp_golden_hardware']=hardware.model_dump()
         if getattr(instance, 'initial_access_ciphertext', None):
             if getattr(instance,'commercial_revision',None):

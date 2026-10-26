@@ -20,7 +20,7 @@ modifica las decisiones de negocio ni acredita E2E nuevos.
   imagen `sha256:9da348a98ab299706aa0230fa70a9caf79b1dcd71af8cd3f8773d5f0e64d140b`.
 - API, PostgreSQL y Redis saludables; workers y Traefik operativos al inicio.
 - Motor interno fijado a `iac-proxmox` SHA
-  `2c0f319ba5d7a45987cd9d0395673828c28f678b`, no al HEAD del clon local.
+  `80f2d310ee0d8fe85ca4f7aef5fbc1c70248df3b`, no al HEAD del clon local.
 - Fuente Golden Image observada: Ubuntu 24.04, VM 29000, `mng01`,
   `DS_CYBERFUEL`. No se modificó la plantilla.
 

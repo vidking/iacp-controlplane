@@ -13,7 +13,6 @@ FILES={
  'modules/compute/kvm/iacp_golden_override.tf.json':json.dumps({'resource':{'proxmox_virtual_environment_vm':{'this':{'cpu':[{
   'cores':'${var.cpu_cores / var.golden_hardware.sockets}',
   'sockets':'${var.golden_hardware.sockets}',
-  'type':'${var.golden_hardware.cpu_type}',
   'flags':'${var.golden_hardware.flags}',
   'numa':'${var.golden_hardware.numa}'
  }]}}}},sort_keys=True),

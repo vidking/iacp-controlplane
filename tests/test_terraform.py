@@ -33,6 +33,22 @@ def allocation_data(vmid=21001, image="test-image"):
             "boot_disk": {"interface": "scsi0", "datastore_id": "fixture-storage", "minimum_size_gb": 20}}
 
 
+def test_allocation_uses_golden_disk_options_without_provider_defaults():
+    from iacp.terraform.golden_hardware import parse
+    raw = {'template': 1, 'cpu': 'x86-64-v4,flags=+aes', 'numa': 1, 'sockets': 1,
+           'bios': 'ovmf', 'machine': 'q35', 'scsihw': 'virtio-scsi-single',
+           'hotplug': 'disk,network,memory', 'boot': 'order=scsi0',
+           'scsi0': 'fixture-storage:base-9000-disk-1,discard=on,iothread=1,size=20G'}
+    data = allocation_data()
+    data['golden_hardware'] = parse(raw, 9000, 'mng01', 1).model_dump()
+    allocation = Allocation.model_validate(data)
+    values = allocation.variables(SimpleNamespace(name='fiel', image='test-image', disk_gb=50,
+                                                  vcpus=1, memory_mb=2048))
+    disk = values['instance']['boot_disk']
+    assert disk['size_gb'] == 50 and disk['discard'] == 'on' and disk['iothread'] is True
+    assert disk['aio'] is None and disk['backup'] is None and disk['replicate'] is None
+
+
 class FakeExecutor:
     def __init__(self, fail=None, callback=None):
         self.calls, self.fail, self.callback = [], fail, callback
