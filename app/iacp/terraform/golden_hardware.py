@@ -167,10 +167,13 @@ def read(env, allocation, vcpus):
             storage = client._request('GET', f'/storage/{quote(hardware.disk.source_datastore_id, safe="")}')
             if not isinstance(storage, dict) or not isinstance(storage.get('type'), str):
                 raise PowerError('invalid storage observation')
+            krbd = storage.get('krbd', False)
+            if krbd not in (False, True, 0, 1, '0', '1'):
+                raise PowerError('invalid krbd observation')
             hardware = hardware.model_copy(update={
                 'disk': hardware.disk.model_copy(update={
                     'storage_type': storage['type'],
-                    'storage_krbd': bool(storage.get('krbd', False)) if storage['type'] == 'rbd' else None,
+                    'storage_krbd': bool(krbd in (True, 1, '1')) if storage['type'] == 'rbd' else None,
                 })
             })
         return hardware
