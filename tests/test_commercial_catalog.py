@@ -255,10 +255,9 @@ def test_local_manual_candidate_examples_match_real_schema(client,auth):
     from html import unescape
     import re
     page=client.get('/docs',headers=auth).text
-    section=page.split('id="crm-catalogo-g"')[1].split('id="crm-introduccion"')[0]
-    examples=re.findall(r'<pre><code>(.*?)</code></pre>',section,re.S)
-    assert len(examples)==2
-    for body in examples:
-        spec=CommercialInstanceCreate.model_validate_json(unescape(body))
-        assert resolved_resources(spec)['disk_gb'] in {50,100}
-    assert 'creación todavía bloqueada' in section
+    body=re.search(r'<code id="pilot-json">(.*?)</code>',page,re.S).group(1)
+    spec=CommercialInstanceCreate.model_validate_json(unescape(body))
+    assert spec.plan_id=='kvm-1' and spec.image_id=='ubuntu-2404'
+    assert resolved_resources(spec)['disk_gb']==50
+    assert 'self_service_policy_id' not in body
+    assert 'contrato histórico' in page

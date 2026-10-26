@@ -1,0 +1,15 @@
+{
+  "openapi": "3.1.0",
+  "contrato_completo_identico": true,
+  "sha256_canonico_antes": "a1057933b7dcb02ba14871cd7dd944991eff6208a5ef37ab5c27d882202a09ca",
+  "sha256_canonico_despues": "a1057933b7dcb02ba14871cd7dd944991eff6208a5ef37ab5c27d882202a09ca",
+  "excepcion_fixture": "Solo URL servers de loopback del fixture; se restaura URL oficial al comparar",
+  "servers_fixture": [
+    {
+      "url": "http://127.0.0.1:8765",
+      "description": "Fixture local de solo lectura"
+    }
+  ],
+  "ejemplo_pydantic": "PASS",
+  "mutaciones_infraestructura": 0
+}

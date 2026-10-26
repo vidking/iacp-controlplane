@@ -1,13 +1,41 @@
 # Guía de integración CRM: catálogo comercial G
 
-Actualizada el 25/10/2026, America/Costa_Rica. Guía de la candidata G: comprobar
-el OpenAPI realmente servido antes de enviar el contrato nuevo. La documentación
+Actualizada el 25/10/2026, America/Costa_Rica. Guía del piloto comercial G certificado para KVM 1/2 con Ubuntu 24.04.
+Comprobar siempre el OpenAPI y la disponibilidad realmente servidos. La documentación
 principal se consulta localmente en `https://iac.cyberfuel.com/docs`.
 
 HTTP Basic protege la documentación. Para API utiliza `Authorization: Bearer
 <token-del-tenant>` con rol y derechos autorizados; en Swagger pulsa Authorize.
 El tenant procede de esa identidad, nunca del cuerpo. No envíes VMID, nodo,
 storage ni credenciales de infraestructura.
+
+## Crear una VM piloto — Ubuntu 24.04
+
+La portada local de `/docs` contiene JSON válido, cURL completo, botones de copia,
+una respuesta real del E2E del 25/10/2026 (VM ya eliminada) y el recorrido hasta
+DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
+
+1. Obtener Bearer autorizado del tenant por el canal existente; HTTP Basic solo
+   permite leer documentación. Authorize recibe el token API y no amplía permisos.
+2. Confirmar `kvm-1`, `ubuntu-2404`, `lab-dhcp`, cuota y capacidad disponibles.
+3. Copiar JSON y reemplazar nombre/pedido y contraseña. Para SSH aportar una llave
+   pública propia; nunca una privada. El cURL solicita los valores por terminal,
+   genera el cuerpo temporal privado y lo elimina después del envío. Guardarlo
+   como `crear-piloto.sh` y usar `source ./crear-piloto.sh` desde Bash, fuera de Git.
+4. Conservar `respuesta.json`, `X-Request-ID` e `Idempotency-Key`. Consultar los IDs
+   devueltos hasta conocer operación y acceso; 202 no significa SSH listo.
+5. Consultar `ip_addresses`; descubrir red si falta IP y esperar la operación.
+   Verificar huella del host por el canal autorizado. Root SSH es por llave;
+   la contraseña inicial permite consola, sin habilitar root SSH por contraseña.
+6. Ejecutar una acción Lifecycle cada vez, esperar terminal e invitado listo antes
+   de reboot. Ante timeout conservar clave/cuerpo, sin nuevas intenciones ciegas.
+7. Apagar y esperar terminal; DELETE comercial con `{}`, después seguir operación
+   y confirmar eliminación/conciliación. No borrar state ni forzar locks.
+
+Fuentes exactas del recorrido: [`piloto.json`](../app/iacp/static/docs/piloto.json),
+[`piloto-creacion.sh`](../app/iacp/static/docs/piloto-creacion.sh) (plantilla renderizada
+por IACP; copiar la versión completa desde `/docs`) y
+[evidencia física Fase G](validation/phase-g/cierre-mvp-20261025/INFORME.md).
 
 ## Consultar antes de crear
 
@@ -17,7 +45,7 @@ storage ni credenciales de infraestructura.
 
 | image_id | Sistema | Estado de integración |
 |---|---|---|
-| ubuntu-2404 | Ubuntu 24.04 | Habilitada por certificación histórica; comprobar capacidad y G6 |
+| ubuntu-2404 | Ubuntu 24.04 | KVM 1/2 y G6 validados en Fase G; comprobar disponibilidad actual |
 | ubuntu-2604 | Ubuntu 26.04 | Pendiente, no seleccionable |
 | almalinux-9 | AlmaLinux 9 | Pendiente, no seleccionable |
 | almalinux-10 | AlmaLinux 10 | Pendiente, no seleccionable |

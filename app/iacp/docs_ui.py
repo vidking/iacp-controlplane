@@ -2,6 +2,8 @@
 from functools import lru_cache
 from html import escape
 import os
+import json
+from pprint import pformat
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -14,6 +16,7 @@ ASSETS = {
     'iacp-v1.css': (ROOT/'docs/iacp.css', 'text/css'),
     'ux-f1.css': (ROOT/'docs/ux-f1.css', 'text/css'),
     'iacp-v1.js': (ROOT/'docs/iacp.js', 'text/javascript'),
+    'piloto-v1.json': (ROOT/'docs/piloto.json', 'application/json'),
     'iacp-v1.svg': (ROOT/'docs/iacp.svg', 'image/svg+xml'),
 }
 
@@ -33,6 +36,13 @@ def documentation(request, version, *, administrative=False):
     base = '/admin/docs' if administrative else '/docs'
     schema = '/admin/openapi.json' if administrative else '/openapi.json'
     html = template().replace('{{base}}', base).replace('{{schema}}', schema)
+    pilot = json.loads((ROOT/'docs/piloto.json').read_text())
+    body = json.dumps(pilot['request'], ensure_ascii=False, indent=2)
+    command = (ROOT/'docs/piloto-creacion.sh').read_text().replace(
+        '{{pilot_request_python}}', pformat(pilot['request'], width=88, sort_dicts=False))
+    html = html.replace('{{pilot_json}}', escape(body)).replace('{{pilot_curl}}', escape(command))
+    html = html.replace('{{pilot_response}}', escape(json.dumps(pilot['accepted'], indent=2)))
+    html = html.replace('{{pilot_contract_note}}', '' if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else '<p class="auth-note">Entorno con contrato histórico: no ejecutar este recorrido comercial hasta completar la migración autorizada.</p>')
     html = html.replace('{{version}}', escape(version))
     html = html.replace('{{scope}}', 'Administración autorizada' if administrative else 'Integración CRM · MVP KVM')
     html = html.replace('{{creation_status}}', ('Contrato comercial G seleccionado; certificación física pendiente.'

@@ -18,3 +18,12 @@
   .navigation{display:none;position:fixed;z-index:40;top:74px;left:0;right:0;height:calc(100vh - 74px);box-shadow:0 12px 24px #10233b22}
   .navigation.open{display:block}
 }
+/* Inicio operativo: mismos colores y ancho; controles de copia accesibles. */
+.pilot.guide-content{padding:0;margin-bottom:36px;max-width:none}
+.pilot h2{font-size:20px;margin:28px 0 10px;color:var(--ink)}
+.pilot h1{font-size:clamp(28px,3vw,42px)}
+.copy-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;font-size:12px}
+.copy-toolbar button{border:1px solid var(--accent);border-radius:5px;background:#fff;color:var(--accent);padding:8px 12px;cursor:pointer;font:inherit}
+.copy-toolbar button:focus-visible{outline:3px solid #9bd9cc;outline-offset:2px}
+#copy-status{min-height:1.8em;color:var(--accent)}
+.workspace>main::after{content:"";display:block;height:var(--navigation-tail,0px)}
