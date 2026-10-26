@@ -20,6 +20,10 @@ class GoldenHardware(StrictModel):
     source_sockets: int = Field(ge=1)
     source_cpu: str
     base: dict
+    # Representación normalizada que utiliza el provider Terraform. ``base``
+    # conserva los nombres y valores crudos de Proxmox para la comprobación
+    # posterior; este mapa evita que el adaptador invente conversiones.
+    terraform_base: dict | None = None
     # Snapshot técnico del disco de arranque. Es opcional únicamente para
     # snapshots históricos anteriores a la captura de hardware de disco.
     disk: "GoldenDisk | None" = None
@@ -128,6 +132,18 @@ def _boot_disk_interface(raw):
     return candidates[0]
 
 
+def _boot_order(raw):
+    """Convierte ``boot=order=scsi0`` al atributo ``boot_order`` del provider."""
+    boot = raw.get("boot")
+    if not isinstance(boot, str):
+        return None
+    match = re.search(r"(?:^|,)order=([^,]+)", boot)
+    if not match:
+        return None
+    order = [item for item in match.group(1).split(";") if item]
+    return order or None
+
+
 def read(env, allocation, vcpus):
     from ..lifecycle.proxmox import ProxmoxPower, PowerError
     from ..catalog import resolve_image
@@ -161,10 +177,18 @@ def parse(raw, vmid, node, vcpus):
         if 'memory' in (raw.get('hotplug') or '').split(',') and not numa:
             raise PlanError('GOLDEN_MEMORY_HOTPLUG_REQUIRES_NUMA')
         base={key:raw.get(key) for key in ['bios','machine','scsihw','hotplug','boot']}
+        terraform_base={
+            'bios': raw.get('bios'),
+            'machine': raw.get('machine'),
+            'scsi_hardware': raw.get('scsihw'),
+            'hotplug': raw.get('hotplug'),
+            'boot_order': _boot_order(raw),
+        }
         interface = _boot_disk_interface(raw)
         disk = _disk(raw.get(interface), interface)
         return GoldenHardware(template_vm_id=vmid,template_node=node,cpu_type=parts[0],flags=flags,
             numa=bool(numa),sockets=sockets,source_sockets=source_sockets,source_cpu=raw['cpu'],base=base,
+            terraform_base=terraform_base,
             disk=disk)
     except (KeyError,TypeError,ValueError):
         raise PlanError('GOLDEN_HARDWARE_UNSUPPORTED') from None
@@ -174,10 +198,24 @@ def verify_cpu(actual, variables):
     hardware=variables.get('iacp_golden_hardware')
     if not hardware:return
     cpu=actual.get('cpu',[{}])[0]
-    if (cpu.get('type') not in (None, hardware['cpu_type']) or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
+    if (cpu.get('type') != hardware['cpu_type'] or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
             or cpu.get('numa') is not hardware['numa'] or cpu.get('sockets',1)!=hardware['sockets']
             or cpu.get('cores',0)*cpu.get('sockets',1)!=variables['instance']['cpu_cores']):
         raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH')
+
+
+def verify_base_plan(actual, variables):
+    """Verifica atributos de VM heredados antes de permitir ``apply``."""
+    hardware = variables.get('iacp_golden_hardware')
+    expected = (hardware or {}).get('terraform_base')
+    if not expected:
+        return
+    try:
+        for key in ('bios', 'machine', 'scsi_hardware', 'hotplug', 'boot_order'):
+            if actual.get(key) != expected.get(key):
+                raise ValueError()
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH') from None
 
 
 def verify_disk_plan(actual, variables):

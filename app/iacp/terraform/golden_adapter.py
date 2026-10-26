@@ -8,14 +8,19 @@ import json
 from .config import PlanError
 
 FILES={
- 'stacks/kvm-instance/iacp_golden_variables.tf.json':json.dumps({'variable':{'iacp_golden_hardware':{'type':'any','nullable':False}}},sort_keys=True),
- 'modules/compute/kvm/iacp_golden_variables.tf.json':json.dumps({'variable':{'golden_hardware':{'type':'any','nullable':False}}},sort_keys=True),
  'modules/compute/kvm/iacp_golden_override.tf.json':json.dumps({'resource':{'proxmox_virtual_environment_vm':{'this':{'cpu':[{
   'cores':'${var.cpu_cores / var.golden_hardware.sockets}',
   'sockets':'${var.golden_hardware.sockets}',
+  'type':'${var.golden_hardware.cpu_type}',
   'flags':'${var.golden_hardware.flags}',
   'numa':'${var.golden_hardware.numa}'
- }]}}}},sort_keys=True),
+ }],
+  'bios':'${var.golden_hardware.terraform_base.bios}',
+  'machine':'${var.golden_hardware.terraform_base.machine}',
+  'scsi_hardware':'${var.golden_hardware.terraform_base.scsi_hardware}',
+  'hotplug':'${var.golden_hardware.terraform_base.hotplug}',
+  'boot_order':'${var.golden_hardware.terraform_base.boot_order}'
+ }}}},sort_keys=True),
 }
 MAIN_ARGUMENT='  golden_hardware = var.iacp_golden_hardware\n'
 DIGEST=hashlib.sha256(json.dumps({'files':FILES,'main_argument':MAIN_ARGUMENT},sort_keys=True).encode()).hexdigest()
