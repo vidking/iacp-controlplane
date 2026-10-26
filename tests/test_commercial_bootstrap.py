@@ -145,7 +145,7 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     secret=specification().access.root_password.get_secret_value()
     result=SecureSSHBootstrap().apply(SimpleNamespace(id='iid',ip_addresses=['192.0.2.10'],image=image),
         SimpleNamespace(path='/fixture'),'R'*43,secret,[],username)
-    assert result['status']=='completed'
+    assert result['status']=='completed' and result['root_ssh_password_enabled'] is True
     assert secret not in COMMAND and secret not in str(ssh.connect.call_args)
     assert 'password' not in ssh.connect.call_args.kwargs
     assert json.loads(stdin.write.call_args.args[0])['password']==secret

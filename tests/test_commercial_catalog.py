@@ -240,13 +240,12 @@ def test_candidate_openapi_valid_examples_and_active_contract_is_historical():
     assert contract['x-iacp-deployment-status']=='NO_GO_E2E_Y_CAPACIDAD'
 
 
-def test_local_manual_candidate_examples_match_real_schema(client,auth):
-    from html import unescape
-    import re
+def test_local_configurator_requires_live_catalog_and_user_values(client,auth):
     page=client.get('/docs',headers=auth).text
-    body=re.search(r'<code id="pilot-json">(.*?)</code>',page,re.S).group(1)
-    spec=CommercialInstanceCreate.model_validate_json(unescape(body))
-    assert spec.plan_id=='kvm-1' and spec.image_id=='ubuntu-2404'
-    assert resolved_resources(spec)['disk_gb']==50
-    assert 'self_service_policy_id' not in body
+    assert '<h1 id="pilot-title">Crear máquina virtual</h1>' in page
+    assert 'id="load-pilot-catalog"' in page
+    assert 'id="pilot-execute" disabled' in page
+    assert 'asset=provisioning-v1.js' in page
+    for field in ['plan','image','name','password','ssh','key']:
+        assert f'id="pilot-{field}"' in page
     assert 'contrato histórico' in page

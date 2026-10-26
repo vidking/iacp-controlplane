@@ -16,7 +16,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def proxmox_resource(env, expected, cancelled):
+def proxmox_resource(env, expected, cancelled, *, golden_hardware=None):
     """Un inventario filtrado por ACL no prueba ausencia en el clúster."""
     phase = "observe.proxmox"
     try:
@@ -57,8 +57,8 @@ def proxmox_resource(env, expected, cancelled):
             raise ValueError("Ambiguous VMID")
         vm = matches[0]
         if (vm["type"] != "qemu" or vm["node"] != expected["node_name"]
-                or vm["name"] != expected["vm_name"] or vm.get("template", 0)
-                or vm["status"] not in {"running", "stopped"}):
+                or (vm.get("name") is not None and vm["name"] != expected["vm_name"]) or vm.get("template", 0)
+                or vm.get("status") not in {None,"unknown","running", "stopped"}):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH", phase=phase)
         config = get(f'/nodes/{quote(expected["node_name"], safe="")}/qemu/{expected["vm_id"]}/config')
         if config["name"] != expected["vm_name"] or config.get("template", 0):
@@ -74,7 +74,18 @@ def proxmox_resource(env, expected, cancelled):
                     or (vlan is not None and nic.get('tag')!=str(vlan))
                     or ip.get('ip')!='dhcp' or 'gw' in ip):
                 raise PlanError('DHCP_NATIVE_CONFIGURATION_MISMATCH',phase=phase)
-        return {"present": True, "power_state": vm["status"]}
+        if golden_hardware is not None:
+            from .golden_hardware import verify_live
+            verify_live(config,golden_hardware,expected)
+        power=vm.get('status')
+        if power in {None,'unknown'}:
+            # pvestatd puede anunciar el VMID antes de publicar nombre/estado.
+            # Config y status nativos prueban identidad/potencia, nunca se infieren.
+            current=get(f'/nodes/{quote(expected["node_name"],safe="")}/qemu/{expected["vm_id"]}/status/current')
+            power=current.get('status')
+            if power not in {'running','stopped'}:
+                raise PlanError('PROXMOX_OBSERVATION_FAILED',phase=phase)
+        return {"present": True, "power_state": power}
     except PlanError:
         raise
     except HTTPError as error:

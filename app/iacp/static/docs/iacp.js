@@ -136,53 +136,6 @@
       filter(); routeFromLocation();
     }
   });
-  // Catálogos reales: solo GET con la autorización ya introducida en Swagger.
-  // Nunca persistir ni escribir la credencial en el DOM o en mensajes de error.
-  const planSelect = document.getElementById('pilot-plan');
-  const imageSelect = document.getElementById('pilot-image');
-  const catalogStatus = document.getElementById('pilot-catalog-status');
-  const initialRequest = JSON.parse(document.getElementById('pilot-json').textContent);
-  const initialCurl = document.getElementById('pilot-curl').textContent;
-  const updateRequest = () => {
-    const body = {...initialRequest, plan_id: planSelect.value, image_id: imageSelect.value};
-    document.getElementById('pilot-json').textContent = JSON.stringify(body, null, 2);
-    document.getElementById('pilot-curl').textContent = initialCurl
-      .replace("'plan_id': 'kvm-1'", "'plan_id': '" + body.plan_id + "'")
-      .replace("'image_id': 'ubuntu-2404'", "'image_id': '" + body.image_id + "'");
-  };
-  planSelect.addEventListener('change', updateRequest);
-  imageSelect.addEventListener('change', updateRequest);
-  document.getElementById('load-pilot-catalog').addEventListener('click', async () => {
-    const entries = Object.values(window.ui.authSelectors.authorized().toJS());
-    const credential = entries.find(item => item.schema?.scheme?.toLowerCase() === 'bearer');
-    if (!credential?.value) { catalogStatus.textContent = 'Pulsa Authorize e introduce el token Bearer del tenant LAB.'; return; }
-    try {
-      const read = async path => {
-        const response = await fetch(path, {headers: {Authorization: 'Bearer ' + credential.value}, cache: 'no-store'});
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json();
-      };
-      const [plans, images] = await Promise.all([read('/v1/plans'), read('/v1/images')]);
-      const fill = (select, rows, key) => {
-        select.replaceChildren();
-        for (const row of rows) {
-          const option = document.createElement('option');
-          option.value = row[key];
-          const label = row.vcpus ? `${row[key]} · ${row.vcpus} vCPU · ${row.memory_mb} MiB · ${row.disk_gb} GiB` : row[key];
-          option.textContent = label + (row.status === 'pendiente' ? ' · certificación pendiente' : '') + (row.availability.available ? ' · disponible' : ' · no disponible: ' + row.availability.reasons.join(', '));
-          option.disabled = !row.availability.available;
-          select.append(option);
-        }
-        select.selectedIndex = rows.findIndex(row => row.availability.available);
-      };
-      fill(planSelect, plans, 'plan_id'); fill(imageSelect, images, 'image_id');
-      const usable = planSelect.selectedIndex >= 0 && imageSelect.selectedIndex >= 0;
-      if (usable) updateRequest();
-      catalogStatus.textContent = usable
-        ? 'JSON y cURL actualizados desde el catálogo. Disponible para ejecución no equivale a certificado: consulta el estado de la imagen. KVM 1/2 Ubuntu 24.04 conservan evidencia E2E histórica.'
-        : 'No hay una combinación disponible ahora. Consulta los motivos en el catálogo; el ejemplo visible no autoriza su ejecución.';
-    } catch (_) { catalogStatus.textContent = 'No se pudo consultar el catálogo. Comprueba autorización, disponibilidad y la respuesta de GET /v1/plans en Swagger.'; }
-  });
   document.addEventListener('click', async event => {
     if (event.target.closest('[data-authorize]')) {
       event.preventDefault(); document.querySelector('.swagger-ui .btn.authorize')?.click(); return;

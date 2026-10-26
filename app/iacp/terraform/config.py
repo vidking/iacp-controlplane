@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import model_serializer, BaseModel, ConfigDict, Field, model_validator
 
 SOURCE_REVISION = "2c0f319ba5d7a45987cd9d0395673828c28f678b"
 TERRAFORM_VERSION = "1.16.6"
@@ -113,6 +113,15 @@ class MachineSettings(StrictModel):
 
 
 class Allocation(MachineSettings):
+    # Solo el worker resuelve este snapshot; nunca procede del JSON CRM.
+    golden_hardware: dict | None = None
+
+    @model_serializer(mode='wrap')
+    def preserve_historical_shape(self, handler):
+        values=handler(self)
+        if self.golden_hardware is None:values.pop('golden_hardware',None)
+        return values
+
     vm_id: int = Field(ge=100, le=999999999)
     ipv4_cidr: str | None = None
     ipv4_gateway: str | None = None
@@ -138,12 +147,18 @@ class Allocation(MachineSettings):
             raise PlanError("AUTHORIZED_IMAGE_MISMATCH")
         if instance.disk_gb < self.boot_disk.minimum_size_gb:
             raise PlanError("DISK_SHRINK_FORBIDDEN")
-        values = self.model_dump(exclude={"image", "environment", "allowed_nodes", "backend"})
+        values = self.model_dump(exclude={"image", "environment", "allowed_nodes", "backend", "golden_hardware"})
         if self.network_mode == "static":
             values.pop("network_mode")  # Preserve sealed historical variables exactly.
         values["boot_disk"]["size_gb"] = instance.disk_gb
         values.update(vm_name=instance.name, cpu_cores=instance.vcpus, memory_mb=instance.memory_mb)
         result = {"environment": self.environment, "allowed_nodes": self.allowed_nodes, "instance": values}
+        if self.golden_hardware is not None:
+            from .golden_hardware import GoldenHardware
+            hardware=GoldenHardware.model_validate(self.golden_hardware)
+            if hardware.template_vm_id!=self.template_vm_id or hardware.template_node!=(self.template_node_name or self.node_name):
+                raise PlanError('GOLDEN_HARDWARE_BINDING_CHANGED')
+            result['iacp_golden_hardware']=hardware.model_dump()
         if getattr(instance, 'initial_access_ciphertext', None):
             if getattr(instance,'commercial_revision',None):
                 raise PlanError('COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN')

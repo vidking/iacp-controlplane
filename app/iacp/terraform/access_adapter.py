@@ -95,7 +95,11 @@ def verify(source, manifest, variables):
         if manifest.get('access_adapter_sha256') != DIGEST:
             raise PlanError('PLAN_INTEGRITY_FAILED')
         try:
-            if any((source / name).read_text() != content for name, content in FILES.items()):
+            expected=dict(FILES)
+            if 'iacp_golden_hardware' in variables:
+                from .golden_adapter import MAIN_ARGUMENT
+                expected['stacks/kvm-instance/main.tf']=expected['stacks/kvm-instance/main.tf'].replace('  source =',MAIN_ARGUMENT+'  source =',1)
+            if any((source / name).read_text() != content for name, content in expected.items()):
                 raise ValueError()
         except (OSError, ValueError):
             raise PlanError('PLAN_INTEGRITY_FAILED') from None

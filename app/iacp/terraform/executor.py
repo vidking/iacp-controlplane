@@ -84,7 +84,7 @@ def verify_plan(plan: dict, variables: dict) -> dict:
     try:
         disk = next(item for item in after["disk"] if item["interface"] == instance["boot_disk"]["interface"])
         correct = (after["vm_id"] == instance["vm_id"] and after["node_name"] == instance["node_name"]
-                   and after["name"] == instance["vm_name"] and after["cpu"][0]["cores"] == instance["cpu_cores"]
+                   and after["name"] == instance["vm_name"] and after["cpu"][0]["cores"] * after["cpu"][0].get("sockets",1) == instance["cpu_cores"]
                    and after["memory"][0]["dedicated"] == instance["memory_mb"]
                    and disk["size"] == instance["boot_disk"]["size_gb"]
                    and disk["datastore_id"] == instance["boot_disk"]["datastore_id"]
@@ -94,6 +94,8 @@ def verify_plan(plan: dict, variables: dict) -> dict:
     if not correct:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
+    from .golden_hardware import verify_cpu
+    verify_cpu(after,variables)
     if 'iacp_root_password' in variables:
         import hmac
         try:
@@ -119,6 +121,13 @@ class TerraformExecutor:
         self.source = source
         self.artifacts = artifacts
         self.runner = runner or CommandRunner()
+
+    def resolve_golden_hardware(self, allocation, vcpus):
+        import tempfile
+        from .golden_hardware import read
+        with tempfile.TemporaryDirectory() as scratch:
+            env=self.environment(Path(scratch))
+            return read(env,allocation,vcpus).model_dump()
 
     def workspace(self, instance_id: str, attempt: int) -> Path:
         from uuid import UUID
@@ -157,6 +166,9 @@ class TerraformExecutor:
         from .access_adapter import install as install_access_adapter, DIGEST as ACCESS_ADAPTER_SHA256
         if 'iacp_root_password' in variables:
             install_access_adapter(workspace / 'source')
+        if 'iacp_golden_hardware' in variables:
+            from .golden_adapter import install as install_golden_adapter
+            install_golden_adapter(workspace / 'source')
         backend = allocation.backend.arguments(state_key)
         write_private(root / "iacp.auto.tfvars.json", variables)
         write_private(root / "backend.tfbackend.json", backend)
@@ -184,6 +196,10 @@ class TerraformExecutor:
         if 'iacp_root_password' in variables:
             manifest = json.loads((workspace / 'manifest.json').read_text())
             write_private(workspace / 'manifest.json', {**manifest, 'access_adapter_sha256': ACCESS_ADAPTER_SHA256})
+        if 'iacp_golden_hardware' in variables:
+            from .golden_adapter import DIGEST as GOLDEN_ADAPTER_SHA256
+            manifest=json.loads((workspace / 'manifest.json').read_text())
+            write_private(workspace / 'manifest.json',{**manifest,'golden_adapter_sha256':GOLDEN_ADAPTER_SHA256})
         return PlanResult(sha256, SOURCE_REVISION, summary)
 
     def environment(self, workspace: Path) -> dict:
@@ -232,6 +248,8 @@ class TerraformExecutor:
             manifest = json.loads((workspace / "manifest.json").read_text())
             from .access_adapter import verify as verify_access_adapter
             verify_access_adapter(workspace / 'source', manifest, variables)
+            from .golden_adapter import verify as verify_golden_adapter
+            verify_golden_adapter(workspace / 'source', manifest, variables)
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
                     or manifest["source_revision"] != revision
@@ -293,6 +311,11 @@ class TerraformExecutor:
             # Relectura efectiva, sin reutilizar salud de admisión ni del plan.
             # Antes de consumir la autorización y de llamar a Terraform apply.
             require_execution_health(env, variables['instance'], cancelled)
+        if 'iacp_golden_hardware' in variables:
+            from .golden_hardware import read as read_golden_hardware
+            current=read_golden_hardware(env,Allocation.model_validate(allocation),variables['instance']['cpu_cores']).model_dump()
+            if current!=variables['iacp_golden_hardware']:
+                raise PlanError('GOLDEN_HARDWARE_CHANGED',phase='preflight.golden_hardware')
         before_mutation()
         self.runner.apply_saved(root, env, cancelled)
         return self.observe(instance_id, attempt, allocation, variables, cancelled)
@@ -334,7 +357,10 @@ class TerraformExecutor:
             if (approved_state["lineage"] and state["lineage"] != approved_state["lineage"]
                     or state["serial"] < approved_state["serial"]):
                 raise PlanError("APPROVED_STATE_MISMATCH", phase="observe.state")
-            proxmox = proxmox_resource(env, variables["instance"], cancelled)
+            if 'iacp_golden_hardware' in variables:
+                proxmox=proxmox_resource(env,variables['instance'],cancelled,golden_hardware=variables['iacp_golden_hardware'])
+            else:
+                proxmox = proxmox_resource(env, variables["instance"], cancelled)
             proxmox_present = proxmox["present"]
             if state_present and proxmox_present:
                 # Solo inicializar Terraform después de constatar un objeto existente.

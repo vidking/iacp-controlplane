@@ -39,3 +39,9 @@
 .pilot-summary>.eyebrow{font-size:10px}
 /* Controles locales del recorrido: la referencia conserva su layout aprobado. */
 #step-piloto-json select { display:block; max-width:100%; width:100%; margin:8px 0; padding:8px; font:inherit; }
+#pilot-form label { display:block; margin-top:14px; font-weight:600; }
+#pilot-form input,#pilot-form textarea { display:block; box-sizing:border-box; width:100%; max-width:100%; padding:9px; margin:6px 0; font:inherit; }
+#pilot-form small { display:block; font-weight:400; }
+.pilot-live { margin:18px 0; padding:16px; border:1px solid var(--line,#d6e2eb); border-radius:8px; }
+#pilot-form button,.pilot-live button,#load-pilot-catalog { color:var(--accent); background:white; border:1px solid var(--accent); border-radius:5px; padding:9px 14px; margin:10px 6px 6px 0; font:inherit; cursor:pointer; }
+#pilot-form button:disabled,.pilot-live button:disabled { opacity:.55; cursor:default; }

@@ -93,13 +93,25 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
             if instance.network_profile:
                 from .profiles import load_profile, settings_for
                 profile=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image if instance.commercial_revision else None)
-                actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway'})
+                actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway','golden_hardware'})
                 if actual != settings_for(profile, allocation.node_name).model_dump():
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
             if instance.self_service_policy_id or instance.commercial_revision:
                 from ..services.lab import member
                 member(session,instance,"create",current_profiles=True)
+            if instance.commercial_revision and allocation.golden_hardware is None and hasattr(executor,'resolve_golden_hardware'):
+                # Enriquecimiento de una intención nueva antes de sellar su primer plan.
+                if execution.plan_sha256:raise PlanError('GOLDEN_HARDWARE_ALREADY_SEALED')
+                hardware=executor.resolve_golden_hardware(allocation,instance.vcpus)
+                allocation=allocation.model_copy(update={'golden_hardware':hardware})
+                execution.allocation=allocation.model_dump()
+                from ..models import CommercialIntent
+                from ..services.commercial import binding
+                intent=session.get(CommercialIntent,instance.id)
+                intent.execution_binding=binding(instance,execution,intent)
+                variables=allocation.variables(instance)
+                event(session,operation,'golden_hardware_observed','worker:terraform')
             execution.allocation = allocation.model_dump()
             execution.vmid, execution.source_revision = allocation.vm_id, SOURCE_REVISION
             state_key = execution.state_key

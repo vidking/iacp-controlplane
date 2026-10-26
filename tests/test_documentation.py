@@ -165,26 +165,12 @@ def test_pilot_example_and_real_response_match_active_commercial_contract(monkey
     assert 'data-copy-target="pilot-json"' in page and 'data-copy-target="pilot-curl"' in page
 
 
-def test_copied_curl_generates_valid_body_without_constant_password(monkeypatch,tmp_path,client,auth):
-    import os, getpass
-    from iacp.commercial_contract import CommercialInstanceCreate
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    fixture=Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.OpenSSH,PublicFormat.OpenSSH).decode()
-    key=tmp_path/'public.pub';key.write_text(fixture)
-    monkeypatch.setenv('IACP_NAME','piloto-prueba-documental')
-    monkeypatch.setenv('IACP_SSH_PUBLIC_KEY_FILE',str(key))
-    monkeypatch.setenv('IACP_WORK',str(tmp_path))
-    sentinel='Solo-prueba-documental-2026!'
-    monkeypatch.setattr(getpass,'getpass',lambda _:sentinel)
-    from html import unescape
-    import re
+def test_configurator_script_is_authenticated_and_preview_contains_no_password(client,auth):
+    assert client.get('/docs?asset=provisioning-v1.js').status_code==401
+    response=client.get('/docs?asset=provisioning-v1.js',headers=auth)
+    assert response.status_code==200
+    assert response.headers['cache-control']=='no-store'
+    assert 'root_password' in response.text
     page=client.get('/docs',headers=auth).text
-    command=unescape(re.search(r'<code id="pilot-curl">(.*?)</code>',page,re.S).group(1))
-    program=command.split("python3 - <<'PY'\n",1)[1].split('\nPY',1)[0]
-    exec(compile(program,'curl-piloto-documental','exec'),{})
-    body=json.loads((tmp_path/'request.json').read_text())
-    parsed=CommercialInstanceCreate.model_validate(body)
-    assert parsed.access.root_password.get_secret_value()==sentinel
-    assert parsed.access.ssh_public_keys==[fixture]
-    assert 'curl --fail-with-body' in command and '--data-binary' in command
+    assert '<code id="pilot-curl">Completa el formulario' in page
+    assert '<code id="pilot-json">Completa el formulario' in page

@@ -15,6 +15,7 @@ ASSETS = {
     'swagger-5.34.0.css': (ROOT/'swagger/5.34.0/swagger-ui.css', 'text/css'),
     'iacp-v1.css': (ROOT/'docs/iacp.css', 'text/css'),
     'ux-f1.css': (ROOT/'docs/ux-f1.css', 'text/css'),
+    'provisioning-v1.js': (ROOT/'docs/provisioning.js', 'text/javascript'),
     'iacp-v1.js': (ROOT/'docs/iacp.js', 'text/javascript'),
     'piloto-v1.json': (ROOT/'docs/piloto.json', 'application/json'),
     'iacp-v1.svg': (ROOT/'docs/iacp.svg', 'image/svg+xml'),
