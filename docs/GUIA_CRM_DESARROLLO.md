@@ -1,4 +1,4 @@
-# Guía de integración CRM: catálogo comercial G
+# Guía de integración: Provisioning API Core
 
 Actualizada el 25/10/2026, America/Costa_Rica. Guía del piloto LAB/MNG. Ubuntu 24.04 KVM 1/2 conserva su E2E histórico; las cuatro plantillas están validadas por Infraestructura y habilitadas en la candidata de integración.
 Comprobar siempre el OpenAPI y la disponibilidad realmente servidos. La documentación
@@ -17,13 +17,13 @@ el frontend, Git, logs ni capturas. La identidad de servicio se asocia al tenant
 persistente autorizado; no se crea un tenant por solicitud ni se envía tenant_id.
 HTTP Basic de documentación conserva su función y credencial separadas.
 
-Esta revisión permite omitir `network` y `commercial_context` **solo en el piloto
-LAB/MNG autorizado, para KVM 1/2/3/4 e imágenes habilitadas**. IACP resuelve `lab-dhcp` y conserva
-propiedad, catálogo, capacidad e idempotencia. El modo persistente LAB elimina los presupuestos
-comerciales de número de instancias y recursos acumulados; conserva concurrencia técnica 1.
-Los demás tenants conservan sus cuotas. No hay fallback automático a otra
-red ni pedido CRM ficticio. Si se envía contexto, su order_id continúa siendo
-obligatorio. `null` no equivale a omitir; los cuerpos completos siguen siendo válidos.
+Esta revisión permite omitir `network` y `commercial_context` **para el contrato
+técnico Provisioning API Core**, con las imágenes y planes que el catálogo autorice.
+IACP resuelve la red DHCP técnica, conserva propiedad, catálogo, capacidad física e
+idempotencia y no evalúa pedidos, productos, suscripciones ni presupuestos comerciales.
+No hay fallback automático a otra red ni pedido CRM ficticio. `commercial_context`,
+cuando se envía, es solo correlación opaca histórica; `null` no equivale a omitir y
+los cuerpos completos siguen siendo válidos.
 Verificar en el OpenAPI servido que esos dos campos ya no figuren en required
 antes de usar el mínimo contra una instalación anterior.
 
@@ -61,8 +61,8 @@ DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
 
 1. Obtener Bearer autorizado del tenant por el canal existente; HTTP Basic solo
    permite leer documentación. Authorize recibe el token API y no amplía permisos.
-2. Pulsar Authorize, después Consultar catálogo autorizado. Seleccionar plan e imagen disponibles; la portada genera JSON y cURL. `lab-dhcp` se resuelve automáticamente.
-3. Copiar JSON, abrir POST /v1/instances, pulsar Try it out, pegarlo y completar Idempotency-Key. Reemplazar nombre y contraseña antes de Execute. Para SSH aportar una llave
+2. Pulsar Authorize, después Consultar catálogo técnico. Seleccionar plan e imagen disponibles; la consola genera JSON, cURL e Idempotency-Key. `lab-dhcp` se resuelve automáticamente.
+3. Pulsar Crear máquina virtual. La consola conserva instance_id y operation_id y sigue la operación; no es necesario copiar IDs ni claves. Para una integración programática, enviar el mismo cuerpo y una clave estable por intención. Para SSH aportar una llave
    pública propia; nunca una privada. El cURL solicita los valores por terminal,
    genera el cuerpo temporal privado y lo elimina después del envío. Guardarlo
    como `crear-piloto.sh` y usar `source ./crear-piloto.sh` desde Bash, fuera de Git.
@@ -73,7 +73,7 @@ DELETE. No copiar los UUID de esa evidencia como si fueran los de una nueva VM.
    la contraseña inicial permite consola y SSH root en el piloto LAB autorizado.
 6. Ejecutar una acción Lifecycle cada vez, esperar terminal e invitado listo antes
    de reboot. Ante timeout conservar clave/cuerpo, sin nuevas intenciones ciegas.
-7. Apagar y esperar terminal; DELETE comercial con `{}`, después seguir operación
+7. Apagar y esperar terminal; DELETE autorizado con `{}`, después seguir operación
    y confirmar eliminación/conciliación. No borrar state ni forzar locks.
 
 Fuentes exactas del recorrido: [`piloto.json`](../app/iacp/static/docs/piloto.json),
@@ -83,9 +83,9 @@ por IACP; copiar la versión completa desde `/docs`) y
 
 ## Consultar antes de crear
 
-1. `GET /v1/plans`: cuatro productos, recursos exactos y disponibilidad del tenant.
+1. `GET /v1/plans`: cuatro planes técnicos, recursos exactos y disponibilidad del tenant.
 2. `GET /v1/images`: estado y disponibilidad de cada sistema operativo.
-3. `GET /v1/profiles`: perfiles de red autorizados; el piloto usa `lab-dhcp`.
+3. `GET /v1/profiles`: referencia técnica de red autorizada; la consola resuelve `lab-dhcp` sin pedirlo en el formulario.
 
 | image_id | Sistema | Estado de integración |
 |---|---|---|
@@ -101,7 +101,7 @@ SSH o filesystem funcionales.
 
 ## Crear mediante plan_id
 
-Ejemplo ilustrativo compatible con `CommercialInstanceCreate`; la contraseña es
+Ejemplo ilustrativo compatible con el contrato técnico de `POST /v1/instances`; la contraseña es
 un marcador y debe sustituirse por la inicial del cliente, gestionada por el CRM.
 No usar el marcador como contraseña de una VM real.
 
@@ -120,13 +120,13 @@ No usar el marcador como contraseña de una VM real.
 }
 ```
 
-Envía `POST /v1/instances` mediante HTTPS, `Content-Type: application/json` e
-`Idempotency-Key: crm-pedido-1002-creacion`. Kvm-2 resuelve internamente
+Envía `POST /v1/instances` mediante HTTPS, `Content-Type: application/json` y
+una `Idempotency-Key` estable por intención (por ejemplo, `crm-creacion-1002`). Kvm-2 resuelve internamente
 2 vCPU, 4096 MiB y 100 GiB; no admite overrides. Para kvm-1 cambia el plan y las
 referencias de una nueva intención: 1 vCPU, 2048 MiB y 50 GiB. Kvm-3/kvm-4
-conservan 4/8192/200 y 8/16384/400. El tenant LAB autorizado habilita expresamente
-los cuatro planes por capacidad física, sin cuotas comerciales ni aprobación por solicitud.
-Los tenants ajenos al modo LAB conservan su autorización y sus límites.
+conservan 4/8192/200 y 8/16384/400. El catálogo expone los cuatro planes cuando
+la capacidad física y la autorización técnica lo permiten; no se requiere una
+aprobación comercial por solicitud.
 
 No envíes tamaños libres, VMIDs ni `self_service_policy_id`. `profile_id`
 pertenece a `network`, no a la raíz. La misma intención conserva cuerpo, tenant y
@@ -155,8 +155,8 @@ Consulta `GET /v1/instances/{instance_id}/power`. Las acciones son
 `/power/reboot`, con Idempotency-Key por intención y seguimiento de la operación.
 
 `DELETE /v1/instances/{instance_id}` exige propiedad, autorización, VM apagada y
-ausencia de locks. En la vía comercial autorizada, el cuerpo `{}` solicita el
-flujo asíncrono de eliminación verificado. Un 202 no confirma ausencia: sigue
+ausencia de locks. El cuerpo `{}` solicita el flujo asíncrono de eliminación
+verificado. Un 202 no confirma ausencia: sigue
 la operación y comprueba limpieza final. Plantillas y recursos protegidos no son
 eliminables desde este recorrido.
 
@@ -166,7 +166,7 @@ eliminables desde este recorrido.
 |---|---|
 | 400/422 | Corregir formato; no enviar tamaños ni VMIDs. |
 | 401/403 | Revisar identidad, tenant y permisos; Bearer válido no concede todos los derechos. |
-| 409 | Revisar intención, estado, catálogo, cuota o capacidad; no reducir el plan automáticamente. |
+| 409 | Revisar intención, estado, catálogo, capacidad o protección técnica; no reducir el plan automáticamente. |
 | 429 | Aplicar backoff y respetar el límite. |
 | 503 | Conservar intención, consultar si hubo admisión y esperar recuperación. |
 | uncertain | Conservar IDs y reconciliar por observación; no crear una sustituta. |

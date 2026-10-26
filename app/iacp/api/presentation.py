@@ -1,5 +1,7 @@
-"""Explicit commercial projections; persisted audit and worker data stay intact."""
+"""Proyección pública del contrato técnico; se conservan auditoría e historial."""
 import re
+
+from ..services.contracts import is_core_contract
 
 
 def public_executor(value):
@@ -9,6 +11,7 @@ def public_executor(value):
 def public_code(value):
     if value is None:
         return None
+    value = re.sub(r"^COMMERCIAL_", "PROVISIONING_", value) if is_core_contract() else value
     return re.sub(r"terraform|opentofu|(?<![a-z])tofu(?![a-z])", lambda m: (
         "PROVISIONING" if m.group().isupper() else "provisioning"), value, flags=re.I)
 

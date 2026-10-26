@@ -174,3 +174,5 @@ def test_configurator_script_is_authenticated_and_preview_contains_no_password(c
     page=client.get('/docs',headers=auth).text
     assert '<code id="pilot-curl">Completa el formulario' in page
     assert '<code id="pilot-json">Completa el formulario' in page
+    assert '/v1/lab/usage' not in response.text
+    assert 'newKey' in response.text and 'Idempotency-Key' in response.text
