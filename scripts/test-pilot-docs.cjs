@@ -109,6 +109,29 @@ async function main() {
    await page.locator('.auth-container input').fill(token);
    await page.locator('.auth-btn-wrapper button.authorize').click();
    await page.locator('.auth-btn-wrapper button.btn-done').click();
+   // Catálogos de contrato en candidata; en runtime se comprueban las lecturas reales.
+   await sidebar('[data-doc-target="inicio"]');
+   await page.locator('a[href="#piloto-json"]').click();
+   if (!bearerMode) {
+    await context.route('**/v1/plans', route => route.fulfill({json:[1,2,3,4].map(n=>({plan_id:'kvm-'+n, availability:{available:true,reasons:[]}}))}));
+    await context.route('**/v1/images', route => route.fulfill({json:[{image_id:'ubuntu-2404',availability:{available:true,reasons:[]}},{image_id:'ubuntu-2604',availability:{available:false,reasons:['IMAGE_CERTIFICATION_PENDING']}}]}));
+   }
+   await page.locator('#load-pilot-catalog').click();
+   await expect(page.locator('#pilot-catalog-status')).not.toContainText('Pulsa Authorize');
+   if (!bearerMode) {
+    await expect(page.locator('#pilot-catalog-status')).toContainText('actualizados desde el catálogo');
+    for (const plan of ['kvm-1','kvm-2','kvm-3','kvm-4']) {
+     await page.locator('#pilot-plan').selectOption(plan);
+     expect(JSON.parse(await page.locator('#pilot-json').textContent()).plan_id).toBe(plan);
+     expect(await page.locator('#pilot-curl').textContent()).toContain("'plan_id': '"+plan+"'");
+    }
+    await expect(page.locator('#pilot-image option[value="ubuntu-2604"]')).toHaveJSProperty('disabled',true);
+    await page.locator('#pilot-plan').selectOption('kvm-1');
+    await context.unroute('**/v1/plans'); await context.unroute('**/v1/images');
+   }
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await page.screenshot({path:path.join(output,mode+'-catalogo.png')});
+   await sidebar('[data-tag-target="instances"]');
    const op=page.locator('#operations-instances-listGoldenImages');
    await op.locator('.opblock-summary-control').click();
    await op.locator('button.try-out__btn').click();

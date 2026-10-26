@@ -28,6 +28,8 @@ from .lab import usage
 class Limits(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     allowed_plans: list[str] = Field(min_length=1,max_length=4)
+    # Excepción operativa explícita: nunca se infiere del rol o del token.
+    lab_mng_physical_capacity_only: bool = False
     max_instances: int = Field(ge=1)
     max_vcpus: int = Field(ge=1)
     max_memory_mb: int = Field(ge=512)
@@ -41,9 +43,25 @@ def limits_for(tenant_id):
         raw=json.loads(Path(path).read_text())
         limits=Limits.model_validate((raw.get('tenants') or raw.get('commercial_limits',{}))[tenant_id])
         for plan in limits.allowed_plans:resolve_plan(plan)
+        validate_lab_mng_scope(tenant_id, limits)
         return limits
     except (KeyError,ValueError,OSError,TypeError):
         raise Conflict('COMMERCIAL_TENANT_NOT_AUTHORIZED') from None
+
+
+def validate_lab_mng_scope(tenant_id, limits):
+    """La excepción comercial no puede extenderse a otro tenant/red/destino."""
+    if not limits.lab_mng_physical_capacity_only:
+        return
+    from ..models import BOOTSTRAP_TENANT_ID
+    profile = authorized_profile(tenant_id)
+    if (tenant_id != BOOTSTRAP_TENANT_ID or profile is None
+            or profile.settings.environment != 'lab'
+            or profile.settings.node_name not in {'mng01', 'mng02'}
+            or not set(profile.settings.allowed_nodes) <= {'mng01', 'mng02'}
+            or not set(profile.target_nodes or [profile.settings.node_name]) <= {'mng01', 'mng02'}
+            or profile.settings.boot_disk.datastore_id != 'DS_CYBERFUEL'):
+        raise Conflict('COMMERCIAL_LAB_MNG_EXCEPTION_SCOPE_INVALID')
 
 
 def live_capacity(session,profile,plan):
@@ -118,11 +136,14 @@ def delegation(session,instance,action,*,current_profiles=False):
 
 
 def quota(session,tenant_id,limits,resources=None):
+    validate_lab_mng_scope(tenant_id, limits)
     used=usage(session,tenant_id)
     additions={'instances':1 if resources else 0,'vcpus':resources['vcpus'] if resources else 0,
         'memory_mb':resources['memory_mb'] if resources else 0,'disk_gb':resources['disk_gb'] if resources else 0,
         'concurrent_operations':1}
     for name in additions:
+        if limits.lab_mng_physical_capacity_only and name != 'concurrent_operations':
+            continue
         if used[name]+additions[name]>getattr(limits,'max_'+name):
             raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:'+name)
 
@@ -194,7 +215,7 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             if profile is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
             if omitted and (profile.settings.environment != 'lab'
                     or profile.settings.network_mode != 'dhcp'
-                    or spec.plan_id not in {'kvm-1', 'kvm-2'}
+                    or (spec.plan_id not in {'kvm-1', 'kvm-2'} and not limits.lab_mng_physical_capacity_only)
                     or spec.image_id != 'ubuntu-2404'):
                 raise Conflict('COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED')
             if profile.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')

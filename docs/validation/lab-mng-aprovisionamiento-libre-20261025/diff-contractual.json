@@ -1,0 +1,6 @@
+{
+  "openapi": "3.1.0",
+  "rutas_y_esquemas_equivalentes": true,
+  "cambio": "Descripciones de omisión LAB; sin campos, rutas, operationId, respuestas ni autenticación nuevos",
+  "fecha_local": "25/10/2026 America/Costa_Rica"
+}

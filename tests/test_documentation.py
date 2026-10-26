@@ -121,7 +121,9 @@ def test_local_guides_render_documentation_not_only_hashes(client, auth):
     page = client.get('/docs', headers=auth).text
     for marker in ('piloto-acceso', 'piloto-json', 'piloto-respuesta', 'piloto-seguimiento', 'piloto-ssh', 'piloto-lifecycle', 'piloto-delete', 'crm-introduccion', 'crm-autenticacion', 'crm-perfiles', 'crm-idempotencia', 'crm-errores', 'ops-componentes', 'ops-estados', 'dep-release', 'dep-rollback'):
         assert f'id="{marker}"' in page
-    assert 'Crear una VM piloto — Ubuntu 24.04' in page
+    assert 'Crear máquina virtual' in page
+    assert 'id="load-pilot-catalog"' in page
+    assert 'Try it out' in page and 'Execute' in page
     assert 'Idempotency-Key' in page and '0012_commercial_intents' in page
     assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' not in page
     assert '"self_service_policy_id"' not in page and '&quot;self_service_policy_id&quot;' not in page

@@ -245,27 +245,38 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute',action='store_true');parser.add_argument('--evidence-dir',type=Path,required=True)
     parser.add_argument('--resume-instance');parser.add_argument('--accepted-file',type=Path)
-    parser.add_argument('--plan',choices=['kvm-1','kvm-2'])
+    parser.add_argument('--plan',choices=['kvm-1','kvm-2','kvm-3','kvm-4'])
+    parser.add_argument('--token-file',type=Path)
+    parser.add_argument('--minimal',action='store_true',help='Cuerpo mínimo del piloto; exige token de integración explícito')
     args=parser.parse_args()
     if not args.execute:print('Preparado: requiere --execute explícito; no se ejecutaron solicitudes.');return
     assert socket.gethostname()=='iacp-controlplane-01'
     os.umask(0o077);OUT=args.evidence_dir;OUT.mkdir(mode=0o700,parents=True,exist_ok=False)
     containers=json.loads(subprocess.check_output(['docker','inspect','iacp-controlplane-api-1'],text=True))
-    tokenpath=next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
+    assert not args.minimal or args.token_file, 'El piloto requiere identidad de integración explícita'
+    tokenpath=args.token_file or next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
     TOKEN=Path(tokenpath).read_text().strip()
     key=worker("import os,paramiko\nk=paramiko.PKey.from_path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE']);print(json.dumps({'public':k.get_name()+' '+k.get_base64()}))")['public']
     live=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
-    assert live['live']==(1 if args.resume_instance else 0)
+    baseline_live=live['live']
+    if not args.minimal:assert live['live']==(1 if args.resume_instance else 0)
     _,contract,_=api('/openapi.json')
     assert contract['openapi']=='3.1.0' and 'plan_id' in json.dumps(contract['paths']['/v1/instances']['post'])+json.dumps(contract['components']['schemas']['CommercialInstanceCreate'])
     save('openapi',contract);save('planes',api('/v1/plans')[1]);save('imagenes',api('/v1/images')[1])
     run=datetime.now(ZoneInfo('America/Costa_Rica')).strftime('%Y%m%d-%H%M%S')
-    for n,cpus,ram,disk in [(1,1,2048,50),(2,2,4096,100)]:
+    sizes=[(1,1,2048,50),(2,2,4096,100),(3,4,8192,200),(4,8,16384,400)]
+    for n,cpus,ram,disk in sizes:
+        if n>2 and not args.plan:continue
         if args.plan and args.plan!='kvm-'+str(n):continue
         plan='kvm-'+str(n);PASSWORD=secrets.token_urlsafe(28)+'A9!'
         body={'name':'e2e-g-kvm'+str(n)+'-'+run,'plan_id':plan,'image_id':'ubuntu-2404',
               'network':{'profile_id':'lab-dhcp'},'access':{'root_password':PASSWORD,'ssh_public_keys':[key]},
               'start_on_create':True,'commercial_context':{'order_id':'E2E-G-'+run+'-'+str(n),'product_id':'CRM-KVM-'+str(n)}}
+        if args.minimal:
+            body.pop('network');body.pop('commercial_context');body.pop('start_on_create')
+        if not args.resume_instance:
+            available=api('/v1/plans')[1]
+            assert next(p for p in available if p['plan_id']==plan)['availability']['available'], 'Plan no disponible; no enviar creación'
         idem='e2e-g-'+run+'-'+plan
         if n==1 and args.resume_instance:
             recovered=worker("from sqlalchemy import select\nfrom iacp.db import get_session_factory\nfrom iacp.models import CommercialIntent,TerraformExecution,Operation,TerraformApply\nfrom iacp.services.bootstrap_secrets import EphemeralSecrets\nwith get_session_factory()() as s:\n c=s.get(CommercialIntent,P['id']);e=s.get(TerraformExecution,P['id']);o=s.get(Operation,e.operation_id)\n approval=s.scalar(select(TerraformApply).where(TerraformApply.instance_id==c.instance_id,TerraformApply.attempt==e.attempt))\n mode='reconcile' if approval and approval.status=='uncertain' and approval.started_at else 'retry-provision'\n assert c.plan_id=='kvm-1' and c.bootstrap_started_at is None and (mode=='reconcile' or e.status=='failed' and e.error_code=='SOURCE_UNAVAILABLE')\n password=EphemeralSecrets.configured().read(c.secret_reference,o.tenant_id,c.instance_id)\n print(json.dumps({'password':password,'attempt':e.attempt,'key':o.idempotency_key,'mode':mode}))",{'id':args.resume_instance})
@@ -306,6 +317,9 @@ def main():
             if PASSWORD.encode() in logs.stdout+logs.stderr:raise RuntimeError('SECRET_IN_LOGS')
         cleaned=worker("from iacp.services.bootstrap_secrets import EphemeralSecrets\ns=EphemeralSecrets.configured();s.delete(P['reference']);print(json.dumps({'removed':not s.redis.exists('iacp:bootstrap:v1:'+P['reference'])}))",fixture)
         assert cleaned['removed'];save(plan+'-client-fixture-cleanup',cleaned)
+        if args.minimal:
+            remaining=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
+            assert remaining['live']==baseline_live, 'No se restauró la ocupación inicial'
         save(plan+'-resultado',{'estado':'PASS','fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
         print(json.dumps({'plan':plan,'estado':'PASS','instance_id':identifier}),flush=True)
     save('resultado',{'estado':'PASS','planes':[args.plan] if args.plan else ['kvm-1','kvm-2'],'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
