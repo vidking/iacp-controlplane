@@ -89,9 +89,9 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(jobs.router)
     creation_contract=os.environ.get('IACP_CREATION_CONTRACT','historical')
-    if creation_contract not in {'historical','commercial-g'}:
+    if creation_contract not in {'historical','commercial-g','provisioning-api-core'}:
         raise ValueError('CREATION_CONTRACT_INVALID')
-    if creation_contract=='commercial-g':
+    if creation_contract in {'commercial-g','provisioning-api-core'}:
         from .api import commercial
         from fastapi import APIRouter
         historical_reads=APIRouter(routes=[r for r in instances.router.routes

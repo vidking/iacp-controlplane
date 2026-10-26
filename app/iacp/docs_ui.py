@@ -43,12 +43,12 @@ def documentation(request, version, *, administrative=False):
         '{{pilot_request_python}}', pformat(pilot['request'], width=88, sort_dicts=False))
     html = html.replace('{{pilot_json}}', escape(body)).replace('{{pilot_curl}}', escape(command))
     html = html.replace('{{pilot_response}}', escape(json.dumps(pilot['accepted'], indent=2)))
-    html = html.replace('{{pilot_contract_note}}', '' if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else '<p class="auth-note">Entorno con contrato histórico: no ejecutar este recorrido comercial hasta completar la migración autorizada.</p>')
+    core = os.environ.get('IACP_CREATION_CONTRACT') in {'commercial-g', 'provisioning-api-core'}
+    html = html.replace('{{pilot_contract_note}}', '' if core else '<p class="auth-note">Entorno con contrato histórico: la creación técnica no está habilitada en este runtime.</p>')
     html = html.replace('{{version}}', escape(version))
-    html = html.replace('{{scope}}', 'Administración autorizada' if administrative else 'Integración CRM · MVP KVM')
-    html = html.replace('{{creation_status}}', ('Contrato comercial G seleccionado; certificación física pendiente.'
-        if os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g' else
-        'Revisión comercial candidata; creación todavía bloqueada en el runtime histórico.'))
+    html = html.replace('{{scope}}', 'Administración autorizada' if administrative else 'Provisioning API Core · MVP KVM')
+    html = html.replace('{{creation_status}}', ('Motor de aprovisionamiento técnico activo; la autorización comercial pertenece al sistema consumidor.'
+        if core else 'Contrato histórico; creación técnica no habilitada en este runtime.'))
     from alembic.script import ScriptDirectory
     from .migrations import alembic_config
     html=html.replace('{{schema_head}}',escape(ScriptDirectory.from_config(alembic_config()).get_current_head()))

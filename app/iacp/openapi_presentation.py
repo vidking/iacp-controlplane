@@ -1,6 +1,6 @@
 """Anotaciones documentales; no cambia schemas, handlers ni requisitos HTTP."""
 DESCRIPTION = (
-    'API corporativa de IACP para integrar el ciclo de vida de instancias KVM con un CRM. '
+    'API de aprovisionamiento y ciclo de vida de IACP para infraestructura KVM. '
     'Selecciona perfiles autorizados, conserva las intenciones idempotentes y sigue cada operación hasta su resultado.\n\n'
     '**Autenticación:** HTTP Basic permite consultar la documentación. Las llamadas a `/v1` requieren '
     'un token Bearer del tenant y el rol correspondiente. Introduce solo el token en **Authorize**; '
@@ -8,10 +8,10 @@ DESCRIPTION = (
     '**Flujo recomendado:** perfiles → creación → seguimiento por `operation_id` → acceso/Lifecycle → eliminación autorizada. '
     'Un 202 confirma admisión; no confirma disponibilidad ni eliminación. Conserva `Idempotency-Key`, UUID y cuerpo en reintentos. '
     'Ante `uncertain`, conserva la misma instancia y utiliza la reconciliación autorizada.\n\n'
-    '**Alcance:** API privada por LAN/VPN, recursos propios del tenant, perfiles y cuotas vigentes. '
-    'Los ejemplos son sintéticos y no constituyen autorizaciones. Las herramientas de diagnóstico y laboratorio '
-    'se separan del recorrido CRM; las operaciones administrativas requieren su ámbito específico.'
-    '\n\n**Precondiciones:** los perfiles DHCP y las cuotas proceden de la autorización vigente. '
+    '**Alcance:** API privada por LAN/VPN, recursos propios del tenant, perfiles técnicos autorizados y capacidad física. '
+    'IACP no determina pagos, pedidos, productos ni elegibilidad comercial. Los ejemplos son sintéticos y no constituyen autorizaciones. '
+    'Las operaciones administrativas requieren su ámbito específico.'
+    '\n\n**Precondiciones:** los perfiles DHCP y los destinos proceden de la autorización técnica vigente. '
     'Usa `power/shutdown` para apagar ordenadamente. DELETE requiere política o allowlist y autorización; '
     'VM 104, VM 106 y Golden Image 29000 permanecen protegidas. La admisión cerrada devuelve 503.'
 )
@@ -30,7 +30,7 @@ TAGS = [
 
 OPERATIONS = {
     'listAuthorizedProfiles': ('Consultar el catálogo de perfiles', 'Devuelve imágenes, destinos y límites autorizados para el tenant. Selecciona un perfil y una política aprobada antes de solicitar recursos; el catálogo no amplía cuotas.'),
-    'createInstance': ('Crear una instancia KVM', 'Admite una intención idempotente bajo un perfil y una política vigentes. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.'),
+    'createInstance': ('Crear una instancia KVM', 'Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.'),
     'listInstances': ('Consultar las instancias del tenant', 'Lista paginada y estable del inventario propio. Utiliza limit, offset y los filtros disponibles. X-Total-Count indica el total del filtro; deleted conserva el historial de una instancia eliminada.'),
     'getInstance': ('Consultar una instancia', 'Obtiene el estado persistido del UUID propio, sus recursos y las observaciones de red/acceso. Una instancia ajena o no visible devuelve 404.'),
     'listOperations': ('Consultar el historial de operaciones', 'Lista paginada de intenciones del tenant. Filtra por instance_id para seguir creación, Lifecycle y eliminación. Consulta normalized_status y, para arranque automático, fulfillment.'),
@@ -100,8 +100,8 @@ def present(schema):
                 if identifier=='createInstance' and media.get('schema',{}).get('$ref','').endswith('/CommercialInstanceCreate'):
                     from .commercial_contract import EXAMPLES, MINIMAL_EXAMPLE
                     operation['summary']='Crear una KVM mediante plan_id'
-                    operation['description']='Admisión automática autenticada: plan, imagen, red, cuota y capacidad. '
-                    operation['description']+='En piloto LAB autorizado KVM 1/2 se puede omitir network (lab-dhcp) y commercial_context, sin pedidos ficticios; cuerpos completos compatibles. '
+                    operation['description']='Admisión automática autenticada: plan, imagen, red, perfil y capacidad física. '
+                    operation['description']+='Se puede omitir network (lab-dhcp) y commercial_context, sin pedidos ficticios; cuerpos completos compatibles. '
                     operation['description']+='Contraseña por HTTPS y Redis AES-256-GCM efímero; nunca plan/state. Un 202 exige seguimiento de operación e inicialización.'
                     media['examples']={'piloto_minimo':{'summary':'Piloto LAB KVM 1; valores predeterminados autorizados','value':MINIMAL_EXAMPLE},
                         **{f'kvm_{i}':{'summary':f'KVM {i}; solicitud completa compatible','value':e}

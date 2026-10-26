@@ -64,16 +64,20 @@ def load_profile(name, tenant_id, *, image_id=None):
         raw=data['profiles'][name]
         if image_id is not None and image_id != raw['settings']['image']:
             from ..catalog import resolve_image
-            from ..services.commercial import limits_for
             if image_id == 'ubuntu-2404':
                 raise ValueError('Base image profile changed')
-            from ..services.instances import Conflict
-            try:
-                allowed=limits_for(tenant_id).lab_mng_physical_capacity_only
-            except Conflict:
-                raise ValueError('Image outside laboratory scope') from None
-            if name != 'lab-dhcp' or not allowed:
+            from ..services.contracts import is_core_contract
+            if name != 'lab-dhcp':
                 raise ValueError('Image outside laboratory scope')
+            if not is_core_contract():
+                from ..services.commercial import limits_for
+                from ..services.instances import Conflict
+                try:
+                    allowed=limits_for(tenant_id).lab_mng_physical_capacity_only
+                except Conflict:
+                    raise ValueError('Image outside laboratory scope') from None
+                if not allowed:
+                    raise ValueError('Image outside laboratory scope')
             registry=data.get('lab_images',{})
             if not isinstance(registry,dict):raise ValueError('Invalid laboratory image configuration')
             config=registry.get(image_id,{})
@@ -103,18 +107,20 @@ def reserve_profile(session, instance):
     commercial = getattr(instance, 'commercial_revision', None)
     if commercial:
         from ..catalog import PLANS
-        from ..services.commercial import limits_for, quota
-        if commercial != 'commercial-g' or instance.network_profile != 'lab-dhcp':
+        from ..services.contracts import COMMERCIAL_CONTRACT, CORE_CONTRACT
+        if commercial not in {COMMERCIAL_CONTRACT, CORE_CONTRACT} or instance.network_profile != 'lab-dhcp':
             raise PlanError('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
         plan = next((row for row in PLANS if (row.vcpus, row.memory_mb, row.disk_gb)
             == (instance.vcpus, instance.memory_mb, instance.disk_gb)), None)
         if plan is None:
             raise PlanError('COMMERCIAL_RESOURCES_OUTSIDE_CATALOG')
-        limits = limits_for(instance.tenant_id)
-        if plan.plan_id not in limits.allowed_plans:
-            raise PlanError('COMMERCIAL_PLAN_NOT_AUTHORIZED')
-        quota(session, instance.tenant_id, limits, dict(vcpus=plan.vcpus,
-            memory_mb=plan.memory_mb, disk_gb=plan.disk_gb))
+        if commercial == COMMERCIAL_CONTRACT:
+            from ..services.commercial import limits_for, quota
+            limits = limits_for(instance.tenant_id)
+            if plan.plan_id not in limits.allowed_plans:
+                raise PlanError('COMMERCIAL_PLAN_NOT_AUTHORIZED')
+            quota(session, instance.tenant_id, limits, dict(vcpus=plan.vcpus,
+                memory_mb=plan.memory_mb, disk_gb=plan.disk_gb))
     elif instance.vcpus>p.max_vcpus or instance.memory_mb>p.max_memory_mb or instance.disk_gb>p.max_disk_gb:
         raise PlanError('PROFILE_CAPACITY_EXCEEDED')
     if instance.disk_gb<p.settings.boot_disk.minimum_size_gb:

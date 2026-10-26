@@ -198,7 +198,7 @@ def admit(session, instance):
 
 
 def member(session, instance, action, *, current_profiles=False):
-    if getattr(instance,'commercial_revision',None)=='commercial-g':
+    if getattr(instance,'commercial_revision',None) in {'commercial-g','provisioning-api-core'}:
         from .commercial import delegation
         return delegation(session,instance,action,current_profiles=current_profiles)
     row = policy(session, instance.self_service_policy_id, instance.tenant_id, action)
@@ -220,9 +220,12 @@ def member(session, instance, action, *, current_profiles=False):
 
 
 def authorize_operation(session, instance, action):
-    if getattr(instance,'commercial_revision',None)=='commercial-g':
+    if getattr(instance,'commercial_revision',None) in {'commercial-g','provisioning-api-core'}:
         from .commercial import member as commercial_member,limits_for,quota
         commercial_member(session,instance,action)
+        if getattr(instance,'commercial_revision',None)=='provisioning-api-core':
+            # El state y los locks siguen siendo obligatorios; no hay cuota de negocio.
+            return
         limit=limits_for(instance.tenant_id)
         if limit.lab_mng_physical_capacity_only:
             # La excepción LAB elimina la cuota comercial; no elimina los
@@ -239,7 +242,7 @@ def authorize_operation(session, instance, action):
 
 def advance(session, instance, publish):
     """Approve the exact verified plan by delegation, then use the existing Apply fence."""
-    if getattr(instance,'commercial_revision',None)=='commercial-g':
+    if getattr(instance,'commercial_revision',None) in {'commercial-g','provisioning-api-core'}:
         from .commercial import advance as commercial_advance
         return commercial_advance(session,instance,publish)
     from ..terraform.apply import approve, dispatch, recover_apply
