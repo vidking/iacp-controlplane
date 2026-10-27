@@ -11,9 +11,9 @@ from sqlalchemy import select
 
 from iacp.api.dependencies import get_guest_initialization_publisher
 from iacp.lifecycle.proxmox import PowerError, Target
-from iacp.models import GuestInitialization, Instance, Job, Operation
+from iacp.models import GuestInitialization, Instance, Job, Operation, utcnow
 from iacp.security import Principal
-from iacp.services.guest_identity import GuestClient, GuestProgramFailed, MODE, PROGRAM, PROGRAM_SHA256, execute_initialization
+from iacp.services.guest_identity import GuestClient, GuestProgramFailed, MODE, PROGRAM, PROGRAM_SHA256, execute_initialization, program_for_mode
 from iacp.services.network import after_power
 from tests.test_dhcp_profiles import policy
 from tests.test_lab_self_service import POLICY_SPEC, create, lab, provision
@@ -85,6 +85,39 @@ def test_lost_exec_response_reconciles_readonly_with_admission_and_policy_closed
     execute_initialization(op,sessions,lambda:fake)
     assert len(fake.calls)==1
     assert client.get('/v1/operations/'+op,headers=auth).json()['status']=='completed'
+
+
+def test_capability_repair_rebinds_only_legacy_alma_fence_without_resubmitting(client,auth,guest,sessions):
+    op=accept(client,auth,guest).json()['operation_id']
+    alma_mode='almalinux-9-lab-identity-v1'
+    current_digest=program_for_mode(alma_mode)[1]
+    with sessions() as s:
+        row=s.get(GuestInitialization,op)
+        operation=s.get(Operation,op)
+        row.mode=alma_mode
+        row.program_sha256='0'*64
+        row.started_at=utcnow()
+        row.pid=None
+        row.status=operation.status='uncertain'
+        operation.error_code='POWER_PROXMOX_UNAVAILABLE'
+        s.commit()
+
+    fake=FakeGuest()
+    fake.observe=lambda target,row: {
+        'mode':row.mode,'instance_id':row.instance_id,'mac_address':row.mac_address,
+        'program_sha256':current_digest,
+        'network_manager_dhcp':True,
+        'network':{'ip_addresses':['192.0.2.10'],'status':'observed'},
+    }
+    execute_initialization(op,sessions,lambda:fake)
+
+    assert fake.calls==[]
+    result=client.get('/v1/operations/'+op,headers=auth).json()
+    assert result['normalized_status']=='completed'
+    with sessions() as s:
+        row=s.get(GuestInitialization,op)
+        assert row.program_sha256==current_digest
+        assert row.pid is None
 
 
 @pytest.mark.parametrize('change',['name','mac','binding','tenant'])
