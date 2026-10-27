@@ -22,27 +22,32 @@ router = APIRouter(
     "", status_code=202, response_model=InstanceAccepted, operation_id="createInstance",
     responses={409: {"model": ErrorResponse}},
     description=("Crea instancia, operación y job de forma atómica. El IaC Worker usa el perfil autorizado; un perfil de autoservicio exige política aprobada y completa el plan por delegación. Los perfiles históricos conservan revisión individual y habilitación explícita. "
-                 "Idempotency-Key es obligatorio y se conserva por tenant; repetirlo con otro cuerpo devuelve 409. "
+                 "Idempotency-Key es opcional; si se omite IACP genera una intención y la devuelve en la respuesta. "
+                 "Una clave explícita se conserva por tenant; repetirla con otro cuerpo devuelve 409. "
                  "Una repetición idéntica devuelve los mismos IDs y no vuelve a publicar el job, incluso si falló."),
 )
 def post_instance(
     request: Request,
     spec: InstanceCreate,
-    key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+    response: Response,
     principal: Annotated[Principal, Depends(authorize_write)],
     session: Annotated[Session, Depends(get_session)],
     publish: Annotated[Publisher, Depends(get_instance_publisher)],
+    key: str = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
 ) -> InstanceAccepted:
     from ..security import request_uses_https
+    from .idempotency import resolve_key
+    key = resolve_key(key, 'create', response)
     if spec.access and not request_uses_https(request):
-        raise HTTPException(422, 'ROOT_ACCESS_REQUIRES_HTTPS')
+        raise HTTPException(422, 'ROOT_ACCESS_REQUIRES_HTTPS', headers={'Idempotency-Key': key})
     try:
         return create_instance(session, principal, spec, key, publish)
     except Conflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from None
+        raise HTTPException(status_code=409, detail=str(error), headers={'Idempotency-Key': key}) from None
     except QueueUnavailable:
         request.state.admission_committed=True
-        raise HTTPException(status_code=503, detail="Queue unavailable; repeat with the same Idempotency-Key to retrieve the operation") from None
+        raise HTTPException(status_code=503, detail="Queue unavailable; repeat with the same Idempotency-Key to retrieve the operation",
+                            headers={'Idempotency-Key': key}) from None
 
 
 @router.get("", response_model=list[InstanceResponse], operation_id="listInstances")

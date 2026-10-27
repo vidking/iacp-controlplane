@@ -124,12 +124,13 @@ def test_http_service_token_uses_one_persistent_tenant_and_preserves_security(
     with TestClient(app,base_url='https://fixture') as client:
         assert client.post('/v1/instances',json=body).status_code==401
         assert client.post('/v1/instances',json=body,headers={**identities['tenant-a-reader']['headers'],'Idempotency-Key':'reader'}).status_code==403
-        assert client.post('/v1/instances',json=body,headers=identities['tenant-a-operator']['headers']).status_code==422
+        assert client.post('/v1/instances',json={**body,'name':'INVALID NAME'},headers={**identities['tenant-a-operator']['headers'],'Idempotency-Key':'invalid-preflight'}).status_code==422
         for extra in [{'tenant_id':tenant},{'vcpus':8},{'pilot_defaults_revision':'otra'}]:
             assert client.post('/v1/instances',json={**body,**extra},headers=headers).status_code==422
         assert client.post('/v1/instances',json={**body,'network':{'profile_id':'wan-static','ipv4_address':'192.0.2.10','prefix_length':24,'gateway':'192.0.2.1'}},headers=headers).status_code==409
-        first=client.post('/v1/instances',json=body,headers=headers);assert first.status_code==202,first.text
-        assert client.post('/v1/instances',json=body,headers=headers).json()==first.json()
+        first=client.post('/v1/instances',json=body,headers=identities['tenant-a-operator']['headers']);assert first.status_code==202,first.text
+        generated_key=first.headers.get('Idempotency-Key');assert generated_key and generated_key.startswith('http-create-')
+        assert client.post('/v1/instances',json=body,headers={**headers,'Idempotency-Key':generated_key}).json()==first.json()
         denied=client.post('/v1/instances',json=body,headers={**identities['tenant-b-operator']['headers'],'Idempotency-Key':'service-intent'})
         assert denied.status_code==409
         assert client.get('/v1/instances/'+first.json()['instance_id'],headers=identities['tenant-b-operator']['headers']).status_code==404
@@ -153,6 +154,9 @@ def test_openapi_change_is_only_compatible_omission_and_documentation(monkeypatc
     from openapi_spec_validator import validate
     monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
     current=create_app().openapi();validate(current)
+    create_operation=current['paths']['/v1/instances']['post']
+    assert any(item['name']=='Idempotency-Key' and not item['required'] for item in create_operation['parameters'])
+    assert create_operation['responses']['202']['headers']['Idempotency-Key']['schema']['type']=='string'
     baseline=json.loads((Path(__file__).resolve().parents[1]/'docs/validation/docs-promocion-https-20261025/openapi-despues.json').read_text())['datos']
     name='CommercialInstanceCreate';schema=current['components']['schemas'][name];old=baseline['components']['schemas'][name]
     assert set(schema['required'])=={'name','plan_id','image_id','access'}
@@ -166,6 +170,16 @@ def test_openapi_change_is_only_compatible_omission_and_documentation(monkeypatc
     for field in ['network','commercial_context']:
         prop=node['properties'][field];prop.pop('description')
         assert prop==old['properties'][field]
+    for path, method in [('/v1/instances','post'),
+                         ('/v1/instances/{instance_id}/power/start','post'),
+                         ('/v1/instances/{instance_id}/power/shutdown','post'),
+                         ('/v1/instances/{instance_id}/power/reboot','post'),
+                         ('/v1/instances/{instance_id}','delete')]:
+        adjusted['paths'][path][method]['responses']['202'].pop('headers', None)
+        for schema in (adjusted, baseline):
+            for parameter in schema['paths'][path][method].get('parameters', []):
+                if parameter.get('name') == 'Idempotency-Key':
+                    parameter['required'] = False
     assert transport_projection(adjusted)==transport_projection(baseline)
 
 
