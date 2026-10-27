@@ -298,7 +298,7 @@ class TerraformExecutor:
             raise PlanError("APPLY_DISABLED")
         if not all((instance_id, attempt, sha256, state_key, allocation, variables)):
             raise PlanError("APPROVED_PLAN_REQUIRED")
-        if variables['instance']['vm_id'] in {104, 29000, 29001, 29010, 29011}:
+        if variables['instance']['vm_id'] in {104, 29000, 29001, 29010, 29011, 29016, 29017}:
             # No afecta la observación/reconciliación histórica de estas VM.
             raise PlanError('PROTECTED_RESOURCE')
         self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables)

@@ -111,7 +111,7 @@ def test_minimal_creation_keeps_idempotency_and_exact_plan(sessions, commercial_
     assert capacity.call_count == publish.call_count == 1
 
 
-@pytest.mark.parametrize('image,vmid', [('ubuntu-2404',29000),('ubuntu-2604',29001),('almalinux-9',29010),('almalinux-10',29011)])
+@pytest.mark.parametrize('image,vmid', [('ubuntu-2404',29000),('ubuntu-2604',29001),('almalinux-9',29016),('almalinux-10',29017)])
 @pytest.mark.parametrize('plan', ['kvm-1','kvm-2','kvm-3','kvm-4'])
 def test_four_images_resolve_internal_template_without_public_vmid(sessions, commercial_config, store, image, vmid, plan):
     enable()
@@ -169,7 +169,12 @@ def test_programs_are_fixed_and_specific_to_image():
         assert hashlib.sha256(program.encode()).hexdigest()==digest
         assert mode in program and 'password' not in program.lower()
         if mode.startswith('almalinux'):
-            assert 'nmcli' in program and 'dhcp-client-id=mac' in program and 'restorecon' in program
+            assert "cloud-init','status','--format','json" in program
+            assert "cloud-init','status','--wait" not in program
+            assert "nmcli','connection','load" not in program
+            assert "nmcli','connection','up" not in program
+            assert 'nmcli' in program and 'dhcp-client-id=mac' in program
+            assert 'machine_id.write_text(machine)' in program and 'path.parent.is_dir()' in program
         else:
             assert 'VERSION_ID="26.04"' in program and 'VERSION_ID="24.04"' not in program
     with pytest.raises(Conflict):program_for_mode('imagen-arbitraria')
