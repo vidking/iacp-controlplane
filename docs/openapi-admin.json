@@ -3292,14 +3292,14 @@
         ]
       },
       "post": {
-        "description": "Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.",
+        "description": "Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. `Idempotency-Key` es opcional: si se omite, IACP genera una clave de intención y la devuelve en la respuesta. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Ante un timeout, reutiliza la misma clave y cuerpo; dos solicitudes sin clave son intenciones independientes.",
         "operationId": "createInstance",
         "parameters": [
           {
-            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "description": "Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
-            "required": true,
+            "required": false,
             "schema": {
               "maxLength": 128,
               "minLength": 1,
@@ -3362,7 +3362,15 @@
                 }
               }
             },
-            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal",
+            "headers": {
+              "Idempotency-Key": {
+                "description": "Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3460,7 +3468,7 @@
     },
     "/v1/instances/{instance_id}": {
       "delete": {
-        "description": "Para una instancia nueva bajo una política vigente, envía {} y una nueva Idempotency-Key. Requiere VM apagada, autorización y ausencia de locks. Sigue la operación hasta confirmar eliminación; conserva UUID e historial. Los recursos protegidos permanecen excluidos. El contrato de aprobación independiente existente sigue disponible para operadores autorizados.",
+        "description": "Para una instancia nueva bajo una política vigente, el cuerpo y `Idempotency-Key` son opcionales en el flujo de autoservicio; IACP genera la intención si se omiten. Requiere VM apagada, autorización y ausencia de locks. Sigue la operación hasta confirmar eliminación; conserva UUID e historial. Los recursos protegidos permanecen excluidos. El contrato de aprobación independiente existente sigue disponible para operadores autorizados. Para operar sin copiar IDs, claves ni cuerpos, vuelve a **Crear y administrar máquinas virtuales**.",
         "operationId": "deleteDisposableInstance",
         "parameters": [
           {
@@ -3473,10 +3481,10 @@
             }
           },
           {
-            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "description": "Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
-            "required": true,
+            "required": false,
             "schema": {
               "maxLength": 128,
               "minLength": 1,
@@ -3543,7 +3551,15 @@
                 }
               }
             },
-            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal",
+            "headers": {
+              "Idempotency-Key": {
+                "description": "Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -4509,7 +4525,7 @@
     },
     "/v1/instances/{instance_id}/power/reboot": {
       "post": {
-        "description": "Solicita un reinicio de una KVM running con autorización vigente. Sigue la operación: observar running no basta para demostrar que el reinicio ocurrió.",
+        "description": "Solicita un reinicio de una KVM running con autorización vigente. `Idempotency-Key` es opcional y se devuelve generada cuando se omite. Sigue la operación: observar running no basta para demostrar que el reinicio ocurrió. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**; espera mutations_available=true y no copies IDs ni claves.",
         "operationId": "rebootInstancePower",
         "parameters": [
           {
@@ -4522,10 +4538,10 @@
             }
           },
           {
-            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "description": "Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
-            "required": true,
+            "required": false,
             "schema": {
               "maxLength": 128,
               "minLength": 1,
@@ -4578,7 +4594,15 @@
                 }
               }
             },
-            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal",
+            "headers": {
+              "Idempotency-Key": {
+                "description": "Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -4694,7 +4718,7 @@
     },
     "/v1/instances/{instance_id}/power/shutdown": {
       "post": {
-        "description": "Solicita shutdown mediante ACPI, sin apagado forzado de respaldo. Sigue operation_id hasta confirmar stopped antes de una eliminación autorizada.",
+        "description": "Solicita shutdown mediante ACPI, sin apagado forzado de respaldo. `Idempotency-Key` es opcional y se devuelve generada cuando se omite. Sigue operation_id hasta confirmar stopped antes de una eliminación autorizada. La consola operativa gestiona el identificador y la intención automáticamente, sin cuerpo vacío.",
         "operationId": "shutdownInstancePower",
         "parameters": [
           {
@@ -4707,10 +4731,10 @@
             }
           },
           {
-            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "description": "Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
-            "required": true,
+            "required": false,
             "schema": {
               "maxLength": 128,
               "minLength": 1,
@@ -4763,7 +4787,15 @@
                 }
               }
             },
-            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal",
+            "headers": {
+              "Idempotency-Key": {
+                "description": "Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -4879,7 +4911,7 @@
     },
     "/v1/instances/{instance_id}/power/start": {
       "post": {
-        "description": "Solicita start con una intención idempotente. Requiere identidad, propiedad, perfil/política y habilitación vigentes. Sigue operation_id hasta el resultado terminal; no garantiza disponibilidad del invitado.",
+        "description": "Solicita start con una intención idempotente. `Idempotency-Key` es opcional; si se omite, IACP genera y devuelve una clave en la respuesta. Requiere identidad, propiedad, perfil/política y habilitación vigentes. Sigue operation_id hasta el resultado terminal; no garantiza disponibilidad del invitado. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**: selecciona la VM y pulsa Iniciar; la consola completa instance_id y la intención.",
         "operationId": "startInstancePower",
         "parameters": [
           {
@@ -4892,10 +4924,10 @@
             }
           },
           {
-            "description": "Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.",
+            "description": "Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.",
             "in": "header",
             "name": "Idempotency-Key",
-            "required": true,
+            "required": false,
             "schema": {
               "maxLength": 128,
               "minLength": 1,
@@ -4948,7 +4980,15 @@
                 }
               }
             },
-            "description": "Intención admitida; seguir operation_id hasta resultado terminal"
+            "description": "Intención admitida; seguir operation_id hasta resultado terminal",
+            "headers": {
+              "Idempotency-Key": {
+                "description": "Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {

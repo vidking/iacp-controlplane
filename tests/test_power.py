@@ -54,6 +54,23 @@ def test_power_operations_confirm_task_and_native_result(client, auth, sessions,
     assert observed["guest_ready"] is None and all(observed[k] == "unknown" for k in ("os_boot", "guest_agent", "cloud_init", "accessible"))
 
 
+def test_power_without_key_generates_one_and_replays_with_returned_key(client, auth, sessions, power):
+    identifier, native, publisher = power
+    native.power = "stopped"
+    accepted = client.post(f"/v1/instances/{identifier}/power/start", headers=auth)
+    assert accepted.status_code == 202
+    generated = accepted.headers.get("Idempotency-Key")
+    assert generated and generated.startswith("http-start-")
+    body = accepted.json()
+    with sessions() as session:
+        operation = session.get(Operation, body["operation_id"])
+        assert operation.idempotency_key == generated
+    replay = client.post(f"/v1/instances/{identifier}/power/start",
+                         headers={**auth, "Idempotency-Key": generated})
+    assert replay.status_code == 202 and replay.json() == body
+    assert publisher.call_count == 2
+
+
 @pytest.mark.parametrize("action,state", [("start", "running"), ("shutdown", "stopped")])
 def test_already_in_target_state_is_an_audited_noop(client, auth, sessions, power, action, state):
     identifier, native, _ = power
@@ -276,7 +293,9 @@ def test_openapi_has_four_authenticated_power_contracts_and_no_force_parameters(
         assert contract['security'] == [{'HTTPBearer': []}]
         if method == 'post':
             assert '202' in contract['responses']
-            assert any(item['name'] == 'Idempotency-Key' and item['required'] for item in contract['parameters'])
+            assert any(item['name'] == 'Idempotency-Key' and not item['required'] for item in contract['parameters'])
+            assert contract['responses']['202']['headers']['Idempotency-Key']['schema']['type'] == 'string'
+            assert not contract.get('requestBody', {}).get('required', False)
     assert schema['components']['schemas']['PowerRequest']['additionalProperties'] is False
     assert schema['components']['schemas']['PowerRequest']['properties'] == {}
 

@@ -274,7 +274,7 @@ def test_swagger_documents_roles_preconditions_and_gated_delete(client,auth):
     assert schema['components']['schemas']['InstanceCreate']['additionalProperties'] is False
     route=schema['paths']['/v1/instances/{instance_id}']['delete']
     assert route['security']==[{'HTTPBearer':[]}]
-    assert route['responses']['202'] and any(p['name']=='Idempotency-Key' and p['required'] for p in route['parameters'])
+    assert route['responses']['202'] and any(p['name']=='Idempotency-Key' and not p['required'] for p in route['parameters'])
     assert 'force' not in schema['components']['schemas']['DeleteRequest']['properties']
     html=client.get('/docs',headers=auth).text
     assert '/docs?asset=iacp-v1.js' in html

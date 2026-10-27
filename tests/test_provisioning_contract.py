@@ -243,6 +243,18 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
         for method, operation in methods.items():
             original = before_http['paths'][path][method]
             operation = after_http['paths'][path][method]
+            # La clave pasó a ser opcional en las cinco mutaciones públicas:
+            # el servidor genera una intención durable cuando se omite. El
+            # resto del contrato HTTP permanece idéntico al histórico.
+            if (path == '/v1/instances' and method == 'post') or (
+                    path.endswith('/power/start') or path.endswith('/power/shutdown') or
+                    path.endswith('/power/reboot') or
+                    (path.startswith('/v1/instances/') and method == 'delete')):
+                for candidate in (original, operation):
+                    for parameter in candidate.get('parameters', []):
+                        if parameter.get('name') == 'Idempotency-Key':
+                            parameter['required'] = False
+                operation.get('responses', {}).get('202', {}).pop('headers', None)
             for field in ['operationId', 'parameters', 'requestBody', 'responses', 'security']:
                 assert operation.get(field) == original.get(field), (method, path, field)
     old_models, new_models = (s['components']['schemas'] for s in [before, after])

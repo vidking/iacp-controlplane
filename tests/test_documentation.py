@@ -55,6 +55,17 @@ def test_openapi_31_valid_and_wire_contract_exact():
     assert {'$ref':'#/components/schemas/OrderContext'} in widened
     widened.remove({'$ref':'#/components/schemas/OrderContext'})
     assert historical['components']['schemas']['InstanceResponse']['properties']['commercial_context'].pop('title')=='Commercial Context'
+    mutation_paths = [('/v1/instances','post'),
+                      ('/v1/instances/{instance_id}/power/start','post'),
+                      ('/v1/instances/{instance_id}/power/shutdown','post'),
+                      ('/v1/instances/{instance_id}/power/reboot','post'),
+                      ('/v1/instances/{instance_id}','delete')]
+    for contract in (before, historical):
+        for path, method in mutation_paths:
+            for parameter in contract['paths'][path][method].get('parameters', []):
+                if parameter.get('name') == 'Idempotency-Key':
+                    parameter['required'] = False
+            contract['paths'][path][method].get('responses', {}).get('202', {}).pop('headers', None)
     assert transport_projection(before) == transport_projection(historical)
     assert schema['openapi'] == '3.1.0'
     assert schema['components']['securitySchemes'] == before['components']['securitySchemes']
@@ -67,7 +78,7 @@ def test_comparator_detects_validation_defaults_headers_security_and_codes():
                lambda s:s['components']['schemas']['InstanceCreate'].update(required=['name']),
                lambda s:s['paths']['/v1/instances']['post'].update(security=[]),
                lambda s:s['paths']['/v1/instances']['post']['responses'].pop('409'),
-               lambda s:s['paths']['/v1/instances']['post']['parameters'][0].update(required=False)]
+               lambda s:s['paths']['/v1/instances']['post']['parameters'][0].update(required=True)]
     for change in changes:
         altered=deepcopy(original);change(altered)
         assert transport_projection(original) != transport_projection(altered)

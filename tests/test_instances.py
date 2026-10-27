@@ -75,6 +75,20 @@ def test_same_key_replays_once_and_changed_request_conflicts(client, auth, appli
             assert session.scalar(select(func.count()).select_from(model)) == 1
 
 
+def test_creation_without_key_generates_unique_intention_and_returns_it(client, auth, application, sessions):
+    publish = Mock()
+    application.dependency_overrides[get_instance_publisher] = lambda: publish
+    first = client.post('/v1/instances', headers=auth, json={**SPEC, 'name': 'generated-one'})
+    second = client.post('/v1/instances', headers=auth, json={**SPEC, 'name': 'generated-two'})
+    assert first.status_code == second.status_code == 202
+    first_key, second_key = first.headers.get('Idempotency-Key'), second.headers.get('Idempotency-Key')
+    assert first_key and second_key and first_key != second_key
+    with sessions() as session:
+        for response, key in ((first, first_key), (second, second_key)):
+            operation = session.get(Operation, response.json()['operation_id'])
+            assert operation.idempotency_key == key
+
+
 def test_defaults_are_part_of_the_canonical_idempotent_request(client, auth):
     first = create(client, auth, spec={"name": SPEC["name"], "image": SPEC["image"]})
     assert first.status_code == 202

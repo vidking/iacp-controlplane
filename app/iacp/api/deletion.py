@@ -1,7 +1,7 @@
 """A reviewed saved destroy plan precedes DELETE; provider identity stays server-side."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Body
+from fastapi import APIRouter, Depends, Header, HTTPException, Body, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/v1/instances/{instance_id}", tags=["disposable-delet
     409: {"model": ErrorResponse}, 503: {"model": ErrorResponse},
 })
 Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")]
+DeleteKey = str
 Database = Annotated[Session, Depends(get_session)]
 Publisher = Annotated[object, Depends(get_deletion_publisher)]
 
@@ -35,13 +36,14 @@ class DeleteApprovalRequest(DeleteRequest):
     valid_for_seconds: int = Field(default=900, ge=60, le=3600)
 
 
-def guarded(call):
+def guarded(call, key=None):
+    headers = {"Idempotency-Key": key} if key else None
     try:
         return call()
     except Conflict as failure:
-        raise HTTPException(409, str(failure)) from None
+        raise HTTPException(409, str(failure), headers=headers) from None
     except QueueUnavailable:
-        raise HTTPException(503, "DELETE_DISPATCH_UNCONFIRMED; repeat the SAME key") from None
+        raise HTTPException(503, "DELETE_DISPATCH_UNCONFIRMED; repeat the SAME key", headers=headers) from None
 
 
 @router.post("/provisioning/deletion-plan", response_model=DeletionAccepted, status_code=202,
@@ -67,23 +69,26 @@ def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Da
 
 @router.delete("", response_model=DeletionAccepted, status_code=202, operation_id="deleteDisposableInstance",
                summary="Eliminar una KVM descartable con plan aprobado",
-               description="Operator original y MISMA Idempotency-Key de deletion-plan. Requiere habilitación explícita, "
+               description="Operator original y una Idempotency-Key opcional. Si se omite, IACP genera una intención y la devuelve en la respuesta. Requiere habilitación explícita, "
                            "allowlist y aprobación independiente vigente. Para una VM nueva bajo política de autoservicio, "
-                           "enviar {} con una clave nueva: prepara, valida y ejecuta el plan por delegación auditada. "
+                           "el cuerpo es opcional para el autoservicio: prepara, valida y ejecuta el plan por delegación auditada. "
                            "IaC Worker aplica únicamente el plan guardado. "
                            "Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. "
                            "Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. "
                            "VM 104 y VM 106 quedan prohibidas. No invoca DELETE nativo ni borra volúmenes Docker.")
-def delete(instance_id: str, key: Key, session: Database, publish: Publisher,
+def delete(instance_id: str, response: Response, session: Database, publish: Publisher,
            principal: Annotated[Principal, Depends(authorize_write)],
+           key: DeleteKey = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
            body: Annotated[DeleteRequest | PowerRequest | None, Body(openapi_examples={
                "self_service":{"summary":"VM nueva bajo política vigente; plan y delegación auditados","value":{}},
                "reviewed_plan":{"summary":"Contrato histórico; sustituir por IDs/digest reales revisados","value":{
                    "operation_id":"00000000-0000-4000-8000-000000000002","plan_sha256":"a"*64}}})] = None):
+    from .idempotency import resolve_key
+    key = resolve_key(key, 'delete', response)
     instance = owned(session, principal, instance_id)
     if not isinstance(body, DeleteRequest):
-        return guarded(lambda: deletion.plan_request(session, instance, principal, key, publish, autonomous=True))
-    return guarded(lambda: deletion.dispatch(session, instance, principal, body.model_dump(), key, publish))
+        return guarded(lambda: deletion.plan_request(session, instance, principal, key, publish, autonomous=True), key)
+    return guarded(lambda: deletion.dispatch(session, instance, principal, body.model_dump(), key, publish), key)
 
 
 @router.post("/provisioning/deletions/{operation_id}/cancel", response_model=DeletionAccepted,
