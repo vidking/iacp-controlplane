@@ -28,15 +28,34 @@ class CommandRunner:
                 or os.environ.get("IACP_TERRAFORM_APPLY_ENABLED") != "1"):
             raise PlanError("DELETE_DISABLED")
 
-    def plan_destroy(self, cwd: Path, env: dict, cancelled) -> bytes:
+    def plan_destroy(self, cwd: Path, env: dict, cancelled, *, refresh=True) -> bytes:
         self.deletion_enabled()
-        return self._execute(["plan", "-destroy", "-input=false", "-no-color", "-lock-timeout=30s",
-                              "-detailed-exitcode", "-out=deletion.tfplan"], cwd, env, cancelled, (0, 2), "delete.plan")
+        args = ["plan", "-destroy", "-input=false", "-no-color", "-lock-timeout=30s"]
+        if not refresh:
+            args.append("-refresh=false")
+        args.extend(["-detailed-exitcode", "-out=deletion.tfplan"])
+        return self._execute(args, cwd, env, cancelled, (0, 2), "delete.plan")
 
     def apply_destroy(self, cwd: Path, env: dict, cancelled) -> bytes:
         self.deletion_enabled()
         return self._execute(["apply", "-input=false", "-no-color", "-lock-timeout=30s", "deletion.tfplan"],
                              cwd, env, cancelled, (0,), "delete.apply")
+
+    def destroy(self, cwd: Path, env: dict, cancelled, *, refresh=False) -> bytes:
+        """Ejecuta el destroy interno solo para recuperación tainted.
+
+        Terraform 1.16.6 puede invalidar un plan guardado al refrescar el
+        state durante ``apply`` cuando el recurso fallido quedó tainted. La
+        recuperación ya inspeccionó un plan exclusivo de ``delete`` y selló
+        identidad, state y ausencia de escritores; en ese caso el comando
+        fijo vuelve a planificar y destruye sin refresh para no adoptar ni
+        reemplazar el recurso.
+        """
+        self.deletion_enabled()
+        args = ["destroy", "-auto-approve", "-input=false", "-no-color", "-lock-timeout=30s"]
+        if not refresh:
+            args.append("-refresh=false")
+        return self._execute(args, cwd, env, cancelled, (0,), "delete.destroy")
 
     def run(self, args, cwd: Path, env: dict, cancelled, allowed=(0,), phase=None) -> bytes:
         if args != ["state", "pull"] and (not args or args[0] not in {"version", "init", "validate", "plan", "show"}):

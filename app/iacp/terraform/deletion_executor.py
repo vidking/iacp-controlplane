@@ -158,7 +158,7 @@ class DeletionExecutor(TerraformExecutor):
         verify_plan(plan, context['variables'])
         return plan
 
-    def plan_deletion(self, context, cancelled):
+    def plan_deletion(self, context, cancelled, *, allow_tainted=False):
         # The original immutable provisioning plan must still belong to this instance.
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
                               context['state_key'], context['allocation'], context['variables'])
@@ -180,7 +180,7 @@ class DeletionExecutor(TerraformExecutor):
         reader = S3StateReader(context['backend'], env)
         try:
             state = reader.read(cancelled)
-            resource = state_resource(state.state, context['variables'])
+            resource = state_resource(state.state, context['variables'], allow_tainted=allow_tainted)
             if resource is None:
                 raise PlanError('DELETE_OWNED_STATE_REQUIRED')
             absence_only=not proxmox_resource(env,context['variables']['instance'],cancelled)['present']
@@ -188,11 +188,26 @@ class DeletionExecutor(TerraformExecutor):
             precondition(env, context['variables'], cancelled)
             self.initialize(root, env, cancelled, 'delete.plan')
             approved = self.provisioning_plan(context, root, env, cancelled)
-            verify_topology(approved, resource)
-            self.runner.plan_destroy(root, env, cancelled)
+            if allow_tainted:
+                # En recuperación destructiva el recurso puede conservar la
+                # discrepancia que provocó el taint. Nunca se adopta como
+                # válido; la identidad exacta queda sellada por state_resource
+                # y el plan destroy debe contener únicamente ``delete``.
+                verify_identity(resource, context['variables']['instance'])
+            else:
+                verify_topology(approved, resource)
+            # Un recurso tainted ya fue comprobado físicamente como detenido y
+            # perteneciente a este state. El refresh dentro de un plan -destroy
+            # puede reescribir el serial remoto antes del apply y volver obsoleto
+            # el plan guardado; la recuperación acotada usa el snapshot sellado.
+            if allow_tainted:
+                self.runner.plan_destroy(root, env, cancelled, refresh=False)
+            else:
+                self.runner.plan_destroy(root, env, cancelled)
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.inspect')
             verify_delete_plan(plan, context['variables'],absence_only=absence_only)
-            technical_drift=verify_topology(approved, deletion_before(plan,absence_only,resource), persisted=resource)
+            technical_drift=(['tainted_recovery'] if allow_tainted else
+                             verify_topology(approved, deletion_before(plan,absence_only,resource), persisted=resource))
             state.verify(reader.read(cancelled))
             precondition(env, context['variables'], cancelled)
             saved = root / 'deletion.tfplan'; saved.chmod(0o600)
@@ -210,7 +225,7 @@ class DeletionExecutor(TerraformExecutor):
         finally:
             reader.close()
 
-    def apply_deletion(self, context, sha256, cancelled, before_mutation):
+    def apply_deletion(self, context, sha256, cancelled, before_mutation, *, allow_tainted=False):
         workspace, manifest = self.manifest(context)
         env = self.environment(workspace)
         if (manifest['plan_sha256'] != sha256 or self.context_digest(env, manifest['execution_context_salt'])
@@ -221,23 +236,37 @@ class DeletionExecutor(TerraformExecutor):
         precondition=require_absent if absence_only else stopped
         try:
             current = reader.read(cancelled)
-            if current.metadata() != manifest['state_before'] or state_resource(current.state, context['variables']) is None:
+            if current.metadata() != manifest['state_before'] or state_resource(current.state, context['variables'], allow_tainted=allow_tainted) is None:
                 raise PlanError('DELETE_STATE_CHANGED')
             precondition(env, context['variables'], cancelled)
             root = workspace / 'source/stacks/kvm-instance'
             self.initialize(root, env, cancelled, 'delete.apply')
             approved = self.provisioning_plan(context, root, env, cancelled)
-            verify_topology(approved, state_resource(current.state, context['variables']))
+            current_resource = state_resource(current.state, context['variables'], allow_tainted=allow_tainted)
+            if allow_tainted:
+                verify_identity(current_resource, context['variables']['instance'])
+            else:
+                verify_topology(approved, current_resource)
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.reinspect')
             verify_delete_plan(plan, context['variables'],absence_only=absence_only)
-            persisted=state_resource(current.state, context['variables'])
-            verify_topology(approved, deletion_before(plan,absence_only,persisted),persisted=persisted)
+            persisted=state_resource(current.state, context['variables'], allow_tainted=allow_tainted)
+            if allow_tainted:
+                verify_identity(persisted, context['variables']['instance'])
+            else:
+                verify_topology(approved, deletion_before(plan,absence_only,persisted),persisted=persisted)
             current.verify(reader.read(cancelled))
             precondition(env, context['variables'], cancelled)
             if digest_file(root / 'deletion.tfplan') != sha256:
                 raise PlanError('DELETE_PLAN_INTEGRITY_FAILED')
             before_mutation()  # Durable consumption fence BEFORE spawning Terraform.
-            self.runner.apply_destroy(root, env, cancelled)
+            if allow_tainted:
+                # Terraform 1.16.6 invalida el plan guardado cuando el
+                # refresh del provider reescribe el state tainted durante
+                # apply. La ruta acotada ya validó el plan exclusivo y vuelve
+                # a ejecutar el destroy interno, sin refresh ni targets.
+                self.runner.destroy(root, env, cancelled, refresh=False)
+            else:
+                self.runner.apply_destroy(root, env, cancelled)
         finally:
             reader.close()
         return self.reconcile_deletion(context, sha256, cancelled)

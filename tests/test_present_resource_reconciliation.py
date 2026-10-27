@@ -92,6 +92,17 @@ def test_raw_module_state_never_adopts_partial_or_foreign_identity(tmp_path, mon
     assert "secret" not in json.dumps(failure.value.diagnostic())
 
 
+def test_tainted_state_is_only_readable_by_explicit_destructive_recovery(tmp_path, monkeypatch):
+    executor, runner, _, _, args = artifacts(tmp_path, monkeypatch)
+    state = deepcopy(runner.state())
+    state["resources"][0]["instances"][0]["status"] = "tainted"
+    with pytest.raises(PlanError) as failure:
+        state_resource(state, args[5])
+    assert failure.value.code == "INCOMPLETE_OBSERVATION"
+    recovered = state_resource(state, args[5], allow_tainted=True)
+    assert recovered["vm_id"] == args[5]["instance"]["vm_id"]
+
+
 @pytest.mark.parametrize("change,error", [("empty", "PROVIDER_OBSERVATION_INCONSISTENT"),
     ("partial", "INCOMPLETE_OBSERVATION"), ("errored", "INCOMPLETE_OBSERVATION"),
     ("actions", "INCOMPLETE_OBSERVATION"), ("missing-prior", "PROVIDER_OBSERVATION_INCONSISTENT"),
