@@ -187,7 +187,21 @@ class DeletionExecutor(TerraformExecutor):
             precondition=require_absent if absence_only else stopped
             precondition(env, context['variables'], cancelled)
             self.initialize(root, env, cancelled, 'delete.plan')
-            approved = self.provisioning_plan(context, root, env, cancelled)
+            if allow_tainted:
+                # La recuperación destructiva no adopta ni revalida la
+                # postcondición del aprovisionamiento fallido. El plan
+                # original puede contener precisamente la discrepancia que
+                # provocó el taint (por ejemplo, la geometría CPU heredada).
+                # Se conserva su vínculo criptográfico mediante
+                # ``verify_artifacts`` y se vuelve a inspeccionar el plan de
+                # destroy, que es la única mutación autorizada.
+                approved = self.read_json(
+                    ['show', '-json', str(self.workspace(context['instance_id'], context['attempt']) /
+                                         'source/stacks/kvm-instance/saved.tfplan')],
+                    root, env, cancelled, 'delete.provisioning_plan'
+                )
+            else:
+                approved = self.provisioning_plan(context, root, env, cancelled)
             if allow_tainted:
                 # En recuperación destructiva el recurso puede conservar la
                 # discrepancia que provocó el taint. Nunca se adopta como

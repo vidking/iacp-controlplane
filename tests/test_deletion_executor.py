@@ -81,7 +81,14 @@ def test_saved_delete_plan_apply_and_readonly_reconciliation(deletion_executor):
 def test_tainted_recovery_uses_fixed_destroy_without_adopting_resource(deletion_executor):
     executor,ctx,store=deletion_executor
     store.state['resources'][0]['instances'][0]['status']='tainted'
-    plan=executor.plan_deletion(ctx,lambda:False,allow_tainted=True)
+    # Un plan de aprovisionamiento fallido puede no satisfacer la barrera de
+    # hardware; la recuperación solo debe sellar y ejecutar el destroy.
+    original = module.verify_plan
+    module.verify_plan = lambda *args, **kwargs: (_ for _ in ()).throw(PlanError('PLAN_MISMATCH'))
+    try:
+        plan=executor.plan_deletion(ctx,lambda:False,allow_tainted=True)
+    finally:
+        module.verify_plan = original
     result=executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:None,allow_tainted=True)
     assert result['deleted']
     assert ['destroy', {'refresh': False}] in executor.runner.calls
