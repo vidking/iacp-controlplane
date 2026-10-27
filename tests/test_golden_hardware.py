@@ -69,6 +69,15 @@ def test_template_vcpu_and_resources_are_not_inherited_by_kvm1_plan():
         verify_cpu(inherited, variables)
 
 
+@pytest.mark.parametrize('vcpus',[1,2,4,8])
+def test_all_kvm_plans_seal_cores_and_effective_vcpus(vcpus):
+    hardware=parse(golden(),29000,'mng01',vcpus).model_dump()
+    variables={'instance': {'cpu_cores': vcpus}, 'iacp_golden_hardware': hardware}
+    verify_cpu({'cpu': [{'type': hardware['cpu_type'], 'flags': hardware['flags'],
+                         'numa': hardware['numa'], 'cores': vcpus,
+                         'sockets': 1, 'hotplugged': vcpus}]}, variables)
+
+
 def test_sockets_are_preserved_when_compatible_and_adjusted_only_for_capacity():
     raw={**golden(),'sockets':2}
     assert parse(raw,29001,'mng01',4).sockets==2
