@@ -1,4 +1,4 @@
-"""Anotaciones documentales; no cambia schemas, handlers ni requisitos HTTP."""
+"""Presentación pública del contrato, incluida la idempotencia HTTP opcional."""
 DESCRIPTION = (
     'API de aprovisionamiento y ciclo de vida de IACP para infraestructura KVM. '
     'Selecciona perfiles autorizados, conserva las intenciones idempotentes y sigue cada operación hasta su resultado.\n\n'
@@ -30,16 +30,16 @@ TAGS = [
 
 OPERATIONS = {
     'listAuthorizedProfiles': ('Consultar el catálogo de perfiles', 'Devuelve imágenes, destinos y límites autorizados para el tenant. Selecciona un perfil y una política aprobada antes de solicitar recursos; el catálogo no amplía cuotas.'),
-    'createInstance': ('Crear una instancia KVM', 'Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Repite la misma clave y cuerpo si no recibes confirmación.'),
+    'createInstance': ('Crear una instancia KVM', 'Admite una intención idempotente bajo el catálogo y el perfil técnico autorizado. `Idempotency-Key` es opcional: si se omite, IACP genera una clave de intención y la devuelve en la respuesta. Conserva los tres identificadores de respuesta. Un 202 no significa que la VM ni su acceso estén disponibles. Ante un timeout, reutiliza la misma clave y cuerpo; dos solicitudes sin clave son intenciones independientes.'),
     'listInstances': ('Consultar las instancias del tenant', 'Lista paginada y estable del inventario propio. Utiliza limit, offset y los filtros disponibles. X-Total-Count indica el total del filtro; deleted conserva el historial de una instancia eliminada.'),
     'getInstance': ('Consultar una instancia', 'Obtiene el estado persistido del UUID propio, sus recursos y las observaciones de red/acceso. Una instancia ajena o no visible devuelve 404.'),
     'listOperations': ('Consultar el historial de operaciones', 'Lista paginada de intenciones del tenant. Filtra por instance_id para seguir creación, Lifecycle y eliminación. Consulta normalized_status y, para arranque automático, fulfillment.'),
     'getOperation': ('Seguir una operación por su UUID', 'Consulta la misma operación hasta completed, failed o uncertain. Revisa error_code y recovery_required antes de continuar. Un estado uncertain exige observación/reconciliación autorizada sobre la misma instancia.'),
     'getInstancePower': ('Consultar el estado de energía', 'Observa la KVM propia y devuelve las transiciones disponibles. Running solo describe energía; no demuestra SSH, Cloud-Init, Guest Agent ni disponibilidad de aplicaciones.'),
-    'startInstancePower': ('Iniciar una instancia autorizada', 'Solicita start con una intención idempotente. Requiere identidad, propiedad, perfil/política y habilitación vigentes. Sigue operation_id hasta el resultado terminal; no garantiza disponibilidad del invitado. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**: selecciona la VM y pulsa Iniciar; la consola completa instance_id e Idempotency-Key.'),
-    'rebootInstancePower': ('Reiniciar una instancia autorizada', 'Solicita un reinicio de una KVM running con autorización vigente. Sigue la operación: observar running no basta para demostrar que el reinicio ocurrió. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**; espera mutations_available=true y no copies IDs ni claves.'),
-    'shutdownInstancePower': ('Apagar una instancia ordenadamente', 'Solicita shutdown mediante ACPI, sin apagado forzado de respaldo. Sigue operation_id hasta confirmar stopped antes de una eliminación autorizada. La consola operativa gestiona el identificador, el cuerpo vacío y la clave de intención automáticamente.'),
-    'deleteDisposableInstance': ('Eliminar una instancia descartable autorizada', 'Para una instancia nueva bajo una política vigente, envía {} y una nueva Idempotency-Key. Requiere VM apagada, autorización y ausencia de locks. Sigue la operación hasta confirmar eliminación; conserva UUID e historial. Los recursos protegidos permanecen excluidos. El contrato de aprobación independiente existente sigue disponible para operadores autorizados. Para operar sin copiar IDs, claves ni {}, vuelve a **Crear y administrar máquinas virtuales**.'),
+    'startInstancePower': ('Iniciar una instancia autorizada', 'Solicita start con una intención idempotente. `Idempotency-Key` es opcional; si se omite, IACP genera y devuelve una clave en la respuesta. Requiere identidad, propiedad, perfil/política y habilitación vigentes. Sigue operation_id hasta el resultado terminal; no garantiza disponibilidad del invitado. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**: selecciona la VM y pulsa Iniciar; la consola completa instance_id y la intención.'),
+    'rebootInstancePower': ('Reiniciar una instancia autorizada', 'Solicita un reinicio de una KVM running con autorización vigente. `Idempotency-Key` es opcional y se devuelve generada cuando se omite. Sigue la operación: observar running no basta para demostrar que el reinicio ocurrió. Para el recorrido guiado usa **Crear y administrar máquinas virtuales**; espera mutations_available=true y no copies IDs ni claves.'),
+    'shutdownInstancePower': ('Apagar una instancia ordenadamente', 'Solicita shutdown mediante ACPI, sin apagado forzado de respaldo. `Idempotency-Key` es opcional y se devuelve generada cuando se omite. Sigue operation_id hasta confirmar stopped antes de una eliminación autorizada. La consola operativa gestiona el identificador y la intención automáticamente, sin cuerpo vacío.'),
+    'deleteDisposableInstance': ('Eliminar una instancia descartable autorizada', 'Para una instancia nueva bajo una política vigente, el cuerpo y `Idempotency-Key` son opcionales en el flujo de autoservicio; IACP genera la intención si se omiten. Requiere VM apagada, autorización y ausencia de locks. Sigue la operación hasta confirmar eliminación; conserva UUID e historial. Los recursos protegidos permanecen excluidos. El contrato de aprobación independiente existente sigue disponible para operadores autorizados. Para operar sin copiar IDs, claves ni cuerpos, vuelve a **Crear y administrar máquinas virtuales**.'),
     'discoverInstanceNetwork': ('Observar la red del invitado', 'Solicita una observación asíncrona con identidad y MAC verificadas. Una IP pendiente no equivale a fallo de creación. Conserva operation_id y espera la observación; no cambia el direccionamiento autorizado.'),
     'initializeInstanceNetwork': ('Completar la inicialización autorizada', 'Inicialización fija y de un solo uso para una clon nueva bajo perfil/política compatibles. No admite comandos o archivos del cliente. Start la solicita automáticamente; esta ruta conserva la intención ante una entrega no confirmada.'),
     'verifyInstanceAccess': ('Verificar el acceso inicial', 'Solicita la verificación autorizada del acceso del invitado. Conserva la operación y consulta el resultado sin enviar de nuevo una creación. No devuelve contraseñas.'),
@@ -83,6 +83,10 @@ PROFILE = {'profile':'lab-dhcp','image':'ubuntu-2404','network_mode':'dhcp','bri
 
 
 def present(schema):
+    optional_key_operations = {
+        'createInstance', 'startInstancePower', 'shutdownInstancePower',
+        'rebootInstancePower', 'deleteDisposableInstance',
+    }
     for methods in schema['paths'].values():
         for operation in methods.values():
             identifier = operation.get('operationId')
@@ -90,7 +94,18 @@ def present(schema):
                 operation['summary'], operation['description'] = OPERATIONS[identifier]
             for parameter in operation.get('parameters', []):
                 if parameter.get('name') == 'Idempotency-Key':
-                    parameter['description'] = 'Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.'
+                    if identifier in optional_key_operations:
+                        parameter['required'] = False
+                        parameter['description'] = 'Opcional. Si se omite, IACP genera una clave única de intención y la devuelve en el header de respuesta. Una clave explícita conserva deduplicación y replay; otro cuerpo devuelve 409.'
+                    else:
+                        parameter['description'] = 'Clave de la intención dentro del tenant. Mismo cuerpo y clave conservan identificadores; otro cuerpo devuelve 409.'
+            if identifier in optional_key_operations:
+                response_202 = operation.get('responses', {}).get('202')
+                if response_202 is not None:
+                    response_202.setdefault('headers', {})['Idempotency-Key'] = {
+                        'description': 'Clave de intención usada por IACP; reutilícela si debe repetir la misma solicitud.',
+                        'schema': {'type': 'string'},
+                    }
             media = operation.get('requestBody', {}).get('content', {}).get('application/json')
             if media is not None and identifier in {'createInstance', 'startInstancePower', 'rebootInstancePower', 'shutdownInstancePower', 'deleteDisposableInstance'}:
                 # Se añaden anotaciones al schema servido, nunca valores por defecto al handler.

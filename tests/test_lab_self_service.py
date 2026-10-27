@@ -184,6 +184,16 @@ def test_self_service_delete_uses_existing_fence_and_preserves_history(client,au
     assert len(client.get('/v1/operations?instance_id='+a['instance_id'],headers=auth).json())==2
 
 
+def test_self_service_delete_without_key_generates_one(client,auth,lab,sessions):
+    a=create(client,auth,lab,77).json();provision(a,sessions,lab)
+    response=client.request('DELETE','/v1/instances/'+a['instance_id'],headers=auth)
+    assert response.status_code==202,response.text
+    generated=response.headers.get('Idempotency-Key')
+    assert generated and generated.startswith('http-delete-')
+    with sessions() as session:
+        assert session.get(Operation,response.json()['operation_id']).idempotency_key==generated
+
+
 def test_lifecycle_and_historical_scope_stay_separate(client,auth,lab,sessions):
     a=create(client,auth,lab).json();provision(a,sessions,lab);path='/v1/instances/'+a['instance_id']
     for n,action in enumerate(['start','reboot','shutdown']):
