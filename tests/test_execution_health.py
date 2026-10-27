@@ -129,7 +129,7 @@ def test_bad_health_stops_plan_before_workspace_creation(tmp_path, monkeypatch, 
     executor.runner.run.assert_not_called()
 
 
-@pytest.mark.parametrize('vmid',[104,29000,29001,29010,29011])
+@pytest.mark.parametrize('vmid',[104,29000,29001,29010,29011,29016,29017])
 def test_protected_targets_never_reach_prepare_or_apply(tmp_path,monkeypatch,target,vmid):
     monkeypatch.setenv('IACP_TERRAFORM_APPLY_ENABLED','1')
     executor=TerraformExecutor(tmp_path/'source',tmp_path/'artifacts',runner=Mock())

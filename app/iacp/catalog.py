@@ -45,6 +45,9 @@ class GoldenImage:
 # Procedencia comprobada en VM 104 el 24/10/2026, America/Costa_Rica.
 # Metadatos internos: VMID/nodo/storage no forman parte de GET /v1/images.
 # Infraestructura confirmó las cuatro plantillas el 25/10/2026, America/Costa_Rica.
+# Revisiones AlmaLinux QGA definitivas en MNG: 29010 (9) y 29011 (10),
+# consolidadas desde 29016/29017 mediante clonación nativa de Proxmox. Las
+# fuentes se conservan hasta completar la certificación y el retiro controlado.
 # Su habilitación autorizada no afirma un nuevo E2E del bootstrap G6 de IACP.
 IMAGES = (
     GoldenImage("ubuntu-2404", "Ubuntu", "24.04", "habilitada", 29000,

@@ -1,0 +1,34 @@
+module iacp_qga 2.0;
+
+require {
+ type virt_qemu_ga_t;
+ type cloud_init_exec_t;
+ type cloud_var_lib_t;
+ type machineid_t;
+ type NetworkManager_etc_t;
+ type NetworkManager_etc_rw_t;
+ type NetworkManager_t;
+ class process setsched;
+ class dbus send_msg;
+ class dir { add_name getattr open read remove_name search write };
+ class file { create execute execute_no_trans getattr ioctl map open read setattr write rename unlink };
+ class lnk_file { getattr open read };
+ attribute file_type;
+}
+
+type iacp_guest_data_t;
+typeattribute iacp_guest_data_t file_type;
+
+allow virt_qemu_ga_t cloud_init_exec_t:file { execute execute_no_trans getattr ioctl open read map };
+allow virt_qemu_ga_t cloud_var_lib_t:dir { getattr open read search };
+allow virt_qemu_ga_t cloud_var_lib_t:file { getattr ioctl open read };
+allow virt_qemu_ga_t cloud_var_lib_t:lnk_file { getattr open read };
+allow virt_qemu_ga_t machineid_t:file { getattr open read write setattr rename unlink };
+allow virt_qemu_ga_t NetworkManager_etc_t:dir { getattr open read search };
+allow virt_qemu_ga_t NetworkManager_etc_t:file { getattr open read };
+allow virt_qemu_ga_t NetworkManager_etc_rw_t:dir { add_name getattr open read remove_name search write };
+allow virt_qemu_ga_t NetworkManager_etc_rw_t:file { create getattr open read setattr write rename unlink };
+allow virt_qemu_ga_t NetworkManager_t:dbus send_msg;
+allow virt_qemu_ga_t iacp_guest_data_t:dir { add_name getattr open read remove_name search write };
+allow virt_qemu_ga_t iacp_guest_data_t:file { create getattr open read setattr write rename unlink };
+allow virt_qemu_ga_t virt_qemu_ga_t:process setsched;

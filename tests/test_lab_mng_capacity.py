@@ -169,7 +169,12 @@ def test_programs_are_fixed_and_specific_to_image():
         assert hashlib.sha256(program.encode()).hexdigest()==digest
         assert mode in program and 'password' not in program.lower()
         if mode.startswith('almalinux'):
-            assert 'nmcli' in program and 'dhcp-client-id=mac' in program and 'restorecon' in program
+            assert "cloud-init','status','--format','json" in program
+            assert "cloud-init','status','--wait" not in program
+            assert "nmcli','connection','load" not in program
+            assert "nmcli','connection','up" not in program
+            assert 'nmcli' in program and 'dhcp-client-id=mac' in program
+            assert 'machine_id.write_text(machine)' in program and 'path.parent.is_dir()' in program
         else:
             assert 'VERSION_ID="26.04"' in program and 'VERSION_ID="24.04"' not in program
     with pytest.raises(Conflict):program_for_mode('imagen-arbitraria')
