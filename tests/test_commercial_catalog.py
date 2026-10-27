@@ -40,7 +40,7 @@ def catalog_profile(tmp_path, monkeypatch):
 def test_four_exact_plans_and_immutable_catalog():
     assert [(p.plan_id,p.vcpus,p.memory_mb,p.disk_gb) for p in PLANS] == [
         ('kvm-1',1,2048,50),('kvm-2',2,4096,100),('kvm-3',4,8192,200),('kvm-4',8,16384,400)]
-    assert catalog_digest() == '039f9769473abad00a99429dcd3427baa5cfa8369603a41fb6b500c525dd2e6d'
+    assert catalog_digest() == '38a7441379541871b50c24fbc6eebf88a9ca8f7425aedb16caf6839f66d1bf2b'
     with pytest.raises(AttributeError):
         PLANS[0].disk_gb = 20
     with pytest.raises(ValueError, match='PLAN_NOT_FOUND'):
@@ -54,7 +54,7 @@ def test_four_templates_enabled_by_infrastructure_keep_tenant_authorization(clie
     assert not PENDING_IMAGES
     assert {(i.image_id,i.template_vm_id,i.status) for i in IMAGES}=={
         ('ubuntu-2404',29000,'habilitada'),('ubuntu-2604',29001,'habilitada'),
-        ('almalinux-9',29016,'habilitada'),('almalinux-10',29017,'habilitada')}
+        ('almalinux-9',29010,'habilitada'),('almalinux-10',29011,'habilitada')}
     rows=client.get('/v1/images',headers=auth).json()
     assert len(rows)==4 and all(r['status']=='habilitada' for r in rows)
     # El registro de producto no amplía derechos de un tenant sin el modo LAB.

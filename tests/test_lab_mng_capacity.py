@@ -111,7 +111,7 @@ def test_minimal_creation_keeps_idempotency_and_exact_plan(sessions, commercial_
     assert capacity.call_count == publish.call_count == 1
 
 
-@pytest.mark.parametrize('image,vmid', [('ubuntu-2404',29000),('ubuntu-2604',29001),('almalinux-9',29016),('almalinux-10',29017)])
+@pytest.mark.parametrize('image,vmid', [('ubuntu-2404',29000),('ubuntu-2604',29001),('almalinux-9',29010),('almalinux-10',29011)])
 @pytest.mark.parametrize('plan', ['kvm-1','kvm-2','kvm-3','kvm-4'])
 def test_four_images_resolve_internal_template_without_public_vmid(sessions, commercial_config, store, image, vmid, plan):
     enable()

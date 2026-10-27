@@ -45,18 +45,18 @@ class GoldenImage:
 # Procedencia comprobada en VM 104 el 24/10/2026, America/Costa_Rica.
 # Metadatos internos: VMID/nodo/storage no forman parte de GET /v1/images.
 # Infraestructura confirmó las cuatro plantillas el 25/10/2026, America/Costa_Rica.
-# Revisiones AlmaLinux QGA corregidas en MNG: 29016 (9) y 29017 (10). Las
-# revisiones históricas 29010/29011 se conservan fuera del catálogo activo para
-# trazabilidad y rollback; no se modifican ni eliminan.
+# Revisiones AlmaLinux QGA definitivas en MNG: 29010 (9) y 29011 (10),
+# consolidadas desde 29016/29017 mediante clonación nativa de Proxmox. Las
+# fuentes se conservan hasta completar la certificación y el retiro controlado.
 # Su habilitación autorizada no afirma un nuevo E2E del bootstrap G6 de IACP.
 IMAGES = (
     GoldenImage("ubuntu-2404", "Ubuntu", "24.04", "habilitada", 29000,
         "mng01", "DS_CYBERFUEL", True, True, True, True, 1, 512, 20),
     GoldenImage("ubuntu-2604", "Ubuntu", "26.04", "habilitada", 29001,
         "mng01", "DS_CYBERFUEL", True, True, True, True, 1, 2048, 20),
-    GoldenImage("almalinux-9", "AlmaLinux", "9", "habilitada", 29016,
+    GoldenImage("almalinux-9", "AlmaLinux", "9", "habilitada", 29010,
         "mng01", "DS_CYBERFUEL", True, True, True, True, 1, 2048, 20),
-    GoldenImage("almalinux-10", "AlmaLinux", "10", "habilitada", 29017,
+    GoldenImage("almalinux-10", "AlmaLinux", "10", "habilitada", 29011,
         "mng01", "DS_CYBERFUEL", True, True, True, True, 1, 2048, 20),
 )
 
