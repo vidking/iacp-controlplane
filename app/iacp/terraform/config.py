@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import model_serializer, BaseModel, ConfigDict, Field, model_validator
 
-SOURCE_REVISION = "48608c364e45be5c70ba043bf245feec2f91d2b3"
+SOURCE_REVISION = "b517c9bb67a9e3c800f0c3657c56224c2b8f80aa"
 TERRAFORM_VERSION = "1.16.6"
 
 
