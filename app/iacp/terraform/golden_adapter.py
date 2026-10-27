@@ -11,6 +11,10 @@ FILES={
  'modules/compute/kvm/iacp_golden_override.tf.json':json.dumps({'resource':{'proxmox_virtual_environment_vm':{'this':{'cpu':[{
   'cores':'${var.cpu_cores / var.golden_hardware.sockets}',
   'sockets':'${var.golden_hardware.sockets}',
+  # bpg/proxmox 0.116.1 serializa el número efectivo de vCPU de Proxmox
+  # (campo ``vcpus``) como ``hotplugged`` en este recurso. El plan debe
+  # sobrescribir explícitamente el valor heredado de la plantilla.
+  'hotplugged':'${var.cpu_cores}',
   'type':'${var.golden_hardware.cpu_type}',
   'flags':'${var.golden_hardware.flags}',
   'numa':'${var.golden_hardware.numa}'

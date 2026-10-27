@@ -31,7 +31,8 @@ def test_each_catalog_golden_carries_its_own_hardware_contract(template, cpu, sc
     hardware=parse(raw, template, 'mng01', 1).model_dump()
     variables={'instance': {'cpu_cores': 1}, 'iacp_golden_hardware': hardware}
     verify_cpu({'cpu': [{'type': hardware['cpu_type'], 'flags': hardware['flags'],
-                         'numa': hardware['numa'], 'cores': 1, 'sockets': 1}]}, variables)
+                         'numa': hardware['numa'], 'cores': 1, 'sockets': 1,
+                         'hotplugged': 1}]}, variables)
     verify_base_plan(hardware['terraform_base'], variables)
 
 
@@ -42,11 +43,30 @@ def test_memory_hotplug_without_numa_rejected_before_plan():
 @pytest.mark.parametrize('change',['type','flags','numa','cores','sockets'])
 def test_provider_defaults_cannot_replace_source_hardware(change):
     h=parse(golden(),29001,'mng01',2).model_dump()
-    actual={'cpu':[{'type':h['cpu_type'],'flags':h['flags'],'numa':True,'cores':2,'sockets':1}]}
+    actual={'cpu':[{'type':h['cpu_type'],'flags':h['flags'],'numa':True,'cores':2,'sockets':1,
+                    'hotplugged':2}]}
     variables={'instance':{'cpu_cores':2},'iacp_golden_hardware':h}
     verify_cpu(actual,variables)
     actual['cpu'][0][change]={'type':'qemu64','flags':[],'numa':False,'cores':1,'sockets':2}[change]
     with pytest.raises(PlanError,match='PLAN_MISMATCH'):verify_cpu(actual,variables)
+
+
+def test_template_vcpu_and_resources_are_not_inherited_by_kvm1_plan():
+    """Regresión del clon 30057: cores/vcpus/RAM/disco del template no son el plan."""
+    hardware=parse({**golden(), 'cores': 10, 'vcpus': 2, 'memory': 4096}, 29000, 'mng01', 1).model_dump()
+    variables={'instance': {'cpu_cores': 1}, 'iacp_golden_hardware': hardware}
+
+    # El plan materializado debe expresar explícitamente 1 core y 1 vCPU.
+    verify_cpu({'cpu': [{'type': hardware['cpu_type'], 'flags': hardware['flags'],
+                         'numa': hardware['numa'], 'cores': 1, 'sockets': 1,
+                         'hotplugged': 1}]}, variables)
+
+    # Cualquier herencia de la topología del template se bloquea antes de apply.
+    inherited={'cpu': [{'type': hardware['cpu_type'], 'flags': hardware['flags'],
+                        'numa': hardware['numa'], 'cores': 10, 'sockets': 1,
+                        'hotplugged': 2}]}
+    with pytest.raises(PlanError, match='PLAN_MISMATCH'):
+        verify_cpu(inherited, variables)
 
 
 def test_sockets_are_preserved_when_compatible_and_adjusted_only_for_capacity():
@@ -66,6 +86,7 @@ def test_adapter_is_versioned_sealed_and_cannot_enter_legacy_workspaces(tmp_path
     override=json.loads(FILES['modules/compute/kvm/iacp_golden_override.tf.json'])
     resource=override['resource']['proxmox_virtual_environment_vm']['this']
     assert resource['cpu'][0]['type']=='${var.golden_hardware.cpu_type}'
+    assert resource['cpu'][0]['hotplugged']=='${var.cpu_cores}'
     assert resource['bios']=='${try(var.golden_hardware.terraform_base.bios, null)}'
     assert resource['scsi_hardware']=='${try(var.golden_hardware.terraform_base.scsi_hardware, null)}'
     with pytest.raises(PlanError):verify(tmp_path,{}, {})
@@ -74,7 +95,7 @@ def test_adapter_is_versioned_sealed_and_cannot_enter_legacy_workspaces(tmp_path
 
 
 def test_native_verification_preserves_firmware_controller_and_hotplug():
-    raw=golden();h=parse(raw,29001,'mng01',2).model_dump();clone={**raw,'cores':2,'sockets':1}
+    raw=golden();h=parse(raw,29001,'mng01',2).model_dump();clone={**raw,'cores':2,'sockets':1,'vcpus':2}
     expected={'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}}
     verify_live(clone,h,expected)
     for field in ['cpu','numa','bios','machine','scsihw','hotplug']:
@@ -85,7 +106,7 @@ def test_native_verification_preserves_firmware_controller_and_hotplug():
 def test_live_verification_accepts_provider_cputype_prefix_only_for_same_cpu():
     h=parse(golden(hotplug='disk,network,memory'),29001,'mng01',2).model_dump()
     clone=golden(hotplug='disk,network,memory')
-    clone.update(cpu='cputype=x86-64-v4,flags=+aes',cores=2,sockets=1)
+    clone.update(cpu='cputype=x86-64-v4,flags=+aes',cores=2,sockets=1,vcpus=2)
     verify_live(clone,h,{'cpu_cores':2,'boot_disk':{'datastore_id':'DS_CYBERFUEL','size_gb':20}})
     clone['cpu']='cputype=qemu64,flags=+aes'
     with pytest.raises(PlanError,match='POSTCONDITION_MISMATCH'):
