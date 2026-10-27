@@ -625,11 +625,12 @@ def observed_resource(values: dict, variables: dict) -> dict:
     try:
         disk = next(row for row in actual["disk"] if row["interface"] == expected["boot_disk"]["interface"])
         cpu = actual["cpu"][0]
+        golden_hardware = variables.get("iacp_golden_hardware")
         if (actual["vm_id"] != expected["vm_id"] or actual["vm_id"] == 104
                 or actual["node_name"] != expected["node_name"] or actual["name"] != expected["vm_name"]
                 or cpu["cores"] != expected["cpu_cores"]
-                or cpu.get("sockets",1) != 1
-                or cpu.get("hotplugged") != expected["cpu_cores"]
+                or (golden_hardware is not None and cpu.get("sockets",1) != golden_hardware.get("sockets", 1))
+                or (golden_hardware is not None and cpu.get("hotplugged") != expected["cpu_cores"])
                 or actual["memory"][0]["dedicated"] != expected["memory_mb"]
                 or disk["size"] != expected["boot_disk"]["size_gb"]
                 or disk["datastore_id"] != expected["boot_disk"]["datastore_id"]
@@ -640,9 +641,10 @@ def observed_resource(values: dict, variables: dict) -> dict:
             nic=actual['network_device'][0]
             network={'network':{'mode':'dhcp','bridge':nic['bridge'],'model':nic['model'],
                        'vlan_id':expected['vlan_id'],'mac_address':nic.get('mac_address'),'ip_addresses':[]}}
+        effective_vcpus = cpu.get("hotplugged", cpu["cores"])
         return {**network,"simulated": False, "infrastructure_kind": "kvm", "vmid": actual["vm_id"],
                 "node": actual["node_name"], "name": actual["name"],
-                "vcpus": cpu["hotplugged"], "memory_mb": actual["memory"][0]["dedicated"],
+                "vcpus": effective_vcpus, "memory_mb": actual["memory"][0]["dedicated"],
                 "disk_gb": disk["size"], "datastore": disk["datastore_id"],
                 "power_state": "running" if actual["started"] else "stopped"}
     except (KeyError, TypeError, IndexError, StopIteration, ValueError):
