@@ -220,7 +220,7 @@ def plan_json(variables):
     row = variables["instance"]
     return {"resource_changes": [{"address": ADDRESS, "change": {"actions": ["create"], "after": {
         "vm_id": row["vm_id"], "node_name": row["node_name"], "name": row["vm_name"],
-        "cpu": [{"cores": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
+        "cpu": [{"cores": row["cpu_cores"], "hotplugged": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
         "clone": [{"vm_id": row["template_vm_id"]}],
         "disk": [{"interface": row["boot_disk"]["interface"], "size": row["boot_disk"]["size_gb"],
                   "datastore_id": row["boot_disk"]["datastore_id"],
