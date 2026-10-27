@@ -24,7 +24,7 @@ from tests.test_instances import SPEC, create, identities
 
 def test_source_revision_is_the_integrated_iac_main():
     """El worker debe archivar la revisión IaC que contiene GoldenHardware."""
-    assert SOURCE_REVISION == "3a2fbecdb89f580e58502bd4ef9f968b167ca260"
+    assert SOURCE_REVISION == "48608c364e45be5c70ba043bf245feec2f91d2b3"
 
 
 def allocation_data(vmid=21001, image="test-image"):

@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
 HEAD = "0012_commercial_intents"
-SOURCE = "3a2fbecdb89f580e58502bd4ef9f968b167ca260"
+SOURCE = "48608c364e45be5c70ba043bf245feec2f91d2b3"
 ARCHIVE = "8ac1e38c8095aada7d9e37e72ae939756517ef6ca69901f29a13afaa21e5a8e8"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
 
