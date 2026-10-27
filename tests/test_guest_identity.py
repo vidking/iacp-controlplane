@@ -74,6 +74,25 @@ def test_single_fixed_initializer_and_same_key_replay(client,auth,guest,sessions
         assert s.get(GuestInitialization,op).started_at is not None
 
 
+def test_initialization_retries_transient_proxmox_readiness_before_consuming_fence(client,auth,guest,sessions,monkeypatch):
+    op=accept(client,auth,guest).json()['operation_id']
+
+    class FlakyGuest(FakeGuest):
+        def __init__(self):
+            super().__init__()
+            self.checks=0
+        def check(self,target,mac):
+            self.checks+=1
+            if self.checks==1:
+                raise PowerError('POWER_PROXMOX_UNAVAILABLE')
+
+    fake=FlakyGuest()
+    monkeypatch.setattr('iacp.services.guest_identity.time.sleep',lambda _:None)
+    execute_initialization(op,sessions,lambda:fake)
+    assert fake.checks==2 and len(fake.calls)==1
+    assert client.get('/v1/operations/'+op,headers=auth).json()['normalized_status']=='completed'
+
+
 def test_lost_exec_response_reconciles_readonly_with_admission_and_policy_closed(client,auth,guest,sessions,monkeypatch):
     op=accept(client,auth,guest).json()['operation_id'];fake=FakeGuest(loss=True)
     execute_initialization(op,sessions,lambda:fake)
