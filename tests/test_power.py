@@ -239,6 +239,19 @@ def test_reboot_waits_for_qemu_restart_after_task_completion(client, auth, sessi
     assert sum(call[0] == "submit" for call in native.calls) == 1
 
 
+def test_reboot_timeout_is_completed_only_after_observed_uptime_reset(client, auth, sessions, power):
+    identifier, native, _ = power
+    native.power = "running"
+    native.outcome = "timeout"
+    native.uptime = Mock(side_effect=[500, 7])
+    accepted = request(client, auth, identifier, "reboot", key="reboot-timeout-observed")
+    execute_power(accepted.json()["operation_id"], sessions, native, pause=lambda _: None)
+    result = client.get('/v1/operations/' + accepted.json()["operation_id"], headers=auth).json()
+    assert result["status"] == "completed"
+    assert result["error_code"] is None
+    assert sum(call[0] == "submit" for call in native.calls) == 1
+
+
 @pytest.mark.parametrize("change", ["simulated", "not-ready", "missing-evidence"])
 def test_only_completed_managed_kvm_can_accept_power(client, auth, sessions, power, change):
     from iacp.models import TerraformApply
