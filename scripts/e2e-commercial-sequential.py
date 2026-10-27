@@ -53,7 +53,12 @@ def api(path,method='GET',body=None,key=None,basic=False):
             if PASSWORD and PASSWORD.encode() in raw:raise RuntimeError('SECRET_IN_RESPONSE')
             return response.status,json.loads(raw),response.headers.get('X-Request-ID')
     except HTTPError as error:
-        raise RuntimeError('API_HTTP_'+str(error.code)) from None
+        try:
+            detail=json.loads(error.read()).get('detail')
+        except Exception:
+            detail=None
+        suffix='_'+str(detail) if isinstance(detail,str) else ''
+        raise RuntimeError('API_HTTP_'+str(error.code)+suffix) from None
 
 
 def wait_operation(identifier,fulfillment=False):
@@ -91,7 +96,47 @@ def wait_instance_idle(identifier):
     raise RuntimeError('INSTANCE_OPERATIONS_TIMEOUT')
 
 
-def wait_guest(data):
+def wait_mutations_available(identifier, timeout=180):
+    """Espera la barrera real de Lifecycle antes de enviar otra mutación.
+
+    START puede quedar terminal mientras el descubrimiento de red posterior
+    todavía conserva el lock de la instancia. Consultar únicamente el estado
+    de la operación START no basta: la API debe confirmar explícitamente que
+    no hay operaciones incompatibles y que ``mutations_available`` es true.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        wait_instance_idle(identifier)
+        try:
+            _, power, _ = api('/v1/instances/' + identifier + '/power')
+        except RuntimeError as error:
+            if str(error).startswith('API_HTTP_409'):
+                time.sleep(2)
+                continue
+            raise
+        if power.get('mutations_available') is True and not power.get('blocked_reason'):
+            return power
+        time.sleep(2)
+    raise RuntimeError('MUTATIONS_AVAILABLE_TIMEOUT')
+
+
+def lifecycle_with_retry(identifier, action, key, timeout=180):
+    """Envía una sola intención de Lifecycle y reusa su clave ante 409 transitorio."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        wait_mutations_available(identifier)
+        try:
+            _, operation, _ = api('/v1/instances/' + identifier + '/power/' + action,
+                                  'POST', {}, key)
+            return operation
+        except RuntimeError as error:
+            if 'API_HTTP_409_INSTANCE_BUSY' not in str(error):
+                raise
+            time.sleep(2)
+    raise RuntimeError('LIFECYCLE_INSTANCE_BUSY_TIMEOUT')
+
+
+def wait_guest(data, verify_password=False):
     deadline=time.monotonic()+180
     discoveries=0
     while time.monotonic()<deadline:
@@ -102,7 +147,7 @@ def wait_guest(data):
                     'e2e-g-network-'+secrets.token_hex(12))
                 save('network-discovery-'+op['operation_id'],wait_operation(op['operation_id']))
                 discoveries+=1
-            return worker(PROBE,{**data,'without_password':True})
+            return worker(PROBE,{**data,'without_password':not verify_password})
         except RuntimeError:time.sleep(3)
     raise RuntimeError('GUEST_READINESS_TIMEOUT')
 
@@ -209,6 +254,9 @@ print(json.dumps({'os_id':release['ID'].strip('\"'),'os_version':release['VERSIO
 """
   cmd='LC_ALL=C python3 -c '+shlex.quote(program)
   _,stdout,_=ssh.exec_command(cmd,timeout=30);guest=json.loads(stdout.read());assert stdout.channel.recv_exit_status()==0
+  _,boot_stdout,_=ssh.exec_command("cat /proc/sys/kernel/random/boot_id",timeout=15)
+  boot_id=boot_stdout.read().decode().strip();assert boot_stdout.channel.recv_exit_status()==0 and boot_id
+  result['boot_id_hash']=hashlib.sha256(boot_id.encode()).hexdigest()
   assert guest['cpus']==P['cpus'] and guest['cloud_init']=='done'
   expected={'ubuntu-2404':('ubuntu','24.04'),'ubuntu-2604':('ubuntu','26.04'),'almalinux-9':('almalinux','9'),'almalinux-10':('almalinux','10')}[P.get('image_id','ubuntu-2404')]
   assert guest['os_id']==expected[0] and (guest['os_version']==expected[1] if expected[0]=='ubuntu' else guest['os_version'].split('.')[0]==expected[1])
@@ -339,13 +387,19 @@ def main():
         identifier=accepted['instance_id'];data={'instance_id':identifier,'image_id':args.image,'plan_id':plan,'cpus':cpus,'memory_mb':ram,'disk_gb':disk,'password':PASSWORD}
         wait_instance_idle(identifier)
         wait_guest(data)
-        save(plan+'-proxmox-guest-state',worker(PROBE,data))
+        initial_guest=worker(PROBE,data);save(plan+'-proxmox-guest-state',initial_guest)
+        boot_before=initial_guest['boot_id_hash']
         for index,action in enumerate(['shutdown','start','reboot','shutdown']):
-            wait_instance_idle(identifier)
             if action in {'shutdown','reboot'}:wait_guest(data)
-            _,operation,_=api('/v1/instances/'+identifier+'/power/'+action,'POST',{},idem+'-'+str(index)+'-'+action)
+            operation=lifecycle_with_retry(identifier,action,idem+'-'+str(index)+'-'+action)
             save(plan+'-'+str(index)+'-'+action,wait_operation(operation['operation_id']))
-            if action in {'start','reboot'}:save(plan+'-'+str(index)+'-guest-ready',wait_guest(data))
+            if action in {'start','reboot'}:
+                guest_after=wait_guest(data,verify_password=(action=='reboot'))
+                save(plan+'-'+str(index)+'-guest-ready',guest_after)
+                if action=='start':boot_before=guest_after['boot_id_hash']
+                if action=='reboot':
+                    assert guest_after['boot_id_hash'] != boot_before, 'BOOT_ID_UNCHANGED'
+                    save(plan+'-'+str(index)+'-reboot-verified',{'boot_id_changed':True,'ssh_root_password':guest_after.get('ssh_root_password') is True})
         save(plan+'-operaciones-antes-delete',wait_instance_idle(identifier))
         status,operation,_=api('/v1/instances/'+identifier,'DELETE',{},idem+'-delete');assert status==202
         save(plan+'-delete',wait_operation(operation['operation_id']))
