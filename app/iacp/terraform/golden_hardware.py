@@ -242,9 +242,13 @@ def verify_cpu(actual, variables):
     hardware=variables.get('iacp_golden_hardware')
     if not hardware:return
     cpu=actual.get('cpu',[{}])[0]
+    expected_vcpus=variables['instance']['cpu_cores']
     if (cpu.get('type') != hardware['cpu_type'] or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
             or cpu.get('numa') is not hardware['numa'] or cpu.get('sockets',1)!=hardware['sockets']
-            or cpu.get('cores',0)*cpu.get('sockets',1)!=variables['instance']['cpu_cores']):
+            or cpu.get('cores',0)*cpu.get('sockets',1)!=expected_vcpus
+            # bpg/proxmox 0.116.1 llama ``hotplugged`` al atributo Proxmox
+            # ``vcpus``. Debe estar presente en el plan sellado y no heredarse.
+            or cpu.get('hotplugged') != expected_vcpus):
         raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH')
 
 
@@ -328,7 +332,8 @@ def verify_live(config, hardware, expected):
         if (cpu_type!=hardware['cpu_type'] or sorted(flags)!=sorted(hardware['flags'])
                 or int(config.get('numa',0)) not in (0,1) or bool(int(config.get('numa',0)))!=hardware['numa']
                 or int(config.get('sockets',1))!=hardware['sockets']
-                or int(config.get('cores',1))*hardware['sockets']!=expected['cpu_cores']):
+                or int(config.get('cores',1))*hardware['sockets']!=expected['cpu_cores']
+                or int(config.get('vcpus'))!=expected['cpu_cores']):
             raise ValueError()
         for name,value in hardware['base'].items():
             actual=config.get(name)

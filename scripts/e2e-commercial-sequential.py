@@ -19,6 +19,8 @@ WORKER='iacp-controlplane-terraform-worker-1'
 TOKEN=''
 PASSWORD=''
 OUT=None
+LAST_RESPONSE_IDEMPOTENCY_KEY=None
+LAST_ERROR=None
 
 
 def validate_storage(guest,disk_gb):
@@ -43,6 +45,9 @@ def worker(code,payload=None):
 
 
 def api(path,method='GET',body=None,key=None,basic=False):
+    global LAST_RESPONSE_IDEMPOTENCY_KEY,LAST_ERROR
+    LAST_RESPONSE_IDEMPOTENCY_KEY=None
+    LAST_ERROR=None
     headers={'Authorization':('Basic '+base64.b64encode(('iacp:'+TOKEN).encode()).decode()) if basic else 'Bearer '+TOKEN}
     if key:headers['Idempotency-Key']=key
     if body is not None:headers['Content-Type']='application/json'
@@ -51,9 +56,46 @@ def api(path,method='GET',body=None,key=None,basic=False):
         with urlopen(request,timeout=45) as response:
             raw=response.read()
             if PASSWORD and PASSWORD.encode() in raw:raise RuntimeError('SECRET_IN_RESPONSE')
+            LAST_RESPONSE_IDEMPOTENCY_KEY=response.headers.get('Idempotency-Key')
             return response.status,json.loads(raw),response.headers.get('X-Request-ID')
     except HTTPError as error:
-        raise RuntimeError('API_HTTP_'+str(error.code)) from None
+        raw=error.read()
+        try:
+            payload=json.loads(raw)
+        except (ValueError,TypeError):
+            payload={}
+        LAST_RESPONSE_IDEMPOTENCY_KEY=error.headers.get('Idempotency-Key')
+        LAST_ERROR={'status':error.code,'detail':payload.get('detail'),'idempotency_key':LAST_RESPONSE_IDEMPOTENCY_KEY}
+        raise RuntimeError('API_HTTP_'+str(error.code)+(':'+str(payload.get('detail')) if payload.get('detail') else '')) from None
+
+
+def lifecycle_intent(instance_id, path, method, body, label, explicit, key=None):
+    """Ejecuta una mutación con una intención estable y recupera INSTANCE_BUSY.
+
+    En modo generado la primera petición omite el header; IACP devuelve la clave
+    interna y los reintentos de esa misma intención la reutilizan. En modo
+    explícito el runner genera la clave antes del primer envío. Nunca se crea una
+    clave nueva dentro del bucle de reintento.
+    """
+    intent_key=key if explicit else None
+    for attempt in range(1,7):
+        try:
+            status,operation,request_id=api(path,method,body,intent_key)
+            resolved=LAST_RESPONSE_IDEMPOTENCY_KEY
+            if not resolved:
+                raise RuntimeError('IDEMPOTENCY_KEY_NOT_RETURNED')
+            return status,operation,request_id,resolved,attempt
+        except RuntimeError as error:
+            busy=LAST_ERROR and LAST_ERROR.get('status')==409 and 'INSTANCE_BUSY' in str(LAST_ERROR.get('detail'))
+            if not busy or attempt==6:
+                raise
+            if intent_key is None:
+                intent_key=LAST_RESPONSE_IDEMPOTENCY_KEY
+            if not intent_key:
+                raise RuntimeError('INSTANCE_BUSY_WITHOUT_IDEMPOTENCY_KEY') from error
+            wait_instance_idle(instance_id)
+            time.sleep(1)
+    raise RuntimeError('INSTANCE_BUSY_RETRY_EXHAUSTED')
 
 
 def wait_operation(identifier,fulfillment=False):
@@ -284,10 +326,13 @@ def main():
     parser.add_argument('--image',choices=['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10'],default='ubuntu-2404')
     parser.add_argument('--token-file',type=Path)
     parser.add_argument('--minimal',action='store_true',help='Cuerpo mínimo del piloto; exige token de integración explícito')
+    parser.add_argument('--idempotency-mode',choices=['generated','explicit'],default='generated',
+        help='generated omite Idempotency-Key en el primer envío; explicit envía una clave del runner')
     args=parser.parse_args()
     if not args.execute:print('Preparado: requiere --execute explícito; no se ejecutaron solicitudes.');return
     assert socket.gethostname()=='iacp-controlplane-01'
     os.umask(0o077);OUT=args.evidence_dir;OUT.mkdir(mode=0o700,parents=True,exist_ok=False)
+    explicit_idempotency=args.idempotency_mode=='explicit'
     containers=json.loads(subprocess.check_output(['docker','inspect','iacp-controlplane-api-1'],text=True))
     assert not args.minimal or args.token_file, 'El piloto requiere identidad de integración explícita'
     tokenpath=args.token_file or next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
@@ -328,9 +373,15 @@ def main():
             assert status==202 and queued['instance_id']==args.resume_instance
             save(plan+'-retry-plan',{'respuesta':queued,'request_id':request_id,'misma_instancia':True})
         else:
-            status,accepted,request_id=api('/v1/instances','POST',body,idem);assert status==202
-            save(plan+'-aceptada',{'respuesta':accepted,'request_id':request_id,'plan_id':plan})
-            assert api('/v1/instances','POST',body,idem)[1]==accepted
+            create_key=idem if explicit_idempotency else None
+            status,accepted,request_id=api('/v1/instances','POST',body,create_key);assert status==202
+            resolved_create_key=LAST_RESPONSE_IDEMPOTENCY_KEY
+            if not resolved_create_key:raise RuntimeError('IDEMPOTENCY_KEY_NOT_RETURNED')
+            save(plan+'-aceptada',{'respuesta':accepted,'request_id':request_id,'plan_id':plan,
+                'idempotency_mode':args.idempotency_mode,'idempotency_key_returned':resolved_create_key})
+            replay=api('/v1/instances','POST',body,resolved_create_key)[1]
+            assert replay==accepted
+            idem=resolved_create_key
         fixture=worker("from iacp.db import get_session_factory\nfrom iacp.models import Instance\nfrom iacp.services.bootstrap_secrets import EphemeralSecrets\nwith get_session_factory()() as s:\n i=s.get(Instance,P['instance_id']);store=EphemeralSecrets.configured();ref=store.put(i.tenant_id,i.id,P['password'])\n print(json.dumps({'reference':ref,'tenant_id':i.tenant_id,'instance_id':i.id,'ttl_seconds':store.redis.ttl('iacp:bootstrap:v1:'+ref)}))",{'instance_id':accepted['instance_id'],'password':PASSWORD})
         # Fixture cifrada de cliente, independiente de la referencia productiva.
         # Solo referencia opaca en archivo privado; nunca exportar este archivo a Git.
@@ -343,12 +394,21 @@ def main():
         for index,action in enumerate(['shutdown','start','reboot','shutdown']):
             wait_instance_idle(identifier)
             if action in {'shutdown','reboot'}:wait_guest(data)
-            _,operation,_=api('/v1/instances/'+identifier+'/power/'+action,'POST',{},idem+'-'+str(index)+'-'+action)
+            action_key=idem+'-'+str(index)+'-'+action if explicit_idempotency else None
+            _,operation,request_id,resolved_action_key,attempts=lifecycle_intent(identifier,
+                '/v1/instances/'+identifier+'/power/'+action,'POST',{},action,explicit_idempotency,action_key)
             save(plan+'-'+str(index)+'-'+action,wait_operation(operation['operation_id']))
+            replay=api('/v1/instances/'+identifier+'/power/'+action,'POST',{},resolved_action_key)[1]
+            assert replay['operation_id']==operation['operation_id']
             if action in {'start','reboot'}:save(plan+'-'+str(index)+'-guest-ready',wait_guest(data))
         save(plan+'-operaciones-antes-delete',wait_instance_idle(identifier))
-        status,operation,_=api('/v1/instances/'+identifier,'DELETE',{},idem+'-delete');assert status==202
+        delete_key=idem+'-delete' if explicit_idempotency else None
+        status,operation,request_id,resolved_delete_key,attempts=lifecycle_intent(identifier,
+            '/v1/instances/'+identifier,'DELETE',{},'delete',explicit_idempotency,delete_key)
+        assert status==202
         save(plan+'-delete',wait_operation(operation['operation_id']))
+        replay=api('/v1/instances/'+identifier,'DELETE',{},resolved_delete_key)[1]
+        assert replay['operation_id']==operation['operation_id']
         save(plan+'-limpieza',worker(PROBE,{**data,'deleted':True}))
         for role in ['api','worker','terraform-worker','lifecycle-worker']:
             logs=subprocess.run(['docker','logs','--since','30m','iacp-controlplane-'+role+'-1'],capture_output=True)
