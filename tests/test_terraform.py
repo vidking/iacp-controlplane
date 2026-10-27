@@ -24,7 +24,7 @@ from tests.test_instances import SPEC, create, identities
 
 def test_source_revision_is_the_integrated_iac_main():
     """El worker debe archivar la revisión IaC que contiene GoldenHardware."""
-    assert SOURCE_REVISION == "3a2fbecdb89f580e58502bd4ef9f968b167ca260"
+    assert SOURCE_REVISION == "48608c364e45be5c70ba043bf245feec2f91d2b3"
 
 
 def allocation_data(vmid=21001, image="test-image"):
@@ -220,7 +220,7 @@ def plan_json(variables):
     row = variables["instance"]
     return {"resource_changes": [{"address": ADDRESS, "change": {"actions": ["create"], "after": {
         "vm_id": row["vm_id"], "node_name": row["node_name"], "name": row["vm_name"],
-        "cpu": [{"cores": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
+        "cpu": [{"cores": row["cpu_cores"], "hotplugged": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
         "clone": [{"vm_id": row["template_vm_id"]}],
         "disk": [{"interface": row["boot_disk"]["interface"], "size": row["boot_disk"]["size_gb"],
                   "datastore_id": row["boot_disk"]["datastore_id"],
