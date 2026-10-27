@@ -338,10 +338,24 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                     if not job or job.operation!=operation.kind or job.tenant_id!=operation.tenant_id:
                         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
                     instance,target=validate_binding(s,row,operation)
-                    client=client_factory();client.check(target,row.mac_address)
-                    capability_check = getattr(client, 'require_initializer_capabilities', None)
-                    if capability_check is not None:
-                        capability_check(target)
+                    client=client_factory()
+                    # A freshly started clone can report its QEMU process as
+                    # running before Proxmox exposes a stable config/status
+                    # pair through the Guest Agent API.  Treat that narrow
+                    # transport/readiness window as transient; do not consume
+                    # the one-shot guest-exec fence until the binding and
+                    # capabilities are observed successfully.
+                    deadline=time.monotonic()+timeout
+                    while True:
+                        try:
+                            client.check(target,row.mac_address)
+                            capability_check = getattr(client, 'require_initializer_capabilities', None)
+                            if capability_check is not None:
+                                capability_check(target)
+                            break
+                        except PowerError:
+                            if time.monotonic()>=deadline:raise
+                            heartbeat();time.sleep(2)
                     # A capability-repair deployment may encounter an older
                     # consumed fence whose QGA POST failed before returning a
                     # PID.  Rebind only that narrowly evidenced AlmaLinux
@@ -355,7 +369,6 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                             row.program_sha256 = current_digest
                             event(s,operation,'guest_initialization_program_rebound_after_capability_repair','worker:iac')
                             s.commit()
-                    deadline=time.monotonic()+timeout
                     if not row.started_at:
                         configured_mode(s,instance)
                         from ..lifecycle.ownership import mutation_revision
