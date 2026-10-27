@@ -180,6 +180,17 @@ def test_definitively_failed_guest_process_is_terminal_and_never_submitted_again
     assert client.get('/v1/lab/usage',headers=auth).json()['usage']['concurrent_operations']==0
 
 
+def test_disabled_guest_initializer_commands_are_terminal_and_recoverable(client,auth,guest,sessions):
+    op=accept(client,auth,guest).json()['operation_id'];fake=FakeGuest()
+    fake.require_initializer_capabilities=lambda target: (_ for _ in ()).throw(
+        GuestProgramFailed('GUEST_AGENT_COMMANDS_DISABLED'))
+    execute_initialization(op,sessions,lambda:fake)
+    assert fake.calls==[]
+    result=client.get('/v1/operations/'+op,headers=auth).json()
+    assert result['status']=='failed' and result['error_code']=='GUEST_AGENT_COMMANDS_DISABLED'
+    assert client.get('/v1/lab/usage',headers=auth).json()['usage']['concurrent_operations']==0
+
+
 def test_iac_worker_refuses_closed_lifecycle_gate_before_consumption_and_retry_preserves_intent(client,auth,guest,sessions,monkeypatch):
     op=accept(client,auth,guest).json()['operation_id'];fake=FakeGuest()
     monkeypatch.setenv('IACP_KVM_LIFECYCLE_ENABLED','0')
