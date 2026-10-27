@@ -18,4 +18,3 @@ def resolve_key(key: str | None, operation: str, response: Response) -> str:
     resolved = key or generated_key(operation)
     response.headers["Idempotency-Key"] = resolved
     return resolved
-
