@@ -47,10 +47,12 @@ def deletion_executor(tmp_path,monkeypatch):
             if args==['version','-json']:return json.dumps({'terraform_version':'1.16.6'}).encode()
             if args[0]=='show':return json.dumps(approved if args[-1].endswith('/saved.tfplan') else destroy).encode()
             return b''
-        def plan_destroy(self,cwd,env,cancelled):
-            cancelled();self.calls.append(['plan_destroy']);(cwd/'deletion.tfplan').write_bytes(b'synthetic saved destroy plan')
+        def plan_destroy(self,cwd,env,cancelled,**kwargs):
+            cancelled();self.calls.append(['plan_destroy',kwargs]);(cwd/'deletion.tfplan').write_bytes(b'synthetic saved destroy plan')
         def apply_destroy(self,cwd,env,cancelled):
             cancelled();self.calls.append(['apply_destroy']);store.state['resources']=[];store.state['serial']=2;store.version='v2'
+        def destroy(self,cwd,env,cancelled,**kwargs):
+            cancelled();self.calls.append(['destroy',kwargs]);store.state['resources']=[];store.state['serial']=2;store.version='v2';store.absent=True
     runner=Runner();executor=DeletionExecutor(tmp_path/'source',tmp_path/'artifacts',runner)
     monkeypatch.setattr(executor,'verify_artifacts',lambda *args:None)
     monkeypatch.setattr(executor,'environment',lambda *args:{'PROXMOX_VE_ENDPOINT':'https://fixture.invalid','PROXMOX_VE_API_TOKEN':'synthetic-token'})
@@ -74,6 +76,16 @@ def test_saved_delete_plan_apply_and_readonly_reconciliation(deletion_executor):
     executor.runner.calls.clear()
     assert executor.reconcile_deletion(ctx,plan['plan_sha256'],lambda:False)['deleted']
     assert executor.runner.calls==[]
+
+
+def test_tainted_recovery_uses_fixed_destroy_without_adopting_resource(deletion_executor):
+    executor,ctx,store=deletion_executor
+    store.state['resources'][0]['instances'][0]['status']='tainted'
+    plan=executor.plan_deletion(ctx,lambda:False,allow_tainted=True)
+    result=executor.apply_deletion(ctx,plan['plan_sha256'],lambda:False,lambda:None,allow_tainted=True)
+    assert result['deleted']
+    assert ['destroy', {'refresh': False}] in executor.runner.calls
+    assert ['apply_destroy'] not in executor.runner.calls
 
 
 @pytest.mark.parametrize('change',['binary','variables','context','credential','state-version','state-lineage','extra-state-resource'])

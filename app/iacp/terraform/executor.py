@@ -429,7 +429,7 @@ class TerraformExecutor:
                 reader.close()
 
 
-def state_resource(state, variables):
+def state_resource(state, variables, *, allow_tainted=False):
     """State pull usa recursos planos con module e instances[].attributes (v4)."""
     try:
         if (state["version"] != 4 or not isinstance(state["lineage"], str) or not state["lineage"]
@@ -449,7 +449,7 @@ def state_resource(state, variables):
             raise PlanError("UNOWNED_STATE", phase="observe.state")
         instances = resource["instances"]
         if (len(instances) != 1 or instances[0].get("deposed") or instances[0].get("index_key") is not None
-                or instances[0].get("status") == "tainted"):
+                or (instances[0].get("status") == "tainted" and not allow_tainted)):
             raise PlanError("INCOMPLETE_OBSERVATION", phase="observe.state")
         attributes = instances[0]["attributes"]
         verify_identity(attributes, variables["instance"])
