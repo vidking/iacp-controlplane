@@ -34,6 +34,13 @@ NETWORK_FILE = '/etc/netplan/99-iacp-identity.yaml'
 class GuestProgramFailed(Conflict):
     """The consumed process has definitively exited unsuccessfully."""
 
+
+GUEST_INITIALIZER_COMMANDS = frozenset({
+    "guest-exec",
+    "guest-exec-status",
+    "guest-file-read",
+})
+
 # The only executable program this adapter can submit. No shell, remote download,
 # package install, credential change, arbitrary path, power action or state edit.
 PROGRAM = r'''
@@ -237,6 +244,25 @@ class GuestClient:
         if not granted(permissions.get('/vms/'+str(target.vmid),{}),'VM.GuestAgent.Unrestricted'):
             raise Conflict('GUEST_INITIALIZATION_PERMISSION_REQUIRED')
 
+    def require_initializer_capabilities(self, target):
+        """Fail closed when the guest agent intentionally blocks the initializer.
+
+        AlmaLinux images may ship qemu-ga with an allow-list that leaves
+        ``guest-exec`` and ``guest-file-read`` disabled.  Treat that as a
+        terminal image-capability defect, not as an unknown network result:
+        the initializer cannot be consumed safely and must never be replayed.
+        Transport/API failures remain ``POWER_PROXMOX_UNAVAILABLE`` so the
+        existing uncertain/reconciliation fence is preserved.
+        """
+        info = self.client._request('GET', target.path + '/agent/info')
+        commands = info.get('result', {}).get('supported_commands') if isinstance(info, dict) else None
+        enabled = {
+            command.get('name') for command in commands
+            if isinstance(command, dict) and command.get('enabled') is True
+        } if isinstance(commands, list) else set()
+        if not GUEST_INITIALIZER_COMMANDS <= enabled:
+            raise GuestProgramFailed('GUEST_AGENT_COMMANDS_DISABLED')
+
     def ready(self,target):
         self.client._request('GET',target.path+'/agent/info')
 
@@ -313,6 +339,9 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
                     instance,target=validate_binding(s,row,operation)
                     client=client_factory();client.check(target,row.mac_address)
+                    capability_check = getattr(client, 'require_initializer_capabilities', None)
+                    if capability_check is not None:
+                        capability_check(target)
                     deadline=time.monotonic()+timeout
                     if not row.started_at:
                         configured_mode(s,instance)
