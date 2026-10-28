@@ -130,6 +130,47 @@ def test_historical_delete_accepts_stable_provider_pool_default_only():
     verify_topology(approved, current, allow_historical_pool_id_default=True)
 
 
+@pytest.mark.parametrize('expected_pool_id', [None, ''])
+def test_historical_delete_accepts_pool_materialized_from_empty_state(expected_pool_id):
+    allocation = Allocation.model_validate(allocation_data(106))
+    instance = SimpleNamespace(name='historical', image='test-image', disk_gb=20, vcpus=2, memory_mb=2048)
+    variables = allocation.variables(instance)
+    approved = plan_json(variables)
+    approved['resource_changes'][0]['change']['after']['pool_id'] = expected_pool_id
+    persisted = deepcopy(approved['resource_changes'][0]['change']['after'])
+    persisted['pool_id'] = ''
+    current = deepcopy(persisted)
+    current['pool_id'] = 'iacp-lab'
+
+    from iacp.terraform.deletion_executor import verify_topology
+    verify_topology(
+        approved,
+        current,
+        persisted=persisted,
+        allow_historical_pool_id_default=True,
+    )
+
+
+def test_historical_delete_rejects_unrelated_pool_materialized_from_empty_state():
+    allocation = Allocation.model_validate(allocation_data(106))
+    instance = SimpleNamespace(name='historical', image='test-image', disk_gb=20, vcpus=2, memory_mb=2048)
+    variables = allocation.variables(instance)
+    approved = plan_json(variables)
+    persisted = deepcopy(approved['resource_changes'][0]['change']['after'])
+    persisted['pool_id'] = ''
+    current = deepcopy(persisted)
+    current['pool_id'] = 'other-pool'
+
+    from iacp.terraform.deletion_executor import verify_topology
+    with pytest.raises(PlanError, match='DELETE_TOPOLOGY_CHANGED'):
+        verify_topology(
+            approved,
+            current,
+            persisted=persisted,
+            allow_historical_pool_id_default=True,
+        )
+
+
 def test_historical_delete_rejects_pool_change_after_first_observation():
     allocation = Allocation.model_validate(allocation_data(106))
     instance = SimpleNamespace(name='historical', image='test-image', disk_gb=20, vcpus=2, memory_mb=2048)
