@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only API probe for public or corporate-internal exposure; never disables TLS.
+"""Read-only API probe for platform or instance exposure; never disables TLS.
 
 The runner's network vantage is an operator attestation, not inferred from DNS.
 No instance creation, queue publishing, Terraform or power command is submitted.
+Platform checks do not require a live VM; instance checks run only when an
+explicit IACP-owned ``--instance-id`` is supplied.
 """
 import argparse
 from datetime import datetime, timezone
@@ -84,7 +86,9 @@ def request(path, *, token=None, cookie=None, context=None, method="GET", header
 def probe(args):
     report = {"passed": False, "at": datetime.now(timezone.utc).isoformat(),
               "runner": args.vantage_id, "external_vantage_asserted": args.external_vantage,
-              "host": HOST, "checks": []}
+              "host": HOST, "checks": [],
+              "instance_smoke": {"status": "not_applicable",
+                                  "reason": "No se proporcionó una instancia IACP activa."}}
 
     def check(name, condition):
         report["checks"].append({"name": name, "passed": bool(condition)})
@@ -133,8 +137,7 @@ def probe(args):
         # A gateway identity alone cannot authorize the IACP contract.
         status, _, _ = request("/openapi.json", cookie=cookie, context=context)
         check("gateway_does_not_replace_iacp", status == 401)
-        for path in ("/docs", "/openapi.json", "/health/ready", "/v1/instances",
-                     "/v1/instances/" + args.instance_id, "/v1/instances/" + args.instance_id + "/power"):
+        for path in ("/docs", "/openapi.json", "/health/ready", "/v1/instances"):
             status, headers, body = request(path, token=token, cookie=cookie, context=context)
             check("authorized:" + path, status == 200 and bool(headers.get("X-Request-ID")))
             if path == "/openapi.json":
@@ -142,13 +145,19 @@ def probe(args):
                 check("contract", all(path in contract["paths"] for path in PATHS))
                 check("protected_contract", all(operation.get("security") for path in PATHS
                     for method, operation in contract["paths"][path].items() if method in {"get", "post"}))
-            if path.endswith("/power"):
-                check("guest_readiness_unknown", json.loads(body)["guest_ready"] is None)
-        if args.other_tenant_token_file:
+        instance_id = getattr(args, "instance_id", None)
+        if instance_id:
+            for path in ("/v1/instances/" + instance_id, "/v1/instances/" + instance_id + "/power"):
+                status, headers, body = request(path, token=token, cookie=cookie, context=context)
+                check("authorized:" + path, status == 200 and bool(headers.get("X-Request-ID")))
+                if path.endswith("/power"):
+                    check("guest_readiness_unknown", json.loads(body)["guest_ready"] is None)
+            report["instance_smoke"] = {"status": "passed", "instance_id": instance_id}
+        if getattr(args, "other_tenant_token_file", None) and instance_id:
             other = private_secret(args.other_tenant_token_file)
-            status, _, _ = request("/v1/instances/" + args.instance_id, token=other, cookie=cookie, context=context)
+            status, _, _ = request("/v1/instances/" + instance_id, token=other, cookie=cookie, context=context)
             check("cross_tenant_hidden", status == 404)
-        if args.operation_id:
+        if getattr(args, "operation_id", None):
             check("operation_tracking", request("/v1/operations/" + args.operation_id,
                 token=token, cookie=cookie, context=context)[0] == 200)
         report["passed"] = True
@@ -168,7 +177,7 @@ def main():
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--gateway-cookie-file", type=Path)
     parser.add_argument("--other-tenant-token-file", type=Path)
-    parser.add_argument("--instance-id", default="a1b2d063-6240-4969-bc04-e7e0e6be9e73")
+    parser.add_argument("--instance-id", help="UUID de una VM IACP activa para el smoke específico de instancia")
     parser.add_argument("--operation-id")
     parser.add_argument("--ca-file", type=Path)
     parser.add_argument("--min-validity-days", type=int, default=14)

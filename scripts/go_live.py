@@ -33,7 +33,7 @@ ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
 HOST_EXECUTION_PROFILE = Path("/etc/iacp/execution-profile.json")
 LAB_AUTOMATED_ACTIONS = frozenset({
     "deploy", "promote-env", "recover-queued-guest-init",
-    "migrate-technical-ownership",
+    "migrate-technical-ownership", "activate-core",
 })
 
 
