@@ -1188,8 +1188,11 @@ def main():
         from uuid import UUID
         values = {"instance_id": args.instance_id, "operation_id": args.operation_id, "job_id": args.job_id}
         for field, value in values.items():
-            require(value is not None and str(UUID(value)) == value,
-                    field + " must be a canonical UUID")
+            try:
+                canonical = str(UUID(value))
+            except (AttributeError, TypeError, ValueError) as error:
+                raise RuntimeError(field + " must be a canonical UUID") from error
+            require(canonical == value, field + " must be a canonical UUID")
         require(args.vmid == 30060, "Only VMID 30060 is approved for this recovery action")
         require(args.operator and len(args.operator) <= 128, "Operator identity is required")
         require(args.change_reference and len(args.change_reference) <= 256, "Change reference is required")
