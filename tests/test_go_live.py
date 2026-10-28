@@ -218,6 +218,28 @@ def test_idle_and_history_guards_preserve_uncertainty():
         driver.compare_history(original, {"tables": {"terraform_attempts": {"count": 4, "sha256": "rewritten"}}})
 
 
+def test_queued_guest_recovery_scope_allows_only_declared_work_or_terminal_retry():
+    request = {
+        "operation_id": "11111111-1111-1111-1111-111111111111",
+        "job_id": "22222222-2222-2222-2222-222222222222",
+    }
+    queued = {
+        "schema": [driver.HEAD],
+        "nonterminal": {
+            "guest_initializations": [{"id": request["operation_id"], "status": "queued"}],
+            "operations": [{"id": request["operation_id"], "status": "queued"}],
+            "jobs": [{"id": request["job_id"], "status": "queued"}],
+        },
+        "queues": {}, "unacked": 0,
+    }
+    driver.check_queued_guest_recovery_scope(queued, request)
+    driver.check_queued_guest_recovery_scope({**queued, "nonterminal": {}}, request)
+    with pytest.raises(RuntimeError, match="Unexpected nonterminal work"):
+        driver.check_queued_guest_recovery_scope({**queued, "nonterminal": {
+            "power_executions": [{"id": "other", "status": "running"}],
+        }}, request)
+
+
 def test_core_contract_can_enable_delete_without_lab_allowlist(tmp_path):
     env = tmp_path / "server.env"
     env.write_text("IACP_ADMISSION_ENABLED=0\nIACP_KVM_LIFECYCLE_ENABLED=0\n")
