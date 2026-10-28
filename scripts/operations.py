@@ -4,6 +4,23 @@ import copy
 SERVICES = {'api', 'worker', 'terraform-worker', 'lifecycle-worker', 'traefik', 'db', 'redis', 'migrate', 'ownership-certifier'}
 EXEC_TMPFS = '/run/iacp-certification:rw,exec,nosuid,nodev,size=536870912,mode=0700,uid=10001,gid=10001'
 IMAGE_CHANGES = {f'/services/{role}/image' for role in SERVICES - {'db', 'redis', 'traefik'}}
+CORE_CONTRACT = 'provisioning-api-core'
+LEGACY_CONTRACT_VALUES = {'historical', 'commercial-g', CORE_CONTRACT}
+LEGACY_ENVIRONMENT = {
+    'api': {
+        'IACP_LAB_SELF_SERVICE_ENABLED',
+        'IACP_LIFECYCLE_INSTANCE_IDS',
+        'IACP_DISPOSABLE_INSTANCE_IDS',
+    },
+    'lifecycle-worker': {
+        'IACP_LAB_SELF_SERVICE_ENABLED',
+        'IACP_LIFECYCLE_INSTANCE_IDS',
+    },
+    'terraform-worker': {
+        'IACP_LAB_SELF_SERVICE_ENABLED',
+        'IACP_DISPOSABLE_INSTANCE_IDS',
+    },
+}
 
 
 def review_tls_proxy_peer(current, candidate, containers, review):
@@ -50,6 +67,58 @@ def normalized(config):
     return data
 
 
+def normalize_core_contract_transition(current, candidate, target_contract):
+    """Normaliza únicamente la transición legacy -> Core revisada.
+
+    El Compose Core ya no expone variables LAB y el contrato se fija en el
+    código operativo. Esta excepción no permite conservarlas, introducirlas ni
+    cambiar ninguna otra configuración.
+    """
+    if target_contract is None:
+        return []
+    if target_contract != CORE_CONTRACT:
+        raise ValueError('El contrato operativo objetivo debe ser provisioning-api-core')
+
+    changed = []
+    old_services = current.get('services', {})
+    new_services = candidate.get('services', {})
+
+    for role, keys in LEGACY_ENVIRONMENT.items():
+        old_env = old_services.get(role, {}).get('environment', {})
+        new_env = new_services.get(role, {}).get('environment', {})
+        if not isinstance(old_env, dict) or not isinstance(new_env, dict):
+            raise ValueError('Entorno de servicio inválido durante la transición Core')
+        for key in keys:
+            if key in new_env:
+                raise ValueError('El contrato Core no puede conservar variables LAB heredadas')
+            if key in old_env:
+                old_env.pop(key)
+                changed.append(f'/services/{role}/environment/{key}')
+
+    # El nuevo runtime verifica el contrato desde el código, no desde una
+    # variable mutable del entorno. Se tolera solamente el marcador exacto
+    # Core, incluido su retiro cuando estaba presente en el runtime legacy.
+    for role, service in new_services.items():
+        if role != 'api' and 'IACP_CREATION_CONTRACT' in service.get('environment', {}):
+            raise ValueError('IACP_CREATION_CONTRACT solo puede existir en api')
+    old_env = old_services.get('api', {}).get('environment', {})
+    new_env = new_services.get('api', {}).get('environment', {})
+    old_contract = old_env.get('IACP_CREATION_CONTRACT')
+    new_contract = new_env.get('IACP_CREATION_CONTRACT')
+    if old_contract is not None and old_contract not in LEGACY_CONTRACT_VALUES:
+        raise ValueError('Contrato legacy de origen no reconocido')
+    if new_contract is not None and new_contract != CORE_CONTRACT:
+        raise ValueError('El contrato de destino debe ser provisioning-api-core')
+    if old_contract != new_contract:
+        if old_contract is not None:
+            old_env.pop('IACP_CREATION_CONTRACT')
+        if new_contract is not None:
+            new_env.pop('IACP_CREATION_CONTRACT')
+        changed.append('/services/api/environment/IACP_CREATION_CONTRACT')
+
+    return changed
+
+
 def differences(a, b, path=''):
     if type(a) is not type(b):
         return [path]
@@ -62,7 +131,7 @@ def differences(a, b, path=''):
     return [] if a == b else [path]
 
 
-def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None, commercial_bootstrap=None):
+def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None, commercial_bootstrap=None, creation_contract=None):
     if not set(image_changes) <= IMAGE_CHANGES:
         raise ValueError('Only separately reviewed application image changes may be allowed')
     if set(candidate.get('services', {})) != SERVICES:
@@ -72,6 +141,7 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
     promoted_paths=[]
     from technical_runtime import normalize_technical_runtime
     promoted_paths.extend(normalize_technical_runtime(a, b, commercial_bootstrap))
+    promoted_paths.extend(normalize_core_contract_transition(a, b, creation_contract))
     # Narrow opt-in for the lab's reviewed input key and exact TLS proxy IPs.
     # This never changes DB/Redis, tenant tokens, RBAC, worker isolation or ports.
     import ipaddress

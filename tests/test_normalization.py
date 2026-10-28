@@ -15,7 +15,7 @@ from iacp.models import BOOTSTRAP_TENANT_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from operations import compare, live_compatibility, EXEC_TMPFS
+from operations import CORE_CONTRACT, compare, live_compatibility, EXEC_TMPFS
 
 
 def basic(username, password):
@@ -53,6 +53,113 @@ def test_docs_only_rotation_preserves_api_and_never_prints_credentials(tmp_path,
 
 def fixture_config():
     return {'services': {role: {} for role in ('api', 'worker', 'terraform-worker', 'lifecycle-worker', 'traefik', 'db', 'redis', 'migrate', 'ownership-certifier')}}
+
+
+def core_transition_configs():
+    old = fixture_config()
+    old['services']['api']['environment'] = {
+        'IACP_CREATION_CONTRACT': CORE_CONTRACT,
+        'IACP_LAB_SELF_SERVICE_ENABLED': '0',
+        'IACP_LIFECYCLE_INSTANCE_IDS': '',
+        'IACP_DISPOSABLE_INSTANCE_IDS': '',
+        'IACP_ADMISSION_ENABLED': '1',
+    }
+    old['services']['lifecycle-worker']['environment'] = {
+        'IACP_LAB_SELF_SERVICE_ENABLED': '0',
+        'IACP_LIFECYCLE_INSTANCE_IDS': '',
+        'IACP_KVM_LIFECYCLE_ENABLED': '1',
+    }
+    old['services']['terraform-worker']['environment'] = {
+        'IACP_LAB_SELF_SERVICE_ENABLED': '0',
+        'IACP_DISPOSABLE_INSTANCE_IDS': '',
+        'IACP_KVM_LIFECYCLE_ENABLED': '1',
+        'IACP_TERRAFORM_APPLY_ENABLED': '1',
+    }
+    new = deepcopy(old)
+    new['services']['api']['environment'].pop('IACP_CREATION_CONTRACT')
+    for role in ('api', 'lifecycle-worker', 'terraform-worker'):
+        for key in tuple(new['services'][role]['environment']):
+            if key.startswith('IACP_LAB_') or key in {'IACP_LIFECYCLE_INSTANCE_IDS', 'IACP_DISPOSABLE_INSTANCE_IDS'}:
+                new['services'][role]['environment'].pop(key)
+    return old, new
+
+
+def test_core_transition_removes_only_reviewed_legacy_inputs():
+    old, new = core_transition_configs()
+    result = compare(old, new, creation_contract=CORE_CONTRACT)
+    assert result['passed']
+    assert '/services/api/environment/IACP_CREATION_CONTRACT' in result['changed_paths']
+    assert '/services/api/environment/IACP_LAB_SELF_SERVICE_ENABLED' in result['changed_paths']
+    assert '/services/lifecycle-worker/environment/IACP_LIFECYCLE_INSTANCE_IDS' in result['changed_paths']
+    assert '/services/terraform-worker/environment/IACP_DISPOSABLE_INSTANCE_IDS' in result['changed_paths']
+
+
+@pytest.mark.parametrize(('role', 'key'), [
+    ('api', 'IACP_LAB_SELF_SERVICE_ENABLED'),
+    ('api', 'IACP_LIFECYCLE_INSTANCE_IDS'),
+    ('api', 'IACP_DISPOSABLE_INSTANCE_IDS'),
+    ('lifecycle-worker', 'IACP_LAB_SELF_SERVICE_ENABLED'),
+    ('lifecycle-worker', 'IACP_LIFECYCLE_INSTANCE_IDS'),
+    ('terraform-worker', 'IACP_LAB_SELF_SERVICE_ENABLED'),
+    ('terraform-worker', 'IACP_DISPOSABLE_INSTANCE_IDS'),
+])
+def test_core_transition_allows_each_declared_legacy_removal(role, key):
+    old = fixture_config()
+    old['services'][role]['environment'] = {key: ''}
+    new = deepcopy(old)
+    new['services'][role]['environment'].pop(key)
+    assert compare(old, new, creation_contract=CORE_CONTRACT)['passed']
+
+
+def test_core_transition_rejects_legacy_reintroduction_and_wrong_service():
+    old = fixture_config()
+    new = deepcopy(old)
+    new['services']['api']['environment'] = {'IACP_LAB_SELF_SERVICE_ENABLED': '0'}
+    with pytest.raises(ValueError, match='variables LAB'):
+        compare(old, new, creation_contract=CORE_CONTRACT)
+
+    old['services']['worker']['environment'] = {'IACP_LAB_SELF_SERVICE_ENABLED': '0'}
+    new = deepcopy(old)
+    new['services']['worker']['environment'].pop('IACP_LAB_SELF_SERVICE_ENABLED')
+    assert not compare(old, new, creation_contract=CORE_CONTRACT)['passed']
+
+
+def test_core_transition_requires_exact_contract_value():
+    old = fixture_config()
+    new = deepcopy(old)
+    new['services']['api']['environment'] = {'IACP_CREATION_CONTRACT': 'commercial-g'}
+    with pytest.raises(ValueError, match='provisioning-api-core'):
+        compare(old, new, creation_contract=CORE_CONTRACT)
+
+    old['services']['api']['environment'] = {'IACP_CREATION_CONTRACT': 'commercial-g'}
+    new = deepcopy(old)
+    new['services']['api']['environment']['IACP_CREATION_CONTRACT'] = CORE_CONTRACT
+    assert compare(old, new, creation_contract=CORE_CONTRACT)['passed']
+
+    old['services']['api']['environment'] = {'IACP_CREATION_CONTRACT': 'unreviewed'}
+    with pytest.raises(ValueError, match='origen'):
+        compare(old, new, creation_contract=CORE_CONTRACT)
+
+
+def test_core_transition_rejects_unexpected_changes_and_preserves_flags():
+    old, new = core_transition_configs()
+    assert compare(old, new, creation_contract=CORE_CONTRACT)['passed']
+    new['services']['api']['environment']['IACP_ADMISSION_ENABLED'] = '0'
+    assert not compare(old, new, creation_contract=CORE_CONTRACT)['passed']
+
+
+def test_core_transition_is_idempotent_after_runtime_migration():
+    _, migrated = core_transition_configs()
+    assert compare(migrated, deepcopy(migrated), creation_contract=CORE_CONTRACT)['passed']
+
+
+def test_core_transition_keeps_digest_review_separate_from_configuration():
+    old, new = core_transition_configs()
+    old['services']['api']['image'] = 'iacp/controlplane-api:old'
+    new['services']['api']['image'] = 'sha256:' + ('a' * 64)
+    assert compare(old, new, ['/services/api/image'], creation_contract=CORE_CONTRACT)['passed']
+    new['services']['worker']['image'] = 'sha256:' + ('b' * 64)
+    assert not compare(old, new, ['/services/api/image'], creation_contract=CORE_CONTRACT)['passed']
 
 
 def test_profile_replacement_requires_exact_reviewed_readonly_bind():
