@@ -14,7 +14,7 @@ from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from operations import compare, runtime_command, live_compatibility
+from operations import CORE_CONTRACT, compare, runtime_command, live_compatibility
 
 
 def run(args, **kwargs):
@@ -112,7 +112,7 @@ def main():
             operation.approve('update-tls-peer')
             current_cfg, peer_change = review_tls_proxy_peer(current_cfg, candidate_cfg, actual, m['tls_peer_update'])
             operation.evidence('tls-peer-reviewed', peer_change)
-        comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []), profile_file=m.get('profile_configuration',{}).get('path'), source_directory=m.get('source_promotion',{}).get('path'), root_bootstrap=m.get('root_bootstrap_configuration'), commercial_bootstrap=m.get('commercial_bootstrap_configuration'))
+        comparison = compare(current_cfg, candidate_cfg, m.get('configuration_changes', []), profile_file=m.get('profile_configuration',{}).get('path'), source_directory=m.get('source_promotion',{}).get('path'), root_bootstrap=m.get('root_bootstrap_configuration'), commercial_bootstrap=m.get('commercial_bootstrap_configuration'), creation_contract=CORE_CONTRACT)
         if peer_change:
             comparison['changed_paths'].append(peer_change['changed_path'])
         operation.evidence('candidate-environment-comparison', comparison)
@@ -227,7 +227,7 @@ with get_session_factory()() as session:
         current = json.loads(run(runtime_command(live, docker)))
         candidate = json.loads(run(dc + ['--profile', 'certification', 'config', '--format', 'json']))
         reviewed_manifest=json.loads(args.manifest.read_text())
-        report = compare(current, candidate, reviewed_manifest.get('configuration_changes',[]), profile_file=reviewed_manifest.get('profile_configuration',{}).get('path'), source_directory=reviewed_manifest.get('source_promotion',{}).get('path'), root_bootstrap=reviewed_manifest.get('root_bootstrap_configuration'), commercial_bootstrap=reviewed_manifest.get('commercial_bootstrap_configuration'))
+        report = compare(current, candidate, reviewed_manifest.get('configuration_changes',[]), profile_file=reviewed_manifest.get('profile_configuration',{}).get('path'), source_directory=reviewed_manifest.get('source_promotion',{}).get('path'), root_bootstrap=reviewed_manifest.get('root_bootstrap_configuration'), commercial_bootstrap=reviewed_manifest.get('commercial_bootstrap_configuration'), creation_contract=CORE_CONTRACT)
         report['live_compatibility'] = live_compatibility(current, live)
         report['passed'] &= report['live_compatibility']['passed']
         report['roles_running'] = {c['Config']['Labels'].get('com.docker.compose.service'): c['State']['Running'] for c in live}
