@@ -19,7 +19,7 @@ def test_readonly_promotion_snapshot_survives_both_real_migrations(pg_engine, ru
     assert before["schema"] == ["0004_authorized_apply"]
     upgrade(pg_engine)
     after = inspector.snapshot()
-    assert after["schema"] == ["0012_commercial_intents"]
+    assert after["schema"] == ["0013_technical_ownership"]
     for table, fingerprint in before["tables"].items():
         actual = (dict(after["compatibility"]["instances_before_0008"]) if table == "instances" else
             dict(after['compatibility']['operations_before_0011']) if table == 'operations' else after["tables"][table])
@@ -45,5 +45,5 @@ def test_0010_preserves_all_0009_rows_and_does_not_initialize_existing_guests(pg
             "VALUES ('historical',:tenant,'historical','ubuntu-2404',2,2048,20,'ready','terraform',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"), {'tenant':BOOTSTRAP_TENANT_ID})
     before=inspector.snapshot();upgrade(pg_engine);upgrade(pg_engine);after=inspector.snapshot()
     driver.compare_history(before,after)
-    assert after['schema']==['0012_commercial_intents']
+    assert after['schema']==['0013_technical_ownership']
     assert after['tables']['guest_initializations']['count']==0

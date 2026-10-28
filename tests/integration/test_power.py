@@ -37,7 +37,7 @@ def power_runtime(sessions, application, monkeypatch, tmp_path):
     monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "1")
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     application.dependency_overrides[get_power_publisher] = lambda: Mock()
-    with power_server(tmp_path) as native:
+    with power_server(tmp_path, vmid=30001, name="fixture-kvm") as native:
         credentials = tmp_path / "kvm.json"
         credentials.write_text(json.dumps({"endpoint": native.endpoint, "api_token": "synthetic-token"}))
         monkeypatch.setenv("IACP_KVM_CREDENTIALS_FILE", str(credentials))

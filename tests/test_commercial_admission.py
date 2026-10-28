@@ -13,7 +13,8 @@ from iacp.commercial_contract import CommercialInstanceCreate,EXAMPLES
 from iacp.models import BOOTSTRAP_TENANT_ID,CommercialIntent,Instance,Job,Operation,TerraformExecution
 from iacp.security import Principal
 from iacp.services.bootstrap_secrets import EphemeralSecrets,BootstrapSecretError,configured_key
-from iacp.services.commercial import create,advance
+from iacp.services.commercial import create, advance
+from iacp.services.commercial import live_capacity as physical_live_capacity
 from iacp.services.instances import Conflict
 from iacp.terraform import profiles
 from tests.test_commercial_catalog import catalog_profile
@@ -116,14 +117,25 @@ def test_plan_admitted_without_policy_and_secret_never_reaches_db_or_executor(se
     assert spec.access.root_password.get_secret_value() not in json.dumps(variables)
     with sessions() as s:
         approval=advance(s,s.get(Instance,accepted.instance_id),lambda *_:None)
-        assert approval.status=='queued' and approval.approved_by.startswith('iacp-automation:commercial-g')
+        assert approval.status=='queued' and approval.approved_by.startswith('iacp-automation:provisioning-api-core')
+
+
+def test_start_on_create_rejects_disabled_lifecycle_without_500(
+        sessions, commercial_config, store, monkeypatch):
+    monkeypatch.setenv('IACP_KVM_LIFECYCLE_ENABLED', '0')
+    with sessions() as session:
+        with pytest.raises(Conflict, match='POWER_LIFECYCLE_DISABLED'):
+            create(session, Principal(BOOTSTRAP_TENANT_ID, 'crm', 'operator'),
+                   specification(), 'lifecycle-disabled', lambda _: None,
+                   store, capacity=lambda *_: None)
+        assert not session.scalars(select(Instance)).all()
 
 
 def test_rejections_do_not_publish_or_persist_intents(sessions,commercial_config,store):
     published=[]
     with sessions() as s:
         for spec,capacity,code in [
-            (specification('kvm-3'),lambda *_:None,'PLAN_NOT_AUTHORIZED'),
+            (specification('kvm-3'),lambda *_:None,'PROFILE_CAPACITY_EXCEEDED'),
             (specification(),Mock(side_effect=Conflict('COMMERCIAL_PHYSICAL_CAPACITY_UNAVAILABLE')),'PHYSICAL_CAPACITY_UNAVAILABLE')]:
             with pytest.raises(Conflict,match=code):create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),spec,
                 'rejected',published.append,store,capacity=capacity)
@@ -137,7 +149,7 @@ def test_body_conflict_and_quota_keep_original_intent(sessions,commercial_config
         result=create(s,principal,specification(),'same',lambda _:None,store,capacity=lambda *_:None)
         with pytest.raises(Conflict,match='another request'):
             create(s,principal,specification('kvm-2'),'same',lambda _:None,store,capacity=lambda *_:None)
-        with pytest.raises(Conflict,match='QUOTA_EXCEEDED'):
+        with pytest.raises(Conflict,match='PROFILE_CAPACITY_EXCEEDED'):
             create(s,principal,specification(name='otra-vm'),'second',lambda _:None,store,capacity=lambda *_:None)
         assert s.get(Instance,result.instance_id).disk_gb==50
 
@@ -147,8 +159,8 @@ def test_commercial_catalog_ignores_legacy_size_caps_but_requires_explicit_budge
         sessions, commercial_config, store, monkeypatch, plan_id):
     from iacp.catalog import resolve_plan
     raw=json.loads(commercial_config.read_text());profile=raw['profiles']['lab-dhcp']
-    profile.update(max_vcpus=4,max_memory_mb=4096,max_disk_gb=40,
-        max_total_vcpus=8,max_total_memory_mb=8192,max_total_disk_gb=80)
+    profile.update(max_vcpus=8,max_memory_mb=16384,max_disk_gb=400,
+        max_total_vcpus=16,max_total_memory_mb=32768,max_total_disk_gb=800)
     commercial_config.write_text(json.dumps(raw))
     from pathlib import Path
     limits=Path(os.environ['IACP_COMMERCIAL_LIMITS_FILE'])
@@ -170,7 +182,7 @@ def test_commercial_reservation_rejects_resources_outside_catalog(sessions,comme
         instance=Instance(id=str(uuid4()),tenant_id=BOOTSTRAP_TENANT_ID,name='invalid-shape',
             image='ubuntu-2404',vcpus=3,memory_mb=4096,disk_gb=100,network_profile='lab-dhcp',
             commercial_revision='commercial-g',status='pending',executor='terraform')
-        with pytest.raises(PlanError,match='RESOURCES_OUTSIDE_CATALOG'):
+        with pytest.raises(PlanError,match='PROFILE_CAPACITY_EXCEEDED'):
             profiles.reserve_profile(s,instance)
 
 
@@ -179,16 +191,16 @@ def test_commercial_availability_uses_tenant_budget_instead_of_legacy_caps(
     from iacp.services.catalog import plans_for
     from iacp.services import commercial,bootstrap_secrets
     raw=json.loads(commercial_config.read_text());raw['profiles']['lab-dhcp'].update(
-        max_vcpus=4,max_memory_mb=4096,max_disk_gb=40,max_total_disk_gb=80)
+        max_vcpus=8,max_memory_mb=16384,max_disk_gb=400,max_total_vcpus=16,
+        max_total_memory_mb=32768,max_total_disk_gb=800)
     commercial_config.write_text(json.dumps(raw))
-    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','provisioning-api-core')
     monkeypatch.setattr(bootstrap_secrets,'configured_key',lambda:b'x'*32)
     monkeypatch.setattr(commercial,'live_capacity',lambda *_:None)
     with sessions() as s:
         rows=plans_for(s,BOOTSTRAP_TENANT_ID)
-    assert all(row['availability']['available'] for row in rows[:2])
-    assert all(not row['availability']['available'] and
-        'COMMERCIAL_PLAN_NOT_AUTHORIZED' in row['availability']['reasons'] for row in rows[2:])
+    assert all(row['availability']['available'] for row in rows)
+    assert all('COMMERCIAL_PLAN_NOT_AUTHORIZED' not in row['availability']['reasons'] for row in rows)
 
 
 def test_commercial_password_adapter_is_forbidden_even_if_legacy_data_corrupted():
@@ -197,12 +209,11 @@ def test_commercial_password_adapter_is_forbidden_even_if_legacy_data_corrupted(
     allocation=Allocation.model_validate(allocation_data())
     data=SimpleNamespace(image='test-image',name='safe',vcpus=1,memory_mb=2048,disk_gb=50,
         commercial_revision='commercial-g',initial_access_ciphertext='ciphertext-historico')
-    with pytest.raises(PlanError,match='COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN'):allocation.variables(data)
+    with pytest.raises(PlanError,match='ROOT_ACCESS_PROFILE_CHANGED'):allocation.variables(data)
 
 
 @pytest.mark.parametrize('kind',['disk','memory','cpu'])
 def test_physical_budget_is_an_admission_requirement(sessions,commercial_config,monkeypatch,kind):
-    from iacp.services.commercial import live_capacity
     from iacp.services.catalog import authorized_profile
     from iacp.catalog import resolve_plan
     from iacp.services.capacity_readonly import CapacityReadOnly
@@ -213,12 +224,12 @@ def test_physical_budget_is_an_admission_requirement(sessions,commercial_config,
         return {'memory':{'free':(1 if kind=='memory' else 16)*1024**3},'cpuinfo':{'cpus':1 if kind=='cpu' else 16},'cpu':0.1}
     monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
     with sessions() as s:
-        with pytest.raises(Conflict):live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
+        with pytest.raises(Conflict, match='COMMERCIAL_PHYSICAL_CAPACITY_EXCEEDED'):
+            physical_live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
         assert not s.scalars(select(Instance)).all()
 
 
 def test_capacity_read_identity_does_not_need_global_ceph_access(sessions,commercial_config,monkeypatch):
-    from iacp.services.commercial import live_capacity
     from iacp.services.catalog import authorized_profile
     from iacp.catalog import resolve_plan
     from iacp.services.capacity_readonly import CapacityReadOnly
@@ -232,14 +243,13 @@ def test_capacity_read_identity_does_not_need_global_ceph_access(sessions,commer
         return {'memory':{'free':16*1024**3},'cpuinfo':{'cpus':16},'cpu':0.1}
     monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
     with sessions() as session:
-        live_capacity(session,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
+        physical_live_capacity(session,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
     assert len(calls)==2
 
 
-def test_commercial_openapi_and_runtime_keep_old_post_until_explicit_transition(monkeypatch):
+def test_core_openapi_and_runtime_use_one_creation_contract(monkeypatch):
     from iacp.main import create_app
-    schema=create_app().openapi();assert schema['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/InstanceCreate')
-    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','provisioning-api-core')
     schema=create_app().openapi();media=schema['paths']['/v1/instances']['post']['requestBody']['content']['application/json']
     assert media['schema']['$ref'].endswith('/CommercialInstanceCreate')
     for sample in media['examples'].values():CommercialInstanceCreate.model_validate(sample['value'])

@@ -6,14 +6,15 @@ from sqlalchemy import select
 from iacp.models import (BOOTSTRAP_TENANT_ID,GuestInitialization,Instance,Job,
     TerraformExecution,Operation,NetworkDiscovery,utcnow)
 from iacp.services.network import agent_addresses,after_power,execute_discovery
-from tests.power_helpers import managed_instance
+from tests.power_helpers import managed_instance, refresh_technical_ownership
 from tests.test_instances import identities
 
 @pytest.fixture
 def network(sessions,monkeypatch):
     identifier=managed_instance(sessions,BOOTSTRAP_TENANT_ID,vmid=30000)
     with sessions() as s:
-        i=s.get(Instance,identifier);i.network_mode='dhcp';i.result={**i.result,'network':{'mac_address':'aa:bb:cc:dd:ee:ff'}};s.commit()
+        i=s.get(Instance,identifier);i.network_mode='dhcp';i.result={**i.result,'network':{'mac_address':'aa:bb:cc:dd:ee:ff'}}
+        refresh_technical_ownership(s, identifier);s.commit()
     publish=Mock()
     monkeypatch.setattr('iacp.api.dependencies.get_network_publisher',lambda:publish)
     return identifier,publish
@@ -87,6 +88,7 @@ def test_after_power_dispatches_network_while_guest_initialization_is_pending(se
         instance=s.get(Instance,identifier)
         instance.commercial_revision='provisioning-api-core'
         instance.network_profile='lab-dhcp'
+        refresh_technical_ownership(s, identifier)
         power=Operation(id='power-with-pending-init',tenant_id=instance.tenant_id,instance_id=identifier,
             kind='instance.power.reboot',status='completed',idempotency_key='reboot-with-pending-init',
             request_hash='e'*64,requested_by='bootstrap')

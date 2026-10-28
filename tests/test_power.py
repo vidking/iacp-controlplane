@@ -8,7 +8,8 @@ from iacp.api.dependencies import get_power_client, get_power_publisher
 from iacp.lifecycle import ownership
 from iacp.lifecycle.execution import _execute, execute_power
 from iacp.lifecycle.proxmox import PowerError
-from iacp.models import BOOTSTRAP_TENANT_ID, Instance, Operation, OperationEvent, PowerExecution
+from iacp.models import (BOOTSTRAP_TENANT_ID, Instance, Operation, OperationEvent,
+                         PowerExecution, TechnicalOwnership, TerraformApply, TerraformExecution)
 from iacp.terraform.config import SOURCE_REVISION
 from tests.power_helpers import FakePower, managed_instance
 from tests.test_instances import identities
@@ -92,11 +93,10 @@ def test_stopped_vm_cannot_be_rebooted(client, auth, sessions, power):
     assert not any(call[0] == "submit" for call in native.calls)
 
 
-@pytest.mark.parametrize("gate", ["unpromoted", "wrong-source", "disabled"])
+@pytest.mark.parametrize("gate", ["unpromoted", "disabled"])
 def test_ownership_and_runtime_gate_fail_closed_without_publishing(client, auth, power, monkeypatch, gate):
     identifier, native, publisher = power
     if gate == "unpromoted": monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", None)
-    if gate == "wrong-source": monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", "f" * 40)
     if gate == "disabled": monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "0")
     assert request(client, auth, identifier).status_code == 409
     publisher.assert_not_called()
@@ -217,13 +217,21 @@ def test_lost_lock_cannot_commit_completion(client, auth, sessions, power, monke
         assert session.scalar(select(OperationEvent.id).where(OperationEvent.code == "power_completed")) is None
 
 
-def test_legacy_source_cannot_claim_lifecycle_ownership(client, auth, power, monkeypatch):
+def test_historical_source_does_not_block_lifecycle_ownership(client, auth, sessions, power):
     identifier, native, publisher = power
-    monkeypatch.setattr(ownership.config, "SOURCE_REVISION", ownership.LEGACY_TERRAFORM_POWER_SOURCE)
-    monkeypatch.setattr(ownership, "KVM_POWER_SOURCE_REVISION", ownership.LEGACY_TERRAFORM_POWER_SOURCE)
-    assert request(client, auth, identifier).json()["detail"] == "POWER_OWNERSHIP_UNAVAILABLE"
-    assert not native.calls
-    publisher.assert_not_called()
+    from iacp.services.ownership_binding import binding_digest
+
+    with sessions() as session:
+        execution = session.get(TerraformExecution, identifier)
+        ownership_row = session.get(TechnicalOwnership, identifier)
+        execution.source_revision = ownership.LEGACY_TERRAFORM_POWER_SOURCE
+        ownership_row.source_revision = execution.source_revision
+        apply = session.scalar(select(TerraformApply).where(TerraformApply.instance_id == identifier))
+        ownership_row.binding_sha256 = binding_digest(session.get(Instance, identifier), execution, apply)
+        session.commit()
+    accepted = request(client, auth, identifier)
+    assert accepted.status_code == 202, accepted.text
+    publisher.assert_called_once_with(accepted.json()["operation_id"])
 
 
 @pytest.mark.parametrize("action", ["start", "shutdown", "reboot"])

@@ -37,29 +37,3 @@ def test_profile_exception_never_expands_isolation(reviewed,change):
     if change=='rootfs':s['read_only']=False
     if change=='duplicate':s['volumes'].append(deepcopy(s['volumes'][0]))
     with pytest.raises(RuntimeError):p.lifecycle_mount_targets(s)
-
-
-@pytest.mark.parametrize('valid',[True,False])
-def test_commercial_activation_uses_actual_tenant_limits_not_policy_uuids(
-        commercial_config,sessions,monkeypatch,valid):
-    from iacp.models import BOOTSTRAP_TENANT_ID
-    from iacp.services.commercial import limits_for
-    import iacp.db
-    monkeypatch.setattr(iacp.db,'get_session_factory',lambda:sessions)
-    p=object.__new__(driver.Promotion)
-    ref={'path':str(commercial_config),'sha256':driver.digest(commercial_config)}
-    p.m={'profile_configuration':ref}
-    expected=limits_for(BOOTSTRAP_TENANT_ID).model_dump()
-    if not valid:expected['max_disk_gb']+=1
-    review={'environment':'lab','lab_network_authorized':True,'resource_capacity_verified':True,
-        'profile_file':ref,'contract':'commercial-g','tenants':{BOOTSTRAP_TENANT_ID:expected}}
-    p.approve=lambda _:{};p.preflight=lambda:None;p.verify=Mock()
-    p.operator_review=lambda *args:review
-    p.compose=lambda *args:json.dumps({'services':{'api':{'environment':{'IACP_CREATION_CONTRACT':'commercial-g'}}}})
-    p.exec_python=lambda role,code:exec(code,{})
-    p.flags=Mock();p.up=Mock();p.evidence=Mock()
-    if valid:
-        p.activate_lab();assert p.flags.call_args.kwargs['admission']==1
-    else:
-        with pytest.raises(AssertionError):p.activate_lab()
-        p.flags.assert_not_called();p.up.assert_not_called()

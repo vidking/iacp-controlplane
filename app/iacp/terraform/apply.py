@@ -311,6 +311,12 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         if (result.get("simulated") is not False or result.get("vmid") != allocation.vm_id
                 or result.get("node") != allocation.node_name):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH")
+        observation = result.get("observation") if isinstance(result.get("observation"), dict) else {}
+        if any(observation.get(key) is not True
+               for key in ("state_present", "proxmox_present", "postconditions_verified")):
+            # Un apply o una reconciliación sin evidencia física completa no
+            # puede cerrar el fence ni materializar ownership técnico.
+            raise PlanError("TECHNICAL_OWNERSHIP_EVIDENCE_REQUIRED")
         if reconcile:
             # Revalidar el vínculo aprobado tras la observación, antes del commit.
             _executor_revision_call(

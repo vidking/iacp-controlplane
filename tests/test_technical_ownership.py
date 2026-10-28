@@ -20,6 +20,8 @@ def test_historical_source_revision_is_adopted_without_policy_or_release_pin(ses
         instance = session.get(Instance, identifier)
         instance.commercial_revision = "commercial-g"
         execution = session.get(TerraformExecution, identifier)
+        session.delete(session.get(TechnicalOwnership, identifier))
+        session.flush()
         execution.source_revision = "a" * 40
         ownership = member(session, instance, "start", adopt=True)
         session.commit()
@@ -73,6 +75,9 @@ def test_migration_is_repeatable_and_preserves_deleted_history(sessions):
     deleted = managed_instance(sessions, "00000000-0000-0000-0000-000000000001", vmid=30012,
                                name="deleted-kvm")
     with sessions() as session:
+        session.delete(session.get(TechnicalOwnership, live))
+        session.delete(session.get(TechnicalOwnership, deleted))
+        session.flush()
         session.get(Instance, deleted).status = "deleted"
         session.commit()
         first = migrate(session)
@@ -124,6 +129,8 @@ def test_snapshot_combines_historical_profile_allocation_and_guest_evidence(sess
     with sessions() as session:
         instance = session.get(Instance, identifier)
         execution = session.get(TerraformExecution, identifier)
+        session.delete(session.get(TechnicalOwnership, identifier))
+        session.flush()
         instance.image = execution.allocation["image"] = "ubuntu-2404"
         instance.network_profile = "lab-dhcp"
         session.add(CommercialIntent(
@@ -163,6 +170,9 @@ def test_migration_separates_failed_empty_ready_inconsistent_and_active_rows(ses
     active = managed_instance(sessions, "00000000-0000-0000-0000-000000000001", vmid=30018,
                               name="active-recovery")
     with sessions() as session:
+        for identifier in (adopted, failed, ready_inconsistent, active):
+            session.delete(session.get(TechnicalOwnership, identifier))
+        session.flush()
         failed_instance = session.get(Instance, failed)
         failed_instance.status = "failed"
         failed_instance.vmid = failed_instance.node = None

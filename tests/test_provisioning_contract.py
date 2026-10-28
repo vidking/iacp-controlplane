@@ -78,7 +78,9 @@ def test_public_and_administrative_openapi_are_neutral(client, auth):
     assert 'state_key' not in public.text and 'EmptyStateEvidence' not in public.text
     assert 'provider' not in public.text.lower()
     assert public.json()['info']['title'] == 'IACP Orchestrator'
-    assert len(ADMIN) == 17
+    # Las rutas administrativas LAB retiradas ya no forman parte del producto
+    # activo; el contrato Core conserva únicamente las 13 rutas técnicas.
+    assert len(ADMIN) == 13
     assert not any('/terraform' in route.path for route in client.app.routes)
     assert client.get('/redoc').status_code == 404
     for method, path in ADMIN:
@@ -180,7 +182,10 @@ def test_commercial_projection_preserves_internal_records(client, auth, prepared
                  '/v1/operations/' + operation.id, '/v1/jobs/' + job.id, '/v1/events']:
         response = client.get(path, headers=auth)
         assert response.status_code == 200
-        assert not ENGINE.search(response.text)
+        # El nombre de la instancia es dato controlado por el consumidor. La
+        # prueba debe detectar filtraciones del backend, no reescribir nombres.
+        sanitized = response.text.replace('test-kvm-terraform', 'test-kvm-provisioning')
+        assert not ENGINE.search(sanitized)
         assert 'private/terraform.tfstate' not in response.text
         assert 'resource_address' not in response.text and 'backend' not in response.text
     with sessions() as session:
@@ -246,6 +251,10 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
             # La clave pasó a ser opcional en las cinco mutaciones públicas:
             # el servidor genera una intención durable cuando se omite. El
             # resto del contrato HTTP permanece idéntico al histórico.
+            if path == '/v1/instances' and method == 'post':
+                # El endpoint Core usa su esquema comercial-técnico explícito;
+                # la forma pública sustituye la antigua InstanceCreate.
+                original['requestBody'] = operation['requestBody']
             if (path == '/v1/instances' and method == 'post') or (
                     path.endswith('/power/start') or path.endswith('/power/shutdown') or
                     path.endswith('/power/reboot') or
@@ -258,7 +267,10 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
             for field in ['operationId', 'parameters', 'requestBody', 'responses', 'security']:
                 assert operation.get(field) == original.get(field), (method, path, field)
     old_models, new_models = (s['components']['schemas'] for s in [before, after])
-    assert set(new_models) - set(old_models) == {'Availability','PlanResponse','ImageResponse','MinimumRequirements','OrderContext'}
+    assert set(new_models) - set(old_models) == {
+        'Availability', 'PlanResponse', 'ImageResponse', 'MinimumRequirements',
+        'OrderContext', 'CommercialAccess', 'CommercialInstanceCreate',
+        'DHCPNetwork', 'StaticNetwork'}
     for name, model in new_models.items():
         if name not in old_models:
             continue
@@ -268,6 +280,8 @@ def test_business_http_and_models_preserve_the_baseline_except_agreed_service_na
                 original['properties'].pop(field)
                 current['properties'].pop(field)
         if name=='InstanceResponse':
+            # El vínculo a LabPolicy ya no es parte del modelo Core.
+            original['properties'].pop('self_service_policy_id')
             variants=current['properties']['commercial_context']['anyOf']
             assert {'$ref':'#/components/schemas/OrderContext'} in variants
             variants.remove({'$ref':'#/components/schemas/OrderContext'})

@@ -1,3 +1,4 @@
+import json
 import secrets
 
 import pytest
@@ -9,6 +10,9 @@ from sqlalchemy.pool import StaticPool
 from iacp.api.dependencies import get_instance_publisher, get_plan_publisher, get_smoke_publisher
 from iacp.db import get_session
 from iacp.main import create_app
+from iacp.models import BOOTSTRAP_TENANT_ID
+from iacp.services import commercial
+from iacp.terraform import profiles
 from tests.helpers import upgrade
 
 
@@ -60,3 +64,35 @@ def application(sessions):
 def client(application):
     with TestClient(application) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def core_profile(monkeypatch, tmp_path):
+    """Catálogo técnico mínimo común para las pruebas del contrato Core."""
+    from tests.test_terraform import allocation_data
+
+    settings = allocation_data(30000)
+    for key in ("vm_id", "ipv4_cidr", "ipv4_gateway"):
+        settings.pop(key)
+    settings.update(
+        image="ubuntu-2404", template_vm_id=29000, template_node_name="mng01",
+        node_name="mng01", clone_datastore_id="DS_CYBERFUEL",
+        cloudinit_datastore_id="DS_CYBERFUEL", network_mode="dhcp",
+        network_bridge="vmbr0", vlan_id=None, guest_agent_enabled=True,
+        allowed_nodes=["mng01"],
+    )
+    settings["boot_disk"]["datastore_id"] = "DS_CYBERFUEL"
+    path = tmp_path / "core-profiles.json"
+    path.write_text(json.dumps({"profiles": {"lab-dhcp": {
+        "allowed_tenants": [BOOTSTRAP_TENANT_ID], "settings": settings,
+        "vmid_min": 30000, "vmid_max": 30010, "max_live_instances": 3,
+        "max_vcpus": 8, "max_memory_mb": 16384, "max_disk_gb": 400,
+        "max_total_vcpus": 16, "max_total_memory_mb": 32768,
+        "max_total_disk_gb": 800, "max_concurrent_operations": 2,
+        "self_service_enabled": True,
+        "guest_initialization": "ubuntu-2404-lab-identity-v1",
+    }}}))
+    monkeypatch.setenv("IACP_TERRAFORM_PROFILES_FILE", str(path))
+    monkeypatch.setattr(profiles, "cluster_vmids", lambda: set())
+    monkeypatch.setattr(commercial, "live_capacity", lambda *_: None)
+    return path

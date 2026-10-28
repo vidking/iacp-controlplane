@@ -56,3 +56,15 @@ def runtime(pg_engine, auth, tmp_path, monkeypatch):
         db.get_session_factory.cache_clear()
         db.get_engine().dispose()
         db.get_engine.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def core_runtime(monkeypatch, tmp_path):
+    """Contrato técnico Core y almacén efímero para las pruebas de integración."""
+    key = tmp_path / "bootstrap-aes.key"
+    key.write_bytes(os.urandom(32))
+    key.chmod(0o600)
+    monkeypatch.setenv("IACP_CREATION_CONTRACT", "provisioning-api-core")
+    monkeypatch.setenv("IACP_INSTANCE_EXECUTOR", "terraform")
+    monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "1")
+    monkeypatch.setenv("IACP_BOOTSTRAP_AES_KEY_FILE", str(key))

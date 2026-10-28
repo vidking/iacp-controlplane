@@ -19,7 +19,7 @@ def request(session,instance,principal,key,publish):
     from ..lifecycle.service import managed_target,response
     with instance_lock(session.get_bind(),instance.id):
         instance=session.get(Instance,instance.id,populate_existing=True)
-        technical_member(session,instance,'start')
+        technical_member(session,instance,'start',adopt=True)
         managed_target(session,instance)
         initialization=session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
         if not initialization or initialization.status!='completed' or not instance.ip_addresses:
@@ -58,7 +58,7 @@ def execute(identifier,sessions,store=None,delivery=None):
                 instance=s.get(Instance,instance_id)
                 existing=s.get(CommercialIntent,instance_id)
                 consumed=bool(existing and existing.bootstrap_started_at)
-                technical_member(s,instance,'start',current_profiles=not consumed,observation=consumed)
+                technical_member(s,instance,'start',current_profiles=not consumed,observation=consumed,adopt=True)
                 row=existing
                 job=s.scalar(select(Job).where(Job.operation_id==identifier))
                 target,_=managed_target(s,instance)

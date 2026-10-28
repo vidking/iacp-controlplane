@@ -25,43 +25,13 @@ from iacp.terraform.runner import CommandRunner
 from tests.test_instances import SPEC, identities
 
 
-CORE_SPEC = {**MINIMAL_EXAMPLE, "name": "test-kvm-terraform", "start_on_create": False}
+CORE_SPEC = {**MINIMAL_EXAMPLE, "name": "test-kvm-provisioning", "start_on_create": False}
 
 
 def create(client, headers, key="create-001", spec=None):
     """Crea por el contrato Core; las variables Terraform siguen siendo sintéticas."""
     return client.post("https://testserver/v1/instances", headers={**headers, "Idempotency-Key": key},
                        json=spec or CORE_SPEC)
-
-
-@pytest.fixture(autouse=True)
-def core_profile(monkeypatch, tmp_path):
-    """Perfil técnico mínimo para ejercitar el contrato Core sin políticas LAB."""
-    settings = allocation_data(30000)
-    for key in ("vm_id", "ipv4_cidr", "ipv4_gateway"):
-        settings.pop(key)
-    settings.update(
-        image="ubuntu-2404", template_vm_id=29000, template_node_name="mng01",
-        node_name="mng01", clone_datastore_id="DS_CYBERFUEL",
-        cloudinit_datastore_id="DS_CYBERFUEL", network_mode="dhcp",
-        network_bridge="vmbr0", vlan_id=None, guest_agent_enabled=True,
-        allowed_nodes=["mng01"],
-    )
-    settings["boot_disk"]["datastore_id"] = "DS_CYBERFUEL"
-    path = tmp_path / "core-profiles.json"
-    path.write_text(json.dumps({"profiles": {"lab-dhcp": {
-        "allowed_tenants": [BOOTSTRAP_TENANT_ID], "settings": settings,
-        "vmid_min": 30000, "vmid_max": 30010, "max_live_instances": 3,
-        "max_vcpus": 8, "max_memory_mb": 16384, "max_disk_gb": 400,
-        "max_total_vcpus": 16, "max_total_memory_mb": 32768,
-        "max_total_disk_gb": 800, "max_concurrent_operations": 2,
-        "self_service_enabled": True,
-        "guest_initialization": "ubuntu-2404-lab-identity-v1",
-    }}}))
-    monkeypatch.setenv("IACP_TERRAFORM_PROFILES_FILE", str(path))
-    monkeypatch.setattr(profiles, "cluster_vmids", lambda: set())
-    monkeypatch.setattr(commercial, "live_capacity", lambda *_: None)
-    return path
 
 
 def test_source_revision_is_the_integrated_iac_main():
@@ -270,6 +240,7 @@ def test_invalid_allocations_are_rejected(change):
 
 def plan_json(variables):
     row = variables["instance"]
+    dhcp = row.get("network_mode") == "dhcp"
     return {"resource_changes": [{"address": ADDRESS, "change": {"actions": ["create"], "after": {
         "vm_id": row["vm_id"], "node_name": row["node_name"], "name": row["vm_name"],
         "cpu": [{"cores": row["cpu_cores"], "hotplugged": row["cpu_cores"]}], "memory": [{"dedicated": row["memory_mb"]}],
@@ -281,7 +252,8 @@ def plan_json(variables):
         "network_device": [{"bridge": row["network_bridge"], "model": "virtio", "vlan_id": row["vlan_id"]}],
         "agent": [{"enabled": row["guest_agent_enabled"]}],
         "initialization": [{"datastore_id": row["cloudinit_datastore_id"],
-                            "ip_config": [{"ipv4": [{"address": row["ipv4_cidr"], "gateway": row["ipv4_gateway"]}]}],
+                            "ip_config": [{"ipv4": [{"address": "dhcp" if dhcp else row["ipv4_cidr"],
+                                                        "gateway": None if dhcp else row["ipv4_gateway"]}]}],
                             "user_account": [{"username": row["cloudinit_username"], "keys": row["ssh_public_keys"]}]}],
     }}}]}
 

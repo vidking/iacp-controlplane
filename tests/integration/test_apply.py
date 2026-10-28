@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from iacp.api.dependencies import get_apply_publisher, get_instance_publisher
 from iacp.db import get_session_factory
 from iacp.main import create_app
-from iacp.models import Instance, Job, OperationEvent, TerraformApply
+from iacp.models import Instance, Job, OperationEvent, TerraformApply, TerraformExecution
 from iacp.terraform.apply import execute_apply
 from iacp.terraform.locks import instance_lock
 from tests.helpers import upgrade
@@ -70,7 +70,10 @@ def test_apply_survives_broker_redelivery_and_api_restart(pg_engine, runtime, mo
             with TestClient(create_app()) as restarted:
                 assert restarted.get(path + "/executions", headers=runtime).json()[0] == response
                 instance = restarted.get('/v1/instances/' + accepted["instance_id"], headers=runtime).json()
-                assert instance["status"] == "ready" and instance["vmid"] == 21001 and instance["result"]["simulated"] is False
+                with sessions() as session:
+                    expected_vmid = session.get(TerraformExecution, accepted["instance_id"]).vmid
+                assert instance["status"] == "ready" and instance["vmid"] == expected_vmid
+                assert instance["result"]["simulated"] is False
             with sessions() as session:
                 events = session.scalars(select(OperationEvent).where(OperationEvent.operation_id == accepted["operation_id"],
                                                                       OperationEvent.code == "terraform_mutation_started")).all()
