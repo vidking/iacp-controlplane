@@ -24,6 +24,7 @@ tls = load("go_live_tls", "render-tls.py")
 
 def test_promotion_accepts_the_deployed_0010_schema_before_migrating():
     driver.require_supported_schema(['0010_guest_identity'])
+    driver.require_supported_schema(['0013_technical_ownership'])
     driver.require_supported_schema([driver.HEAD])
     for unknown in ([], ['future'], ['0010_guest_identity', driver.HEAD]):
         with pytest.raises(RuntimeError, match='Unsupported schema'):
@@ -39,6 +40,44 @@ def test_restore_evidence_accepts_actual_0011_backup_and_rejects_unverified_rest
                    {'table_count': 14}, {'passed': False}, {'isolated': False}):
         with pytest.raises(RuntimeError, match='Restore attestation'):
             driver.check_restore_evidence(backup, {**restored, **change})
+
+
+def test_restore_evidence_accepts_actual_0013_backup_before_0014():
+    backup = {'schema': '0013_technical_ownership', 'sha256': 'digest-0013'}
+    restored = {'schema': '0013_technical_ownership', 'backup_sha256': 'digest-0013',
+                'passed': True, 'isolated': True, 'table_count': 17}
+    driver.check_restore_evidence(backup, restored)
+    with pytest.raises(RuntimeError, match='Restore attestation'):
+        driver.check_restore_evidence(backup, {**restored, 'table_count': 16})
+
+
+def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
+    before = {
+        'schema': ['0013_technical_ownership'],
+        'tables': {'technical_ownership': {'count': 1, 'sha256': 'before'}},
+        'technical_ownership_entries': {'existing': 'digest-existing'},
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {'technical_ownership': {'count': 2, 'sha256': 'after'}},
+        'technical_ownership_entries': {
+            'existing': 'digest-existing', 'adopted': 'digest-adopted',
+        },
+    }
+    migration = {'adopted_instances': [{'instance_id': 'adopted', 'vmid': 106}]}
+    driver.compare_history(before, after, migration)
+    with pytest.raises(RuntimeError, match='Existing technical ownership changed'):
+        driver.compare_history(before, {
+            **after,
+            'technical_ownership_entries': {'existing': 'rewritten', 'adopted': 'digest-adopted'},
+        }, migration)
+    with pytest.raises(RuntimeError, match='Unexpected technical ownership rows'):
+        driver.compare_history(before, {
+            **after,
+            'technical_ownership_entries': {
+                **after['technical_ownership_entries'], 'unexpected': 'digest-unexpected',
+            },
+        }, migration)
 
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])

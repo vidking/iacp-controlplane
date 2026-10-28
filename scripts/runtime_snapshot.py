@@ -31,6 +31,18 @@ def snapshot():
             hashes = sorted(hashlib.sha256(json.dumps(dict(row), default=str, sort_keys=True,
                             separators=(",", ":")).encode()).hexdigest() for row in rows)
             report["tables"][name] = {"count": len(rows), "sha256": hashlib.sha256("".join(hashes).encode()).hexdigest()}
+            if name == "technical_ownership":
+                # La comparación 0013→0014 necesita distinguir filas
+                # históricas de las adopciones declaradas por migrate-ownership.
+                # Solo se publican identificadores y hashes, nunca state,
+                # allocation ni evidencia.
+                report["technical_ownership_entries"] = {
+                    str(row["instance_id"]): hashlib.sha256(
+                        json.dumps(dict(row), default=str, sort_keys=True,
+                                   separators=(",", ":")).encode()
+                    ).hexdigest()
+                    for row in rows
+                }
             if name=='instances' and 'commercial_revision' in table.c:
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k!='commercial_revision'},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
