@@ -3,7 +3,7 @@ import os
 from ..catalog import IMAGES, PENDING_IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
-from .lab import usage
+from .usage import usage
 from .contracts import is_managed_creation_contract, is_core_contract
 
 
@@ -68,7 +68,7 @@ def plans_for(session, tenant_id):
                     raise Conflict('DISK_SHRINK_FORBIDDEN')
                 if p.root_password_bootstrap:
                     raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
-                if p.guest_initialization != 'ubuntu-2404-lab-identity-v1':
+                if not p.guest_initialization or not p.guest_initialization.endswith('-lab-identity-v1'):
                     raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
                 live_capacity(session,p,plan); verified=True
             except (Conflict, BootstrapSecretError) as error:

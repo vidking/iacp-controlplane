@@ -12,6 +12,7 @@ from ..terraform.apply import fingerprint
 from ..terraform.config import Allocation, SOURCE_REVISION
 from ..terraform.locks import admission_lock
 from .instances import Conflict, event
+from .usage import usage
 
 
 class LabPolicySpec(BaseModel):
@@ -141,21 +142,6 @@ def policy(session, identifier, tenant_id, action):
     return row
 
 
-def usage(session, tenant_id, exclude_operation=None):
-    # Failed and uncertain reservations remain charged until verified deletion.
-    rows = session.scalars(select(Instance).where(Instance.tenant_id == tenant_id, Instance.status != "deleted")).all()
-    active = session.scalars(select(Operation).where(Operation.tenant_id == tenant_id,
-        Operation.status.in_(["queued", "running", "uncertain"]), Operation.kind != "instance.network.discover")).all()
-    from ..models import TerraformApply
-    active_ids={r.id for r in active}
-    active_ids.update(session.scalars(select(TerraformExecution.operation_id).join(Instance)
-        .join(TerraformApply, TerraformApply.instance_id==Instance.id).where(Instance.tenant_id==tenant_id,
-            TerraformApply.status.in_(['approved','queued','running','uncertain']))))
-    return {"instances": len(rows), "vcpus": sum(r.vcpus for r in rows),
-        "memory_mb": sum(r.memory_mb for r in rows), "disk_gb": sum(r.disk_gb for r in rows),
-        "concurrent_operations": len(active_ids - {exclude_operation})}
-
-
 def check_quota(session, tenant_id, limits, instance=None, exclude_operation=None):
     used = usage(session, tenant_id, exclude_operation)
     requested = {"instances": 1 if instance else 0, "vcpus": instance.vcpus if instance else 0,
@@ -221,20 +207,8 @@ def member(session, instance, action, *, current_profiles=False):
 
 def authorize_operation(session, instance, action):
     if getattr(instance,'commercial_revision',None) in {'commercial-g','provisioning-api-core'}:
-        from .commercial import member as commercial_member,limits_for,quota
-        commercial_member(session,instance,action)
-        if getattr(instance,'commercial_revision',None)=='provisioning-api-core':
-            # El state y los locks siguen siendo obligatorios; no hay cuota de negocio.
-            return
-        limit=limits_for(instance.tenant_id)
-        if limit.lab_mng_physical_capacity_only:
-            # La excepción LAB elimina la cuota comercial; no elimina los
-            # locks por instancia/state ni la serialización del executor.
-            return
-        used=usage(session,instance.tenant_id)
-        if used['concurrent_operations']>=limit.max_concurrent_operations:
-            raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:concurrent_operations')
-        return
+        from .commercial import authorize_operation as authorize_commercial
+        return authorize_commercial(session, instance, action)
     if instance.self_service_policy_id:
         row = member(session, instance, action)
         check_quota(session, instance.tenant_id, {"concurrent_operations": limits(row)["concurrent_operations"]})
@@ -271,6 +245,9 @@ def advance(session, instance, publish):
 
 
 def advance_deletion(session, instance, operation_id, publish):
+    if getattr(instance, 'commercial_revision', None) in {'commercial-g', 'provisioning-api-core'}:
+        from .commercial import advance_deletion as advance_commercial_deletion
+        return advance_commercial_deletion(session, instance, operation_id, publish)
     from ..models import DeletionExecution
     from ..terraform import deletion
     row = session.get(DeletionExecution, operation_id, populate_existing=True)

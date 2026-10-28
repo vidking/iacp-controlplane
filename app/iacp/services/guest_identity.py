@@ -133,7 +133,7 @@ def active(session, instance_id):
 
 
 def configured_mode(session, instance, *, current_profiles=True):
-    from ..services.lab import member
+    from .authorization import member
     row=member(session,instance,'start',current_profiles=current_profiles)
     mode=row.profile_snapshots[instance.network_profile].get('guest_initialization')
     expected = program_for_mode(mode, root=bool(row.profile_snapshots[instance.network_profile].get('root_password_bootstrap')))[1]
@@ -159,7 +159,7 @@ def validate_binding(session, row, operation):
 
 
 def request_initialization(session, instance, principal, key, publish, *, current_profiles=True):
-    from .lab import authorize_operation
+    from .authorization import authorize_operation
     from ..lifecycle.ownership import mutation_revision
     from ..lifecycle.service import response
     digest=fingerprint({'instance_id':instance.id,'action':'network.initialize'})
@@ -200,7 +200,7 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                     kind='instance.network.initialize',status='queued',idempotency_key=key,request_hash=digest,requested_by=principal.subject)
                 session.add(operation);session.flush()
                 from ..models import LabPolicy
-                from .lab import member
+                from .authorization import member
                 profile=member(session,instance,'start').profile_snapshots[instance.network_profile]
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
                     program_sha256=program_for_mode(mode, root=bool(profile.get('root_password_bootstrap')))[1],

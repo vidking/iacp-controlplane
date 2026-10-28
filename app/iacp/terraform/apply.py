@@ -252,7 +252,7 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         with sessions() as session:
             current = session.get(TerraformApply, identifier, with_for_update=True)
             if instance.self_service_policy_id or instance.commercial_revision:
-                from ..services.lab import member
+                from ..services.authorization import member
                 try:
                     member(session, session.get(Instance, current.instance_id), "create", current_profiles=True)
                 except Conflict as failure:

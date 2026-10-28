@@ -116,7 +116,7 @@ def test_plan_admitted_without_policy_and_secret_never_reaches_db_or_executor(se
     assert spec.access.root_password.get_secret_value() not in json.dumps(variables)
     with sessions() as s:
         approval=advance(s,s.get(Instance,accepted.instance_id),lambda *_:None)
-        assert approval.status=='queued' and approval.approved_by.startswith('commercial:')
+        assert approval.status=='queued' and approval.approved_by.startswith('iacp-automation:commercial-g')
 
 
 def test_rejections_do_not_publish_or_persist_intents(sessions,commercial_config,store):

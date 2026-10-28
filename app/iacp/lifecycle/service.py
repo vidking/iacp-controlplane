@@ -53,7 +53,7 @@ def binding(session, row, operation, *, check_ownership=False):
     if check_ownership and instance_ownership(session, instance, approval) != row.ownership_certificate_id:
         raise PowerError("POWER_BINDING_CHANGED")
     if check_ownership and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
-        from ..services.lab import member
+        from ..services.authorization import member
         try:
             member(session, instance, row.action)
         except Conflict as failure:
@@ -102,7 +102,7 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                 if instance.commercial_revision:
                     from ..services.commercial_bootstrap import active as bootstrap_active
                     if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
-                from ..services.lab import authorize_operation
+                from ..services.authorization import authorize_operation
                 authorize_operation(session, instance, action)
                 try:
                     revision = mutation_revision()

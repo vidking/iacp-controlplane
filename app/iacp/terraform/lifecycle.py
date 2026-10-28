@@ -98,7 +98,7 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
             if instance.self_service_policy_id or instance.commercial_revision:
-                from ..services.lab import member
+                from ..services.authorization import member
                 member(session,instance,"create",current_profiles=True)
             if instance.commercial_revision and allocation.golden_hardware is None and hasattr(executor,'resolve_golden_hardware'):
                 # Enriquecimiento de una intención nueva antes de sellar su primer plan.

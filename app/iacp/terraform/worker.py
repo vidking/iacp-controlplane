@@ -6,7 +6,7 @@ from .lifecycle import execute_plan
 @celery_app.task(name="iacp.terraform.plan", autoretry_for=(), acks_late=True)
 def plan_instance(job_id: str, attempt: int) -> None:
     execute_plan(job_id, attempt, get_session_factory())
-    from ..services.lab import after_plan
+    from ..services.authorization import after_plan
     from ..api.dependencies import get_apply_publisher
     after_plan(job_id, get_session_factory(), get_apply_publisher())
 
@@ -28,7 +28,7 @@ def delete_instance(identifier: str, mode: str) -> None:
     execute_deletion(identifier, mode, get_session_factory())
     if mode == "plan":
         from ..models import DeletionExecution, Instance, Operation
-        from ..services.lab import advance_deletion
+        from ..services.authorization import advance_deletion
         from ..services.instances import event
         from ..api.dependencies import get_deletion_publisher
         with get_session_factory()() as session:

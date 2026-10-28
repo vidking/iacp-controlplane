@@ -66,6 +66,46 @@ def test_core_lifecycle_delegation_does_not_consult_commercial_limits(monkeypatc
     lab.authorize_operation(None, instance, 'start')
 
 
+def test_core_mutations_never_require_lab_policy_administration(client, auth, monkeypatch):
+    monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
+    policy = {
+        'profiles': ['lab-dhcp'],
+        'actions': ['create', 'start', 'shutdown', 'reboot', 'delete'],
+        'max_instances': 1,
+        'max_vcpus': 1,
+        'max_memory_mb': 2048,
+        'max_disk_gb': 50,
+        'max_concurrent_operations': 1,
+        'valid_for_seconds': 3600,
+        'change_reference': 'CORE-NO-LAB-POLICY',
+    }
+    response = client.post('/v1/lab/policies', headers={**auth, 'Idempotency-Key': 'core-policy'}, json=policy)
+    assert response.status_code == 410
+    assert response.json()['detail'] == 'LAB_POLICY_ADMINISTRATION_DISCONTINUED'
+    assert client.get('/v1/lab/policies', headers=auth).status_code == 200
+
+
+def test_core_authorization_is_bound_to_persisted_contract_not_release_policy(monkeypatch):
+    monkeypatch.setenv('IACP_CREATION_CONTRACT', 'historical')
+    row = SimpleNamespace(revision='provisioning-api-core')
+    monkeypatch.setattr(commercial, 'member', lambda *args, **kwargs: row)
+    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('Core must not load limits')))
+    commercial.authorize_operation(
+        None,
+        SimpleNamespace(commercial_revision='provisioning-api-core', tenant_id=BOOTSTRAP_TENANT_ID),
+        'delete',
+    )
+
+
+def test_core_uses_explicit_automation_identity():
+    from iacp.services.automation import CORE_AUTOMATION_SUBJECT, technical_principal
+
+    principal = technical_principal(BOOTSTRAP_TENANT_ID, 'provisioning-api-core')
+    assert principal.subject == CORE_AUTOMATION_SUBJECT
+    assert principal.role == 'automation'
+    assert principal.administration is True
+
+
 def test_core_public_errors_are_technical_codes(monkeypatch):
     monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
     from iacp.api.presentation import public_code

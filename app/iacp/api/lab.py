@@ -127,6 +127,8 @@ def usage(principal: Reader, session: Database):
 @router.post("/v1/lab/policies", tags=["lab-administration"], response_model=PolicyResponse, status_code=201, operation_id="proposeLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Operator propone límites dentro de los techos del servidor. No autoriza infraestructura. Un approver distinto revisa el digest una vez; la delegación solo cubre VMs nuevas.")
 def propose(body: lab.LabPolicySpec, key: Key, principal: Operator, session: Database):
+    if os.environ.get("IACP_CREATION_CONTRACT") == "provisioning-api-core":
+        raise HTTPException(410, "LAB_POLICY_ADMINISTRATION_DISCONTINUED")
     return guarded(lambda: lab.propose(session, principal, body, key))
 
 
@@ -145,18 +147,24 @@ def get_policy(policy_id: str, principal: Reader, session: Database):
 @router.post("/v1/lab/policies/{policy_id}/approve", tags=["lab-administration"], response_model=PolicyResponse, operation_id="approveLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Approver independiente del proponente. Aprueba el digest exacto y fija la caducidad; no elimina controles de Apply, Lifecycle, DELETE o propiedad.")
 def approve(policy_id: str, body: PolicyApproval, principal: Approver, session: Database):
+    if os.environ.get("IACP_CREATION_CONTRACT") == "provisioning-api-core":
+        raise HTTPException(410, "LAB_POLICY_ADMINISTRATION_DISCONTINUED")
     return guarded(lambda: lab.approve_policy(session, owned(session, policy_id, principal), principal, body.policy_sha256))
 
 
 @router.post("/v1/lab/policies/{policy_id}/renew", tags=["lab-administration"],response_model=PolicyResponse,operation_id="renewLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Nueva revisión independiente del mismo digest y perfiles. Extiende la ventana por la duración original, conserva aprobación inicial, membresía e historial. Una política revocada no se reactiva.")
 def renew(policy_id:str,body:PolicyApproval,principal:Approver,session:Database):
+    if os.environ.get("IACP_CREATION_CONTRACT") == "provisioning-api-core":
+        raise HTTPException(410, "LAB_POLICY_ADMINISTRATION_DISCONTINUED")
     return guarded(lambda:lab.renew_policy(session,owned(session,policy_id,principal),principal,body.policy_sha256))
 
 
 @router.post("/v1/lab/policies/{policy_id}/revoke", tags=["lab-administration"], response_model=PolicyResponse, operation_id="revokeLabPolicy", dependencies=[Depends(authorize_administration)],
     description="Revocación irreversible del approver. Bloquea nuevos comandos antes de la mutación; la observación de operaciones ya consumidas sigue disponible.")
 def revoke(policy_id: str, principal: Approver, session: Database, body: PowerRequest | None = None):
+    if os.environ.get("IACP_CREATION_CONTRACT") == "provisioning-api-core":
+        raise HTTPException(410, "LAB_POLICY_ADMINISTRATION_DISCONTINUED")
     with admission_lock(session):
         row = owned(session, policy_id, principal)
         row = session.get(LabPolicy, row.id, with_for_update=True, populate_existing=True)
@@ -195,11 +203,13 @@ def provision(instance_id: str, principal: Operator, session: Database, body: Po
             session.commit()
             advance(instance.id, sessions)
         else:
-            lab.member(session, instance, "create", current_profiles=True)
+            from ..services.authorization import member
+            member(session, instance, "create", current_profiles=True)
             if execution.status == "queued":
                 plan_publish(execution.job_id, execution.attempt)
             else:
-                lab.advance(session, instance, publish)
+                from ..services.authorization import advance
+                advance(session, instance, publish)
         return PowerAccepted(instance_id=instance.id, operation_id=operation.id, job_id=execution.job_id, status=operation.status)
     return guarded(resume)
 
@@ -216,7 +226,8 @@ def retry_provision(instance_id: str, body: RetryRequest, key: Key, principal: O
     from ..terraform.actions import retry
     instance = own_instance(session, principal, instance_id)
     def request():
-        lab.member(session, instance, "create", current_profiles=True)
+        from ..services.authorization import member
+        member(session, instance, "create", current_profiles=True)
         execution = session.get(TerraformExecution, instance.id)
         return retry(session, execution, body.expected_attempt, key, principal.subject, publish)
     return guarded(request)

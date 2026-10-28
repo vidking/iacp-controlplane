@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ..catalog import CATALOG_VERSION, catalog_digest, resolve_plan
+from ..catalog import catalog_digest, resolve_plan
 from ..commercial_contract import resolved_resources
 from ..models import CommercialIntent, Instance, Job, Operation, TerraformApply, TerraformExecution, utcnow
 from ..schemas import InstanceAccepted
@@ -22,7 +22,7 @@ from .bootstrap_secrets import EphemeralSecrets
 from .catalog import authorized_profile
 from .instances import Conflict, accepted, event
 from .jobs import QueueUnavailable
-from .lab import usage
+from .usage import usage
 from .contracts import COMMERCIAL_CONTRACT, CORE_CONTRACT, is_core_contract
 
 
@@ -116,13 +116,31 @@ def member(session,instance,action,*,current_profiles=False,observation=False):
             or row.execution_binding!=binding(instance,execution,row)):
         raise Conflict('COMMERCIAL_OWNERSHIP_BINDING_CHANGED')
     if observation:return row
-    if not is_core_contract() or row.revision == COMMERCIAL_CONTRACT:
+    # La autorización histórica queda ligada al contrato persistido, no a la
+    # variable del release actual. Un Core existente no adquiere cuotas ni
+    # requiere una política porque cambie el contenedor desplegado.
+    if row.revision == COMMERCIAL_CONTRACT:
         limits=limits_for(instance.tenant_id)
         if row.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
     if current_profiles:
         current=authorized_profile(instance.tenant_id, instance.image)
         if current is None or current.model_dump()!=row.specification['profile_snapshot']:
             raise Conflict('COMMERCIAL_PROFILE_CHANGED')
+    return row
+
+
+def authorize_operation(session, instance, action):
+    """Autoriza una mutación técnica sin consultar cuotas o políticas LAB."""
+    row = member(session, instance, action)
+    if getattr(instance, "commercial_revision", None) == CORE_CONTRACT or row.revision == CORE_CONTRACT:
+        return row
+    limits = limits_for(instance.tenant_id)
+    if limits.lab_mng_physical_capacity_only:
+        # La excepción histórica elimina la cuota comercial, pero no los
+        # locks por instancia/state ni la serialización del executor.
+        return row
+    if usage(session, instance.tenant_id)["concurrent_operations"] >= limits.max_concurrent_operations:
+        raise Conflict("COMMERCIAL_QUOTA_EXCEEDED:concurrent_operations")
     return row
 
 
@@ -292,7 +310,42 @@ def advance(session,instance,publish):
         publish(approval.id,'apply')
         return approval
     if not approval:
+        from .automation import technical_principal
+        contract = CORE_CONTRACT if row.revision == CORE_CONTRACT else COMMERCIAL_CONTRACT
+        automation = technical_principal(instance.tenant_id, contract)
         approval=approve(session,execution,{'attempt':execution.attempt,'plan_sha256':execution.plan_sha256,
-            'valid_for_seconds':900},'commercial:'+instance.id+':'+str(execution.attempt),
-            Principal(instance.tenant_id,'commercial:'+CATALOG_VERSION,'approver'))
+            'valid_for_seconds':900},automation.subject+':apply:'+instance.id+':'+str(execution.attempt),
+            automation)
     return dispatch(session,execution,approval.id,'commercial-apply:'+approval.id,principal,publish)
+
+
+def advance_deletion(session, instance, operation_id, publish):
+    """Delega el destroy técnico a la identidad explícita del contrato."""
+    from ..models import DeletionExecution
+    from ..terraform import deletion
+
+    row = session.get(DeletionExecution, operation_id, populate_existing=True)
+    operation = session.get(Operation, operation_id)
+    if row is None or not row.autonomous or row.status in {"failed", "completed"}:
+        return
+    principal = Principal(instance.tenant_id, operation.requested_by, "operator")
+    if row.started_at:
+        return deletion.recover_or_cancel(session, instance, principal, operation_id, publish)
+    member(session, instance, "delete", current_profiles=True)
+    body = {"operation_id": row.operation_id, "plan_sha256": row.plan_sha256}
+    if row.status == "planned":
+        from .automation import technical_principal
+
+        automation = technical_principal(
+            instance.tenant_id,
+            CORE_CONTRACT if instance.commercial_revision == CORE_CONTRACT else COMMERCIAL_CONTRACT,
+        )
+        deletion.approve(
+            session,
+            instance,
+            automation,
+            {**body, "valid_for_seconds": 300},
+            f"{automation.subject}:delete:{row.operation_id}",
+        )
+    if row.phase in {"approved", "delete_queued"}:
+        return deletion.dispatch(session, instance, principal, body, operation.idempotency_key, publish)
