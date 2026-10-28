@@ -277,16 +277,15 @@ def after_power(identifier,sessions):
         if not operation or operation.status!='completed' or operation.kind not in {'instance.power.start','instance.power.reboot'}:return
         instance=s.get(Instance,operation.instance_id)
         if instance.network_mode!='dhcp':return
-        policy=None
-        from ..models import LabPolicy
-        policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
-        if instance.commercial_revision:
-            from .commercial import delegation
-            policy=delegation(s,instance,'start')
-
         initialization_failure=None
-        if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
-            try:
+        try:
+            policy=None
+            from ..models import LabPolicy
+            policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+            if instance.commercial_revision:
+                from .commercial import delegation
+                policy=delegation(s,instance,'start')
+            if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
                 from .guest_identity import request_initialization
                 from ..api.dependencies import get_guest_initialization_publisher
                 from ..models import GuestInitialization
@@ -301,11 +300,11 @@ def after_power(identifier,sessions):
                             previous.idempotency_key,get_guest_initialization_publisher(),current_profiles=False)
                     elif initialization.status!='failed':
                         get_guest_initialization_publisher()(initialization.operation_id)
-            except Exception as failure:
-                # A guest-exec dispatch failure must not suppress the
-                # independent, read-only network observation below.
-                s.rollback()
-                initialization_failure=failure
+        except Exception as failure:
+            # A policy/delegation or guest-exec dispatch failure must not
+            # suppress the independent, read-only network observation below.
+            s.rollback()
+            initialization_failure=failure
 
         network_failure=None
         try:
