@@ -51,6 +51,31 @@ def test_provider_defaults_cannot_replace_source_hardware(change):
     with pytest.raises(PlanError,match='PLAN_MISMATCH'):verify_cpu(actual,variables)
 
 
+def test_historical_delete_compatibility_accepts_only_zero_hotplugged():
+    h=parse(golden(),29001,'mng01',2).model_dump()
+    variables={'instance': {'cpu_cores': 2}, 'iacp_golden_hardware': h}
+    historical={'cpu': [{'type': h['cpu_type'], 'flags': h['flags'], 'numa': True,
+                         'cores': 2, 'sockets': 1, 'hotplugged': 0}]}
+    with pytest.raises(PlanError, match='PLAN_MISMATCH'):
+        verify_cpu(historical, variables)
+    verify_cpu(historical, variables, allow_historical_hotplugged_zero=True)
+    for field, value in (('cores', 1), ('sockets', 2), ('numa', False),
+                         ('type', 'qemu64'), ('flags', [])):
+        changed=deepcopy(historical)
+        changed['cpu'][0][field]=value
+        with pytest.raises(PlanError, match='PLAN_MISMATCH'):
+            verify_cpu(changed, variables, allow_historical_hotplugged_zero=True)
+
+
+def test_historical_delete_compatibility_does_not_accept_missing_hotplugged():
+    h=parse(golden(),29001,'mng01',1).model_dump()
+    variables={'instance': {'cpu_cores': 1}, 'iacp_golden_hardware': h}
+    actual={'cpu': [{'type': h['cpu_type'], 'flags': h['flags'], 'numa': True,
+                     'cores': 1, 'sockets': 1}]}
+    with pytest.raises(PlanError, match='PLAN_MISMATCH'):
+        verify_cpu(actual, variables, allow_historical_hotplugged_zero=True)
+
+
 def test_template_vcpu_and_resources_are_not_inherited_by_kvm1_plan():
     """Regresión del clon 30057: cores/vcpus/RAM/disco del template no son el plan."""
     hardware=parse({**golden(), 'cores': 10, 'vcpus': 2, 'memory': 4096}, 29000, 'mng01', 1).model_dump()

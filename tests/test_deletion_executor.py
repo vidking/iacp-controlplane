@@ -12,7 +12,7 @@ import pytest
 
 from iacp.terraform import deletion_executor as module
 from iacp.terraform.config import Allocation, PlanError, SOURCE_REVISION
-from iacp.terraform.deletion_executor import DeletionExecutor
+from iacp.terraform.deletion_executor import DeletionExecutor, allow_historical_delete_hardware
 from iacp.terraform.executor import ADDRESS
 from iacp.terraform.runner import CommandRunner
 from iacp.terraform.state import StateSnapshot
@@ -94,6 +94,19 @@ def test_tainted_recovery_uses_fixed_destroy_without_adopting_resource(deletion_
     assert result['deleted']
     assert ['destroy', {'refresh': False}] in executor.runner.calls
     assert ['apply_destroy'] not in executor.runner.calls
+
+
+@pytest.mark.parametrize(('source_revision','vmid','golden','expected'), [
+    ('a' * 40, 30059, True, True),
+    (SOURCE_REVISION, 30059, True, False),
+    ('a' * 40, 106, True, False),
+    ('a' * 40, 30059, False, False),
+])
+def test_historical_delete_hardware_compatibility_is_narrow(source_revision, vmid, golden, expected):
+    context={'source_revision': source_revision,
+             'variables': {'instance': {'vm_id': vmid},
+                           **({'iacp_golden_hardware': {}} if golden else {})}}
+    assert allow_historical_delete_hardware(context) is expected
 
 
 @pytest.mark.parametrize('change',['binary','variables','context','credential','state-version','state-lineage','extra-state-resource'])
