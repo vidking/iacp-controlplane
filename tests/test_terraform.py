@@ -111,7 +111,10 @@ def test_plan_is_persistent_and_waits_for_approval(client, auth, terraform_mode,
     assert result["status"] == "planned" and result["attempt"] == 1
     assert result["apply_enabled"] is False and result["approval_required"] is True
     assert result["source_revision"] == SOURCE_REVISION
-    assert accepted["instance_id"] in result["state_key"]
+    assert result["state_key"] == (
+        f"iacp/lab/tenants/{BOOTSTRAP_TENANT_ID}/instances/"
+        f"{accepted['instance_id']}/terraform.tfstate"
+    )
     row = client.get(f'/v1/instances/{accepted["instance_id"]}', headers=auth).json()
     assert row["status"] == "pending" and row["vmid"] is row["node"] is None
     assert row["result"]["phase"] == "awaiting_approval"

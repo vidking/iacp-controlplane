@@ -24,7 +24,10 @@ def _executor_revision_call(method, *args, revision):
 
 
 def initial_execution(session, instance, operation, job, allocation=None):
-    state_namespace = "iacp/tenants"
+    # El backend LAB autoriza y conserva los estados bajo este prefijo. Las
+    # instancias históricas y el perfil operativo usan la misma identidad;
+    # omitir ``lab`` hace que Wasabi rechace el HeadObject inicial con 403.
+    state_namespace = "iacp/lab/tenants"
     execution = TerraformExecution(instance_id=instance.id, job_id=job.id, operation_id=operation.id,
                                    status="queued", attempt=1,
                                    state_key=f"{state_namespace}/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate",
