@@ -1,8 +1,10 @@
 """Network discovery is read-only, tenant scoped and bound to a guest MAC."""
 from unittest.mock import Mock
+from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
-from iacp.models import BOOTSTRAP_TENANT_ID,Instance,TerraformExecution,Operation,NetworkDiscovery,utcnow
+from iacp.models import (BOOTSTRAP_TENANT_ID,GuestInitialization,Instance,Job,
+    TerraformExecution,Operation,NetworkDiscovery,utcnow)
 from iacp.services.network import agent_addresses,after_power,execute_discovery
 from tests.power_helpers import managed_instance
 from tests.test_instances import identities
@@ -49,6 +51,86 @@ def test_qga_pending_retries_until_dhcp_is_observed(client,auth,sessions,network
     assert data['network_observation']['current_ip_verified'] is True
     assert data['network_observation']['attempt']==3
     assert client.get('/v1/operations/'+op,headers=auth).json()['status']=='completed'
+
+
+@pytest.mark.parametrize('initialization_status',['queued','failed'])
+def test_network_observation_is_independent_from_guest_initialization(client,auth,sessions,network,initialization_status):
+    """QGA puede verificar DHCP mientras otro guest-exec sigue incompleto."""
+    identifier,_=network
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        init_operation=Operation(id='guest-init-'+initialization_status,tenant_id=instance.tenant_id,
+            instance_id=identifier,kind='instance.network.initialize',status=initialization_status,
+            idempotency_key='guest-init-'+initialization_status,request_hash='b'*64,requested_by='bootstrap')
+        s.add(init_operation);s.flush()
+        s.add(Job(id='guest-job-'+initialization_status,tenant_id=instance.tenant_id,
+            operation_id=init_operation.id,operation=init_operation.kind,status=initialization_status))
+        s.add(GuestInitialization(operation_id=init_operation.id,instance_id=identifier,
+            provisioning_binding='c'*64,mode='ubuntu-2604-lab-identity-v1',program_sha256='d'*64,
+            mac_address='aa:bb:cc:dd:ee:ff',status=initialization_status))
+        s.commit()
+    op=request(client,auth,identifier,key='discover-with-init-'+initialization_status).json()['operation_id']
+    execute_discovery(op,sessions,Mock(return_value={
+        'status':'observed','ip_addresses':['192.0.2.60'],'source':'qemu-guest-agent'}))
+    data=client.get('/v1/instances/'+identifier,headers=auth).json()
+    assert data['ip_addresses']==['192.0.2.60']
+    assert data['network_observation']['status']=='observed'
+    assert data['network_observation']['current_ip_verified'] is True
+    with sessions() as s:
+        assert s.get(GuestInitialization,init_operation.id).status==initialization_status
+
+
+def test_after_power_dispatches_network_while_guest_initialization_is_pending(sessions,network,monkeypatch):
+    identifier,publish=network
+    init_publish=Mock()
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        instance.commercial_revision='provisioning-api-core'
+        instance.network_profile='lab-dhcp'
+        power=Operation(id='power-with-pending-init',tenant_id=instance.tenant_id,instance_id=identifier,
+            kind='instance.power.reboot',status='completed',idempotency_key='reboot-with-pending-init',
+            request_hash='e'*64,requested_by='bootstrap')
+        init_operation=Operation(id='init-with-pending-power',tenant_id=instance.tenant_id,instance_id=identifier,
+            kind='instance.network.initialize',status='running',idempotency_key='init-with-pending-power',
+            request_hash='f'*64,requested_by='bootstrap')
+        s.add_all([power,init_operation]);s.flush()
+        s.add(Job(id='init-job-with-pending-power',tenant_id=instance.tenant_id,
+            operation_id=init_operation.id,operation=init_operation.kind,status='running'))
+        s.add(GuestInitialization(operation_id=init_operation.id,instance_id=identifier,
+            provisioning_binding='1'*64,mode='ubuntu-2604-lab-identity-v1',program_sha256='2'*64,
+            mac_address='aa:bb:cc:dd:ee:ff',status='running'))
+        s.commit()
+    monkeypatch.setattr('iacp.services.commercial.delegation',lambda *args,**kwargs:
+        SimpleNamespace(profile_snapshots={'lab-dhcp':{'guest_initialization':'ubuntu-2604-lab-identity-v1'}}))
+    monkeypatch.setattr('iacp.api.dependencies.get_guest_initialization_publisher',lambda:init_publish)
+    after_power('power-with-pending-init',sessions)
+    init_publish.assert_called_once_with('init-with-pending-power')
+    publish.assert_called_once()
+    with sessions() as s:
+        network_operations=s.scalars(select(Operation).where(
+            Operation.instance_id==identifier,Operation.kind=='instance.network.discover')).all()
+        assert len(network_operations)==1
+        assert network_operations[0].idempotency_key.endswith('-power-with-pending-init')
+
+
+def test_each_completed_power_transition_gets_a_new_network_observation(sessions,network):
+    identifier,publish=network
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        for action in ('start','reboot'):
+            power=Operation(id='power-refresh-'+action,tenant_id=instance.tenant_id,instance_id=identifier,
+                kind='instance.power.'+action,status='completed',idempotency_key='power-refresh-'+action,
+                request_hash='9'*64,requested_by='bootstrap')
+            s.add(power)
+        s.commit()
+    after_power('power-refresh-start',sessions)
+    after_power('power-refresh-reboot',sessions)
+    assert publish.call_count==2
+    with sessions() as s:
+        network_operations=s.scalars(select(Operation).where(
+            Operation.instance_id==identifier,Operation.kind=='instance.network.discover')).all()
+        assert len(network_operations)==2
+        assert len({row.idempotency_key for row in network_operations})==2
 
 
 def test_qga_timeout_preserves_last_ip_as_unverified_history(client,auth,sessions,network):
