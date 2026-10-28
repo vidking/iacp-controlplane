@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import Instance, Operation, TechnicalOwnership, TerraformApply, TerraformExecution
 from .instances import Conflict
-from .technical_ownership import record
+from .technical_ownership import PROTECTED_VMIDS, record
 
 
 def migrate(session):
@@ -31,6 +31,7 @@ def migrate(session):
         "blocked": [],
         "reconciliation_required": [],
         "recovery_required": [],
+        "protected_excluded": [],
         "failed_without_resource": [],
         "incomplete_without_resource": [],
     }
@@ -61,6 +62,15 @@ def migrate(session):
                     "applies": len(active_applies)}
             report["recovery_required"].append(item)
             report["blocked"].append(item)
+            continue
+        protected_vmid = next((vmid for vmid in (instance.vmid, execution.vmid if execution else None)
+                               if vmid in PROTECTED_VMIDS), None)
+        if protected_vmid is not None:
+            report["protected_excluded"].append({
+                "instance_id": instance.id,
+                "vmid": protected_vmid,
+                "reason": "PROTECTED_RESOURCE_EXCLUDED",
+            })
             continue
         apply = None
         if execution is not None:

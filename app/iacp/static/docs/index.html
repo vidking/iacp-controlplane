@@ -132,7 +132,7 @@ curl --fail-with-body -sS "$IACP_BASE_URL/v1/operations/$OPERATION_ID" -H "Autho
     <p>La API genera una clave y la devuelve en el header <code>Idempotency-Key</code>. Si el consumidor necesita reintentar por timeout, conserva esa clave; no generes otra para la misma intención. No envíes la siguiente acción mientras exista una operación incierta o activa.</p>
 </div></details>
     <details class="pilot-step" id="step-piloto-delete"><summary><h2 id="piloto-delete">8. Eliminar correctamente</h2></summary><div class="pilot-step-content">
-    <p>Solo una instancia propia autorizada, apagada y sin operaciones activas. Espera el shutdown terminal antes del <a href="#/disposable-deletion/deleteDisposableInstance" data-operation-id="deleteDisposableInstance">DELETE autorizado</a>; el cuerpo y la clave son opcionales en el flujo de autoservicio. Los recursos protegidos quedan excluidos; VM 104, VM 106 y la Golden Image 29000 no se ofrecen para mutaciones desde este recorrido.</p>
+    <p>Solo una instancia propia autorizada, apagada y sin operaciones activas. Espera el shutdown terminal antes del <a href="#/disposable-deletion/deleteDisposableInstance" data-operation-id="deleteDisposableInstance">DELETE autorizado</a>; el cuerpo y la clave son opcionales en el flujo de autoservicio. Los recursos protegidos quedan excluidos: VM 104 y las Golden Images 29000, 29001, 29010 y 29011. Las KVM administradas, incluida la histórica VM 106, siguen el ownership técnico verificable.</p>
     <pre><code>curl --fail-with-body -sS -X DELETE "$IACP_BASE_URL/v1/instances/$INSTANCE_ID" \
   -H "Authorization: Bearer $IACP_API_TOKEN" -o eliminacion.json
 OPERATION_ID="$(python3 -c 'import json; print(json.load(open("eliminacion.json"))["operation_id"])')"

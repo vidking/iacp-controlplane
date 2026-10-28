@@ -157,7 +157,7 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     assert "os.chmod(path.parent,0o700)" in PROGRAM
 
 
-@pytest.mark.parametrize('vmid',[104,106,29000])
+@pytest.mark.parametrize('vmid',[104,29000,29001,29010,29011])
 def test_commercial_binding_never_authorizes_protected_resources(sessions,initialized,vmid):
     from iacp.services.commercial import member
     from iacp.services.instances import Conflict

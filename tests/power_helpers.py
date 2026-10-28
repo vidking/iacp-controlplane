@@ -51,7 +51,7 @@ def managed_instance(sessions, tenant_id, *, vmid=30001, name="fixture-kvm"):
         session.add(apply)
         session.flush()
         if ("technical_ownership" in inspect(session.connection()).get_table_names()
-                and vmid not in {104, 106, 29000}):
+                and vmid not in {104, 29000, 29001, 29010, 29011}):
             session.add(TechnicalOwnership(
                 instance_id=identifier, tenant_id=tenant_id, vmid=vmid, node="mng01", name=name,
                 state_key=execution.state_key, source_revision=execution.source_revision,

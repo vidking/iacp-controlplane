@@ -176,7 +176,8 @@ def execute_verification(identifier, sessions, verifier=None):
                             or not instance.initial_access_ciphertext):
                         raise Conflict('ROOT_ACCESS_BINDING_CHANGED')
                     target, _ = managed_target(session, instance)
-                    if target.vmid < 30000 or target.vmid in {104, 106}:
+                    from .technical_ownership import is_managed_vmid
+                    if not is_managed_vmid(target.vmid):
                         raise Conflict('ROOT_ACCESS_BINDING_CHANGED')
                     operation.status = job.status = 'running'
                     session.commit()
