@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -36,6 +37,15 @@ ADMIN = administrative_operations()
 LEGACY = [(method, path) for path, item in json.loads(
     (ROOT / 'docs/contracts/openapi-before-provisioning.json').read_text())['paths'].items()
     if '/terraform' in path for method in item]
+
+
+@pytest.fixture(autouse=True)
+def bootstrap_secret_configuration(tmp_path, monkeypatch):
+    """El contrato de creación requiere una clave efímera aislada por test."""
+    key = tmp_path / "bootstrap-aes.key"
+    key.write_bytes(os.urandom(32))
+    key.chmod(0o600)
+    monkeypatch.setenv("IACP_BOOTSTRAP_AES_KEY_FILE", str(key))
 
 
 @pytest.fixture
@@ -78,9 +88,9 @@ def test_public_and_administrative_openapi_are_neutral(client, auth):
     assert 'state_key' not in public.text and 'EmptyStateEvidence' not in public.text
     assert 'provider' not in public.text.lower()
     assert public.json()['info']['title'] == 'IACP Orchestrator'
-    # Las rutas administrativas LAB retiradas ya no forman parte del producto
-    # activo; el contrato Core conserva únicamente las 13 rutas técnicas.
-    assert len(ADMIN) == 13
+    # La recuperación Core es una ruta administrativa única; no reintroduce
+    # el motor LAB ni sus endpoints de políticas.
+    assert len(ADMIN) == 14
     assert not any('/terraform' in route.path for route in client.app.routes)
     assert client.get('/redoc').status_code == 404
     for method, path in ADMIN:

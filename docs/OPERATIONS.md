@@ -10,6 +10,33 @@ La entrada operativa es **scripts/iacpctl**, con paths absolutos, proyecto fijo
 `iacp-controlplane`, un Compose y `/etc/iacp/server.env` como fuente activa de
 variables no secretas/referencias, modo 0600. Ningún comando imprime config cruda.
 
+## Ejecución LAB API-first
+
+En el **IACP Control Plane (VM 104)** del clúster **MNG**, el archivo privado
+`/etc/iacp/execution-profile.json` puede declarar exclusivamente el perfil
+`environment=lab`, `cluster=MNG`, `control_plane=VM104`, el hostname local y
+`enabled=true`. Debe ser un archivo regular propiedad de root, sin permisos de
+grupo u otros, y los comandos deben ejecutarse con la identidad efectiva del
+operador autorizado del sistema operativo. Su ausencia conserva el camino de
+producción; un perfil inválido falla cerrado. Un header, argumento o variable
+del cliente nunca selecciona LAB.
+
+Con ese perfil, `deploy`, `promote-env`, `migrate-technical-ownership` y
+`recover-queued-guest-init` generan evidencia local con actor, fecha, SHA,
+acción y resultado, sin exigir un `change_record` vencible por cada operación.
+El preflight, la comparación estricta de Compose, los digests, locks, colas,
+`check_idle`, exclusión de escritores y doctor permanecen obligatorios. En
+producción `go_live.py` conserva la validación de actor, referencia, aprobación
+y ventana UTC.
+
+La recuperación administrativa de Guest Initialization está disponible en
+`POST /v1/instances/{instance_id}/provisioning/guest-initialization/recover`.
+Solo cancela una tarea `queued` que nunca consumió `guest-exec`, con ownership y
+tenant válidos, bajo locks exclusivos y con Redis/Celery inactivos. La acción es
+atómica e idempotente, conserva la auditoría y convierte una entrega tardía en
+no-op; una operación ya consumida falla cerrado. VM 104, VM 106 y las Golden
+Images 29000, 29001, 29010 y 29011 continúan protegidas.
+
 ```mermaid
 flowchart LR
   A[Checkout revisado fuera de la release activa] --> B[server.env.next privado]

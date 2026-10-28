@@ -51,6 +51,42 @@ def test_restore_evidence_accepts_actual_0013_backup_before_0014():
         driver.check_restore_evidence(backup, {**restored, 'table_count': 16})
 
 
+def test_lab_execution_profile_is_host_bound_and_generates_audit_authorization():
+    profile = {
+        "version": 1, "environment": "lab", "cluster": "MNG",
+        "control_plane": "VM104", "hostname": "iacp-controlplane-01",
+        "enabled": True,
+    }
+    validated = driver.validate_host_execution_profile(
+        profile, owner_uid=0, mode=0o600, effective_uid=0,
+        hostname="iacp-controlplane-01", actual_hostname="iacp-controlplane-01",
+    )
+    assert validated["environment"] == "lab"
+
+    promotion = object.__new__(driver.Promotion)
+    promotion.m = {"project": "iacp-controlplane", "release": "a" * 40}
+    promotion.execution_profile = {"environment": "lab"}
+    evidence = []
+    promotion.evidence = lambda name, value: evidence.append((name, value))
+    result = promotion.authorize("deploy")
+    assert result["authorized"] is True and result["approved"] is False
+    assert result["authorization_source"] == "host-execution-profile"
+    assert evidence[0][0] == "lab-authorization"
+
+
+def test_invalid_host_lab_profile_fails_closed():
+    profile = {
+        "version": 1, "environment": "lab", "cluster": "PRX",
+        "control_plane": "VM104", "hostname": "iacp-controlplane-01",
+        "enabled": True,
+    }
+    with pytest.raises(RuntimeError, match="authorized MNG LAB profile"):
+        driver.validate_host_execution_profile(
+            profile, owner_uid=0, mode=0o600, effective_uid=0,
+            hostname="iacp-controlplane-01", actual_hostname="iacp-controlplane-01",
+        )
+
+
 def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
     before = {
         'schema': ['0013_technical_ownership'],

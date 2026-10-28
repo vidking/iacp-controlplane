@@ -49,11 +49,11 @@ def main():
             s.add_argument('probe_args', nargs=argparse.REMAINDER)
     recover_guest = sub.add_parser('recover-queued-guest-init')
     recover_guest.add_argument('--instance-id', required=True, help='UUID exacto de la instancia')
-    recover_guest.add_argument('--vmid', required=True, type=int, help='VMID exacto; esta acción solo admite 30060')
+    recover_guest.add_argument('--vmid', required=True, type=int, help='VMID exacto de la KVM administrable')
     recover_guest.add_argument('--operation-id', required=True, help='UUID exacto de Guest Initialization')
     recover_guest.add_argument('--job-id', required=True, help='UUID exacto del Job')
-    recover_guest.add_argument('--operator', required=True, help='Identidad del operador autorizado')
-    recover_guest.add_argument('--change-reference', required=True, help='Referencia del cambio autorizado')
+    recover_guest.add_argument('--operator', help='Identidad del operador; LAB deriva la identidad del proceso')
+    recover_guest.add_argument('--change-reference', help='Referencia de cambio; LAB genera evidencia local')
     logs = sub.add_parser('logs'); logs.add_argument('service'); logs.add_argument('--tail', type=int, default=100)
     rotate = sub.add_parser('docs-rotate')
     rotate.add_argument('--registry', type=Path, required=True)
@@ -106,7 +106,7 @@ def main():
             raise ValueError('Candidate differs from approved configuration reference')
         args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         operation = Promotion(m, args.evidence_dir)
-        operation.approve('promote-env')
+        operation.authorize('promote-env')
         candidate_dc = dc.copy()
         candidate_dc[candidate_dc.index('--env-file') + 1] = str(args.candidate.resolve())
         candidate_cfg = json.loads(run(candidate_dc + ['--profile', 'certification', 'config', '--format', 'json']))
@@ -165,7 +165,7 @@ def main():
         args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         from go_live import Promotion
         operation = Promotion(m, args.evidence_dir)
-        operation.approve('migrate-technical-ownership')
+        operation.authorize('migrate-technical-ownership')
         api = next(c for c in live if c['Config']['Labels'].get('com.docker.compose.service') == 'api')
         code = '''import json
 from iacp.db import get_session_factory
@@ -280,9 +280,11 @@ with get_session_factory()() as session:
                 '--vmid', str(args.vmid),
                 '--operation-id', args.operation_id,
                 '--job-id', args.job_id,
-                '--operator', args.operator,
-                '--change-reference', args.change_reference,
             ])
+            if args.operator:
+                command.extend(['--operator', args.operator])
+            if args.change_reference:
+                command.extend(['--change-reference', args.change_reference])
         subprocess.run(command, check=True)
 
 
