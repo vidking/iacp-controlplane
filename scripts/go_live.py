@@ -90,7 +90,8 @@ def check_idle(report, allowed_uncertain=()):
 
 
 def compare_history(before, after, ownership_migration=None):
-    if before.get('schema') == ['0013_technical_ownership']:
+    from_0013 = before.get('schema') == ['0013_technical_ownership']
+    if from_0013:
         require(isinstance(ownership_migration, dict),
                 'Technical ownership migration evidence is required for 0013→0014')
         adopted = ownership_migration.get('adopted_instances')
@@ -108,8 +109,18 @@ def compare_history(before, after, ownership_migration=None):
                 'Unexpected technical ownership rows were materialized during 0013→0014')
         require(all(after_entries[identifier] == before_entries[identifier] for identifier in before_ids),
                 'Existing technical ownership changed during 0013→0014')
+        before_tables = set(before.get('tables', {}))
+        after_tables = set(after.get('tables', {}))
+        require(before_tables <= after_tables,
+                'Historical table disappeared during 0013→0014')
+        require(after_tables - before_tables <= {'technical_ownership'},
+                'Unexpected historical table materialized during 0013→0014')
     for name, evidence in before["tables"].items():
-        if name == 'technical_ownership' and before.get('schema') == ['0013_technical_ownership']:
+        if name == 'technical_ownership' and from_0013:
+            continue
+        if from_0013:
+            require(after["tables"].get(name) == evidence,
+                    "Historical rows changed: " + name)
             continue
         if name=='instances' and before.get('schema')==['0011_crm_contract']:
             projected=after.get('compatibility',{}).get('instances_before_0012',{})
@@ -124,7 +135,7 @@ def compare_history(before, after, ownership_migration=None):
                 {k:projected.get(k) for k in ('count','sha256')} == evidence,
                 'Historical data changed during CRM migration: '+name)
             continue
-        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],['0012_commercial_intents'],['0013_technical_ownership'],[HEAD]]:
+        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],['0012_commercial_intents'],[HEAD]]:
             projected=after.get('compatibility',{}).get(name+'_before_0009',{})
             if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
                 require(projected.get('new_fields_default') is True

@@ -20,12 +20,20 @@ from .locks import ExecutionBusy, instance_lock, admission_lock
 from ..services.technical_ownership import is_managed_vmid
 
 
-def gate(instance, session=None):
+def gate(instance, session=None, *, allow_queued_initialization=False):
     if os.environ.get('IACP_TERRAFORM_DELETE_ENABLED') != '1' or os.environ.get('IACP_TERRAFORM_APPLY_ENABLED') != '1':
         raise Conflict('DELETE_DISABLED')
     if session is not None:
         from ..services.guest_identity import active as active_initialization
-        if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
+        initialization = active_initialization(session, instance.id)
+        if initialization:
+            eligible = (initialization.status == 'queued'
+                        and initialization.started_at is None and initialization.pid is None)
+            if not eligible:
+                raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED'
+                               if allow_queued_initialization else 'GUEST_INITIALIZATION_ACTIVE')
+            if not allow_queued_initialization:
+                raise Conflict('GUEST_INITIALIZATION_ACTIVE')
         from ..models import CommercialIntent
         if session.get(CommercialIntent, instance.id) is not None:
             from ..services.commercial_bootstrap import active as bootstrap_active
@@ -107,7 +115,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 resume = session.get(DeletionExecution, previous.id).phase == 'plan_queued'
                 identifier = previous.id
             else:
-                gate(instance, session)
+                gate(instance, session, allow_queued_initialization=True)
                 from ..services.authorization import authorize_operation
                 authorize_operation(session, instance, 'delete')
                 target, approval = managed_target(session, instance)
@@ -124,6 +132,8 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 operation = Operation(id=str(uuid4()), instance_id=instance.id, tenant_id=principal.tenant_id,
                     kind='instance.delete', status='queued', idempotency_key=key, request_hash=digest, requested_by=principal.subject)
                 session.add(operation);session.flush()
+                from ..services.guest_identity import supersede_queued_for_delete
+                supersede_queued_for_delete(session, instance, operation.id, principal.subject)
                 session.add(Job(id=str(uuid4()), operation=operation.kind, tenant_id=principal.tenant_id,
                                 operation_id=operation.id, status='queued'))
                 row = DeletionExecution(operation_id=operation.id, instance_id=instance.id, status='queued', phase='plan_queued',
