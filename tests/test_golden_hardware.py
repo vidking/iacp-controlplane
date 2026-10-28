@@ -222,6 +222,27 @@ def test_golden_and_access_adapters_compose_and_seal_the_module_argument(tmp_pat
     with pytest.raises(PlanError,match='INTEGRITY'):verify(tmp_path,manifest,variables)
 
 
+def test_historical_golden_adapter_is_accepted_only_for_its_sealed_revision(tmp_path):
+    from iacp.terraform import access_adapter
+    from iacp.terraform.golden_adapter import LEGACY_ADAPTERS, verify
+
+    digest, spec = next(iter(LEGACY_ADAPTERS.items()))
+    for path in spec['files']:
+        (tmp_path/path).parent.mkdir(parents=True,exist_ok=True)
+        (tmp_path/path).write_text(spec['files'][path]+'\n')
+    main=tmp_path/'stacks/kvm-instance/main.tf'
+    main.parent.mkdir(parents=True,exist_ok=True)
+    main.write_text(access_adapter.BASE_MAIN.replace('  source =',spec['main_argument']+'  source =',1))
+    variables={'iacp_golden_hardware':{}}
+    manifest={'golden_adapter_sha256':digest,'source_revision':spec['source_revision']}
+    verify(tmp_path,manifest,variables)
+
+    wrong_revision=dict(manifest);wrong_revision['source_revision']='0'*40
+    with pytest.raises(PlanError,match='INTEGRITY'):verify(tmp_path,wrong_revision,variables)
+    main.write_text(main.read_text().replace(spec['main_argument'],''))
+    with pytest.raises(PlanError,match='INTEGRITY'):verify(tmp_path,manifest,variables)
+
+
 def test_delete_records_only_numa_drift_without_changing_sealed_creation_plan():
     from iacp.terraform.deletion_executor import verify_topology
     from tests.test_terraform import allocation_data,plan_json
