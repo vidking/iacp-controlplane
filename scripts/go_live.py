@@ -89,6 +89,28 @@ def check_idle(report, allowed_uncertain=()):
     require(not any(report["queues"].values()) and report["unacked"] == 0, "Broker has pending work")
 
 
+def check_queued_guest_recovery_scope(report, request):
+    """Permite observar únicamente la inicialización declarada antes de cancelarla."""
+    expected = {
+        "guest_initializations": request["operation_id"],
+        "operations": request["operation_id"],
+        "jobs": request["job_id"],
+    }
+    for name, rows in report.get("nonterminal", {}).items():
+        if not rows:
+            continue
+        require(name in expected and len(rows) == 1,
+                "Unexpected nonterminal work during queued guest recovery: " + name)
+        row = rows[0]
+        require(str(row["id"]) == expected[name] and row["status"] == "queued",
+                "Queued guest recovery identity or status changed: " + name)
+    # En una repetición idempotente las tres filas ya pueden ser terminales y,
+    # por tanto, no aparecen en runtime_snapshot(). La acción inyectada vuelve
+    # a comprobar sus estados terminales y su evento de auditoría exactos.
+    require(not any(report.get("queues", {}).values()) and report.get("unacked") == 0,
+            "Broker activity prevents queued guest recovery")
+
+
 def compare_history(before, after, ownership_migration=None):
     from_0013 = before.get('schema') == ['0013_technical_ownership']
     if from_0013:
@@ -247,6 +269,42 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(all(set(report[key]) == set(expected) for key in ("active", "reserved", "scheduled")), "Partial worker inventory")
         require(all(not any(report[key].values()) for key in ("active", "reserved", "scheduled")), "Workers are still busy")
         self.evidence("workers", report)
+
+    def recover_queued_guest_init(self, request):
+        """Cancela una sola inicialización queued no despachada en el API activo.
+
+        La fuente de la acción se inyecta por stdin al contenedor que está
+        ejecutando la aplicación. Por eso esta operación no depende de haber
+        desplegado primero el candidato ni de que la imagen activa conozca el
+        nuevo comando.
+        """
+        change = self.approve("recover-queued-guest-init")
+        require(request["actor"] == change["actor"], "Operator identity differs from change record")
+        require(request["change_reference"] == change["reference"],
+                "Change reference differs from change record")
+        before = self.snapshot()
+        require(before["schema"] == [HEAD], "Recovery requires the current schema head")
+        check_queued_guest_recovery_scope(before, request)
+        self.workers_idle(lifecycle=True)
+        source = (ROOT / "scripts/recover_queued_guest_init.py").read_text(encoding="utf8")
+        payload = json.dumps(request, sort_keys=True)
+        code = source + "\nrun_from_json(" + repr(payload) + ")\n"
+        result = json.loads(self.exec_python("api", code))
+        self.evidence("recover-queued-guest-init", result)
+        require(result.get("passed") is True,
+                "Queued guest recovery rejected: " + str(result.get("reason", "unknown")))
+        after = self.snapshot()
+        check_idle(after)
+        self.workers_idle(lifecycle=True)
+        self.evidence("recover-queued-guest-init-completed", {
+            "instance_id": request["instance_id"],
+            "operation_id": request["operation_id"],
+            "job_id": request["job_id"],
+            "changed": result.get("changed"),
+            "already_completed": result.get("already_completed"),
+            "check_idle": True,
+        })
+        return result
 
     def migrate_technical_ownership(self):
         """Adopta evidencia persistida sin mutar Terraform ni Proxmox."""
@@ -1112,13 +1170,35 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-core", "attest-root-transport"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-core", "attest-root-transport", "recover-queued-guest-init"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
+    parser.add_argument("--instance-id", help="UUID exacto de la instancia para la recuperación")
+    parser.add_argument("--vmid", type=int, help="VMID exacto de la instancia para la recuperación")
+    parser.add_argument("--operation-id", help="UUID exacto de la operación de Guest Initialization")
+    parser.add_argument("--job-id", help="UUID exacto del Job de Guest Initialization")
+    parser.add_argument("--operator", help="Identidad del operador del registro de cambio")
+    parser.add_argument("--change-reference", help="Referencia del registro de cambio")
     args = parser.parse_args()
     os.umask(0o077)
     output = args.evidence_dir.resolve()
     require(not output.is_relative_to(ROOT), "Keep operational evidence outside the checkout")
+    recovery_request = None
+    if args.action == "recover-queued-guest-init":
+        from uuid import UUID
+        values = {"instance_id": args.instance_id, "operation_id": args.operation_id, "job_id": args.job_id}
+        for field, value in values.items():
+            require(value is not None and str(UUID(value)) == value,
+                    field + " must be a canonical UUID")
+        require(args.vmid == 30060, "Only VMID 30060 is approved for this recovery action")
+        require(args.operator and len(args.operator) <= 128, "Operator identity is required")
+        require(args.change_reference and len(args.change_reference) <= 256, "Change reference is required")
+        recovery_request = {
+            **values,
+            "vmid": args.vmid,
+            "actor": args.operator,
+            "change_reference": args.change_reference,
+        }
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     manifest = json.loads(args.manifest.read_text())
     private_json(output / "manifest-digest.json", {"sha256": digest(args.manifest), "action": args.action, "at": stamp()})
@@ -1130,6 +1210,8 @@ def main():
             if args.action == "inventory":
                 promotion.snapshot()
                 promotion.workers_idle(lifecycle=any(c["Config"]["Labels"].get("com.docker.compose.service") == "lifecycle-worker" for c in promotion.containers()))
+            elif args.action == "recover-queued-guest-init":
+                promotion.recover_queued_guest_init(recovery_request)
             elif args.action in {"validate-certificate", "record-certificate"}:
                 promotion.certify(record=args.action == "record-certificate")
             else:

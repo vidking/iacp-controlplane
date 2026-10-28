@@ -47,6 +47,13 @@ def main():
             s.add_argument('--record', action='store_true')
         if action == 'smoke':
             s.add_argument('probe_args', nargs=argparse.REMAINDER)
+    recover_guest = sub.add_parser('recover-queued-guest-init')
+    recover_guest.add_argument('--instance-id', required=True, help='UUID exacto de la instancia')
+    recover_guest.add_argument('--vmid', required=True, type=int, help='VMID exacto; esta acción solo admite 30060')
+    recover_guest.add_argument('--operation-id', required=True, help='UUID exacto de Guest Initialization')
+    recover_guest.add_argument('--job-id', required=True, help='UUID exacto del Job')
+    recover_guest.add_argument('--operator', required=True, help='Identidad del operador autorizado')
+    recover_guest.add_argument('--change-reference', required=True, help='Referencia del cambio autorizado')
     logs = sub.add_parser('logs'); logs.add_argument('service'); logs.add_argument('--tail', type=int, default=100)
     rotate = sub.add_parser('docs-rotate')
     rotate.add_argument('--registry', type=Path, required=True)
@@ -263,9 +270,20 @@ with get_session_factory()() as session:
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport',
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport', 'recover-queued-guest-init':'recover-queued-guest-init',
                   'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
-        subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
+        command = [sys.executable, str(ROOT / 'scripts/go_live.py'), action,
+                   '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)]
+        if args.action == 'recover-queued-guest-init':
+            command.extend([
+                '--instance-id', args.instance_id,
+                '--vmid', str(args.vmid),
+                '--operation-id', args.operation_id,
+                '--job-id', args.job_id,
+                '--operator', args.operator,
+                '--change-reference', args.change_reference,
+            ])
+        subprocess.run(command, check=True)
 
 
 if __name__ == '__main__':
