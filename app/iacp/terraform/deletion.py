@@ -35,7 +35,7 @@ def gate(instance, session=None):
             from ..services.commercial_bootstrap import active as bootstrap_active
             if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
     if session is not None and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
-        from ..services.lab import member
+        from ..services.authorization import member
         member(session, instance, 'delete', current_profiles=True)
         delegated = True
     if (instance.id not in allowed and not delegated) or instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106}:
@@ -108,7 +108,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 identifier = previous.id
             else:
                 gate(instance, session)
-                from ..services.lab import authorize_operation
+                from ..services.authorization import authorize_operation
                 authorize_operation(session, instance, 'delete')
                 if autonomous and not instance.self_service_policy_id and not getattr(instance,'commercial_revision',None):
                     raise Conflict('LAB_POLICY_REQUIRED')
@@ -143,7 +143,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
     if resume:
         publish_task(session, session.get(Operation, identifier), publish, 'plan')
     elif autonomous:
-        from ..services.lab import advance_deletion
+        from ..services.authorization import advance_deletion
         advance_deletion(session, instance, identifier, publish)
     return result
 

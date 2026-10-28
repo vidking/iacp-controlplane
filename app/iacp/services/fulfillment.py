@@ -2,7 +2,7 @@
 import os
 from sqlalchemy import select
 
-from ..models import GuestInitialization, Instance, LabPolicy, Operation, TerraformExecution
+from ..models import GuestInitialization, Instance, Operation, TerraformExecution
 from ..security import Principal
 from .instances import Conflict, event
 
@@ -64,7 +64,11 @@ def progress(session, instance, provisioning_status):
     start = session.scalar(select(Operation).where(Operation.tenant_id == instance.tenant_id,
         Operation.instance_id == instance.id, Operation.idempotency_key == 'autostart-' + instance.id))
     initialization = session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id == instance.id))
-    policy = session.get(LabPolicy, instance.self_service_policy_id)
+    policy = None
+    if instance.self_service_policy_id:
+        # Solo las instancias históricas consultan la fila LAB que ya poseen.
+        from ..models import LabPolicy
+        policy = session.get(LabPolicy, instance.self_service_policy_id)
     requires_identity = bool(instance.commercial_revision or policy and policy.profile_snapshots.get(instance.network_profile, {}).get('guest_initialization'))
     phase, status = 'provisioning', provisioning_status
     if provisioning_status == 'completed':

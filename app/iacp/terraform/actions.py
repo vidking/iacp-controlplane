@@ -49,7 +49,10 @@ def retry(session, execution, expected, key, actor, publish):
             from .apply import block_replan
             block_replan(session, execution.instance_id)
             instance = session.get(Instance, execution.instance_id)
-            if instance.self_service_policy_id:
+            if instance.commercial_revision:
+                from ..services.authorization import authorize_operation
+                authorize_operation(session, instance, "create")
+            elif instance.self_service_policy_id:
                 from ..services.lab import member, check_quota, limits
                 policy = member(session, instance, 'create', current_profiles=True)
                 check_quota(session,instance.tenant_id,{'concurrent_operations':limits(policy)['concurrent_operations']},

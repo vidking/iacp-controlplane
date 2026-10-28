@@ -156,6 +156,11 @@ class Promotion:
         options = ["--profile", "certification"] if args and args[0] == "config" else []
         return self.run(self.dc + options + list(args), **kwargs)
 
+    def creation_contract(self):
+        """Lee el contrato efectivo de Compose, nunca una variable del shell."""
+        config = json.loads(self.compose("config", "--format", "json"))
+        return config["services"]["api"]["environment"].get("IACP_CREATION_CONTRACT", "historical")
+
     def containers(self):
         ids = self.run(self.docker + ["ps", "-aq", "--filter", "label=com.docker.compose.project=" + self.m["project"]]).split()
         require(ids, "No existing stack; this driver cannot bootstrap or adopt another project")
@@ -261,7 +266,9 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             from uuid import UUID
             require(deletion in (0, 1), "Invalid deletion flag")
             identifiers = [str(UUID(identifier)) for identifier in disposable_ids or []]
-            require(not deletion or bool(identifiers) or lab_self_service==1, "Deletion requires an explicit UUID allowlist or reviewed lab activation")
+            core = self.creation_contract() == "provisioning-api-core"
+            require(not deletion or bool(identifiers) or lab_self_service==1 or core,
+                    "Deletion requires an explicit UUID allowlist or the technical Core contract")
             values.update(IACP_TERRAFORM_DELETE_ENABLED=str(deletion), IACP_DISPOSABLE_INSTANCE_IDS=','.join(identifiers))
         lines = [line for line in original.splitlines() if not re.match(
             r"^\s*(?:export\s+)?(?:" + "|".join(values) + r")\s*=", line)]
@@ -685,6 +692,16 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         before = self.preflight()
         recovery_ids=self.review_recovery_deployment(change,before)
         current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
+        contract = self.creation_contract()
+        restore_flags = {
+            "admission": int(current_api_flags.get("IACP_ADMISSION_ENABLED", "0")),
+            "lifecycle": int(current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED", "0")),
+            "deletion": int(current_api_flags.get("IACP_TERRAFORM_DELETE_ENABLED", "0")),
+            "disposable_ids": [value for value in current_api_flags.get("IACP_DISPOSABLE_INSTANCE_IDS", "").split(",") if value],
+            "lifecycle_ids": [value for value in current_api_flags.get("IACP_LIFECYCLE_INSTANCE_IDS", "").split(",") if value],
+            # Core no longer uses the LAB policy flag as a product gate.
+            "lab_self_service": 0 if contract == "provisioning-api-core" else int(current_api_flags.get("IACP_LAB_SELF_SERVICE_ENABLED", "0")),
+        }
         if self.canonical() and before["schema"] == [HEAD] and all(
             self.container(role)["Image"] == self.m["images"]["terraform" if role == "terraform-worker" else "api"] for role in ROLES) and (
                 current_api_flags.get("IACP_ADMISSION_ENABLED") == "0" and current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED") == "0"):
@@ -693,7 +710,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             return
         # Stop admission at the source, including internal clients. Never stop shared Traefik.
         self.compose("stop", "--timeout", "60", "api", timeout=75)
-        self.flags(admission=0, lifecycle=0, lab_self_service=0)
+        self.flags(admission=0, lifecycle=0, deletion=0, disposable_ids=[], lifecycle_ids=[], lab_self_service=0)
         deadline = time.monotonic() + 300
         while True:
             try:
@@ -710,9 +727,18 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         # Alembic owns its version table. Its ordered graph keeps 0005 intact.
         self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T", "migrate", timeout=180)
         self.up(*ROLES)
-        after = self.verify(allowed_uncertain=recovery_ids)
+        self.verify(allowed_uncertain=recovery_ids)
+        self.flags(**restore_flags)
+        self.up(*ROLES)
+        after = self.verify(admission=restore_flags["admission"], lifecycle=restore_flags["lifecycle"],
+                            allowed_uncertain=recovery_ids)
         compare_history(before, after)
-        self.evidence("promotion-completed", {"schema": HEAD, "lifecycle": 0, "admission": 0, "history_unchanged": True})
+        self.evidence("promotion-completed", {"schema": HEAD,
+                                               "lifecycle": restore_flags["lifecycle"],
+                                               "admission": restore_flags["admission"],
+                                               "deletion": restore_flags["deletion"],
+                                               "lab_self_service": restore_flags["lab_self_service"],
+                                               "history_unchanged": True})
 
     def review_recovery_deployment(self, change, before):
         if 'recovery_deployment_review' not in self.m:
@@ -765,6 +791,8 @@ with get_session_factory()() as s:
 
     def activate_lab(self):
         """Reviewed dynamic scope uses approved policies, never a global VM allowlist."""
+        if self.creation_contract() == "provisioning-api-core":
+            return self.activate_core()
         change=self.approve('activate-lab')
         self.preflight()
         self.verify(admission=0,lifecycle=0)
@@ -824,6 +852,22 @@ print('INDEPENDENT_LAB_POLICIES_VERIFIED')
         self.evidence('lab-self-service-activated',{'policies':review.get('policies',[]),
             'commercial_tenants':list(review.get('tenants',{})) if commercial else [],
             'historical_instances_authorized':False})
+
+    def activate_core(self):
+        """Habilita el contrato técnico sin consultar ni renovar LabPolicy."""
+        self.approve('activate-core')
+        self.preflight()
+        self.verify(admission=0, lifecycle=0)
+        self.flags(admission=1, lifecycle=1, deletion=1, disposable_ids=[], lifecycle_ids=[], lab_self_service=0)
+        self.up('api', 'terraform-worker', 'lifecycle-worker')
+        self.verify(admission=1, lifecycle=1)
+        self.evidence('core-contract-enabled', {
+            'contract': 'provisioning-api-core',
+            'admission': 1,
+            'lifecycle': 1,
+            'deletion': 1,
+            'lab_self_service': 0,
+        })
 
     def admit(self):
         change = self.approve('enable-admission')
@@ -1140,7 +1184,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab", "attest-root-transport"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab", "activate-core", "attest-root-transport"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     args = parser.parse_args()

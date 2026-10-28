@@ -89,6 +89,26 @@ def test_idle_and_history_guards_preserve_uncertainty():
         driver.compare_history(original, {"tables": {"terraform_attempts": {"count": 4, "sha256": "rewritten"}}})
 
 
+def test_core_contract_can_enable_delete_without_lab_allowlist(tmp_path):
+    env = tmp_path / "server.env"
+    env.write_text("IACP_ADMISSION_ENABLED=0\nIACP_KVM_LIFECYCLE_ENABLED=0\n")
+    promotion = object.__new__(driver.Promotion)
+    promotion.m = {"environment_file": str(env)}
+    promotion.creation_contract = lambda: "provisioning-api-core"
+    promotion.evidence = lambda *args: None
+    promotion.flags(admission=1, lifecycle=1, deletion=1, disposable_ids=[], lifecycle_ids=[], lab_self_service=0)
+    values = dict(line.split("=", 1) for line in env.read_text().splitlines())
+    assert values == {
+        "IACP_ADMISSION_ENABLED": "1",
+        "IACP_KVM_LIFECYCLE_ENABLED": "1",
+        "IACP_TERRAFORM_APPLY_ENABLED": "1",
+        "IACP_LAB_SELF_SERVICE_ENABLED": "0",
+        "IACP_LIFECYCLE_INSTANCE_IDS": "",
+        "IACP_TERRAFORM_DELETE_ENABLED": "1",
+        "IACP_DISPOSABLE_INSTANCE_IDS": "",
+    }
+
+
 @pytest.mark.parametrize("action", ["promote", "publish", "activate", "first_start", "rollback", "certify"])
 def test_expired_change_cannot_mutate_runtime(tmp_path, action):
     change = tmp_path / "change.json"
