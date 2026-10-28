@@ -8,13 +8,8 @@ def get_smoke_publisher() -> Publisher:
 
 
 def get_instance_publisher() -> Publisher:
-    from ..worker import provision_instance
-    from ..terraform.config import instance_executor
-
-    if instance_executor() == "terraform":
-        return lambda job_id: get_plan_publisher()(job_id, 1)
-
-    return provision_instance.delay
+    """Publica exclusivamente la planificación Terraform del contrato Core."""
+    return lambda job_id: get_plan_publisher()(job_id, 1)
 
 
 def get_plan_publisher():

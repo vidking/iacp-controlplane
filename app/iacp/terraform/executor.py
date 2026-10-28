@@ -144,9 +144,12 @@ class TerraformExecutor:
         return self.artifacts / identifier / f"attempt-{attempt}"
 
     def plan(self, instance_id: str, attempt: int, state_key: str, allocation: Allocation,
-             variables: dict, cancelled) -> PlanResult:
+             variables: dict, cancelled, revision: str | None = None) -> PlanResult:
         if os.environ.get("IACP_TERRAFORM_PLAN_ENABLED") != "1":
             raise PlanError("REAL_PLAN_DISABLED")
+        revision = revision or SOURCE_REVISION
+        if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
+            raise PlanError("SOURCE_REVISION_INVALID")
         if allocation.network_mode == 'dhcp':
             # Never adopt an existing VM through a new DHCP profile intent.
             import tempfile
@@ -161,7 +164,7 @@ class TerraformExecutor:
         workspace.mkdir(parents=True, mode=0o700, exist_ok=False)
         workspace.chmod(0o700)
         try:
-            archive = subprocess.run(["git", "-c", f"safe.directory={self.source}", "-C", str(self.source), "archive", SOURCE_REVISION],
+            archive = subprocess.run(["git", "-c", f"safe.directory={self.source}", "-C", str(self.source), "archive", revision],
                                      check=True, capture_output=True, timeout=30).stdout
             with tarfile.open(fileobj=io.BytesIO(archive)) as source_tar:
                 if any(item.issym() or item.islnk() for item in source_tar.getmembers()):
@@ -196,7 +199,7 @@ class TerraformExecutor:
         saved.chmod(0o600)
         sha256 = digest_file(saved)
         salt = secrets.token_hex(32)
-        write_private(workspace / "manifest.json", {"sha256": sha256, "source_revision": SOURCE_REVISION,
+        write_private(workspace / "manifest.json", {"sha256": sha256, "source_revision": revision,
                       "state_key": state_key, "variables": variables, "backend": backend, "summary": summary,
                       "execution_context_salt": salt,
                       "execution_context_sha256": self.context_digest(env, salt)})
@@ -207,7 +210,7 @@ class TerraformExecutor:
             from .golden_adapter import DIGEST as GOLDEN_ADAPTER_SHA256
             manifest=json.loads((workspace / 'manifest.json').read_text())
             write_private(workspace / 'manifest.json',{**manifest,'golden_adapter_sha256':GOLDEN_ADAPTER_SHA256})
-        return PlanResult(sha256, SOURCE_REVISION, summary)
+        return PlanResult(sha256, revision, summary)
 
     def environment(self, workspace: Path) -> dict:
         try:
@@ -243,16 +246,26 @@ class TerraformExecutor:
             payload["SSL_CERT_FILE_SHA256"] = digest_file(Path(env["SSL_CERT_FILE"]))
         return hashlib.sha256((salt + json.dumps(payload, sort_keys=True, separators=(",", ":"))).encode()).hexdigest()
 
-    def verify_artifacts(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
-        """Verificar el vínculo persistido sin exigir credenciales de una mutación nueva."""
-        return self._verify_artifacts_revision(instance_id, attempt, sha256, state_key, allocation, variables, SOURCE_REVISION)
+    def verify_artifacts(self, instance_id: str, attempt: int, sha256: str, state_key: str,
+                         allocation: dict, variables: dict, revision: str | None = None) -> dict:
+        """Verifica el vínculo usando la revisión IaC sellada en la ejecución.
 
-    def _verify_artifacts_revision(self, instance_id, attempt, sha256, state_key, allocation, variables, revision):
-        # Historical inspection is used only by the offline ownership certifier.
-        # apply/reconcile retain the strict current SOURCE_REVISION check above.
+        Una instancia histórica conserva su revisión original. La revisión
+        actual sigue siendo la única fuente para planes nuevos, pero no se
+        utiliza como comparación global para leer, reconciliar o eliminar un
+        state ya administrado.
+        """
+        return self._verify_artifacts_revision(
+            instance_id, attempt, sha256, state_key, allocation, variables, revision,
+        )
+
+    def _verify_artifacts_revision(self, instance_id, attempt, sha256, state_key, allocation, variables, revision=None):
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
+            revision = revision or manifest.get("source_revision")
+            if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
+                raise ValueError("Invalid source revision")
             from .access_adapter import verify as verify_access_adapter
             verify_access_adapter(workspace / 'source', manifest, variables)
             from .golden_adapter import verify as verify_golden_adapter
@@ -275,25 +288,28 @@ class TerraformExecutor:
             raise PlanError("PLAN_INTEGRITY_FAILED") from None
         return manifest
 
-    def prepare_reconcile(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
-        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
+    def prepare_reconcile(self, instance_id: str, attempt: int, sha256: str, state_key: str,
+                          allocation: dict, variables: dict, revision: str | None = None) -> dict:
+        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables, revision)
         saved = self.workspace(instance_id, attempt) / "source/stacks/kvm-instance/saved.tfplan"
         return {"plan_sha256": sha256, "legacy_manifest": "execution_context_salt" not in manifest,
                 "state_key": state_key, "workspace": "default", "backend_bucket": manifest["backend"]["bucket"],
-                "source_revision": SOURCE_REVISION, "execution_enabled": False,
+                "source_revision": manifest["source_revision"], "execution_enabled": False,
                 "approved_state": approved_state_metadata(saved)}
 
-    def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str, allocation: dict, variables: dict) -> dict:
-        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables)
+    def prepare_apply(self, instance_id: str, attempt: int, sha256: str, state_key: str,
+                      allocation: dict, variables: dict, revision: str | None = None) -> dict:
+        manifest = self.verify_artifacts(instance_id, attempt, sha256, state_key, allocation, variables, revision)
         env = self.environment(self.workspace(instance_id, attempt))
         if ("execution_context_salt" not in manifest
                 or self.context_digest(env, manifest["execution_context_salt"]) != manifest["execution_context_sha256"]):
             raise PlanError("PLAN_INTEGRITY_FAILED")
-        return {"plan_sha256": sha256, "state_key": state_key, "source_revision": SOURCE_REVISION,
+        return {"plan_sha256": sha256, "state_key": state_key, "source_revision": manifest["source_revision"],
                 "approval_required": True, "execution_enabled": False}
 
     def apply(self, instance_id=None, attempt=None, sha256=None, state_key=None,
-              allocation=None, variables=None, cancelled=lambda: False, before_mutation=lambda: None):
+              allocation=None, variables=None, cancelled=lambda: False,
+              before_mutation=lambda: None, revision: str | None = None):
         if os.environ.get("IACP_TERRAFORM_APPLY_ENABLED") != "1":
             raise PlanError("APPLY_DISABLED")
         if not all((instance_id, attempt, sha256, state_key, allocation, variables)):
@@ -301,7 +317,7 @@ class TerraformExecutor:
         if variables['instance']['vm_id'] in {104, 29000, 29001, 29010, 29011, 29016, 29017}:
             # No afecta la observación/reconciliación histórica de estas VM.
             raise PlanError('PROTECTED_RESOURCE')
-        self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables)
+        self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables, revision)
         workspace = self.workspace(instance_id, attempt)
         root = workspace / "source" / "stacks" / "kvm-instance"
         env = self.environment(workspace)
@@ -311,7 +327,7 @@ class TerraformExecutor:
         plan = self.read_json(["show", "-json", "saved.tfplan"], root, env, cancelled, "apply.inspect")
         verify_plan(plan, variables)
         # Revalidar el binario inmediatamente antes de consumir la autorización.
-        self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables)
+        self.prepare_apply(instance_id, attempt, sha256, state_key, allocation, variables, revision)
         if cancelled():
             raise PlanError("CANCELLED")
         if variables["instance"].get("network_mode") == "dhcp":
@@ -354,7 +370,8 @@ class TerraformExecutor:
         reader = None
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
-            self.verify_artifacts(instance_id, attempt, manifest["sha256"], manifest["state_key"], allocation, variables)
+            self.verify_artifacts(instance_id, attempt, manifest["sha256"], manifest["state_key"], allocation, variables,
+                                  manifest.get("source_revision"))
             approved_state = approved_state_metadata(root / "saved.tfplan")
             reader = S3StateReader(manifest["backend"], env)
             snapshot = reader.read(cancelled)

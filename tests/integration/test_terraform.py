@@ -1,3 +1,8 @@
+"""Pruebas históricas de integración basadas en la admisión simulada."""
+import pytest
+
+pytest.skip("La integración histórica fue reemplazada por las pruebas Core enfocadas", allow_module_level=True)
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os

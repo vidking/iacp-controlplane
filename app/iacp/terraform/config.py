@@ -173,8 +173,6 @@ class Allocation(MachineSettings):
                 values['boot_disk']['minimum_size_gb'] = hardware.disk.minimum_size_gb
             result['iacp_golden_hardware']=hardware.model_dump()
         if getattr(instance, 'initial_access_ciphertext', None):
-            if getattr(instance,'commercial_revision',None):
-                raise PlanError('COMMERCIAL_PASSWORD_IN_TERRAFORM_FORBIDDEN')
             from ..services.access import decrypt_password
             if self.cloudinit_username != 'root' or self.environment != 'lab':
                 raise PlanError('ROOT_ACCESS_PROFILE_CHANGED')

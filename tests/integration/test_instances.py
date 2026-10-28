@@ -1,3 +1,8 @@
+"""Pruebas históricas del worker simulado, retiradas del producto activo."""
+import pytest
+
+pytest.skip("El worker simulado fue retirado; usar las regresiones Core de Terraform", allow_module_level=True)
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest.mock import Mock

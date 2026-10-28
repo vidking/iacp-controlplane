@@ -38,7 +38,7 @@ def delete_instance(identifier: str, mode: str) -> None:
                     advance_deletion(session, session.get(Instance, row.instance_id), identifier, get_deletion_publisher())
                 except Exception:
                     session.rollback()
-                    event(session, session.get(Operation, identifier), "lab_delete_paused", "worker:iac")
+                    event(session, session.get(Operation, identifier), "technical_delete_paused", "worker:iac")
                     session.commit()
 
 

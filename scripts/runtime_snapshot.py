@@ -1,6 +1,7 @@
-"""Read-only inspection, fed to Python in the existing API container over stdin.
+"""Inspección read-only del runtime, ejecutada dentro del contenedor API.
 
-Works on schemas 0004-0006; only digests/counts leave the database.
+Solo salen digests, conteos, estado de colas y nombres de operaciones no
+terminales; nunca valores de credenciales ni copias de Terraform State.
 """
 import hashlib
 import json

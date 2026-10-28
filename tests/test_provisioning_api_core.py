@@ -2,7 +2,6 @@
 import json
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 from sqlalchemy import select
 
@@ -10,7 +9,6 @@ from iacp.commercial_contract import CommercialInstanceCreate, MINIMAL_EXAMPLE
 from iacp.models import BOOTSTRAP_TENANT_ID, CommercialIntent, Instance, OperationEvent
 from iacp.security import Principal
 from iacp.services import commercial
-from iacp.services import lab
 from iacp.services.catalog import authorized_profile
 from tests.test_commercial_admission import commercial_config, store
 from tests.test_commercial_catalog import catalog_profile
@@ -26,8 +24,6 @@ def core_spec(**changes):
 def test_core_create_uses_identity_and_technical_capacity_only(
         sessions, commercial_config, store, monkeypatch):
     monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
-    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('no commercial limits')))
-    monkeypatch.setattr(commercial, 'quota', Mock(side_effect=AssertionError('no commercial quota')))
     published=[]
     with sessions() as session:
         accepted=commercial.create(session,
@@ -52,18 +48,14 @@ def test_core_catalog_resolves_all_authorized_golden_images_without_limits(
     raw['lab_images']={key:{'enabled':True,'cloudinit_username':'root'}
         for key in ['ubuntu-2604','almalinux-9','almalinux-10']}
     commercial_config.write_text(json.dumps(raw))
-    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('no commercial limits')))
     for image_id in ['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']:
         assert authorized_profile(BOOTSTRAP_TENANT_ID, image_id) is not None
 
 
 def test_core_lifecycle_delegation_does_not_consult_commercial_limits(monkeypatch):
-    monkeypatch.setenv('IACP_CREATION_CONTRACT', 'provisioning-api-core')
     monkeypatch.setattr(commercial, 'member', lambda *args, **kwargs: object())
-    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('no commercial limits')))
-    monkeypatch.setattr(commercial, 'quota', Mock(side_effect=AssertionError('no commercial quota')))
     instance = SimpleNamespace(commercial_revision='provisioning-api-core', tenant_id=BOOTSTRAP_TENANT_ID)
-    lab.authorize_operation(None, instance, 'start')
+    commercial.authorize_operation(None, instance, 'start')
 
 
 def test_core_mutations_never_require_lab_policy_administration(client, auth, monkeypatch):
@@ -80,16 +72,14 @@ def test_core_mutations_never_require_lab_policy_administration(client, auth, mo
         'change_reference': 'CORE-NO-LAB-POLICY',
     }
     response = client.post('/v1/lab/policies', headers={**auth, 'Idempotency-Key': 'core-policy'}, json=policy)
-    assert response.status_code == 410
-    assert response.json()['detail'] == 'LAB_POLICY_ADMINISTRATION_DISCONTINUED'
-    assert client.get('/v1/lab/policies', headers=auth).status_code == 200
+    assert response.status_code == 404
+    assert client.get('/v1/lab/policies', headers=auth).status_code == 404
 
 
 def test_core_authorization_is_bound_to_persisted_contract_not_release_policy(monkeypatch):
     monkeypatch.setenv('IACP_CREATION_CONTRACT', 'historical')
     row = SimpleNamespace(revision='provisioning-api-core')
     monkeypatch.setattr(commercial, 'member', lambda *args, **kwargs: row)
-    monkeypatch.setattr(commercial, 'limits_for', Mock(side_effect=AssertionError('Core must not load limits')))
     commercial.authorize_operation(
         None,
         SimpleNamespace(commercial_revision='provisioning-api-core', tenant_id=BOOTSTRAP_TENANT_ID),

@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 
 from iacp.terraform import deletion_executor as module
-from iacp.terraform.config import Allocation, PlanError
+from iacp.terraform.config import Allocation, PlanError, SOURCE_REVISION
 from iacp.terraform.deletion_executor import DeletionExecutor
 from iacp.terraform.executor import ADDRESS
 from iacp.terraform.runner import CommandRunner
@@ -25,7 +25,8 @@ def deletion_executor(tmp_path,monkeypatch):
     allocation=Allocation.model_validate(allocation_data(30000))
     instance=SimpleNamespace(name='disposable',image='test-image',disk_gb=20,vcpus=2,memory_mb=2048)
     ctx={'instance_id':str(uuid4()),'operation_id':str(uuid4()),'attempt':1,'provisioning_plan_sha256':'a'*64,
-         'state_key':'synthetic-state','allocation':allocation.model_dump(),'variables':allocation.variables(instance),
+         'state_key':'synthetic-state','source_revision':SOURCE_REVISION,
+         'allocation':allocation.model_dump(),'variables':allocation.variables(instance),
          'backend':allocation.backend.arguments('synthetic-state')}
     approved=plan_json(ctx['variables'])
     values=deepcopy(approved['resource_changes'][0]['change']['after']);values['id']='30000'

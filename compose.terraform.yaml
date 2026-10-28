@@ -10,12 +10,10 @@ services:
         bind:
           create_host_path: false
     environment:
-      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       IACP_INSTANCE_EXECUTOR: terraform
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:-0}
       IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
-      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
 
   terraform-worker:
     build:
@@ -23,7 +21,6 @@ services:
       target: terraform-worker
     image: ${IACP_TF_WORKER_IMAGE:?Indicar una imagen de release distinta del bootstrap}
     environment:
-      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       POSTGRES_DB: ${POSTGRES_DB:-iacp}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
@@ -33,7 +30,6 @@ services:
       IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:-0}
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:-0}
       IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
-      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
       IACP_TERRAFORM_SOURCE_DIR: /iac-source
       IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
       IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials

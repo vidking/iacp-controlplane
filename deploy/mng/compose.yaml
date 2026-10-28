@@ -49,15 +49,12 @@ services:
     command: null
     entrypoint: null
     environment:
-      IACP_CREATION_CONTRACT: ${IACP_CREATION_CONTRACT:-historical}
       IACP_ADMISSION_CREDENTIALS_FILE: /run/secrets/admission_credentials
       IACP_BOOTSTRAP_AES_KEY_FILE: /run/secrets/bootstrap_aes_key
       IACP_BOOTSTRAP_SECRET_TTL_SECONDS: ${IACP_BOOTSTRAP_SECRET_TTL_SECONDS:-900}
       IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED: ${IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED:-0}
       IACP_ROOT_INPUT_KEY_FILE: /run/secrets/root_input_key
       IACP_TLS_PROXY_IPS: ${IACP_TLS_PROXY_IPS:-}
-      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
-      IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
@@ -72,7 +69,6 @@ services:
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
         flag required}
       IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
-      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
       POSTGRES_DB: ${POSTGRES_DB:-iacp}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
     image: iacp/controlplane-api:${IACP_RELEASE:?Approved application image release}
@@ -166,8 +162,6 @@ services:
     entrypoint: null
     environment:
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
-      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
-      IACP_LIFECYCLE_INSTANCE_IDS: ${IACP_LIFECYCLE_INSTANCE_IDS:-}
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
@@ -337,7 +331,6 @@ services:
       IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED: ${IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED:-0}
       IACP_ROOT_INPUT_KEY_FILE: /run/secrets/root_input_key
       IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:?Explicit operating flag required}
-      IACP_LAB_SELF_SERVICE_ENABLED: ${IACP_LAB_SELF_SERVICE_ENABLED:-0}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
       DATABASE_HOST: db
@@ -346,7 +339,6 @@ services:
       IACP_TERRAFORM_APPLY_ENABLED: ${IACP_TERRAFORM_APPLY_ENABLED:?Explicit operating
         flag required}
       IACP_TERRAFORM_DELETE_ENABLED: ${IACP_TERRAFORM_DELETE_ENABLED:-0}
-      IACP_DISPOSABLE_INSTANCE_IDS: ${IACP_DISPOSABLE_INSTANCE_IDS:-}
       IACP_TERRAFORM_ARTIFACTS_DIR: /var/lib/iacp/terraform
       IACP_TERRAFORM_CREDENTIALS_FILE: /run/secrets/terraform_credentials
       IACP_TERRAFORM_PLAN_ENABLED: ${IACP_TERRAFORM_PLAN_ENABLED:?Explicit operating

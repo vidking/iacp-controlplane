@@ -1,70 +1,38 @@
-"""Autorización de mutaciones según el contrato de la instancia.
+"""Autorización técnica única del contrato ``provisioning-api-core``.
 
-Las instancias Core nunca consultan LabPolicy. El import del motor LAB queda
-limitado a recursos históricos que todavía conservan ``self_service_policy_id``.
+Las decisiones comerciales y las filas LabPolicy históricas no participan en
+la autorización operativa. La única fuente de pertenencia es la evidencia
+persistida por Terraform y su vínculo técnico unificado.
 """
-
-from .contracts import instance_uses_managed_contract
 
 
 def member(session, instance, action, *, current_profiles=False, observation=False):
-    if instance_uses_managed_contract(instance):
-        if observation:
-            from .commercial import member as commercial_member
+    from .technical_ownership import member as technical_member
 
-            return commercial_member(
-                session,
-                instance,
-                action,
-                current_profiles=current_profiles,
-                observation=True,
-            )
-        from .commercial import delegation
-
-        return delegation(
-            session,
-            instance,
-            action,
-            current_profiles=current_profiles,
-        )
-    from .lab import member as historical_member
-
-    return historical_member(
+    return technical_member(
         session,
         instance,
         action,
         current_profiles=current_profiles,
+        observation=observation,
+        adopt=True,
     )
 
 
 def authorize_operation(session, instance, action):
-    if instance_uses_managed_contract(instance):
-        from .commercial import authorize_operation as authorize_commercial
-
-        return authorize_commercial(session, instance, action)
-    from .lab import authorize_operation as authorize_historical
-
-    return authorize_historical(session, instance, action)
+    return member(session, instance, action)
 
 
 def advance(session, instance, publish):
-    if instance_uses_managed_contract(instance):
-        from .commercial import advance as advance_commercial
+    from .commercial import advance as technical_advance
 
-        return advance_commercial(session, instance, publish)
-    from .lab import advance as advance_historical
-
-    return advance_historical(session, instance, publish)
+    return technical_advance(session, instance, publish)
 
 
 def advance_deletion(session, instance, operation_id, publish):
-    if instance_uses_managed_contract(instance):
-        from .commercial import advance_deletion as advance_commercial_deletion
+    from .commercial import advance_deletion as technical_advance_deletion
 
-        return advance_commercial_deletion(session, instance, operation_id, publish)
-    from .lab import advance_deletion as advance_historical_deletion
-
-    return advance_historical_deletion(session, instance, operation_id, publish)
+    return technical_advance_deletion(session, instance, operation_id, publish)
 
 
 def after_plan(job_id, sessions, publish):
@@ -81,9 +49,7 @@ def after_plan(job_id, sessions, publish):
         if execution is None or execution.status != "planned":
             return
         instance = session.get(Instance, execution.instance_id)
-        if instance is None or not (
-            instance.self_service_policy_id or instance_uses_managed_contract(instance)
-        ):
+        if instance is None:
             return
         try:
             advance(session, instance, publish)

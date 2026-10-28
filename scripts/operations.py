@@ -70,8 +70,8 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
     a, b = normalized(current), normalized(candidate)
     allowed = set(image_changes)
     promoted_paths=[]
-    from commercial_runtime import normalize_commercial
-    promoted_paths.extend(normalize_commercial(a, b, commercial_bootstrap))
+    from technical_runtime import normalize_technical_runtime
+    promoted_paths.extend(normalize_technical_runtime(a, b, commercial_bootstrap))
     # Narrow opt-in for the lab's reviewed input key and exact TLS proxy IPs.
     # This never changes DB/Redis, tenant tokens, RBAC, worker isolation or ports.
     import ipaddress
@@ -141,20 +141,14 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
                     promoted_paths.append('/services/'+role+'/volumes/iac-source')
     for role in ('api','lifecycle-worker'):
         old_env=a['services'][role].get('environment',{});new_env=b['services'][role].get('environment',{})
-        if 'IACP_LIFECYCLE_INSTANCE_IDS' not in old_env and new_env.get('IACP_LIFECYCLE_INSTANCE_IDS')=='':
-            allowed.add('/services/'+role+'/environment/IACP_LIFECYCLE_INSTANCE_IDS')
     # An upgrade may introduce the destructive capability ONLY disabled. Enabling
     # it or adding UUIDs is a separately reviewed operational change, never drift tolerance.
     for role in ('api', 'terraform-worker'):
         old_env = a['services'][role].get('environment', {})
         new_env = b['services'][role].get('environment', {})
-        for key, safe in [('IACP_TERRAFORM_DELETE_ENABLED', '0'), ('IACP_DISPOSABLE_INSTANCE_IDS', '')]:
+        for key, safe in [('IACP_TERRAFORM_DELETE_ENABLED', '0')]:
             if key not in old_env and new_env.get(key) == safe:
                 allowed.add('/services/' + role + '/environment/' + key)
-    for role in ('api','terraform-worker','lifecycle-worker'):
-        old_env=a['services'][role].get('environment',{});new_env=b['services'][role].get('environment',{})
-        if 'IACP_LAB_SELF_SERVICE_ENABLED' not in old_env and new_env.get('IACP_LAB_SELF_SERVICE_ENABLED')=='0':
-            allowed.add('/services/'+role+'/environment/IACP_LAB_SELF_SERVICE_ENABLED')
     old_tf=current['services'].get('terraform-worker',{}).get('environment',{})
     new_tf=candidate['services'].get('terraform-worker',{}).get('environment',{})
     if 'IACP_KVM_LIFECYCLE_ENABLED' not in old_tf and new_tf.get('IACP_KVM_LIFECYCLE_ENABLED')=='0':

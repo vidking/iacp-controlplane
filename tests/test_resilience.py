@@ -1,21 +1,101 @@
 """Phase C: bounded failures with dummy infrastructure and real OS processes."""
 import os
+import json
+import hashlib
 from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from unittest.mock import Mock
 
 import pytest
 
 from iacp.models import Instance, Job, TerraformApply, TerraformExecution
+from iacp.api.dependencies import get_apply_publisher
 from iacp.terraform.apply import execute_apply
 from iacp.terraform.actions import retry
-from iacp.services.instances import create_instance
+from iacp.commercial_contract import CommercialInstanceCreate, MINIMAL_EXAMPLE
 from iacp.models import BOOTSTRAP_TENANT_ID
-from iacp.schemas import InstanceCreate
+from iacp.services.commercial import create as create_core
 from iacp.security import Principal
-from tests.test_apply import ApplyingExecutor, approval, dispatch, prepared
+from tests.test_apply import ApplyingExecutor, approval, dispatch
+from tests.test_commercial_admission import commercial_config, store
+from tests.test_terraform import create, run_plan
+
+
+@pytest.fixture
+def catalog_profile(tmp_path, monkeypatch):
+    """Catálogo técnico mínimo para los ensayos de resiliencia Core."""
+    from tests.test_dhcp_profiles import profile_data
+
+    data = profile_data()
+    settings = data['profiles']['lab-dhcp']['settings']
+    settings.update(
+        image='ubuntu-2404', template_vm_id=29000, template_node_name='mng01',
+        node_name='mng01', clone_datastore_id='DS_CYBERFUEL',
+        cloudinit_datastore_id='DS_CYBERFUEL', guest_agent_enabled=True,
+        network_bridge='vmbr0',
+    )
+    settings['boot_disk']['datastore_id'] = 'DS_CYBERFUEL'
+    settings['allowed_nodes'] = ['mng01']
+    path = tmp_path / 'core-resilience-profiles.json'
+    path.write_text(json.dumps(data))
+    monkeypatch.setenv('IACP_TERRAFORM_PROFILES_FILE', str(path))
+    return path
+
+
+@pytest.fixture
+def core_profile(tmp_path, monkeypatch):
+    """Perfil Core sintético para la recuperación de un apply interrumpido."""
+    from tests.test_terraform import allocation_data
+    from iacp.services import commercial
+    from iacp.terraform import profiles
+
+    settings = allocation_data(30000)
+    for key in ('vm_id', 'ipv4_cidr', 'ipv4_gateway'):
+        settings.pop(key)
+    settings.update(
+        image='ubuntu-2404', template_vm_id=29000, template_node_name='mng01',
+        node_name='mng01', clone_datastore_id='DS_CYBERFUEL',
+        cloudinit_datastore_id='DS_CYBERFUEL', network_mode='dhcp',
+        network_bridge='vmbr0', vlan_id=None, guest_agent_enabled=True,
+        allowed_nodes=['mng01'],
+    )
+    settings['boot_disk']['datastore_id'] = 'DS_CYBERFUEL'
+    path = tmp_path / 'core-recovery-profiles.json'
+    path.write_text(json.dumps({'profiles': {'lab-dhcp': {
+        'allowed_tenants': [BOOTSTRAP_TENANT_ID], 'settings': settings,
+        'vmid_min': 30000, 'vmid_max': 30010, 'max_live_instances': 3,
+        'max_vcpus': 8, 'max_memory_mb': 16384, 'max_disk_gb': 400,
+        'max_total_vcpus': 16, 'max_total_memory_mb': 32768,
+        'max_total_disk_gb': 800, 'max_concurrent_operations': 2,
+        'self_service_enabled': True,
+        'guest_initialization': 'ubuntu-2404-lab-identity-v1',
+    }}}))
+    monkeypatch.setenv('IACP_TERRAFORM_PROFILES_FILE', str(path))
+    monkeypatch.setattr(profiles, 'cluster_vmids', lambda: set())
+    monkeypatch.setattr(commercial, 'live_capacity', lambda *_: None)
+    return path
+
+
+@pytest.fixture
+def core_prepared(client, auth, sessions, terraform_mode, application, monkeypatch, tmp_path, core_profile):
+    accepted = create(client, auth).json()
+    run_plan(accepted, sessions)
+    token = 'core-recovery-approval-' + 'a' * 40
+    registry = tmp_path / 'core-recovery-credentials.json'
+    with sessions() as session:
+        tenant = session.get(Instance, accepted['instance_id']).tenant_id
+    registry.write_text(json.dumps([{
+        'token_sha256': hashlib.sha256(token.encode()).hexdigest(),
+        'tenant_id': tenant, 'subject': 'infra-review', 'role': 'approver',
+    }]))
+    monkeypatch.setenv('IACP_TENANT_CREDENTIALS_FILE', str(registry))
+    application.dependency_overrides[get_apply_publisher] = lambda: Mock()
+    return accepted, {'Authorization': 'Bearer ' + token}, (
+        f'/v1/instances/{accepted["instance_id"]}/provisioning'
+    )
 from tests.test_terraform import terraform_mode
 from tests.test_terraform import FakeExecutor, run_plan
 
@@ -76,15 +156,25 @@ class WorkerKilled(BaseException):
 
 
 def test_c01_commit_publish_gap_keeps_intent_and_manual_retry_fences_late_delivery(
-        client, auth, sessions, terraform_mode):
+        client, auth, sessions, terraform_mode, commercial_config, store):
     def killed_before_publish(job_id):
         raise WorkerKilled()
 
     with sessions() as s:
         with pytest.raises(WorkerKilled):
-            create_instance(s, Principal(BOOTSTRAP_TENANT_ID, 'bootstrap', 'operator'),
-                            InstanceCreate(name='phase-c-unpublished', image='test-image'),
-                            'phase-c-commit-gap', killed_before_publish)
+            create_core(
+                s,
+                Principal(BOOTSTRAP_TENANT_ID, 'bootstrap', 'operator'),
+                CommercialInstanceCreate.model_validate({
+                    **MINIMAL_EXAMPLE,
+                    'name': 'phase-c-unpublished',
+                    'start_on_create': False,
+                }),
+                'phase-c-commit-gap',
+                killed_before_publish,
+                store,
+                capacity=lambda *_: None,
+            )
     from sqlalchemy import select
     with sessions() as s:
         execution = s.scalar(select(TerraformExecution))
@@ -204,14 +294,14 @@ def test_missing_helper_status_never_satisfies_plan_exit_two(tmp_path, monkeypat
 
 
 def test_c02_mutation_fence_survives_interruption_and_recovery_is_readonly(
-        client, auth, prepared, sessions, monkeypatch):
+        client, auth, core_prepared, sessions, monkeypatch):
     monkeypatch.setenv('IACP_TERRAFORM_APPLY_ENABLED', '1')
-    row = approval(client, prepared).json()
-    assert dispatch(client, prepared, auth, row).status_code == 202
+    row = approval(client, core_prepared).json()
+    assert dispatch(client, core_prepared, auth, row).status_code == 202
     mutations = []
 
     def killed_after_clone():
-        mutations.append(prepared[0]['instance_id'])
+        mutations.append(core_prepared[0]['instance_id'])
         raise WorkerKilled()
 
     executor = ApplyingExecutor(callback=killed_after_clone)
@@ -232,6 +322,8 @@ def test_c02_mutation_fence_survives_interruption_and_recovery_is_readonly(
         current = s.get(TerraformApply, row['approval_id'])
         binding = s.get(TerraformExecution, current.instance_id)
         assert (binding.vmid, binding.state_key, binding.attempt) == original
-        assert current.status == 'completed'
-        assert s.get(Instance, current.instance_id).status == 'ready'
+        # La reconciliación sin evidencia física suficiente conserva el fence;
+        # no puede declarar completed solo por observar una entrega incierta.
+        assert current.status == 'uncertain'
+        assert s.get(Instance, current.instance_id).status == 'failed'
     assert len(mutations) == 1

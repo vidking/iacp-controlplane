@@ -16,7 +16,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from ..lifecycle.certification_binding import binding_digest
 from ..lifecycle.proxmox import PowerError, ProxmoxPower, granted
 from ..lifecycle.service import managed_target
 from ..models import GuestInitialization, Instance, Job, Operation, Tenant, TerraformExecution, utcnow
@@ -150,10 +149,12 @@ def validate_binding(session, row, operation):
         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
     target,approval=managed_target(session,instance)
     execution=session.get(TerraformExecution,instance.id)
+    from .technical_ownership import record as technical_record
+    ownership=technical_record(session, instance, adopt=True)
     mac=(instance.result or {}).get('network',{}).get('mac_address','').lower()
-    if (target.vmid<30000 or target.vmid in {104,106} or not (instance.self_service_policy_id or instance.commercial_revision)
+    if (target.vmid<30000 or target.vmid in {104,106,29000}
             or instance.network_mode!='dhcp' or row.mode not in {MODE, 'ubuntu-2604-lab-identity-v1', 'almalinux-9-lab-identity-v1', 'almalinux-10-lab-identity-v1'} or mac!=row.mac_address
-            or row.provisioning_binding!=binding_digest(instance,execution,approval)):
+            or row.provisioning_binding!=ownership.binding_sha256):
         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
     return instance,target
 
@@ -194,17 +195,18 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                     raise Conflict('INSTANCE_BUSY')
                 target,approval=managed_target(session,instance)
                 execution=session.get(TerraformExecution,instance.id)
+                from .technical_ownership import record as technical_record
+                ownership=technical_record(session, instance, adopt=True)
                 mac=(instance.result or {}).get('network',{}).get('mac_address','').lower()
                 if not re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac):raise Conflict('GUEST_INITIALIZATION_MAC_REQUIRED')
                 operation=Operation(id=str(uuid4()),tenant_id=instance.tenant_id,instance_id=instance.id,
                     kind='instance.network.initialize',status='queued',idempotency_key=key,request_hash=digest,requested_by=principal.subject)
                 session.add(operation);session.flush()
-                from ..models import LabPolicy
                 from .authorization import member
                 profile=member(session,instance,'start').profile_snapshots[instance.network_profile]
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
                     program_sha256=program_for_mode(mode, root=bool(profile.get('root_password_bootstrap')))[1],
-                    provisioning_binding=binding_digest(instance,execution,approval),status='queued')
+                    provisioning_binding=ownership.binding_sha256,status='queued')
                 session.add(row)
                 session.add(Job(id=str(uuid4()),tenant_id=instance.tenant_id,operation_id=operation.id,operation=operation.kind,status='queued'))
                 instance.ip_addresses=[]

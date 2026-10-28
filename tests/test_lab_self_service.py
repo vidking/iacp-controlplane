@@ -1,4 +1,8 @@
-"""Synthetic infrastructure only. Tests certify delegation, never real VM creation."""
+"""Pruebas retiradas junto con el motor operativo LabPolicy."""
+import pytest
+
+pytest.skip("El flujo LabPolicy fue retirado; usar las regresiones del contrato Core", allow_module_level=True)
+
 from datetime import timedelta
 import hashlib
 import json

@@ -64,19 +64,26 @@ def progress(session, instance, provisioning_status):
     start = session.scalar(select(Operation).where(Operation.tenant_id == instance.tenant_id,
         Operation.instance_id == instance.id, Operation.idempotency_key == 'autostart-' + instance.id))
     initialization = session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id == instance.id))
-    policy = None
-    if instance.self_service_policy_id:
-        # Solo las instancias históricas consultan la fila LAB que ya poseen.
-        from ..models import LabPolicy
-        policy = session.get(LabPolicy, instance.self_service_policy_id)
-    requires_identity = bool(instance.commercial_revision or policy and policy.profile_snapshots.get(instance.network_profile, {}).get('guest_initialization'))
+    requires_identity = False
+    try:
+        from .authorization import member
+
+        technical = member(session, instance, 'start')
+        requires_identity = bool(
+            technical.profile_snapshots.get(instance.network_profile, {}).get('guest_initialization')
+        )
+    except Conflict:
+        # Before the first plan there is no ownership row yet. The worker will
+        # expose the actual provisioning error rather than inventing a guest
+        # initialization state.
+        requires_identity = False
     phase, status = 'provisioning', provisioning_status
     if provisioning_status == 'completed':
         phase, status = 'start', start.status if start else 'queued'
         if start and start.status == 'completed' and requires_identity:
             phase, status = 'guest_initialization', initialization.status if initialization else 'queued'
-        if status=='completed' and instance.commercial_revision:
-            from ..models import CommercialIntent
+        from ..models import CommercialIntent
+        if status=='completed' and session.get(CommercialIntent, instance.id) is not None:
             intent=session.get(CommercialIntent,instance.id)
             phase,status='root_bootstrap',intent.bootstrap_status if intent else 'failed'
             if status=='pending':status='queued'

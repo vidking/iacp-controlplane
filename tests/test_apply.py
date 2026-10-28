@@ -16,8 +16,9 @@ from iacp.terraform.config import Allocation, PlanError
 from iacp.terraform.executor import ADDRESS, TerraformExecutor, observed_resource
 from iacp.terraform.locks import instance_lock
 from iacp.terraform.runner import CommandRunner
-from tests.test_instances import SPEC, create, identities
+from tests.test_instances import SPEC, identities
 from tests.test_terraform import allocation_data, plan_json, run_plan, terraform_mode
+from tests.test_terraform import create
 
 
 class ApplyingExecutor:

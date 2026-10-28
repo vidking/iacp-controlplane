@@ -1,3 +1,4 @@
+import inspect
 import os
 from pathlib import Path
 
@@ -7,14 +8,26 @@ from sqlalchemy.exc import IntegrityError
 from ..models import Instance, Job, Operation, TerraformAttempt, TerraformExecution, Tenant, utcnow
 from ..services.instances import event, Conflict
 from .config import Allocation, PlanError, SOURCE_REVISION, allocation_for
+from ..services.ownership_binding import valid_source_revision
 from .executor import TerraformExecutor
 from .locks import ExecutionBusy, instance_lock
 
 
+def _executor_revision_call(method, *args, revision):
+    """Entrega la revisión sellada sin romper dobles de observación antiguos."""
+    parameters = inspect.signature(method).parameters
+    if "revision" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(method).parameters.values()):
+        return method(*args, revision=revision)
+    return method(*args)
+
+
 def initial_execution(session, instance, operation, job, allocation=None):
+    state_namespace = "iacp/tenants"
     execution = TerraformExecution(instance_id=instance.id, job_id=job.id, operation_id=operation.id,
                                    status="queued", attempt=1,
-                                   state_key=f"iacp/lab/tenants/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate",
+                                   state_key=f"{state_namespace}/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate",
                                    allocation=allocation.model_dump() if allocation else None,
                                    vmid=allocation.vm_id if allocation else None,
                                    source_revision=SOURCE_REVISION if allocation else None)
@@ -87,40 +100,44 @@ def _execute_plan(instance_id, job_id, number, sessions, executor, load_allocati
         executor = executor or build_executor()
         with sessions() as session:
             execution = session.get(TerraformExecution, instance_id)
-            if execution.source_revision not in {None, SOURCE_REVISION}:
-                raise PlanError("SOURCE_REVISION_CHANGED")
+            if execution.source_revision is None:
+                raise PlanError("SOURCE_REVISION_REQUIRED")
+            if not valid_source_revision(execution.source_revision):
+                raise PlanError("SOURCE_REVISION_INVALID")
             allocation = Allocation.model_validate(execution.allocation) if execution.allocation else load_allocation(instance)
             if instance.network_profile:
                 from .profiles import load_profile, settings_for
-                profile=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image if instance.commercial_revision else None)
+                profile=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image)
                 actual=allocation.model_dump(exclude={'vm_id','ipv4_cidr','ipv4_gateway','golden_hardware'})
                 if actual != settings_for(profile, allocation.node_name).model_dump():
                     raise PlanError('PROFILE_CONFIGURATION_CHANGED')
             variables = allocation.variables(instance)
-            if instance.self_service_policy_id or instance.commercial_revision:
-                from ..services.authorization import member
-                member(session,instance,"create",current_profiles=True)
-            if instance.commercial_revision and allocation.golden_hardware is None and hasattr(executor,'resolve_golden_hardware'):
+            from ..services.authorization import member
+            member(session,instance,"create",current_profiles=True)
+            if allocation.golden_hardware is None and hasattr(executor,'resolve_golden_hardware'):
                 # Enriquecimiento de una intención nueva antes de sellar su primer plan.
                 if execution.plan_sha256:raise PlanError('GOLDEN_HARDWARE_ALREADY_SEALED')
                 hardware=executor.resolve_golden_hardware(allocation,instance.vcpus)
                 allocation=allocation.model_copy(update={'golden_hardware':hardware})
                 execution.allocation=allocation.model_dump()
-                from ..models import CommercialIntent
-                from ..services.commercial import binding
-                intent=session.get(CommercialIntent,instance.id)
-                intent.execution_binding=binding(instance,execution,intent)
                 variables=allocation.variables(instance)
                 event(session,operation,'golden_hardware_observed','worker:terraform')
             execution.allocation = allocation.model_dump()
-            execution.vmid, execution.source_revision = allocation.vm_id, SOURCE_REVISION
+            execution.vmid = allocation.vm_id
             state_key = execution.state_key
+            source_revision = execution.source_revision
             try:
                 session.commit()
             except IntegrityError:
                 raise PlanError("VMID_ALREADY_RESERVED") from None
-        result = executor.plan(instance_id, number, state_key, allocation, variables, cancelled)
-        executor.prepare_apply(instance_id, number, result.sha256, state_key, allocation.model_dump(), variables)
+        result = _executor_revision_call(
+            executor.plan, instance_id, number, state_key, allocation, variables, cancelled,
+            revision=source_revision,
+        )
+        _executor_revision_call(
+            executor.prepare_apply, instance_id, number, result.sha256, state_key,
+            allocation.model_dump(), variables, revision=source_revision,
+        )
     except PlanError as error:
         error_code = error.code
     except Conflict as error:

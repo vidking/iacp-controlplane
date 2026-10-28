@@ -238,6 +238,31 @@ class TerraformApply(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class TechnicalOwnership(Base):
+    """Vínculo técnico único entre una instancia y su recurso Terraform."""
+    __tablename__ = "technical_ownership"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "state_key", name="uq_technical_ownership_tenant_state"),
+        UniqueConstraint("vmid", name="uq_technical_ownership_vmid"),
+        CheckConstraint("vmid >= 30000 AND vmid NOT IN (104,106,29000)",
+                        name="ck_technical_ownership_disposable_vmid"),
+    )
+    instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    vmid: Mapped[int] = mapped_column(Integer, nullable=False)
+    node: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
+    state_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    binding_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    allocation: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow,
+                                                  onupdate=utcnow, nullable=False)
+
+
 class PowerOwnershipCertificate(Base):
     __tablename__ = "power_ownership_certificates"
     __table_args__ = (

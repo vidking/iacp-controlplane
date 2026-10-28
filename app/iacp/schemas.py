@@ -66,31 +66,6 @@ class AccessProgress(BaseModel):
     error_code: str | None = None
 
 
-class InstanceCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra={"examples": [
-        {"name":"iacp-mvp-dhcp-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp"},
-        {"name":"desarrollo-kvm-01","image":"ubuntu-2404","vcpus":2,"memory_mb":2048,"disk_gb":20,"network_profile":"lab-dhcp", "self_service_policy_id":"00000000-0000-4000-8000-000000000001"}
-    ]})
-    name: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-                      examples=["iacp-mvp-demo-01"], description="Nombre único por tenant. El perfil DHCP omite IPAM; el modo estático conserva la asignación autorizada.")
-    image: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$",
-                       examples=["ubuntu-2404"], description="Perfil de imagen autorizado por el servidor; no una URL o VMID de Proxmox.")
-    vcpus: int = Field(default=2, ge=1, le=64)
-    memory_mb: int = Field(default=2048, ge=512, le=262144, multiple_of=256)
-    disk_gb: int = Field(default=20, ge=8, le=4096)
-    network_profile: str | None = Field(default=None, min_length=1, max_length=63, pattern=r"^[a-z0-9][a-z0-9._-]*$",
-        examples=["lab-dhcp"], description="Perfil autorizado por tenant. DHCP omite IPAM; sin perfil se conserva el flujo estático existente.")
-    node_preference: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.-]*$",
-        description="Preferencia opcional entre los nodos de destino del perfil. Omitir para selección automática.")
-    self_service_policy_id: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$",
-        description="UUID de una política de laboratorio aprobada e independiente. Solo vincula VMs nuevas; nunca adopta recursos existentes.")
-    commercial_context: CommercialContext | None = Field(default=None,
-        description="Referencias opacas del CRM. No incluyen datos personales ni secretos y no conceden autorización técnica.")
-    start_on_create: bool = Field(default=False,
-        description="Solicita start posterior al aprovisionamiento mediante Lifecycle Worker. Requiere política con start; conserva operaciones y fences independientes.")
-    access: RootAccess | None = None
-
-
 class InstanceAccepted(JobAccepted):
     instance_id: str = Field(description="UUID estable de la instancia IACP; nunca un VMID de Proxmox.")
     operation_id: str = Field(description="UUID de la intención asíncrona; consultar GET /v1/operations/{operation_id}.")
@@ -110,7 +85,6 @@ class InstanceResponse(BaseModel):
     image: str
     network_profile: str | None = None
     node_preference: str | None = None
-    self_service_policy_id: str | None = None
     commercial_context: CommercialContext | OrderContext | None = None
     start_on_create: bool = False
     access: AccessProgress | None = None

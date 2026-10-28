@@ -5,7 +5,7 @@ from sqlalchemy import select
 from ..models import CommercialIntent,GuestInitialization,Instance,Job,Operation,Tenant,utcnow
 from ..terraform.locks import instance_lock,ExecutionBusy
 from .bootstrap_secrets import EphemeralSecrets,BootstrapSecretError
-from .commercial import member
+from .technical_ownership import member as technical_member
 from .instances import Conflict,event
 from .jobs import QueueUnavailable
 
@@ -19,7 +19,7 @@ def request(session,instance,principal,key,publish):
     from ..lifecycle.service import managed_target,response
     with instance_lock(session.get_bind(),instance.id):
         instance=session.get(Instance,instance.id,populate_existing=True)
-        member(session,instance,'start')
+        technical_member(session,instance,'start')
         managed_target(session,instance)
         initialization=session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
         if not initialization or initialization.status!='completed' or not instance.ip_addresses:
@@ -58,7 +58,8 @@ def execute(identifier,sessions,store=None,delivery=None):
                 instance=s.get(Instance,instance_id)
                 existing=s.get(CommercialIntent,instance_id)
                 consumed=bool(existing and existing.bootstrap_started_at)
-                row=member(s,instance,'start',current_profiles=not consumed,observation=consumed)
+                technical_member(s,instance,'start',current_profiles=not consumed,observation=consumed)
+                row=existing
                 job=s.scalar(select(Job).where(Job.operation_id==identifier))
                 target,_=managed_target(s,instance)
                 if op.tenant_id!=instance.tenant_id or not job or job.tenant_id!=instance.tenant_id:
@@ -121,7 +122,7 @@ def after_initialization(instance_id,sessions):
     from ..security import Principal
     with sessions() as s:
         instance=s.get(Instance,instance_id)
-        if not instance or not instance.commercial_revision:return
+        if not instance or not s.get(CommercialIntent, instance.id):return
         creation=s.scalar(select(Operation).where(Operation.instance_id==instance.id,Operation.kind=='instance.create'))
         try:request(s,instance,Principal(instance.tenant_id,creation.requested_by,'operator'),
             'bootstrap-'+instance.id,get_commercial_bootstrap_publisher())

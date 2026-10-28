@@ -9,17 +9,10 @@ from ..security import Principal
 
 
 CORE_AUTOMATION_SUBJECT = "iacp-automation:provisioning-api-core"
-COMMERCIAL_AUTOMATION_SUBJECT = "iacp-automation:commercial-g"
 
 
-def technical_principal(tenant_id: str, contract: str) -> Principal:
-    """Devuelve la identidad explícita que consume una ejecución delegada."""
-    subjects = {
-        "provisioning-api-core": CORE_AUTOMATION_SUBJECT,
-        "commercial-g": COMMERCIAL_AUTOMATION_SUBJECT,
-    }
-    try:
-        subject = subjects[contract]
-    except KeyError:
-        raise ValueError("Contrato sin identidad de automatización") from None
-    return Principal(tenant_id, subject, "automation", True)
+def technical_principal(tenant_id: str, contract: str = "provisioning-api-core") -> Principal:
+    """Devuelve la identidad explícita que consume una ejecución Core."""
+    if contract != "provisioning-api-core":
+        raise ValueError("Solo provisioning-api-core puede delegar ejecuciones")
+    return Principal(tenant_id, CORE_AUTOMATION_SUBJECT, "automation", True)

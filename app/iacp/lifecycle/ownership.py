@@ -35,37 +35,21 @@ def mutation_revision() -> str:
 
 
 def instance_ownership(session, instance, approval):
-    """A global source promotion never upgrades historical provisioning evidence."""
-    from sqlalchemy import select
-    from ..models import PowerOwnershipCertificate, TerraformExecution
-    from .certification_binding import binding_digest
+    """Validate one technical ownership record for any source revision.
 
-    revision = ownership_revision()
-    execution = session.get(TerraformExecution, instance.id)
-    if revision is None:
+    ``mutation_revision`` still protects the running Lifecycle provider, but
+    the revision that created this VM is immutable evidence and is not compared
+    with the current release pin.
+    """
+    if ownership_revision() is None:
         raise PowerError("POWER_OWNERSHIP_UNAVAILABLE")
-    scope = os.environ.get("IACP_LIFECYCLE_INSTANCE_IDS", "")
-    delegated = False
-    if instance.self_service_policy_id or getattr(instance,'commercial_revision',None):
-        from ..services.authorization import member
-        from ..services.instances import Conflict
-        try:
-            member(session, instance, "create")
-            delegated = True
-        except Conflict as failure:
-            raise PowerError(str(failure)) from None
-    restricted = bool(scope) or os.environ.get("IACP_LAB_SELF_SERVICE_ENABLED") == "1"
-    if restricted and instance.id not in scope.split(",") and not delegated:
-        raise PowerError("POWER_INSTANCE_NOT_AUTHORIZED")
-    if execution.source_revision in ({revision} | PREVIOUS_POWER_SOURCE_REVISIONS):
-        return None
-    if execution.source_revision != LEGACY_TERRAFORM_POWER_SOURCE:
-        raise PowerError("POWER_SOURCE_REVISION_UNSUPPORTED")
-    certificate = session.scalar(select(PowerOwnershipCertificate).where(
-        PowerOwnershipCertificate.instance_id == instance.id,
-        PowerOwnershipCertificate.approval_id == approval.id,
-        PowerOwnershipCertificate.ownership_revision.in_([revision, *PREVIOUS_POWER_SOURCE_REVISIONS])))
-    if (certificate is None or certificate.source_revision != execution.source_revision
-            or certificate.binding_sha256 != binding_digest(instance, execution, approval)):
-        raise PowerError("POWER_OWNERSHIP_CERTIFICATION_REQUIRED")
-    return certificate.id
+    from ..services.authorization import member
+    from ..services.instances import Conflict
+
+    try:
+        member(session, instance, "start")
+    except Conflict as failure:
+        raise PowerError(str(failure)) from None
+    # PowerExecution retains the nullable legacy certificate column for audit;
+    # the unified record is checked above and does not fabricate a certificate.
+    return None

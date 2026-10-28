@@ -34,38 +34,42 @@ def main():
     administrative = json.loads((ROOT / "docs/openapi-admin.json").read_text())
     required = [
         ('/v1/events', 'get'), ('/v1/observability', 'get'),
+        ('/v1/plans', 'get'), ('/v1/images', 'get'),
+        ('/v1/instances', 'post'), ('/v1/instances', 'get'),
+        ('/v1/instances/{instance_id}', 'get'), ('/v1/instances/{instance_id}', 'delete'),
         ('/v1/instances/{instance_id}/access/verify', 'post'),
-        ("/v1/profiles","get"), ("/v1/lab/usage","get"), ("/v1/lab/policies","post"),
-        ("/v1/lab/policies/{policy_id}/approve","post"), ("/v1/lab/policies/{policy_id}/renew","post"),
-        ("/v1/lab/policies/{policy_id}/revoke","post"), ("/v1/operations","get"),
-        ("/v1/instances/{instance_id}/provision","post"), ("/v1/instances/{instance_id}/retry-provision","post"),
-        ("/v1/instances/{instance_id}/reconcile","post"),
-        ("/v1/instances/{instance_id}/network/discover", "post"),
-        ("/v1/instances/{instance_id}/network/initialize", "post"),
-        ("/v1/instances", "post"), ("/v1/instances", "get"), ("/v1/instances/{instance_id}", "get"),
-        ("/v1/jobs/{job_id}", "get"), ("/v1/operations/{operation_id}", "get"),
-        ("/v1/instances/{instance_id}/provisioning/approvals", "post"),
-        ("/v1/instances/{instance_id}/provisioning/executions", "post"),
-        ("/v1/instances/{instance_id}/provisioning/executions", "get"),
-        ("/v1/instances/{instance_id}/provisioning/executions/{approval_id}/recover", "post"),
-        ("/v1/instances/{instance_id}/power", "get"),
-        ("/v1/instances/{instance_id}/power/start", "post"),
-        ("/v1/instances/{instance_id}/power/shutdown", "post"),
-        ("/v1/instances/{instance_id}/power/reboot", "post"),
-        ("/v1/instances/{instance_id}", "delete"),
-        ("/v1/instances/{instance_id}/provisioning/deletion-plan", "post"),
-        ("/v1/instances/{instance_id}/provisioning/deletion-approval", "post"),
+        ('/v1/instances/{instance_id}/network/discover', 'post'),
+        ('/v1/instances/{instance_id}/network/initialize', 'post'),
+        ('/v1/instances/{instance_id}/power', 'get'),
+        ('/v1/instances/{instance_id}/power/start', 'post'),
+        ('/v1/instances/{instance_id}/power/shutdown', 'post'),
+        ('/v1/instances/{instance_id}/power/reboot', 'post'),
+        ('/v1/jobs/{job_id}', 'get'), ('/v1/operations', 'get'),
+        ('/v1/operations/{operation_id}', 'get'),
+        ('/v1/instances/{instance_id}/provisioning/plan', 'get'),
+        ('/v1/instances/{instance_id}/provisioning/plan/cancel', 'post'),
+        ('/v1/instances/{instance_id}/provisioning/plan/retry', 'post'),
+        ('/v1/instances/{instance_id}/provisioning/approvals', 'post'),
+        ('/v1/instances/{instance_id}/provisioning/executions', 'get'),
+        ('/v1/instances/{instance_id}/provisioning/executions', 'post'),
+        ('/v1/instances/{instance_id}/provisioning/deletion-plan', 'post'),
+        ('/v1/instances/{instance_id}/provisioning/deletion-approval', 'post'),
     ]
     for path, method in required:
-        operation = (administrative if "/provisioning/" in path or (path.startswith("/v1/lab/policies") and method == "post") else api)["paths"][path][method]
+        source = administrative if "/provisioning/" in path else api
+        if path not in source["paths"] or method not in source["paths"][path]:
+            raise ValueError(f"Ruta del contrato ausente: {method.upper()} {path}")
+        operation = source["paths"][path][method]
         if operation.get("security") != [{"HTTPBearer": []}]:
             raise ValueError(f"Contrato sin identidad de servicio: {path}")
     create = api["paths"]["/v1/instances"]["post"]
-    from iacp.schemas import InstanceCreate
+    from iacp.commercial_contract import CommercialInstanceCreate
     for example in (ROOT/'docs/examples/crm').glob('*.json'):
-        InstanceCreate.model_validate_json(example.read_text())
-    if "202" not in create["responses"] or not any(row["name"] == "Idempotency-Key" and row["required"] for row in create["parameters"]):
+        CommercialInstanceCreate.model_validate_json(example.read_text())
+    if "202" not in create["responses"] or not any(row["name"] == "Idempotency-Key" for row in create["parameters"]):
         raise ValueError("Contrato de creación no idempotente/asíncrono")
+    if any(path.startswith("/v1/lab/") for path in api["paths"] | administrative["paths"]):
+        raise ValueError("El contrato activo todavía publica rutas LabPolicy")
     print(json.dumps({"status": "passed", "network_contacted": False, "documents": len(documents),
                       "authenticated_contracts": len(required), "api_version": api["info"]["version"],
                       "api_url": api["servers"][0]["url"]}, sort_keys=True))

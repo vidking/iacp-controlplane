@@ -8,13 +8,12 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ..lifecycle.certification_binding import binding_digest
 from ..lifecycle.service import managed_target
 from ..models import DeletionExecution, Instance, Job, Operation, PowerExecution, TerraformApply, TerraformExecution, Tenant, utcnow
 from ..services.instances import Conflict, event
 from ..services.jobs import QueueUnavailable
 from .apply import fingerprint, not_expired
-from .config import Allocation, PlanError, SOURCE_REVISION
+from .config import Allocation, PlanError
 from .deletion_executor import DeletionExecutor
 from .lifecycle import build_executor
 from .locks import ExecutionBusy, instance_lock, admission_lock
@@ -23,22 +22,14 @@ from .locks import ExecutionBusy, instance_lock, admission_lock
 def gate(instance, session=None):
     if os.environ.get('IACP_TERRAFORM_DELETE_ENABLED') != '1' or os.environ.get('IACP_TERRAFORM_APPLY_ENABLED') != '1':
         raise Conflict('DELETE_DISABLED')
-    try:
-        allowed = {str(UUID(x.strip())) for x in os.environ.get('IACP_DISPOSABLE_INSTANCE_IDS', '').split(',') if x.strip()}
-    except ValueError:
-        raise Conflict('DELETE_ALLOWLIST_INVALID') from None
-    delegated = False
     if session is not None:
         from ..services.guest_identity import active as active_initialization
         if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
-        if getattr(instance,'commercial_revision',None):
+        from ..models import CommercialIntent
+        if session.get(CommercialIntent, instance.id) is not None:
             from ..services.commercial_bootstrap import active as bootstrap_active
             if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
-    if session is not None and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
-        from ..services.authorization import member
-        member(session, instance, 'delete', current_profiles=True)
-        delegated = True
-    if (instance.id not in allowed and not delegated) or instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106}:
+    if instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106, 29000}:
         raise Conflict('DELETE_DISPOSABLE_INSTANCE_REQUIRED')
 
 
@@ -65,10 +56,15 @@ def context(session, row):
     except Conflict:
         raise PlanError('DELETE_BINDING_CHANGED') from None
     execution = session.get(TerraformExecution, instance.id)
+    from ..services.technical_ownership import record as technical_record
+    try:
+        ownership = technical_record(session, original, adopt=True)
+    except Conflict:
+        raise PlanError('DELETE_BINDING_CHANGED') from None
     if ((target.vmid, target.node, target.name) != (row.vmid, row.node, row.name)
-            or execution.source_revision != SOURCE_REVISION or not approval.started_at or not approval.finished_at
-            or binding_digest(original, execution, approval) != row.provisioning_binding
-            or execution.state_key != f'iacp/lab/tenants/{instance.tenant_id}/instances/{instance.id}/terraform.tfstate'):
+            or not approval.started_at or not approval.finished_at
+            or ownership.binding_sha256 != row.provisioning_binding
+            or execution.state_key != ownership.state_key):
         raise PlanError('DELETE_BINDING_CHANGED')
     allocation = Allocation.model_validate(execution.allocation)
     variables = allocation.variables(instance)
@@ -76,6 +72,7 @@ def context(session, row):
         raise PlanError('DELETE_BINDING_CHANGED')
     return {'instance_id': instance.id, 'operation_id': row.operation_id, 'attempt': execution.attempt,
             'provisioning_plan_sha256': execution.plan_sha256, 'state_key': execution.state_key,
+            'source_revision': ownership.source_revision,
             'allocation': execution.allocation, 'variables': variables, 'backend': allocation.backend.arguments(execution.state_key)}
 
 
@@ -94,6 +91,8 @@ def publish_task(session, operation, publish, mode):
 
 
 def plan_request(session, instance, principal, key, publish, *, autonomous=False):
+    if principal.tenant_id != instance.tenant_id:
+        raise Conflict('TENANT_NOT_AUTHORIZED')
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
     digest = fingerprint({'instance_id': instance.id, 'action': 'delete', **({'autonomous': True} if autonomous else {})})
     try:
@@ -110,8 +109,6 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 gate(instance, session)
                 from ..services.authorization import authorize_operation
                 authorize_operation(session, instance, 'delete')
-                if autonomous and not instance.self_service_policy_id and not getattr(instance,'commercial_revision',None):
-                    raise Conflict('LAB_POLICY_REQUIRED')
                 target, approval = managed_target(session, instance)
                 if active_deletion(session, instance.id):
                     raise Conflict('DELETE_OPERATION_ACTIVE')
@@ -121,6 +118,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 if session.scalar(select(TerraformApply.id).where(TerraformApply.instance_id == instance.id,
                         TerraformApply.status.in_(['approved','queued','running','uncertain']))):
                     raise Conflict('APPLY_REQUIRES_RECONCILIATION')
+                from ..services.technical_ownership import binding as technical_binding
                 execution = session.get(TerraformExecution, instance.id)
                 operation = Operation(id=str(uuid4()), instance_id=instance.id, tenant_id=principal.tenant_id,
                     kind='instance.delete', status='queued', idempotency_key=key, request_hash=digest, requested_by=principal.subject)
@@ -130,7 +128,7 @@ def plan_request(session, instance, principal, key, publish, *, autonomous=False
                 row = DeletionExecution(operation_id=operation.id, instance_id=instance.id, status='queued', phase='plan_queued',
                     autonomous=autonomous,
                     vmid=target.vmid, node=target.node, name=target.name,
-                    provisioning_binding=binding_digest(instance, execution, approval))
+                    provisioning_binding=technical_binding(session, instance, adopt=True))
                 session.add(row);session.flush();context(session, row)
                 event(session, operation, 'delete_plan_accepted', principal.subject);heartbeat();session.commit()
                 identifier, resume = operation.id, True

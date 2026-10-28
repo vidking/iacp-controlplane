@@ -13,13 +13,55 @@ import pytest
 from sqlalchemy import func, select
 
 from iacp.api.dependencies import get_plan_publisher
-from iacp.models import Instance, Job, Operation, TerraformAttempt, TerraformExecution
+from iacp.commercial_contract import MINIMAL_EXAMPLE
+from iacp.models import BOOTSTRAP_TENANT_ID, Instance, Job, Operation, TerraformAttempt, TerraformExecution
+from iacp.services import commercial
 from iacp.terraform.config import Allocation, Cancelled, PlanError, SOURCE_REVISION, TERRAFORM_VERSION
 from iacp.terraform.executor import ADDRESS, PlanResult, TerraformExecutor, verify_plan
 from iacp.terraform.lifecycle import execute_plan
 from iacp.terraform.locks import instance_lock
+from iacp.terraform import profiles
 from iacp.terraform.runner import CommandRunner
-from tests.test_instances import SPEC, create, identities
+from tests.test_instances import SPEC, identities
+
+
+CORE_SPEC = {**MINIMAL_EXAMPLE, "name": "test-kvm-terraform", "start_on_create": False}
+
+
+def create(client, headers, key="create-001", spec=None):
+    """Crea por el contrato Core; las variables Terraform siguen siendo sintéticas."""
+    return client.post("https://testserver/v1/instances", headers={**headers, "Idempotency-Key": key},
+                       json=spec or CORE_SPEC)
+
+
+@pytest.fixture(autouse=True)
+def core_profile(monkeypatch, tmp_path):
+    """Perfil técnico mínimo para ejercitar el contrato Core sin políticas LAB."""
+    settings = allocation_data(30000)
+    for key in ("vm_id", "ipv4_cidr", "ipv4_gateway"):
+        settings.pop(key)
+    settings.update(
+        image="ubuntu-2404", template_vm_id=29000, template_node_name="mng01",
+        node_name="mng01", clone_datastore_id="DS_CYBERFUEL",
+        cloudinit_datastore_id="DS_CYBERFUEL", network_mode="dhcp",
+        network_bridge="vmbr0", vlan_id=None, guest_agent_enabled=True,
+        allowed_nodes=["mng01"],
+    )
+    settings["boot_disk"]["datastore_id"] = "DS_CYBERFUEL"
+    path = tmp_path / "core-profiles.json"
+    path.write_text(json.dumps({"profiles": {"lab-dhcp": {
+        "allowed_tenants": [BOOTSTRAP_TENANT_ID], "settings": settings,
+        "vmid_min": 30000, "vmid_max": 30010, "max_live_instances": 3,
+        "max_vcpus": 8, "max_memory_mb": 16384, "max_disk_gb": 400,
+        "max_total_vcpus": 16, "max_total_memory_mb": 32768,
+        "max_total_disk_gb": 800, "max_concurrent_operations": 2,
+        "self_service_enabled": True,
+        "guest_initialization": "ubuntu-2404-lab-identity-v1",
+    }}}))
+    monkeypatch.setenv("IACP_TERRAFORM_PROFILES_FILE", str(path))
+    monkeypatch.setattr(profiles, "cluster_vmids", lambda: set())
+    monkeypatch.setattr(commercial, "live_capacity", lambda *_: None)
+    return path
 
 
 def test_source_revision_is_the_integrated_iac_main():
@@ -73,8 +115,12 @@ class FakeExecutor:
 
 
 @pytest.fixture
-def terraform_mode(monkeypatch):
+def terraform_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("IACP_INSTANCE_EXECUTOR", "terraform")
+    key = tmp_path / "bootstrap-aes.key"
+    key.write_bytes(os.urandom(32))
+    key.chmod(0o600)
+    monkeypatch.setenv("IACP_BOOTSTRAP_AES_KEY_FILE", str(key))
 
 
 def run_plan(accepted, sessions, executor=None, load=None, attempt=1):
@@ -189,16 +235,22 @@ def test_recover_interrupted_attempt_after_lock_release(client, auth, terraform_
 def test_vmid_reservation_prevents_other_instance_using_same_target(client, auth, terraform_mode, sessions):
     first = create(client, auth).json()
     run_plan(first, sessions)
-    second = create(client, auth, key="second", spec={**SPEC, "name": "other-kvm"}).json()
+    second = create(client, auth, key="second", spec={**CORE_SPEC, "name": "other-kvm"}).json()
     fake = run_plan(second, sessions)
-    assert not fake.calls
-    assert execution(client, auth, second).json()["error_code"] == "VMID_ALREADY_RESERVED"
+    assert fake.calls
+    with sessions() as session:
+        first_vmid = session.get(TerraformExecution, first["instance_id"]).vmid
+        second_vmid = session.get(TerraformExecution, second["instance_id"]).vmid
+        assert first_vmid != second_vmid
 
 
-def test_plan_actions_are_tenant_scoped_and_reader_cannot_mutate(client, auth, identities, terraform_mode):
+def test_plan_actions_are_tenant_scoped_and_reader_cannot_mutate(client, auth, identities, terraform_mode, core_profile):
     operator = identities["tenant-a-operator"]["headers"]
     reader = identities["tenant-a-reader"]["headers"]
     other = identities["tenant-b-operator"]["headers"]
+    data = json.loads(core_profile.read_text())
+    data["profiles"]["lab-dhcp"]["allowed_tenants"] = [identities["tenant-a-operator"]["tenant_id"]]
+    core_profile.write_text(json.dumps(data))
     accepted = create(client, operator).json()
     path = f'/v1/instances/{accepted["instance_id"]}/provisioning/plan'
     assert client.get(path, headers=reader).status_code == 403

@@ -43,7 +43,7 @@ def documentation(request, version, *, administrative=False):
         '{{pilot_request_python}}', pformat(pilot['request'], width=88, sort_dicts=False))
     html = html.replace('{{pilot_json}}', escape(body)).replace('{{pilot_curl}}', escape(command))
     html = html.replace('{{pilot_response}}', escape(json.dumps(pilot['accepted'], indent=2)))
-    core = os.environ.get('IACP_CREATION_CONTRACT') in {'commercial-g', 'provisioning-api-core'}
+    core = True
     html = html.replace('{{pilot_contract_note}}', '' if core else '<p class="auth-note">Entorno con contrato histórico: la creación técnica no está habilitada en este runtime.</p>')
     html = html.replace('{{version}}', escape(version))
     html = html.replace('{{scope}}', 'Administración autorizada' if administrative else 'Provisioning API Core · MVP KVM')

@@ -7,7 +7,6 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from ..models import Instance, Job, NetworkDiscovery, Operation, Tenant, TerraformExecution, utcnow
-from ..lifecycle.certification_binding import binding_digest
 from ..lifecycle.service import managed_target
 from .instances import Conflict,event
 from .jobs import QueueUnavailable
@@ -103,7 +102,10 @@ def request_discovery(session,instance,principal,key,publish):
                 session.commit()
             else:
                 target,approval=managed_target(session,instance)
-                binding=binding_digest(instance,session.get(TerraformExecution,instance.id),approval)
+                from .authorization import member
+                member(session, instance, 'start', observation=True)
+                from .technical_ownership import record as technical_record
+                binding=technical_record(session, instance, adopt=True).binding_sha256
                 operation=Operation(id=str(uuid4()),tenant_id=instance.tenant_id,instance_id=instance.id,kind='instance.network.discover',
                                     status='queued',idempotency_key=key,request_hash=digest,requested_by=principal.subject)
                 session.add(operation);session.flush()
@@ -203,7 +205,9 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
                             or instance.network_mode!='dhcp' or operation.kind!='instance.network.discover' or job.operation!=operation.kind):
                         raise Conflict('TENANT_OR_NETWORK_BINDING_CHANGED')
                     target,approval=managed_target(s,instance);execution=s.get(TerraformExecution,instance.id)
-                    if row.provisioning_binding!=binding_digest(instance,execution,approval):raise Conflict('NETWORK_BINDING_CHANGED')
+                    from .technical_ownership import record as technical_record
+                    ownership=technical_record(s, instance, adopt=True)
+                    if row.provisioning_binding!=ownership.binding_sha256:raise Conflict('NETWORK_BINDING_CHANGED')
                     while True:
                         attempt += 1
                         s.refresh(instance)
@@ -279,29 +283,29 @@ def after_power(identifier,sessions):
         if instance.network_mode!='dhcp':return
         initialization_failure=None
         try:
-            policy=None
-            from ..models import LabPolicy
-            policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
-            if instance.commercial_revision:
-                from .commercial import delegation
-                policy=delegation(s,instance,'start')
-            if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
-                from .guest_identity import request_initialization
-                from ..api.dependencies import get_guest_initialization_publisher
-                from ..models import GuestInitialization
-                initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
-                if initialization is None:
+            from ..models import GuestInitialization
+            initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
+            from .authorization import member
+            from .guest_identity import request_initialization
+            from ..api.dependencies import get_guest_initialization_publisher
+            guest_publisher=get_guest_initialization_publisher()
+            if initialization is not None:
+                # Una entrega ya consumida se observa/reentrega con su misma
+                # identidad. No se vuelve a validar el catálogo para ocultar
+                # ni retrasar el seguimiento de red.
+                if initialization.status=='failed' and not initialization.started_at:
+                    previous=s.get(Operation,initialization.operation_id)
+                    request_initialization(s,instance,Principal(instance.tenant_id,previous.requested_by,'operator'),
+                        previous.idempotency_key,guest_publisher,current_profiles=False)
+                elif initialization.status!='completed' and initialization.status!='failed':
+                    guest_publisher(initialization.operation_id)
+            else:
+                technical = member(s, instance, 'start')
+                if technical.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
                     request_initialization(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
-                        'identity-'+instance.id,get_guest_initialization_publisher(),current_profiles=False)
-                elif initialization.status!='completed':
-                    if initialization.status=='failed' and not initialization.started_at:
-                        previous=s.get(Operation,initialization.operation_id)
-                        request_initialization(s,instance,Principal(instance.tenant_id,previous.requested_by,'operator'),
-                            previous.idempotency_key,get_guest_initialization_publisher(),current_profiles=False)
-                    elif initialization.status!='failed':
-                        get_guest_initialization_publisher()(initialization.operation_id)
+                        'identity-'+instance.id,guest_publisher,current_profiles=False)
         except Exception as failure:
-            # Un fallo de policy/delegation o del despacho guest-exec no debe
+            # Un fallo de autorización técnica o del despacho guest-exec no debe
             # suprimir la observación de red independiente y de solo lectura.
             s.rollback()
             initialization_failure=failure

@@ -159,11 +159,11 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
 
 @pytest.mark.parametrize('vmid',[104,106,29000])
 def test_commercial_binding_never_authorizes_protected_resources(sessions,initialized,vmid):
-    from iacp.services.commercial import member,binding
+    from iacp.services.commercial import member
     from iacp.services.instances import Conflict
     accepted,_,_,_=initialized
     with sessions() as s:
         instance=s.get(Instance,accepted.instance_id);execution=s.get(TerraformExecution,instance.id)
         execution.vmid=instance.vmid=vmid
-        row=s.get(CommercialIntent,instance.id);row.execution_binding=binding(instance,execution,row)
-        with pytest.raises(Conflict,match='OWNERSHIP_BINDING_CHANGED'):member(s,instance,'delete')
+        row=s.get(CommercialIntent,instance.id)
+        with pytest.raises(Conflict,match='TECHNICAL_OWNERSHIP_EVIDENCE_REQUIRED'):member(s,instance,'delete')
