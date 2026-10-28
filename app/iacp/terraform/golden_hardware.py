@@ -238,17 +238,25 @@ def parse(raw, vmid, node, vcpus):
         raise PlanError('GOLDEN_HARDWARE_UNSUPPORTED') from None
 
 
-def verify_cpu(actual, variables):
+def verify_cpu(actual, variables, *, allow_historical_hotplugged_zero=False):
     hardware=variables.get('iacp_golden_hardware')
     if not hardware:return
     cpu=actual.get('cpu',[{}])[0]
     expected_vcpus=variables['instance']['cpu_cores']
+    hotplugged=cpu.get('hotplugged')
+    hotplugged_matches = hotplugged == expected_vcpus
+    if (allow_historical_hotplugged_zero and type(hotplugged) is int
+            and hotplugged == 0 and expected_vcpus > 0):
+        # Algunos planes históricos del provider guardaron vcpus como 0,
+        # aunque cores/sockets y el recurso físico sean correctos. Esta
+        # compatibilidad sólo se usa en DELETE histórico, nunca en CREATE.
+        hotplugged_matches = True
     if (cpu.get('type') != hardware['cpu_type'] or sorted(cpu.get('flags') or [])!=sorted(hardware['flags'])
             or cpu.get('numa') is not hardware['numa'] or cpu.get('sockets',1)!=hardware['sockets']
             or cpu.get('cores',0)*cpu.get('sockets',1)!=expected_vcpus
             # bpg/proxmox 0.116.1 llama ``hotplugged`` al atributo Proxmox
             # ``vcpus``. Debe estar presente en el plan sellado y no heredarse.
-            or cpu.get('hotplugged') != expected_vcpus):
+            or not hotplugged_matches):
         raise PlanError('GOLDEN_HARDWARE_PLAN_MISMATCH')
 
 

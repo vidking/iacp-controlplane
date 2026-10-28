@@ -59,7 +59,7 @@ def approved_state_metadata(path):
         raise PlanError("PLAN_INTEGRITY_FAILED", phase="observe.approved_state") from None
 
 
-def verify_plan(plan: dict, variables: dict) -> dict:
+def verify_plan(plan: dict, variables: dict, *, allow_historical_hotplugged_zero=False) -> dict:
     """Aceptar solo creación/no-op de la KVM asignada; nunca adoptar recursos ajenos."""
     instance = variables["instance"]
     if instance["vm_id"] == 104 or instance["template_vm_id"] == 104:
@@ -95,7 +95,8 @@ def verify_plan(plan: dict, variables: dict) -> dict:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
     from .golden_hardware import verify_base_plan, verify_cpu, verify_disk_plan
-    verify_cpu(after,variables)
+    verify_cpu(after, variables,
+               allow_historical_hotplugged_zero=allow_historical_hotplugged_zero)
     verify_base_plan(after,variables)
     if after.get('disk'):
         disk = next((item for item in after['disk']

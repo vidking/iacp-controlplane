@@ -12,13 +12,32 @@ from uuid import UUID
 from urllib.request import build_opener, HTTPSHandler, ProxyHandler
 
 from ..lifecycle.proxmox import NoRedirect, PowerError, ProxmoxPower, Target, granted
-from .config import PlanError
+from .config import PlanError, SOURCE_REVISION
 from ..services.ownership_binding import valid_source_revision
 from .executor import (ADDRESS, TerraformExecutor, digest_file, managed_resources,
                        state_resource, verify_identity, verify_plan, verify_postconditions, write_private)
 from .observation import proxmox_resource
 from .state import S3StateReader
 from ..services.technical_ownership import is_managed_vmid
+
+
+def allow_historical_delete_hardware(context):
+    """Limita la compatibilidad al DELETE de KVM históricas desechables.
+
+    No relaja CREATE, apply, observación ni recursos protegidos. El vínculo
+    criptográfico del plan, ownership, state y la topología siguen siendo
+    comprobados por el flujo normal de eliminación.
+    """
+    variables = context.get('variables') or {}
+    instance = variables.get('instance') or {}
+    source_revision = context.get('source_revision')
+    return (
+        valid_source_revision(source_revision)
+        and source_revision != SOURCE_REVISION
+        and type(instance.get('vm_id')) is int
+        and instance['vm_id'] >= 30000
+        and isinstance(variables.get('iacp_golden_hardware'), dict)
+    )
 
 
 def verify_delete_plan(plan, variables, *, absence_only=False):
@@ -154,13 +173,14 @@ class DeletionExecutor(TerraformExecutor):
             raise PlanError('DELETE_PLAN_INTEGRITY_FAILED') from None
         return workspace, manifest
 
-    def provisioning_plan(self, context, root, env, cancelled):
+    def provisioning_plan(self, context, root, env, cancelled, *, allow_historical_hotplugged_zero=False):
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
                               context['state_key'], context['allocation'], context['variables'],
                               context.get('source_revision'))
         saved = self.workspace(context['instance_id'], context['attempt']) / 'source/stacks/kvm-instance/saved.tfplan'
         plan = self.read_json(['show', '-json', str(saved)], root, env, cancelled, 'delete.provisioning_plan')
-        verify_plan(plan, context['variables'])
+        verify_plan(plan, context['variables'],
+                    allow_historical_hotplugged_zero=allow_historical_hotplugged_zero)
         return plan
 
     def plan_deletion(self, context, cancelled, *, allow_tainted=False):
@@ -210,7 +230,10 @@ class DeletionExecutor(TerraformExecutor):
                     root, env, cancelled, 'delete.provisioning_plan'
                 )
             else:
-                approved = self.provisioning_plan(context, root, env, cancelled)
+                approved = self.provisioning_plan(
+                    context, root, env, cancelled,
+                    allow_historical_hotplugged_zero=allow_historical_delete_hardware(context),
+                )
             if allow_tainted:
                 # En recuperación destructiva el recurso puede conservar la
                 # discrepancia que provocó el taint. Nunca se adopta como
@@ -264,7 +287,10 @@ class DeletionExecutor(TerraformExecutor):
             precondition(env, context['variables'], cancelled)
             root = workspace / 'source/stacks/kvm-instance'
             self.initialize(root, env, cancelled, 'delete.apply')
-            approved = self.provisioning_plan(context, root, env, cancelled)
+            approved = self.provisioning_plan(
+                context, root, env, cancelled,
+                allow_historical_hotplugged_zero=allow_historical_delete_hardware(context),
+            )
             current_resource = state_resource(current.state, context['variables'], allow_tainted=allow_tainted)
             if allow_tainted:
                 verify_identity(current_resource, context['variables']['instance'])
