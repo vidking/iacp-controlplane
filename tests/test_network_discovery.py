@@ -55,7 +55,7 @@ def test_qga_pending_retries_until_dhcp_is_observed(client,auth,sessions,network
 
 @pytest.mark.parametrize('initialization_status',['queued','failed'])
 def test_network_observation_is_independent_from_guest_initialization(client,auth,sessions,network,initialization_status):
-    """QGA can verify DHCP while a separate guest-exec remains incomplete."""
+    """QGA puede verificar DHCP mientras otro guest-exec sigue incompleto."""
     identifier,_=network
     with sessions() as s:
         instance=s.get(Instance,identifier)

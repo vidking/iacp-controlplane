@@ -208,10 +208,10 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
                         attempt += 1
                         s.refresh(instance)
                         if instance.status!='ready':raise Conflict('NETWORK_BINDING_CHANGED')
-                        # Network observation is read-only and independent from
-                        # guest identity/SSH initialization.  QGA can prove a
-                        # DHCP address while a separate guest-exec operation is
-                        # still pending, failed, or awaiting reconciliation.
+                        # La observación de red es de solo lectura e
+                        # independiente de la identidad/inicialización SSH del
+                        # guest. QGA puede demostrar DHCP mientras un guest-exec
+                        # separado sigue pendiente, fallido o en reconciliación.
                         try:
                             result=observer(execution,instance)
                         except Exception as failure:
@@ -265,11 +265,11 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
 
 
 def after_power(identifier,sessions):
-    """Queue independent guest initialization and network observation.
+    """Encola por separado inicialización guest y observación de red.
 
-    A lifecycle operation must never make network visibility depend on the
-    outcome of guest-exec.  Both follow-ups are best-effort and independently
-    auditable; neither one changes power, Terraform, or guest configuration.
+    Una operación Lifecycle nunca debe hacer que la visibilidad de red dependa
+    del resultado de guest-exec. Ambos seguimientos son independientes,
+    auditables y no modifican energía, Terraform ni la configuración del guest.
     """
     from ..security import Principal
     with sessions() as s:
@@ -301,8 +301,8 @@ def after_power(identifier,sessions):
                     elif initialization.status!='failed':
                         get_guest_initialization_publisher()(initialization.operation_id)
         except Exception as failure:
-            # A policy/delegation or guest-exec dispatch failure must not
-            # suppress the independent, read-only network observation below.
+            # Un fallo de policy/delegation o del despacho guest-exec no debe
+            # suprimir la observación de red independiente y de solo lectura.
             s.rollback()
             initialization_failure=failure
 
@@ -312,9 +312,10 @@ def after_power(identifier,sessions):
             operation=s.get(Operation,identifier)
             instance=s.get(Instance,operation.instance_id)
             from ..api.dependencies import get_network_publisher
-            # The power operation is part of the idempotency scope.  A stable
-            # per-instance key would incorrectly reuse a completed discovery
-            # after a later REBOOT and leave a changed DHCP address stale.
+            # La operación de energía forma parte del alcance de idempotencia.
+            # Una clave estable por instancia reutilizaría incorrectamente un
+            # descubrimiento completado tras otro REBOOT y dejaría obsoleta una
+            # dirección DHCP que cambió.
             request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                               'network-after-'+identifier+'-'+operation.id,get_network_publisher())
         except Exception as failure:
