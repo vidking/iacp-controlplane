@@ -396,9 +396,11 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                                 raise Conflict('DHCP_ADDRESS_CONFLICT')
                             row.result=result;row.status=operation.status=job.status='completed';row.finished_at=utcnow()
                             operation.error_code=None
-                            instance.ip_addresses=result['network']['ip_addresses']
-                            instance.network_observation={**result['network'],'observed_at':utcnow().isoformat(),
-                                'identity_initialization':'completed','initialization_operation_id':identifier}
+                            from .network import _observed_observation
+                            instance.network_observation=_observed_observation(instance,{
+                                **result['network'],'observed_at':utcnow().isoformat(),
+                                'identity_initialization':'completed','initialization_operation_id':identifier})
+                            instance.ip_addresses=instance.network_observation['ip_addresses']
                             event(s,operation,'guest_initialization_verified','worker:iac');s.commit();return
                         if time.monotonic()>=deadline:raise Conflict('GUEST_INITIALIZATION_OBSERVATION_TIMEOUT')
                         heartbeat();time.sleep(2)

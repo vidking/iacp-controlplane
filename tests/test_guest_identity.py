@@ -89,7 +89,9 @@ def test_initialization_retries_transient_proxmox_readiness_before_consuming_fen
     fake=FlakyGuest()
     monkeypatch.setattr('iacp.services.guest_identity.time.sleep',lambda _:None)
     execute_initialization(op,sessions,lambda:fake)
-    assert fake.checks==2 and len(fake.calls)==1
+    # The initializer checks once before consuming the one-shot fence and
+    # once immediately before dispatching it.
+    assert fake.checks==3 and len(fake.calls)==1
     assert client.get('/v1/operations/'+op,headers=auth).json()['normalized_status']=='completed'
 
 

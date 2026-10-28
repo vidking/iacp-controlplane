@@ -2,8 +2,8 @@
 from unittest.mock import Mock
 import pytest
 from sqlalchemy import select
-from iacp.models import BOOTSTRAP_TENANT_ID,Instance,TerraformExecution,Operation,NetworkDiscovery
-from iacp.services.network import agent_addresses,execute_discovery
+from iacp.models import BOOTSTRAP_TENANT_ID,Instance,TerraformExecution,Operation,NetworkDiscovery,utcnow
+from iacp.services.network import agent_addresses,after_power,execute_discovery
 from tests.power_helpers import managed_instance
 from tests.test_instances import identities
 
@@ -19,12 +19,11 @@ def network(sessions,monkeypatch):
 def request(client,headers,identifier,key='discover-one'):
     return client.post(f'/v1/instances/{identifier}/network/discover',headers={**headers,'Idempotency-Key':key},json={})
 
-@pytest.mark.parametrize('observed',[False,True])
-def test_agent_pending_never_fails_instance_and_replay_never_observes_twice(client,auth,sessions,network,observed):
+def test_agent_observation_completes_once_and_replay_never_observes_twice(client,auth,sessions,network):
     identifier,publish=network
     r=request(client,auth,identifier);assert r.status_code==202,r.text
     op=r.json()['operation_id'];publish.assert_called_once_with(op)
-    result={'status':'observed' if observed else 'pending','ip_addresses':['192.0.2.50'] if observed else [],'source':'qemu-guest-agent'}
+    result={'status':'observed','ip_addresses':['192.0.2.50'],'source':'qemu-guest-agent'}
     observer=Mock(return_value=result)
     execute_discovery(op,sessions,observer);execute_discovery(op,sessions,observer)
     observer.assert_called_once()
@@ -33,6 +32,79 @@ def test_agent_pending_never_fails_instance_and_replay_never_observes_twice(clie
     assert data['status']=='ready' and data['ip_addresses']==result['ip_addresses']
     assert data['result']['network']=={'mac_address':'aa:bb:cc:dd:ee:ff'}
     assert client.get('/v1/operations/'+op,headers=auth).json()['network']['status']==result['status']
+
+
+def test_qga_pending_retries_until_dhcp_is_observed(client,auth,sessions,network):
+    identifier,_=network
+    op=request(client,auth,identifier,key='discover-retry').json()['operation_id']
+    observer=Mock(side_effect=[
+        {'status':'pending','ip_addresses':[],'source':'qemu-guest-agent','reason':'GUEST_AGENT_UNAVAILABLE'},
+        {'status':'pending','ip_addresses':[],'source':'qemu-guest-agent','reason':'DHCP_LEASE_PENDING'},
+        {'status':'observed','ip_addresses':['192.0.2.51'],'source':'qemu-guest-agent'},
+    ])
+    execute_discovery(op,sessions,observer,timeout=30,pause=lambda _:None)
+    assert observer.call_count==3
+    data=client.get('/v1/instances/'+identifier,headers=auth).json()
+    assert data['ip_addresses']==['192.0.2.51']
+    assert data['network_observation']['current_ip_verified'] is True
+    assert data['network_observation']['attempt']==3
+    assert client.get('/v1/operations/'+op,headers=auth).json()['status']=='completed'
+
+
+def test_qga_timeout_preserves_last_ip_as_unverified_history(client,auth,sessions,network):
+    identifier,_=network
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        instance.ip_addresses=['192.0.2.50']
+        instance.network_observation={'status':'observed','ip_addresses':['192.0.2.50'],
+            'current_ip_verified':True,'observed_at':'2026-10-27T00:00:00+00:00'}
+        s.commit()
+    op=request(client,auth,identifier,key='discover-timeout').json()['operation_id']
+    observer=Mock(return_value={'status':'pending','ip_addresses':[],'source':'qemu-guest-agent',
+        'reason':'GUEST_AGENT_UNAVAILABLE'})
+    execute_discovery(op,sessions,observer,timeout=0,pause=lambda _:None)
+    data=client.get('/v1/instances/'+identifier,headers=auth).json()
+    assert data['ip_addresses']==[]
+    assert data['network_observation']['status']=='pending'
+    assert data['network_observation']['current_ip_verified'] is False
+    assert data['network_observation']['last_known_ip_addresses']==['192.0.2.50']
+    operation=client.get('/v1/operations/'+op,headers=auth).json()
+    assert operation['status']=='failed' and operation['error_code']=='NETWORK_DISCOVERY_TIMEOUT'
+
+
+def test_reboot_may_replace_verified_dhcp_address(client,auth,sessions,network):
+    identifier,_=network
+    first=request(client,auth,identifier,key='discover-before-reboot').json()['operation_id']
+    execute_discovery(first,sessions,Mock(return_value={
+        'status':'observed','ip_addresses':['192.0.2.50'],'source':'qemu-guest-agent'}))
+    second=request(client,auth,identifier,key='discover-after-reboot').json()['operation_id']
+    execute_discovery(second,sessions,Mock(return_value={
+        'status':'observed','ip_addresses':['192.0.2.51'],'source':'qemu-guest-agent'}))
+    data=client.get('/v1/instances/'+identifier,headers=auth).json()
+    assert data['ip_addresses']==['192.0.2.51']
+    assert data['network_observation']['previous_ip_addresses']==['192.0.2.50']
+
+
+def test_followup_dispatch_failure_keeps_last_ip_as_history(sessions,network,monkeypatch):
+    identifier,_=network
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        instance.self_service_policy_id='fixture-policy'
+        instance.ip_addresses=['192.0.2.50']
+        instance.network_observation={'status':'observed','ip_addresses':['192.0.2.50'],
+            'current_ip_verified':True,'observed_at':utcnow().isoformat()}
+        power=Operation(id='power-followup',tenant_id=instance.tenant_id,instance_id=identifier,
+            kind='instance.power.reboot',status='completed',idempotency_key='reboot-followup',
+            request_hash='a'*64,requested_by='bootstrap')
+        s.add(power);s.commit()
+    monkeypatch.setattr('iacp.api.dependencies.get_network_publisher',lambda:Mock(side_effect=RuntimeError('queue')))
+    after_power('power-followup',sessions)
+    with sessions() as s:
+        instance=s.get(Instance,identifier)
+        assert instance.ip_addresses==[]
+        assert instance.network_observation['status']=='pending'
+        assert instance.network_observation['reason']=='NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED'
+        assert instance.network_observation['last_known_ip_addresses']==['192.0.2.50']
 
 def test_discovery_denies_anonymous_reader_other_tenant_and_overrides(client,auth,network,identities):
     identifier,publish=network

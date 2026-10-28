@@ -124,7 +124,7 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     import paramiko
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives import serialization
-    from iacp.services.secure_bootstrap import SecureSSHBootstrap,COMMAND
+    from iacp.services.secure_bootstrap import SecureSSHBootstrap,COMMAND,PROGRAM
     from iacp.services.guest_identity import GuestClient
     from types import SimpleNamespace
     keyfile=tmp_path/'fixture_key';keyfile.write_text('fixture-key-never-used');keyfile.chmod(0o600)
@@ -144,14 +144,17 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     monkeypatch.setattr(paramiko,'SSHClient',lambda:ssh)
     secret=specification().access.root_password.get_secret_value()
     result=SecureSSHBootstrap().apply(SimpleNamespace(id='iid',ip_addresses=['192.0.2.10'],image=image),
-        SimpleNamespace(path='/fixture'),'R'*43,secret,[],username)
+        SimpleNamespace(path='/fixture'),'R'*43,secret,[host],username)
     assert result['status']=='completed' and result['root_ssh_password_enabled'] is True
     assert secret not in COMMAND and secret not in str(ssh.connect.call_args)
     assert 'password' not in ssh.connect.call_args.kwargs
-    assert json.loads(stdin.write.call_args.args[0])['password']==secret
+    payload=json.loads(stdin.write.call_args.args[0])
+    assert payload['password']==secret and payload['ssh_public_keys']==[host]
     assert json.loads(stdin.write.call_args.args[0])['image_id']==image
     assert secret not in str(ssh.exec_command.call_args)
     assert isinstance(ssh.set_missing_host_key_policy.call_args.args[0],paramiko.RejectPolicy)
+    assert "os.chmod(ssh_directory,0o700)" in PROGRAM
+    assert "os.chmod(path.parent,0o700)" in PROGRAM
 
 
 @pytest.mark.parametrize('vmid',[104,106,29000])

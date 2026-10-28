@@ -57,8 +57,8 @@ def test_discovery_dispatches_real_redis_message_and_persists_pending_without_fa
             message.ack()
         finally:queue.close()
     observer=Mock(return_value={'status':'pending','source':'qemu-guest-agent','ip_addresses':[]})
-    execute_discovery(result['operation_id'],sessions,observer)
+    execute_discovery(result['operation_id'],sessions,observer,timeout=0,pause=lambda _:None)
     with sessions() as s:
-        assert s.get(Operation,result['operation_id']).status=='completed'
+        assert s.get(Operation,result['operation_id']).status=='failed'
         assert s.get(Instance,identifier).status=='ready'
         assert s.get(Instance,identifier).network_observation['status']=='pending'
