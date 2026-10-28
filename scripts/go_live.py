@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Operator promotion driver. No schema rollback, state mutation or direct PVE POST.
+"""Driver de promoción y mantenimiento del IACP Control Plane.
 
-Approvals are externally reviewed change records, never inferred from a CLI flag.
-The explicit first-start phase uses IACP only. Failed promotion never reopens
-admission automatically. Resume a stage only after reviewing its journal.
+En producción, las acciones siguen requiriendo registros de cambio revisados.
+En el LAB MNG autorizado, el perfil privado del host habilita únicamente las
+acciones operativas explícitas y genera su propia evidencia auditable. La fase
+first-start usa IACP; una promoción fallida nunca reabre admisión por sí sola.
 """
 import argparse
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import socket
@@ -28,6 +30,11 @@ HEAD = "0014_allow_historical_kvm_106"
 SOURCE = "b517c9bb67a9e3c800f0c3657c56224c2b8f80aa"
 ARCHIVE = "68ddafc66df5a96cd3e22165658a273446d9d0f9fb46115f2e065034c2ddf2a3"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
+HOST_EXECUTION_PROFILE = Path("/etc/iacp/execution-profile.json")
+LAB_AUTOMATED_ACTIONS = frozenset({
+    "deploy", "promote-env", "recover-queued-guest-init",
+    "migrate-technical-ownership",
+})
 
 
 def require(condition, message):
@@ -67,6 +74,70 @@ def digest(path):
 
 def stamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def local_os_actor():
+    """Identidad efectiva del proceso; nunca toma el actor de un argumento."""
+    uid = os.geteuid()
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        name = "uid-" + str(uid)
+    return f"os:{uid}:{name}"[:128]
+
+
+def validate_host_execution_profile(profile, *, owner_uid, mode, effective_uid,
+                                    hostname, actual_hostname):
+    """Valida el perfil sellado sin aceptar selección desde el cliente."""
+    require(owner_uid == 0 and not mode & 0o077,
+            "Host execution profile must be root-owned and private")
+    require(effective_uid == 0,
+            "LAB execution requires the authorized OS identity")
+    require(
+        isinstance(profile, dict)
+        and set(profile) == {
+            "version", "environment", "cluster", "control_plane", "hostname", "enabled"
+        }
+        and profile["version"] == 1
+        and profile["environment"] == "lab"
+        and profile["cluster"] == "MNG"
+        and profile["control_plane"] == "VM104"
+        and profile["hostname"] == hostname == actual_hostname
+        and profile["enabled"] is True,
+        "Host execution profile is not the authorized MNG LAB profile",
+    )
+    return {"environment": "lab", "source": "host-execution-profile",
+            "cluster": "MNG", "control_plane": "VM104", "hostname": hostname}
+
+
+def host_execution_profile():
+    """Lee el perfil LAB solo desde la configuración privada fija del host.
+
+    La ausencia del archivo conserva el camino corporativo. Un archivo
+    presente pero inválido falla cerrado; ningún argumento o variable del
+    cliente puede seleccionar LAB.
+    """
+    try:
+        path = HOST_EXECUTION_PROFILE
+        stat = path.lstat()
+    except FileNotFoundError:
+        return {"environment": "production", "source": "default"}
+    require(path.is_file() and not path.is_symlink(),
+            "Invalid host execution profile")
+    try:
+        profile = json.loads(path.read_text(encoding="utf8"))
+    except (OSError, UnicodeError, ValueError) as error:
+        raise RuntimeError("Invalid host execution profile") from error
+    result = validate_host_execution_profile(
+        profile,
+        owner_uid=stat.st_uid,
+        mode=stat.st_mode,
+        effective_uid=os.geteuid(),
+        hostname=profile.get("hostname") if isinstance(profile, dict) else None,
+        actual_hostname=socket.gethostname(),
+    )
+    result["source"] = str(path)
+    return result
 
 
 def private_json(path, value):
@@ -178,6 +249,7 @@ class Promotion:
     def __init__(self, manifest, output):
         self.m = manifest
         self.output = output
+        self.execution_profile = host_execution_profile()
         self.env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
         self.env.update(COMPOSE_ANSI="never")
         require(manifest["project"] == "iacp-controlplane", "Unexpected Compose project")
@@ -278,15 +350,23 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         desplegado primero el candidato ni de que la imagen activa conozca el
         nuevo comando.
         """
-        change = self.approve("recover-queued-guest-init")
-        require(request["actor"] == change["actor"], "Operator identity differs from change record")
-        require(request["change_reference"] == change["reference"],
-                "Change reference differs from change record")
+        change = self.authorize("recover-queued-guest-init")
+        if self.execution_profile.get("environment") == "lab":
+            request = {
+                **request,
+                "actor": request.get("actor") or change["actor"],
+                "change_reference": request.get("change_reference") or change["reference"],
+            }
+        else:
+            require(request.get("actor") == change["actor"],
+                    "Operator identity differs from change record")
+            require(request.get("change_reference") == change["reference"],
+                    "Change reference differs from change record")
         before = self.snapshot()
         require(before["schema"] == [HEAD], "Recovery requires the current schema head")
         check_queued_guest_recovery_scope(before, request)
         self.workers_idle(lifecycle=True)
-        source = (ROOT / "scripts/recover_queued_guest_init.py").read_text(encoding="utf8")
+        source = (ROOT / "app/iacp/services/guest_recovery.py").read_text(encoding="utf8")
         payload = json.dumps(request, sort_keys=True)
         code = source + "\nrun_from_json(" + repr(payload) + ")\n"
         result = json.loads(self.exec_python("api", code))
@@ -334,9 +414,39 @@ with get_session_factory()() as session:
         self.evidence("approval", {"action": action, "record_sha256": record["sha256"], "actor": change["actor"], "reference": change["reference"]})
         return change
 
+    def authorize(self, action):
+        """Autoriza según el entorno sellado del host, sin debilitar producción."""
+        profile = getattr(self, "execution_profile", None)
+        if profile is None:
+            profile = host_execution_profile()
+        if profile.get("environment") == "lab" and action in LAB_AUTOMATED_ACTIONS:
+            actor = local_os_actor()
+            reference = f"lab:{socket.gethostname()}:{self.m['release']}:{action}"
+            result = {
+                "approved": False,
+                "authorized": True,
+                "authorization_source": "host-execution-profile",
+                "actor": actor,
+                "reference": reference,
+                "hostname": socket.gethostname(),
+                "project": self.m["project"],
+                "release": self.m["release"],
+                "actions": [action],
+                "external_writers_excluded": True,
+            }
+            self.evidence("lab-authorization", {
+                "actor": actor,
+                "action": action,
+                "release": self.m["release"],
+                "authorization_source": "host-execution-profile",
+                "result": "authorized",
+            })
+            return result
+        return self.approve(action)
+
     def attest_root_transport(self):
         """Install only the deterministic TLS assertion; preserve routing/RBAC."""
-        self.approve('attest-root-transport')
+        self.authorize('attest-root-transport')
         reference=self.m['tls_dynamic_file'];candidate=self.m['root_transport_configuration']
         require(digest(reference['path'])==reference['sha256'], 'Active TLS routing changed')
         require(digest(candidate['path'])==candidate['sha256'], 'Transport candidate checksum mismatch')
@@ -537,7 +647,7 @@ with get_session_factory()() as session:
         return allowed
 
     def publish(self):
-        self.approve("publish-api")
+        self.authorize("publish-api")
         self.preflight()
         self.verify()
         require(self.canonical() or ("compose.public.yaml" in self.m["compose_files"] and "compose.tls.yaml" in self.m["compose_files"]), "TLS/proxy configuration missing")
@@ -729,7 +839,7 @@ with get_session_factory()() as session:
         return controls
 
     def promote(self):
-        change=self.approve("deploy")
+        change=self.authorize("deploy")
         before = self.preflight()
         recovery_ids=self.review_recovery_deployment(change,before)
         current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
@@ -842,7 +952,7 @@ with get_session_factory()() as s:
 
     def activate_core(self):
         """Habilita el contrato técnico con auditoría del operador."""
-        self.approve('activate-core')
+        self.authorize('activate-core')
         self.preflight()
         self.verify(admission=0, lifecycle=0)
         self.flags(admission=1, lifecycle=1, deletion=1)
@@ -856,7 +966,7 @@ with get_session_factory()() as s:
         })
 
     def admit(self):
-        change = self.approve('enable-admission')
+        change = self.authorize('enable-admission')
         self.preflight()
         self.verify()  # Idle, admission=0, Lifecycle=0; does not need VM106 activation.
         review = self.operator_review('admission_review', change)
@@ -945,7 +1055,7 @@ print('REVIEWED_DISPOSABLE_IDENTITIES')
         self.exec_python('api',code)
 
     def activate_pilot(self):
-        change=self.approve('activate-pilot')
+        change=self.authorize('activate-pilot')
         self.verify(admission=1,lifecycle=0)
         review=self.operator_review('pilot_review',change)
         require(review.get('lab_network_authorized') is True,'Lab network authorization required')
@@ -998,7 +1108,7 @@ print('PILOT_OWNERSHIP_NETWORK_STATE_VALID')
         self.evidence('pilot-activated',{'instance_ids':identifiers,'vm106_authorized':False,'apply':1})
 
     def enable_delete(self):
-        change = self.approve('enable-delete')
+        change = self.authorize('enable-delete')
         self.preflight()
         self.verify()
         review = self.operator_review('deletion_review', change)
@@ -1040,7 +1150,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         return report
 
     def certify(self, *, record=False):
-        change = self.approve("record-certificate" if record else "validate-certificate")
+        change = self.authorize("record-certificate" if record else "validate-certificate")
         self.verify()
         request = json.loads(Path(self.m["expectations_file"]).read_text())
         require(request["actor"] == change["actor"] and request["change_reference"] == change["reference"], "Certification actor/change mismatch")
@@ -1058,7 +1168,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         self.evidence("certificate", result)
 
     def expectations(self):
-        change = self.approve("validate-certificate")
+        change = self.authorize("validate-certificate")
         self.verify()
         result = json.loads(self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T",
             "-e", "CERT_ACTOR=" + change["actor"], "-e", "CERT_CHANGE=" + change["reference"],
@@ -1068,7 +1178,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         self.evidence("expectations", {"sha256": digest(self.m["expectations_file"])})
 
     def activate(self):
-        self.approve("activate-lifecycle")
+        self.authorize("activate-lifecycle")
         controls = self.activation_controls()
         allocated = str(ipaddress.ip_interface(self.state()["assigned_ipv4_cidr"]).ip)
         require(ipaddress.ip_address(allocated).is_global and allocated == controls["assigned_public_ip"], "Assigned public IP is not validated")
@@ -1103,7 +1213,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         return token, cookie
 
     def first_start(self):
-        self.approve("first-start")
+        self.authorize("first-start")
         controls = self.activation_controls()
         intent_path = Path(self.m["start_intent_file"])
         before = self.verify(admission=1, lifecycle=1, idle=not intent_path.exists())
@@ -1156,7 +1266,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
                                                "power_state": "running", "guest_ready": None})
 
     def rollback(self):
-        self.approve("functional-rollback")
+        self.authorize("functional-rollback")
         # API closes admission first. Known UPIDs keep observing with lifecycle=0.
         # Do not stop a worker while it may still be observing a native task.
         self.flags(admission=0, lifecycle=0, deletion=0)
@@ -1193,9 +1303,12 @@ def main():
             except (AttributeError, TypeError, ValueError) as error:
                 raise RuntimeError(field + " must be a canonical UUID") from error
             require(canonical == value, field + " must be a canonical UUID")
-        require(args.vmid == 30060, "Only VMID 30060 is approved for this recovery action")
-        require(args.operator and len(args.operator) <= 128, "Operator identity is required")
-        require(args.change_reference and len(args.change_reference) <= 256, "Change reference is required")
+        require(args.vmid is not None and args.vmid >= 30000,
+                "A managed VMID is required for this recovery action")
+        if args.operator is not None:
+            require(len(args.operator) <= 128, "Operator identity is invalid")
+        if args.change_reference is not None:
+            require(len(args.change_reference) <= 256, "Change reference is invalid")
         recovery_request = {
             **values,
             "vmid": args.vmid,

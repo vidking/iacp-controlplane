@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
         # These authenticated handlers cannot submit infrastructure mutations:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
-            r'/v1/instances/[a-f0-9-]{36}/(?:provisioning/deletions/[a-f0-9-]{36}/(?:cancel|recover)|provisioning/executions/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
+            r'/v1/instances/[a-f0-9-]{36}/(?:provisioning/deletions/[a-f0-9-]{36}/(?:cancel|recover)|provisioning/executions/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|provisioning/guest-initialization/recover|network/discover|reconcile)', request.url.path)
         if re.match(r'/v1/instances/[^/]+/terraform(?:/|$)', request.url.path):
             # Removed HTTP routes stay absent even while admission is drained.
             response = JSONResponse(status_code=404, content={"detail": "Not Found"})

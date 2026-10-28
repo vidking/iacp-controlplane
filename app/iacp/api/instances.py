@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_session
 from ..models import Instance, Operation
-from ..schemas import ErrorResponse, InstanceResponse, NetworkAccepted, PowerRequest
-from ..security import Principal, authorize, authorize_write
+from ..schemas import (ErrorResponse, GuestInitializationRecoveryAccepted,
+                       GuestInitializationRecoveryRequest, InstanceResponse,
+                       NetworkAccepted, PowerRequest)
+from ..security import Principal, authorize, authorize_administration, authorize_write
 from ..services.instances import Conflict
 from ..services.jobs import QueueUnavailable
 from .dependencies import get_guest_initialization_publisher
@@ -80,6 +82,37 @@ def initialize_network(instance_id: str,principal: Annotated[Principal,Depends(a
     try:return request_initialization(session,row,principal,key,publish)
     except Conflict as error:raise HTTPException(409,str(error)) from None
     except QueueUnavailable:raise HTTPException(503,'GUEST_INITIALIZATION_DISPATCH_UNCONFIRMED; repeat the same key') from None
+
+
+@router.post('/{instance_id}/provisioning/guest-initialization/recover',
+    status_code=200, response_model=GuestInitializationRecoveryAccepted,
+    operation_id='recoverQueuedGuestInitialization',
+    tags=['provisioning-administration'],
+    dependencies=[Depends(authorize_administration)],
+    responses={404:{'model':ErrorResponse},409:{'model':ErrorResponse},503:{'model':ErrorResponse}},
+    description='Cancela una Guest Initialization queued que nunca consumió guest-exec. '
+    'Requiere identidad administrativa operator del tenant, ownership técnico, UUIDs exactos, '
+    'locks exclusivos, Redis/Celery inactivos y ausencia de operaciones concurrentes. '
+    'La operación es idempotente; una entrega Celery tardía observa el estado terminal y no ejecuta comandos.')
+def recover_guest_initialization(instance_id: str,
+    body: GuestInitializationRecoveryRequest,
+    principal: Annotated[Principal, Depends(authorize_write)],
+    session: Annotated[Session, Depends(get_session)]):
+    from .power import owned
+    from ..services.guest_recovery import recover_queued_initialization
+    row = owned(session, principal, instance_id)
+    try:
+        result = recover_queued_initialization(session, row, principal,
+                                               body.operation_id, body.job_id)
+        return GuestInitializationRecoveryAccepted(
+            instance_id=result['instance_id'], operation_id=result['operation_id'],
+            job_id=result['job_id'], status='failed',
+            error_code='GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH',
+            event_code='guest_initialization_cancelled_before_dispatch',
+            changed=result['changed'], already_completed=result.get('already_completed', False),
+        )
+    except Conflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
 
 
 @router.post('/{instance_id}/access/verify', status_code=202, response_model=NetworkAccepted,

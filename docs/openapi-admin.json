@@ -1181,6 +1181,79 @@
         "title": "ExecutionResponse",
         "type": "object"
       },
+      "GuestInitializationRecoveryAccepted": {
+        "properties": {
+          "already_completed": {
+            "default": false,
+            "title": "Already Completed",
+            "type": "boolean"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "error_code": {
+            "const": "GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH",
+            "title": "Error Code",
+            "type": "string"
+          },
+          "event_code": {
+            "const": "guest_initialization_cancelled_before_dispatch",
+            "title": "Event Code",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "failed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "operation_id",
+          "job_id",
+          "status",
+          "error_code",
+          "event_code",
+          "changed"
+        ],
+        "title": "GuestInitializationRecoveryAccepted",
+        "type": "object"
+      },
+      "GuestInitializationRecoveryRequest": {
+        "additionalProperties": false,
+        "description": "Identidad exacta de una inicialización que nunca fue despachada.",
+        "properties": {
+          "job_id": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "job_id"
+        ],
+        "title": "GuestInitializationRecoveryRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -6382,6 +6455,155 @@
         "summary": "Resolve",
         "tags": [
           "provisioning-approvals"
+        ]
+      }
+    },
+    "/v1/instances/{instance_id}/provisioning/guest-initialization/recover": {
+      "post": {
+        "description": "Cancela una Guest Initialization queued que nunca consumió guest-exec. Requiere identidad administrativa operator del tenant, ownership técnico, UUIDs exactos, locks exclusivos, Redis/Celery inactivos y ausencia de operaciones concurrentes. La operación es idempotente; una entrega Celery tardía observa el estado terminal y no ejecuta comandos.",
+        "operationId": "recoverQueuedGuestInitialization",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuestInitializationRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestInitializationRecoveryAccepted"
+                }
+              }
+            },
+            "description": "Consulta completada"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Unauthorized"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidad ausente o inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Write permission required"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Rol, tenant o permiso insuficiente"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Instance not found"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Recurso inexistente o no visible para el tenant"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "INSTANCE_BUSY"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicto de intención, estado, ownership o capacidad"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Request incompatible con el schema; datos rechazados no se reflejan"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "respuesta_sintetica": {
+                    "summary": "Respuesta de ejemplo; identificadores sintéticos",
+                    "value": {
+                      "detail": "Admission drained"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Admisión cerrada, persistencia o dependencia no disponible"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recover Guest Initialization",
+        "tags": [
+          "instances",
+          "provisioning-administration"
         ]
       }
     },

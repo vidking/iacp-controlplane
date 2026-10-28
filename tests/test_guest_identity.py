@@ -21,7 +21,9 @@ from iacp.models import (
     BOOTSTRAP_TENANT_ID,
     GuestInitialization,
     Instance,
+    Job,
     Operation,
+    OperationEvent,
     TerraformExecution,
 )
 from iacp.services.guest_identity import (
@@ -119,6 +121,68 @@ def test_core_initializer_is_single_use_and_idempotent(client, auth, guest, sess
         row = session.get(GuestInitialization, operation_id)
         assert instance.ip_addresses == ["192.0.2.10"]
         assert row.status == "completed" and row.started_at is not None
+
+
+def test_administrative_api_cancels_queued_initialization_without_guest_exec(
+        client, auth, guest, sessions, monkeypatch):
+    accepted = accept(client, auth, guest, key="admin-recovery")
+    body = accepted.json()
+    monkeypatch.setattr(
+        "iacp.services.guest_recovery.assert_broker_and_workers_idle",
+        lambda: {"redis": True, "workers": {}},
+    )
+    path = f"/v1/instances/{guest.id}/provisioning/guest-initialization/recover"
+    response = client.post(path, headers=auth, json={
+        "operation_id": body["operation_id"], "job_id": body["job_id"],
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["changed"] is True
+    assert result["status"] == "failed"
+    assert result["error_code"] == "GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH"
+
+    replay = client.post(path, headers=auth, json={
+        "operation_id": body["operation_id"], "job_id": body["job_id"],
+    })
+    assert replay.status_code == 200 and replay.json()["already_completed"] is True
+    with sessions() as session:
+        initialization = session.get(GuestInitialization, body["operation_id"])
+        operation = session.get(Operation, body["operation_id"])
+        job = session.get(Job, body["job_id"])
+        events = session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id == body["operation_id"],
+            OperationEvent.code == "guest_initialization_cancelled_before_dispatch",
+        )).all()
+        assert initialization.status == operation.status == job.status == "failed"
+        assert initialization.started_at is None and initialization.pid is None
+        assert len(events) == 1
+
+
+def test_guest_recovery_requires_administrative_operator(
+        client, auth, guest, sessions, tmp_path, monkeypatch):
+    accepted = accept(client, auth, guest, key="admin-recovery-rbac")
+    body = accepted.json()
+    token = "c" * 64
+    registry = tmp_path / "credentials.json"
+    registry.write_text(json.dumps([{
+        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+        "subject": "crm-operator",
+        "tenant_id": BOOTSTRAP_TENANT_ID,
+        "role": "operator",
+        "administration": False,
+    }]))
+    monkeypatch.setenv("IACP_TENANT_CREDENTIALS_FILE", str(registry))
+    monkeypatch.setattr(
+        "iacp.services.guest_recovery.assert_broker_and_workers_idle",
+        lambda: {"redis": True, "workers": {}},
+    )
+    path = f"/v1/instances/{guest.id}/provisioning/guest-initialization/recover"
+    response = client.post(path, headers={"Authorization": f"Bearer {token}"}, json={
+        "operation_id": body["operation_id"], "job_id": body["job_id"],
+    })
+    assert response.status_code == 403
+    with sessions() as session:
+        assert session.get(GuestInitialization, body["operation_id"]).status == "queued"
 
 
 def test_qga_readiness_retries_before_consuming_guest_exec(client, auth, guest, sessions, monkeypatch):

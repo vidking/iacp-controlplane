@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "environment": "lab",
+  "cluster": "MNG",
+  "control_plane": "VM104",
+  "hostname": "iacp-controlplane-01",
+  "enabled": true
+}
