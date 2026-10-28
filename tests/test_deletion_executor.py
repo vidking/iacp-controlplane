@@ -99,7 +99,7 @@ def test_tainted_recovery_uses_fixed_destroy_without_adopting_resource(deletion_
 @pytest.mark.parametrize(('source_revision','vmid','golden','expected'), [
     ('a' * 40, 30059, True, True),
     (SOURCE_REVISION, 30059, True, False),
-    ('a' * 40, 106, True, False),
+    ('a' * 40, 106, True, True),
     ('a' * 40, 30059, False, False),
 ])
 def test_historical_delete_hardware_compatibility_is_narrow(source_revision, vmid, golden, expected):

@@ -89,7 +89,13 @@ def load_profile(name, tenant_id, *, image_id=None):
 
 
 def reserve_profile(session, instance):
-    """Caller holds the existing profile advisory lock through commit/rollback."""
+    """Reserve a VMID after validating the technical plan/profile binding.
+
+    Legacy ``max_live_instances`` and aggregate ``max_total_*`` values remain
+    accepted in the private profile format for backwards compatibility, but
+    they are not admission quotas.  Physical capacity is checked separately
+    against the live MNG node and datastore by the Core admission path.
+    """
     from ..models import Instance, TerraformExecution
     p=load_profile(instance.network_profile,instance.tenant_id, image_id=instance.image)
     if instance.image != p.settings.image:
@@ -103,12 +109,6 @@ def reserve_profile(session, instance):
         if instance.node_preference:
             raise PlanError('STATIC_IPAM_NODE_FIXED')
         return None  # Existing per-instance IPAM is resolved ONLY by the worker.
-    rows=session.scalars(select(Instance).where(Instance.tenant_id==instance.tenant_id,
-        Instance.network_profile==instance.network_profile,Instance.status!='deleted')).all()
-    if (len(rows) >= p.max_live_instances or sum(i.vcpus for i in rows)+instance.vcpus > p.max_total_vcpus
-            or sum(i.memory_mb for i in rows)+instance.memory_mb > p.max_total_memory_mb
-            or sum(i.disk_gb for i in rows)+instance.disk_gb > p.max_total_disk_gb):
-        raise PlanError('PROFILE_CAPACITY_EXCEEDED')
     nodes=p.target_nodes or [p.settings.node_name]
     allocations=session.scalars(select(TerraformExecution.allocation).join(Instance).where(Instance.status!='deleted')).all()
     node=instance.node_preference or min(nodes,key=lambda n:(sum(a.get('node_name')==n for a in allocations if a),n))

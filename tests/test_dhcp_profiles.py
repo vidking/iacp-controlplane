@@ -62,11 +62,15 @@ def test_dhcp_does_not_open_ipam_and_seals_identity(client,auth,terraform_mode,p
     assert client.get('/v1/instances/'+data['instance_id'],headers=auth).json()['ip_addresses']==[]
 
 
-def test_dhcp_capacity_and_cluster_collisions_are_not_reused(client,auth,terraform_mode,policy,sessions,monkeypatch):
+def test_dhcp_allocates_multiple_instances_without_stale_profile_quota(
+        client,auth,terraform_mode,policy,sessions,monkeypatch):
     monkeypatch.setattr(profiles,'cluster_vmids',lambda:{30000,30001})
     r=create(client,auth).json()
     with sessions() as s:assert s.get(TerraformExecution,r['instance_id']).vmid==30002
-    assert create(client,auth,key='second',name='another-guest').status_code==409
+    second=create(client,auth,key='second',name='another-guest')
+    assert second.status_code==202,second.text
+    with sessions() as s:
+        assert s.get(TerraformExecution,second.json()['instance_id']).vmid==30003
 
 
 def test_profile_resources_and_tenant_authorization(client,auth,terraform_mode,policy,identities):

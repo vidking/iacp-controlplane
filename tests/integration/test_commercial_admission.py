@@ -21,7 +21,8 @@ pytestmark=pytest.mark.integration
 
 
 @pytest.mark.parametrize('minimal_body',[False,True])
-def test_global_quota_serializes_two_commercial_requests(pg_engine,commercial_config,store,minimal_body):
+def test_global_admission_serializes_two_core_requests_without_tenant_quota(
+        pg_engine,commercial_config,store,minimal_body):
     upgrade(pg_engine);sessions=sessionmaker(bind=pg_engine,autoflush=False,expire_on_commit=False)
     barrier=Barrier(2)
     def submit(n):
@@ -38,10 +39,10 @@ def test_global_quota_serializes_two_commercial_requests(pg_engine,commercial_co
                 capacity=lambda *_:None).instance_id
             except Conflict:return None
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(submit,[1,2]))
-    assert sum(x is not None for x in results)==1
+    assert sum(x is not None for x in results)==2
     with sessions() as s:
-        assert len(s.scalars(select(Instance)).all())==len(s.scalars(select(CommercialIntent)).all())==1
-    assert len(store.redis.values)==1
+        assert len(s.scalars(select(Instance)).all())==len(s.scalars(select(CommercialIntent)).all())==2
+    assert len(store.redis.values)==2
 
 
 def test_bootstrap_queue_transports_only_opaque_operation_reference(runtime):

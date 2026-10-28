@@ -108,12 +108,12 @@ def test_reader_catalog_and_tenant_isolation(client,catalog_profile,identities):
     assert 'TENANT_PROFILE_NOT_AUTHORIZED' in other.json()[0]['availability']['reasons']
 
 
-def test_quota_counts_whole_tenant_and_never_claims_physical_capacity(catalog_profile):
+def test_stale_tenant_counters_do_not_become_admission_quota(catalog_profile):
     profile = authorized_profile(BOOTSTRAP_TENANT_ID)
     assert profile is not None
     used = dict(instances=1,vcpus=8,memory_mb=8192,disk_gb=100,concurrent_operations=2)
     result = plan_availability(PLANS[0], profile, used)
-    assert 'TENANT_TECHNICAL_QUOTA_EXCEEDED' in result['reasons']
+    assert 'TENANT_TECHNICAL_QUOTA_EXCEEDED' not in result['reasons']
     assert 'PHYSICAL_CAPACITY_NOT_VERIFIED' in result['reasons']
     assert not result['available'] and not result['capacity_verified']
 
