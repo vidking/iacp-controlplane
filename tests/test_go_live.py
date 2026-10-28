@@ -2,6 +2,7 @@ import base64
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -72,6 +73,36 @@ def test_lab_execution_profile_is_host_bound_and_generates_audit_authorization()
     assert result["authorized"] is True and result["approved"] is False
     assert result["authorization_source"] == "host-execution-profile"
     assert evidence[0][0] == "lab-authorization"
+
+
+def test_lab_authorizes_activate_core_but_production_requires_approval():
+    promotion = object.__new__(driver.Promotion)
+    promotion.m = {"project": "iacp-controlplane", "release": "a" * 40}
+    promotion.execution_profile = {"environment": "lab"}
+    evidence = []
+    promotion.evidence = lambda name, value: evidence.append((name, value))
+    result = promotion.authorize("activate-core")
+    assert result["authorized"] is True and result["approved"] is False
+    assert evidence[0][1]["action"] == "activate-core"
+
+    production = object.__new__(driver.Promotion)
+    production.m = promotion.m
+    production.execution_profile = {"environment": "production"}
+    production.approve = lambda action: ("approval", action)
+    assert production.authorize("activate-core") == ("approval", "activate-core")
+
+
+def test_lab_profile_rejects_an_unauthorized_os_identity():
+    profile = {
+        "version": 1, "environment": "lab", "cluster": "MNG",
+        "control_plane": "VM104", "hostname": "iacp-controlplane-01",
+        "enabled": True,
+    }
+    with pytest.raises(RuntimeError, match="authorized OS identity"):
+        driver.validate_host_execution_profile(
+            profile, owner_uid=0, mode=0o600, effective_uid=1000,
+            hostname="iacp-controlplane-01", actual_hostname="iacp-controlplane-01",
+        )
 
 
 def test_invalid_host_lab_profile_fails_closed():
@@ -293,7 +324,7 @@ def test_core_contract_can_enable_delete_without_lab_allowlist(tmp_path):
     }
 
 
-@pytest.mark.parametrize("action", ["promote", "publish", "activate", "first_start", "rollback", "certify"])
+@pytest.mark.parametrize("action", ["promote", "publish", "activate", "activate_core", "first_start", "rollback", "certify"])
 def test_expired_change_cannot_mutate_runtime(tmp_path, action):
     change = tmp_path / "change.json"
     change.write_text(json.dumps({"window_start": "2020-01-01T00:00:00Z", "window_end": "2020-01-02T00:00:00Z"}))
@@ -313,6 +344,112 @@ def test_external_probe_rejects_private_dns_before_reading_tokens(monkeypatch, t
     report = probe.probe(Namespace(vantage_id="unit-fixture", external_vantage=True, expected_public_ip=["192.168.1.50"]))
     assert report["passed"] is False
     assert report["checks"] == [{"name": "public_dns", "passed": False}]
+
+
+def test_platform_smoke_does_not_require_deleted_default_instance(monkeypatch, tmp_path):
+    probe = load("platform_smoke", "smoke_public.py")
+
+    class FakeSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    class FakeTLS:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def getpeercert(self): return {"notAfter": "Jan 01 00:00:00 2035 GMT"}
+
+    class FakeContext:
+        def wrap_socket(self, transport, server_hostname): return FakeTLS()
+
+    token = tmp_path / "token"
+    cookie = tmp_path / "cookie"
+    token.write_text("token")
+    cookie.write_text("cookie")
+    token.chmod(0o600)
+    cookie.chmod(0o600)
+    contract = {"paths": {path: {"get": {"security": [{"bearer": []}]}}
+                           for path in probe.PATHS}}
+
+    def fake_request(path, **kwargs):
+        if kwargs.get("base", "").startswith("http://"):
+            return 301, {"Location": probe.BASE + "/docs"}, b""
+        if not kwargs.get("token"):
+            return 401, {}, b""
+        if path == "/openapi.json":
+            return 200, {"X-Request-ID": "request"}, json.dumps(contract).encode()
+        return 200, {"X-Request-ID": "request"}, b"[]"
+
+    monkeypatch.setattr(probe, "resolved_addresses", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(probe.socket, "create_connection", lambda *args, **kwargs: FakeSocket())
+    monkeypatch.setattr(probe.ssl, "create_default_context", lambda **kwargs: FakeContext())
+    monkeypatch.setattr(probe.ssl, "cert_time_to_seconds", lambda value: 4_000_000_000)
+    monkeypatch.setattr(probe, "request", fake_request)
+    args = SimpleNamespace(
+        vantage_id="unit-fixture", external_vantage=True, expected_public_ip=["8.8.8.8"],
+        manifest=None, lan_vpn_vantage=False, token_file=token,
+        gateway_cookie_file=cookie, other_tenant_token_file=None,
+        instance_id=None, operation_id=None, ca_file=None, min_validity_days=14,
+    )
+    report = probe.probe(args)
+    assert report["passed"] is True
+    assert report["instance_smoke"] == {
+        "status": "not_applicable",
+        "reason": "No se proporcionó una instancia IACP activa.",
+    }
+    assert not any("a1b2d063" in check["name"] for check in report["checks"])
+
+
+def test_instance_smoke_checks_energy_when_instance_is_supplied(monkeypatch, tmp_path):
+    probe = load("instance_smoke", "smoke_public.py")
+    token = tmp_path / "token"
+    cookie = tmp_path / "cookie"
+    token.write_text("token")
+    cookie.write_text("cookie")
+    token.chmod(0o600)
+    cookie.chmod(0o600)
+    contract = {"paths": {path: {"get": {"security": [{"bearer": []}]}}
+                           for path in probe.PATHS}}
+
+    class FakeSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    class FakeTLS:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def getpeercert(self): return {"notAfter": "Jan 01 00:00:00 2035 GMT"}
+
+    class FakeContext:
+        def wrap_socket(self, transport, server_hostname): return FakeTLS()
+
+    instance_id = "11111111-1111-4111-8111-111111111111"
+
+    def fake_request(path, **kwargs):
+        if kwargs.get("base", "").startswith("http://"):
+            return 301, {"Location": probe.BASE + "/docs"}, b""
+        if not kwargs.get("token"):
+            return 401, {}, b""
+        if path == "/openapi.json":
+            return 200, {"X-Request-ID": "request"}, json.dumps(contract).encode()
+        if path.endswith("/power"):
+            return 200, {"X-Request-ID": "request"}, json.dumps({"guest_ready": None}).encode()
+        return 200, {"X-Request-ID": "request"}, b"[]"
+
+    monkeypatch.setattr(probe, "resolved_addresses", lambda: ["8.8.8.8"])
+    monkeypatch.setattr(probe.socket, "create_connection", lambda *args, **kwargs: FakeSocket())
+    monkeypatch.setattr(probe.ssl, "create_default_context", lambda **kwargs: FakeContext())
+    monkeypatch.setattr(probe.ssl, "cert_time_to_seconds", lambda value: 4_000_000_000)
+    monkeypatch.setattr(probe, "request", fake_request)
+    args = SimpleNamespace(
+        vantage_id="unit-fixture", external_vantage=True, expected_public_ip=["8.8.8.8"],
+        manifest=None, lan_vpn_vantage=False, token_file=token,
+        gateway_cookie_file=cookie, other_tenant_token_file=None,
+        instance_id=instance_id, operation_id=None, ca_file=None, min_validity_days=14,
+    )
+    report = probe.probe(args)
+    assert report["passed"] is True
+    assert report["instance_smoke"] == {"status": "passed", "instance_id": instance_id}
+    assert any(check["name"].endswith("/power") for check in report["checks"])
 
 
 def test_public_router_keeps_crm_away_from_docs_and_admin_paths():
