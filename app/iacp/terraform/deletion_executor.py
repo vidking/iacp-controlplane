@@ -39,6 +39,25 @@ def allow_historical_delete_hardware(context):
     )
 
 
+def allow_historical_delete_plan_defaults(context):
+    """Permitir sólo equivalencias históricas de lectura no identitarias.
+
+    Algunas revisiones antiguas no sellaron atributos que el provider actual
+    devuelve al refrescar (por ejemplo, ``pool_id``). Esta compatibilidad sólo
+    aplica al DELETE de una KVM con ownership técnico y revisión IaC histórica;
+    la identidad, el state, la topología y el alcance del destroy continúan
+    verificándose por separado.
+    """
+    variables = context.get('variables') or {}
+    instance = variables.get('instance') or {}
+    source_revision = context.get('source_revision')
+    return (
+        valid_source_revision(source_revision)
+        and source_revision != SOURCE_REVISION
+        and is_managed_vmid(instance.get('vm_id'))
+    )
+
+
 def verify_delete_plan(plan, variables, *, absence_only=False):
     if not is_managed_vmid(variables['instance']['vm_id']):
         raise PlanError('DELETE_UNSAFE_PLAN')
@@ -114,7 +133,8 @@ def deletion_before(plan, absence_only, persisted):
     return changes[0]['change']['before'] if changes else persisted
 
 
-def verify_topology(approved, current, *, persisted=None):
+def verify_topology(approved, current, *, persisted=None,
+                    allow_historical_pool_id_default=False):
     """Retain provisioning checks; only started belongs to Lifecycle after create.
 
     Extra disks/NICs must never be swept into a deletion after an external attach.
@@ -145,6 +165,17 @@ def verify_topology(approved, current, *, persisted=None):
             observed['cpu'][0]['numa']=expected_numa
             if previous is not None and len(previous.get('cpu') or [])==1 and type(previous['cpu'][0].get('numa')) is bool:
                 previous['cpu'][0]['numa']=expected_numa
+    expected_pool_id = change['after'].get('pool_id')
+    actual_pool_id = observed.get('pool_id')
+    if (allow_historical_pool_id_default and expected_pool_id is None
+            and actual_pool_id not in (None, '')):
+        if (previous is not None
+                and previous.get('pool_id') != actual_pool_id):
+            raise PlanError('DELETE_TOPOLOGY_CHANGED')
+        # The provider's non-empty historical pool value is accepted only
+        # after the exact state/PVE identity checks above. ``checked`` is a
+        # copy, so the sealed creation plan is never rewritten.
+        change['after']['pool_id'] = actual_pool_id
     verify_postconditions(checked, observed, source='delete.topology', persisted=previous)
     return technical_drift
 
@@ -240,7 +271,11 @@ class DeletionExecutor(TerraformExecutor):
                 # y el plan destroy debe contener únicamente ``delete``.
                 verify_identity(resource, context['variables']['instance'])
             else:
-                verify_topology(approved, resource)
+                verify_topology(
+                    approved,
+                    resource,
+                    allow_historical_pool_id_default=allow_historical_delete_plan_defaults(context),
+                )
             # Un recurso tainted ya fue comprobado físicamente como detenido y
             # perteneciente a este state. El refresh dentro de un plan -destroy
             # puede reescribir el serial remoto antes del apply y volver obsoleto
@@ -252,7 +287,12 @@ class DeletionExecutor(TerraformExecutor):
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.inspect')
             verify_delete_plan(plan, context['variables'],absence_only=absence_only)
             technical_drift=(['tainted_recovery'] if allow_tainted else
-                             verify_topology(approved, deletion_before(plan,absence_only,resource), persisted=resource))
+                             verify_topology(
+                                 approved,
+                                 deletion_before(plan, absence_only, resource),
+                                 persisted=resource,
+                                 allow_historical_pool_id_default=allow_historical_delete_plan_defaults(context),
+                             ))
             state.verify(reader.read(cancelled))
             precondition(env, context['variables'], cancelled)
             saved = root / 'deletion.tfplan'; saved.chmod(0o600)
@@ -294,14 +334,23 @@ class DeletionExecutor(TerraformExecutor):
             if allow_tainted:
                 verify_identity(current_resource, context['variables']['instance'])
             else:
-                verify_topology(approved, current_resource)
+                verify_topology(
+                    approved,
+                    current_resource,
+                    allow_historical_pool_id_default=allow_historical_delete_plan_defaults(context),
+                )
             plan = self.read_json(['show', '-json', 'deletion.tfplan'], root, env, cancelled, 'delete.reinspect')
             verify_delete_plan(plan, context['variables'],absence_only=absence_only)
             persisted=state_resource(current.state, context['variables'], allow_tainted=allow_tainted)
             if allow_tainted:
                 verify_identity(persisted, context['variables']['instance'])
             else:
-                verify_topology(approved, deletion_before(plan,absence_only,persisted),persisted=persisted)
+                verify_topology(
+                    approved,
+                    deletion_before(plan, absence_only, persisted),
+                    persisted=persisted,
+                    allow_historical_pool_id_default=allow_historical_delete_plan_defaults(context),
+                )
             current.verify(reader.read(cancelled))
             precondition(env, context['variables'], cancelled)
             if digest_file(root / 'deletion.tfplan') != sha256:
