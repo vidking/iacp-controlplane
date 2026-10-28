@@ -9,7 +9,7 @@ promoción.
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ..models import Instance, TechnicalOwnership
+from ..models import Instance, Operation, TechnicalOwnership, TerraformApply, TerraformExecution
 from .instances import Conflict
 from .technical_ownership import record
 
@@ -29,6 +29,10 @@ def migrate(session):
         "already_bound": 0,
         "deleted": 0,
         "blocked": [],
+        "reconciliation_required": [],
+        "recovery_required": [],
+        "failed_without_resource": [],
+        "incomplete_without_resource": [],
     }
     rows = session.scalars(select(Instance).order_by(Instance.created_at, Instance.id)).all()
     for instance in rows:
@@ -39,17 +43,66 @@ def migrate(session):
         if session.get(TechnicalOwnership, instance.id) is not None:
             report["already_bound"] += 1
             continue
+        execution = session.get(TerraformExecution, instance.id)
+        active_operations = session.scalars(select(Operation).where(
+            Operation.instance_id == instance.id,
+            Operation.status.in_({"queued", "running", "uncertain"}),
+        )).all()
+        active_applies = []
+        if execution is not None:
+            active_applies = session.scalars(select(TerraformApply).where(
+                TerraformApply.instance_id == instance.id,
+                TerraformApply.status.in_({"approved", "queued", "running", "uncertain"}),
+            )).all()
+        if active_operations or active_applies:
+            item = {"instance_id": instance.id,
+                    "reason": "ACTIVE_OR_UNCERTAIN_OPERATION",
+                    "operations": len(active_operations),
+                    "applies": len(active_applies)}
+            report["recovery_required"].append(item)
+            report["blocked"].append(item)
+            continue
+        apply = None
+        if execution is not None:
+            apply = session.scalar(select(TerraformApply).where(
+                TerraformApply.instance_id == instance.id,
+                TerraformApply.attempt == execution.attempt,
+                TerraformApply.plan_sha256 == execution.plan_sha256,
+                TerraformApply.status == "completed",
+            ))
+        result = apply.result if apply and isinstance(apply.result, dict) else {}
+        observation = result.get("observation") if isinstance(result.get("observation"), dict) else {}
+        physical_evidence = bool(
+            instance.vmid is not None or instance.node is not None
+            or observation.get("proxmox_present") is True
+        )
+        if instance.status == "failed" and not physical_evidence:
+            report["failed_without_resource"].append({
+                "instance_id": instance.id,
+                "reason": "FAILED_WITHOUT_VERIFIED_RESOURCE",
+            })
+            continue
+        if instance.status in {"pending", "provisioning"} and not physical_evidence and apply is None:
+            report["incomplete_without_resource"].append({
+                "instance_id": instance.id,
+                "reason": "NO_COMPLETED_APPLY_OR_RESOURCE_EVIDENCE",
+            })
+            continue
         try:
             with session.begin_nested():
                 record(session, instance, adopt=True)
             report["adopted"] += 1
         except Conflict as error:
-            report["blocked"].append({"instance_id": instance.id, "reason": str(error)})
+            item = {"instance_id": instance.id, "reason": str(error)}
+            report["reconciliation_required"].append(item)
+            report["blocked"].append(item)
         except IntegrityError:
-            report["blocked"].append({
+            item = {
                 "instance_id": instance.id,
                 "reason": "TECHNICAL_OWNERSHIP_COLLISION",
-            })
+            }
+            report["reconciliation_required"].append(item)
+            report["blocked"].append(item)
     session.commit()
     report["blocked_count"] = len(report["blocked"])
     return report

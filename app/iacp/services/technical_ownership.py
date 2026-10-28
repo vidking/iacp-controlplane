@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from ..models import (
+    CommercialIntent,
+    GuestInitialization,
     Instance,
     TechnicalOwnership,
     TerraformApply,
@@ -20,6 +22,7 @@ from ..models import (
 )
 from .instances import Conflict
 from .ownership_binding import binding_digest, valid_source_revision
+from ..terraform.config import PlanError
 
 TECHNICAL_ACTIONS = frozenset({"create", "start", "shutdown", "reboot", "delete"})
 PROTECTED_VMIDS = frozenset({104, 106, 29000})
@@ -69,35 +72,106 @@ def _evidence(instance, execution, apply):
     return allocation
 
 
-def _snapshot(session, instance, execution):
-    # La asignación sellada es la compatibilidad efectiva de la instancia.
-    # Preferirla evita que un cambio del catálogo actual reinterprete una VM
-    # histórica como si hubiera sido creada por otro perfil.
-    if isinstance(execution.allocation, dict) and execution.allocation.get("image"):
-        return dict(execution.allocation)
-    if not instance.network_profile:
-        return {}
+def _allocation_matches_profile(instance, allocation, profile):
+    """Comprueba que un snapshot de perfil describe la asignación sellada."""
+    if not isinstance(allocation, dict) or not isinstance(profile, dict):
+        return False
+    settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
+    if settings.get("image") != instance.image:
+        return False
+    for key in ("node_name", "template_vm_id", "template_node_name", "network_mode",
+                "network_bridge", "vlan_id", "clone_datastore_id", "cloudinit_datastore_id"):
+        if key in allocation and settings.get(key) != allocation.get(key):
+            return False
+    allocation_disk = allocation.get("boot_disk")
+    profile_disk = settings.get("boot_disk")
+    if isinstance(allocation_disk, dict) and isinstance(profile_disk, dict):
+        if allocation_disk.get("datastore_id") != profile_disk.get("datastore_id"):
+            return False
+    return instance.tenant_id in profile.get("allowed_tenants", [])
+
+
+def _profile_from_intent(session, instance, allocation):
+    """Recupera el snapshot técnico persistido en la intención, si es íntegro."""
+    intent = session.get(CommercialIntent, instance.id)
+    specification = intent.specification if intent and isinstance(intent.specification, dict) else {}
+    raw = specification.get("profile_snapshot")
+    if not isinstance(raw, dict):
+        return None
     try:
-        from ..terraform.profiles import load_profile
+        from ..terraform.profiles import Profile
+
+        profile = Profile.model_validate(raw)
+        snapshot = profile.model_dump(mode="json")
+    except (PlanError, TypeError, ValueError):
+        return None
+    return snapshot if _allocation_matches_profile(instance, allocation, snapshot) else None
+
+
+def _profile_from_current_catalog(session, instance, allocation):
+    """Usa el catálogo actual solo si todavía describe exactamente el recurso."""
+    if not instance.network_profile:
+        return None
+    try:
+        from ..terraform.profiles import Profile, load_profile
 
         profile = load_profile(instance.network_profile, instance.tenant_id, image_id=instance.image)
-        snapshot = profile.model_dump(mode="json")
-        if snapshot.get("guest_initialization"):
-            try:
-                from .guest_identity import program_for_mode
+        snapshot = Profile.model_validate(profile.model_dump(mode="json")).model_dump(mode="json")
+    except (PlanError, TypeError, ValueError):
+        return None
+    return snapshot if _allocation_matches_profile(instance, allocation, snapshot) else None
 
-                snapshot["guest_initialization_program_sha256"] = program_for_mode(
-                    snapshot["guest_initialization"],
-                    root=bool(snapshot.get("root_password_bootstrap")),
-                )[1]
-            except Exception:
-                pass
+
+def _add_initialization_evidence(session, instance, snapshot):
+    """Añade evidencia persistida; nunca reabre ni reentrega guest-exec."""
+    initialization = session.scalar(select(GuestInitialization).where(
+        GuestInitialization.instance_id == instance.id))
+    if initialization is None:
         return snapshot
-    except Exception:
-        # A historical source revision remains administrable from its sealed
-        # allocation even when the current profile catalog has moved on.
-        return {"network_profile": instance.network_profile,
-                "allocation": execution.allocation or {}}
+    snapshot = dict(snapshot)
+    snapshot.setdefault("guest_initialization", initialization.mode)
+    # La huella observada prevalece sobre una inferencia del catálogo. Si no
+    # coincide con el programa vigente, configured_mode() fallará cerrado.
+    snapshot["guest_initialization_program_sha256"] = initialization.program_sha256
+    from .guest_identity import ROOT_PROGRAM_SHA256
+
+    if initialization.program_sha256 == ROOT_PROGRAM_SHA256:
+        snapshot["root_password_bootstrap"] = True
+    snapshot["guest_initialization_evidence"] = {
+        "operation_id": initialization.operation_id,
+        "status": initialization.status,
+        "program_sha256": initialization.program_sha256,
+        "started_at": initialization.started_at.isoformat() if initialization.started_at else None,
+        "finished_at": initialization.finished_at.isoformat() if initialization.finished_at else None,
+    }
+    return snapshot
+
+
+def _snapshot(session, instance, execution):
+    # Allocation conserva hardware, VMID, nodo y state key. El perfil técnico
+    # aporta guest initialization y capacidades que no forman parte de la
+    # Allocation. Nunca se sustituye una revisión histórica por la actual sin
+    # comprobar que describe exactamente la misma asignación.
+    allocation = dict(execution.allocation) if isinstance(execution.allocation, dict) else {}
+    snapshot = _profile_from_intent(session, instance, allocation)
+    if snapshot is None:
+        snapshot = _profile_from_current_catalog(session, instance, allocation)
+    if snapshot is None:
+        snapshot = {}
+    snapshot.update(allocation)
+    if snapshot.get("guest_initialization") and not snapshot.get("guest_initialization_program_sha256"):
+        try:
+            from .guest_identity import program_for_mode
+
+            snapshot["guest_initialization_program_sha256"] = program_for_mode(
+                snapshot["guest_initialization"],
+                root=bool(snapshot.get("root_password_bootstrap")),
+            )[1]
+        except (Conflict, ValueError):
+            # configured_mode() will reject an incomplete or incompatible
+            # historical profile; never invent a program digest.
+            pass
+    return _add_initialization_evidence(session, instance, snapshot)
 
 
 def _membership(session, instance, ownership, execution, *, current_profiles=False):
