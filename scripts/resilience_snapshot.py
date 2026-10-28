@@ -133,7 +133,7 @@ assert socket.gethostname()=='iacp-controlplane-01'
 def call(args):return subprocess.check_output(args,text=True)
 ids=call(['docker','ps','-q','--filter','label=com.docker.compose.project=iacp-controlplane']).split()
 containers=json.loads(call(['docker','inspect',*ids]))
-allowed={'IACP_ADMISSION_ENABLED','IACP_INSTANCE_EXECUTOR','IACP_LAB_SELF_SERVICE_ENABLED','IACP_TERRAFORM_PLAN_ENABLED','IACP_TERRAFORM_APPLY_ENABLED','IACP_TERRAFORM_DELETE_ENABLED','IACP_KVM_LIFECYCLE_ENABLED','IACP_LIFECYCLE_INSTANCE_IDS','IACP_DISPOSABLE_INSTANCE_IDS'}
+allowed={'IACP_ADMISSION_ENABLED','IACP_INSTANCE_EXECUTOR','IACP_TERRAFORM_PLAN_ENABLED','IACP_TERRAFORM_APPLY_ENABLED','IACP_TERRAFORM_DELETE_ENABLED','IACP_KVM_LIFECYCLE_ENABLED'}
 result={'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'host':socket.gethostname(),'cpus':os.cpu_count(),'uptime_seconds':float(open('/proc/uptime').read().split()[0]),'loadavg':list(os.getloadavg()),'containers':[]}
 result['memory']={k:v.strip() for k,v in (line.split(':',1) for line in open('/proc/meminfo')) if k in {'MemTotal','MemAvailable','SwapTotal','SwapFree'}}
 for c in containers:

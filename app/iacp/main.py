@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api import health, instances, jobs, operations, terraform, applies, power, deletion, lab, observability, catalog
+from .api import health, instances, jobs, operations, terraform, applies, power, deletion, observability, catalog
 from .security import authorize_docs, authorize_admin_docs
 from .docs_ui import documentation
 from .openapi_presentation import DESCRIPTION, TAGS, present
@@ -36,10 +36,6 @@ def create_app() -> FastAPI:
         # cancel refuses a consumed command; recover accepts only observation.
         bookkeeping = request.method == 'POST' and re.fullmatch(
             r'/v1/instances/[a-f0-9-]{36}/(?:provisioning/deletions/[a-f0-9-]{36}/(?:cancel|recover)|provisioning/executions/[a-f0-9-]{36}/(?:cancel|recover|resolve-absence)|network/discover|reconcile)', request.url.path)
-        # Policy administration prepares/revokes delegation without submitting
-        # infrastructure work. It must be usable before activate-lab opens gates.
-        bookkeeping = bookkeeping or (request.method == 'POST' and re.fullmatch(
-            r'/v1/lab/policies(?:/[a-f0-9-]{36}/(?:approve|renew|revoke))?',request.url.path))
         if re.match(r'/v1/instances/[^/]+/terraform(?:/|$)', request.url.path):
             # Removed HTTP routes stay absent even while admission is drained.
             response = JSONResponse(status_code=404, content={"detail": "Not Found"})
@@ -88,25 +84,21 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router)
     application.include_router(jobs.router)
-    creation_contract=os.environ.get('IACP_CREATION_CONTRACT','historical')
-    if creation_contract not in {'historical','commercial-g','provisioning-api-core'}:
-        raise ValueError('CREATION_CONTRACT_INVALID')
-    if creation_contract in {'commercial-g','provisioning-api-core'}:
-        from .api import commercial
-        from fastapi import APIRouter
-        historical_reads=APIRouter(routes=[r for r in instances.router.routes
-            if not (r.path=='/v1/instances' and 'POST' in r.methods)])
-        application.include_router(historical_reads)
-        application.include_router(commercial.router)
-    else:
-        application.include_router(instances.router)
+    # Todas las nuevas admisiones usan el contrato Core. Las rutas de lectura
+    # históricas se conservan para inventario y reconciliación, pero el POST
+    # legacy nunca vuelve a estar activo.
+    from .api import commercial
+    from fastapi import APIRouter
+    historical_reads=APIRouter(routes=[r for r in instances.router.routes
+        if not (r.path=='/v1/instances' and 'POST' in r.methods)])
+    application.include_router(historical_reads)
+    application.include_router(commercial.router)
     application.include_router(catalog.router)
     application.include_router(operations.router)
     application.include_router(terraform.router)
     application.include_router(applies.router)
     application.include_router(power.router)
     application.include_router(deletion.router)
-    application.include_router(lab.router)
     application.include_router(observability.router)
 
     @application.exception_handler(RequestValidationError)
@@ -142,12 +134,11 @@ def create_app() -> FastAPI:
         for route in application.routes:
             if not isinstance(route, APIRoute):
                 continue
-            admin = ("/provisioning/" in route.path or (
-                route.path.startswith("/v1/lab/policies") and "POST" in route.methods))
+            admin = "/provisioning/" in route.path
             if administrative or not admin:
                 routes.append(route)
         tags = application.openapi_tags if administrative else [tag for tag in application.openapi_tags
-            if tag["name"] not in {"provisioning-administration", "provisioning-approvals", "lab-administration"}]
+            if tag["name"] not in {"provisioning-administration", "provisioning-approvals"}]
         return present(get_openapi(title=application.title, version=application.version,
             description=application.description, servers=application.servers, tags=tags, routes=routes))
 

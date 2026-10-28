@@ -1,6 +1,7 @@
 """Autorizaciones y aplicación de planes: persistencia independiente de HTTP."""
 from datetime import datetime, timedelta, timezone
 import hashlib
+import inspect
 import json
 import os
 import time
@@ -11,7 +12,8 @@ from sqlalchemy import select
 from ..models import Instance, Job, Operation, TerraformApply, TerraformExecution, Tenant, utcnow
 from ..services.instances import Conflict, event
 from ..services.jobs import QueueUnavailable
-from .config import Allocation, PlanError, SOURCE_REVISION
+from .config import Allocation, PlanError
+from ..services.ownership_binding import valid_source_revision
 from .lifecycle import build_executor
 from .locks import ExecutionBusy, instance_lock
 
@@ -22,6 +24,16 @@ def enabled():
 
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _executor_revision_call(method, *args, revision):
+    """Pasa la revisión sellada sin romper ejecutores de observación antiguos."""
+    parameters = inspect.signature(method).parameters.values()
+    if "revision" in inspect.signature(method).parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
+    ):
+        return method(*args, revision=revision)
+    return method(*args)
 
 
 def not_expired(value):
@@ -47,7 +59,8 @@ def approve(session, execution, body, key, principal):
     if principal.subject == operation.requested_by:
         raise Conflict("INDEPENDENT_APPROVAL_REQUIRED")
     if (execution.status != "planned" or execution.cancel_requested or execution.attempt != body["attempt"]
-            or execution.plan_sha256 != body["plan_sha256"] or execution.source_revision != SOURCE_REVISION):
+            or execution.plan_sha256 != body["plan_sha256"]
+            or not valid_source_revision(execution.source_revision)):
         raise Conflict("PLAN_CHANGED")
     if session.scalar(select(TerraformApply.id).where(TerraformApply.instance_id == execution.instance_id,
                                                      TerraformApply.attempt == execution.attempt)):
@@ -106,7 +119,7 @@ def dispatch(session, execution, identifier, key, principal, publish):
 def check_binding(row, execution):
     if (row.instance_id != execution.instance_id or row.attempt != execution.attempt or row.plan_sha256 != execution.plan_sha256
             or execution.status != "planned" or execution.cancel_requested
-            or execution.source_revision != SOURCE_REVISION):
+            or not valid_source_revision(execution.source_revision)):
         raise PlanError("PLAN_CHANGED")
 
 
@@ -232,7 +245,8 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         job.status = "running"
         event(session, operation, "terraform_reconcile_started" if reconcile else "terraform_apply_started", "worker:terraform")
         session.commit()
-        number, sha, state_key, allocation_data = row.attempt, row.plan_sha256, execution.state_key, execution.allocation
+        number, sha, state_key = row.attempt, row.plan_sha256, execution.state_key
+        allocation_data, source_revision = execution.allocation, execution.source_revision
 
     deadline = time.monotonic() + 900
     def cancelled():
@@ -251,12 +265,11 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             raise PlanError("CANCELLED")
         with sessions() as session:
             current = session.get(TerraformApply, identifier, with_for_update=True)
-            if instance.self_service_policy_id or instance.commercial_revision:
-                from ..services.authorization import member
-                try:
-                    member(session, session.get(Instance, current.instance_id), "create", current_profiles=True)
-                except Conflict as failure:
-                    raise PlanError(str(failure)) from None
+            from ..services.authorization import member
+            try:
+                member(session, session.get(Instance, current.instance_id), "create", current_profiles=True)
+            except Conflict as failure:
+                raise PlanError(str(failure)) from None
             check_binding(current, session.get(TerraformExecution, current.instance_id))
             if current.status != "running" or current.started_at or not not_expired(current.expires_at):
                 raise PlanError("APPROVAL_EXPIRED_OR_CONSUMED")
@@ -280,18 +293,30 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
             if not reconcile and not not_expired(current.expires_at):
                 raise PlanError("APPROVAL_EXPIRED_OR_CONSUMED")
         if reconcile:
-            reconciliation = executor.prepare_reconcile(instance.id, number, sha, state_key, allocation_data, variables)
+            reconciliation = _executor_revision_call(
+                executor.prepare_reconcile, instance.id, number, sha, state_key, allocation_data, variables,
+                revision=source_revision,
+            )
             result = executor.observe(instance.id, number, allocation_data, variables, cancelled)
         else:
-            executor.prepare_apply(instance.id, number, sha, state_key, allocation_data, variables)
-            result = executor.apply(instance.id, number, sha, state_key, allocation_data, variables, cancelled, before_mutation)
+            _executor_revision_call(
+                executor.prepare_apply, instance.id, number, sha, state_key, allocation_data, variables,
+                revision=source_revision,
+            )
+            result = _executor_revision_call(
+                executor.apply, instance.id, number, sha, state_key, allocation_data, variables,
+                cancelled, before_mutation, revision=source_revision,
+            )
         # Defensa del contrato incluso ante otra implementación del ejecutor.
         if (result.get("simulated") is not False or result.get("vmid") != allocation.vm_id
                 or result.get("node") != allocation.node_name):
             raise PlanError("OBSERVED_RESOURCE_MISMATCH")
         if reconcile:
             # Revalidar el vínculo aprobado tras la observación, antes del commit.
-            executor.prepare_reconcile(instance.id, number, sha, state_key, allocation_data, variables)
+            _executor_revision_call(
+                executor.prepare_reconcile, instance.id, number, sha, state_key, allocation_data, variables,
+                revision=source_revision,
+            )
         if cancelled():
             raise PlanError("CANCELLED")
     except PlanError as failure:
@@ -327,6 +352,11 @@ def _execute(identifier, sessions, executor, reconcile, heartbeat):
         if not error:
             instance.status, instance.vmid, instance.node = "ready", result["vmid"], result["node"]
             instance.result = {**result, "phase": "observed", "observed_at": utcnow().isoformat(), "apply_id": row.id}
+            # El vínculo técnico queda materializado al terminar el apply.
+            # Lifecycle, red y borrado solo lo vuelven a validar; no deben ser
+            # el primer lugar donde se adopta una KVM ya creada.
+            from ..services.technical_ownership import record as technical_record
+            technical_record(session, instance, adopt=True)
         else:
             instance.status = "failed"
             instance.result = {"simulated": False, "phase": row.status, "error_code": error,

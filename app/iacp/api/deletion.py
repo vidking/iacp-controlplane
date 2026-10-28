@@ -48,7 +48,7 @@ def guarded(call, key=None):
 
 @router.post("/provisioning/deletion-plan", response_model=DeletionAccepted, status_code=202,
              operation_id="planDisposableDeletion", dependencies=[Depends(authorize_administration)], summary="Preparar plan de eliminación sin borrar",
-             description="Operator del tenant. Solo UUID en allowlist, VMID >=30000 y KVM propia con Apply completado. "
+             description="Operator del tenant. Solo una KVM propia con VMID descartable y Apply completado. "
                          "Reserva la instancia frente a Lifecycle; genera un plan destroy guardado, sin Apply. "
                          "Consultar operation.deletion en GET /v1/operations/{operation_id}. Conservar esta misma Idempotency-Key para DELETE.")
 def plan(instance_id: str, key: Key, session: Database, publish: Publisher,
@@ -70,8 +70,7 @@ def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Da
 @router.delete("", response_model=DeletionAccepted, status_code=202, operation_id="deleteDisposableInstance",
                summary="Eliminar una KVM descartable con plan aprobado",
                description="Operator original y una Idempotency-Key opcional. Si se omite, IACP genera una intención y la devuelve en la respuesta. Requiere habilitación explícita, "
-                           "allowlist y aprobación independiente vigente. Para una VM nueva bajo política de autoservicio, "
-                           "el cuerpo es opcional para el autoservicio: prepara, valida y ejecuta el plan por delegación auditada. "
+                           "ownership técnico y ausencia de fences activos. El cuerpo es opcional en el flujo Core: prepara, valida y ejecuta el plan por delegación auditada. "
                            "IaC Worker aplica únicamente el plan guardado. "
                            "Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. "
                            "Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. "
@@ -80,7 +79,7 @@ def delete(instance_id: str, response: Response, session: Database, publish: Pub
            principal: Annotated[Principal, Depends(authorize_write)],
            key: DeleteKey = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
            body: Annotated[DeleteRequest | PowerRequest | None, Body(openapi_examples={
-               "self_service":{"summary":"VM nueva bajo política vigente; plan y delegación auditados","value":{}},
+               "core":{"summary":"VM propia bajo ownership técnico; plan y delegación auditados","value":{}},
                "reviewed_plan":{"summary":"Contrato histórico; sustituir por IDs/digest reales revisados","value":{
                    "operation_id":"00000000-0000-4000-8000-000000000002","plan_sha256":"a"*64}}})] = None):
     from .idempotency import resolve_key

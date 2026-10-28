@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("El contrato comercial histórico fue retirado; conservar solo regresiones técnicas Core", allow_module_level=True)
+
 import hashlib
 import json
 from types import SimpleNamespace

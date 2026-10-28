@@ -115,7 +115,7 @@ def test_client_cannot_override_target_or_force_flags(client, auth, power, body)
 
 
 def test_reader_and_other_tenant_cannot_mutate_or_discover_instances(client, identities, sessions, power):
-    identifier = managed_instance(sessions, identities["tenant-a-operator"]["tenant_id"], vmid=21002, name="tenant-kvm")
+    identifier = managed_instance(sessions, identities["tenant-a-operator"]["tenant_id"], vmid=30002, name="tenant-kvm")
     assert request(client, identities["tenant-a-reader"]["headers"], identifier).status_code == 403
     assert request(client, identities["tenant-b-operator"]["headers"], identifier).status_code == 404
     assert client.get(f'/v1/instances/{identifier}/power', headers=identities["tenant-b-reader"]["headers"]).status_code == 404
@@ -128,7 +128,7 @@ def test_controlplane_and_unprovisioned_resources_are_excluded(client, auth, ses
         instance = session.get(Instance, identifier)
         instance.vmid = 104
         session.commit()
-    assert request(client, auth, identifier).status_code == 503
+    assert request(client, auth, identifier).status_code == 409
     assert not native.calls
     publisher.assert_not_called()
 

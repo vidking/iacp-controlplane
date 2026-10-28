@@ -6,7 +6,7 @@ from iacp.lifecycle.proxmox import readiness
 from iacp.terraform.config import SOURCE_REVISION
 
 
-def managed_instance(sessions, tenant_id, *, vmid=21001, name="fixture-kvm"):
+def managed_instance(sessions, tenant_id, *, vmid=30001, name="fixture-kvm"):
     identifier, operation_id, job_id, approval_id = (str(uuid4()) for _ in range(4))
     result = {"simulated": False, "vmid": vmid, "node": "mng01", "name": name,
               "observation": {"postconditions_verified": True, "state_present": True, "proxmox_present": True}}
@@ -38,6 +38,7 @@ def managed_instance(sessions, tenant_id, *, vmid=21001, name="fixture-kvm"):
         session.flush()
         session.add(TerraformExecution(instance_id=identifier, job_id=job_id, operation_id=operation_id,
             status="planned", attempt=1, state_key="synthetic/" + identifier, vmid=vmid,
+            allocation={"image": "synthetic-image", "node_name": "mng01", "vm_id": vmid},
             plan_sha256="a" * 64, source_revision=SOURCE_REVISION))
         session.flush()
         session.add(TerraformApply(id=approval_id, instance_id=identifier, attempt=1, plan_sha256="a" * 64,

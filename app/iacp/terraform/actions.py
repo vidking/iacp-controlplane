@@ -49,14 +49,8 @@ def retry(session, execution, expected, key, actor, publish):
             from .apply import block_replan
             block_replan(session, execution.instance_id)
             instance = session.get(Instance, execution.instance_id)
-            if instance.commercial_revision:
-                from ..services.authorization import authorize_operation
-                authorize_operation(session, instance, "create")
-            elif instance.self_service_policy_id:
-                from ..services.lab import member, check_quota, limits
-                policy = member(session, instance, 'create', current_profiles=True)
-                check_quota(session,instance.tenant_id,{'concurrent_operations':limits(policy)['concurrent_operations']},
-                    exclude_operation=execution.operation_id)
+            from ..services.authorization import authorize_operation
+            authorize_operation(session, instance, "create")
             # Releer después del lock: otra petición pudo registrar esta misma clave.
             previous = session.scalar(select(TerraformAttempt).where(TerraformAttempt.instance_id == execution.instance_id,
                                                                     TerraformAttempt.retry_key == key))

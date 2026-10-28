@@ -1,10 +1,9 @@
 """Disponibilidad conservadora por tenant. Consultar no reserva capacidad."""
-import os
 from ..catalog import IMAGES, PENDING_IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
 from .usage import usage
-from .contracts import is_managed_creation_contract, is_core_contract
+from .contracts import is_managed_creation_contract
 
 
 def authorized_profile(tenant_id, image_id="ubuntu-2404"):
@@ -43,7 +42,7 @@ def plan_availability(plan, profile, used):
                 or used["concurrent_operations"] + 1 > min(2, profile.max_concurrent_operations)):
             reasons.append("TENANT_TECHNICAL_QUOTA_EXCEEDED")
     # No convertir un catálogo estático en un certificado de capacidad física.
-    reasons.extend(["PHYSICAL_CAPACITY_NOT_VERIFIED", "COMMERCIAL_CONTRACT_NOT_ACTIVE"])
+    reasons.append("PHYSICAL_CAPACITY_NOT_VERIFIED")
     return {"available": False, "capacity_verified": False, "reasons": reasons}
 
 
@@ -54,46 +53,25 @@ def plans_for(session, tenant_id):
     result=[]
     for plan in PLANS:
         availability=plan_availability(plan,p,used)
-        if is_core_contract():
-            from .commercial import live_capacity
-            from .bootstrap_secrets import configured_key, BootstrapSecretError
-            from .instances import Conflict
-            reasons=[]; verified=False
-            try:
-                configured_key()
-                if p is None: raise Conflict('PROVISIONING_PROFILE_NOT_AUTHORIZED')
-                if plan.vcpus > p.max_vcpus or plan.memory_mb > p.max_memory_mb or plan.disk_gb > p.max_disk_gb:
-                    raise Conflict('ENVIRONMENT_PLAN_LIMIT_EXCEEDED')
-                if plan.disk_gb < p.settings.boot_disk.minimum_size_gb:
-                    raise Conflict('DISK_SHRINK_FORBIDDEN')
-                if p.root_password_bootstrap:
-                    raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
-                if not p.guest_initialization or not p.guest_initialization.endswith('-lab-identity-v1'):
-                    raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
-                live_capacity(session,p,plan); verified=True
-            except (Conflict, BootstrapSecretError) as error:
-                reasons.append(str(error))
-            availability={'available':not reasons,'capacity_verified':verified,'reasons':reasons}
-        elif os.environ.get('IACP_CREATION_CONTRACT')=='commercial-g':
-            from .commercial import limits_for,quota,live_capacity
-            from .bootstrap_secrets import configured_key,BootstrapSecretError
-            from .instances import Conflict
-            # G usa derechos y presupuesto explícitos del tenant. Los topes del
-            # perfil histórico no definen ni reducen los productos comerciales.
-            reasons=[]
-            verified=False
-            try:
-                limits=limits_for(tenant_id)
-                if plan.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
-                quota(session,tenant_id,limits,asdict(plan))
-                configured_key()
-                if p is None:raise Conflict('COMMERCIAL_PROFILE_NOT_AUTHORIZED')
-                if plan.disk_gb < p.settings.boot_disk.minimum_size_gb:raise Conflict('DISK_SHRINK_FORBIDDEN')
-                if p.root_password_bootstrap:raise Conflict('COMMERCIAL_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
-                if p.guest_initialization!='ubuntu-2404-lab-identity-v1':raise Conflict('COMMERCIAL_GUEST_INITIALIZATION_REQUIRED')
-                live_capacity(session,p,plan);verified=True
-            except (Conflict,BootstrapSecretError) as error:reasons.append(str(error))
-            availability={'available':not reasons,'capacity_verified':verified,'reasons':reasons}
+        from .commercial import live_capacity
+        from .bootstrap_secrets import configured_key, BootstrapSecretError
+        from .instances import Conflict
+        reasons=[]; verified=False
+        try:
+            configured_key()
+            if p is None: raise Conflict('PROVISIONING_PROFILE_NOT_AUTHORIZED')
+            if plan.vcpus > p.max_vcpus or plan.memory_mb > p.max_memory_mb or plan.disk_gb > p.max_disk_gb:
+                raise Conflict('ENVIRONMENT_PLAN_LIMIT_EXCEEDED')
+            if plan.disk_gb < p.settings.boot_disk.minimum_size_gb:
+                raise Conflict('DISK_SHRINK_FORBIDDEN')
+            if p.root_password_bootstrap:
+                raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
+            if not p.guest_initialization or not p.guest_initialization.endswith('-lab-identity-v1'):
+                raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
+            live_capacity(session,p,plan); verified=True
+        except (Conflict, BootstrapSecretError) as error:
+            reasons.append(str(error))
+        availability={'available':not reasons,'capacity_verified':verified,'reasons':reasons}
         result.append({**asdict(plan),'availability':availability})
     return result
 

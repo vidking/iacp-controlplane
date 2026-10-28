@@ -12,7 +12,8 @@ from uuid import UUID
 from urllib.request import build_opener, HTTPSHandler, ProxyHandler
 
 from ..lifecycle.proxmox import NoRedirect, PowerError, ProxmoxPower, Target, granted
-from .config import PlanError, SOURCE_REVISION
+from .config import PlanError
+from ..services.ownership_binding import valid_source_revision
 from .executor import (ADDRESS, TerraformExecutor, digest_file, managed_resources,
                        state_resource, verify_identity, verify_plan, verify_postconditions, write_private)
 from .observation import proxmox_resource
@@ -139,7 +140,9 @@ class DeletionExecutor(TerraformExecutor):
             manifest = json.loads((workspace / 'deletion-manifest.json').read_text())
             from .golden_adapter import verify as verify_golden_adapter
             verify_golden_adapter(workspace / 'source',manifest,context['variables'])
-            if (manifest['context'] != context or manifest['source_revision'] != SOURCE_REVISION
+            if (manifest['context'] != context
+                    or not valid_source_revision(manifest['source_revision'])
+                    or manifest['source_revision'] != context['source_revision']
                     or digest_file(workspace / 'source/stacks/kvm-instance/deletion.tfplan') != manifest['plan_sha256']):
                 raise ValueError()
             root = workspace / 'source/stacks/kvm-instance'
@@ -152,7 +155,8 @@ class DeletionExecutor(TerraformExecutor):
 
     def provisioning_plan(self, context, root, env, cancelled):
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
-                              context['state_key'], context['allocation'], context['variables'])
+                              context['state_key'], context['allocation'], context['variables'],
+                              context.get('source_revision'))
         saved = self.workspace(context['instance_id'], context['attempt']) / 'source/stacks/kvm-instance/saved.tfplan'
         plan = self.read_json(['show', '-json', str(saved)], root, env, cancelled, 'delete.provisioning_plan')
         verify_plan(plan, context['variables'])
@@ -161,11 +165,15 @@ class DeletionExecutor(TerraformExecutor):
     def plan_deletion(self, context, cancelled, *, allow_tainted=False):
         # The original immutable provisioning plan must still belong to this instance.
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
-                              context['state_key'], context['allocation'], context['variables'])
+                              context['state_key'], context['allocation'], context['variables'],
+                              context.get('source_revision'))
         workspace = self.deletion_workspace(context['instance_id'], context['operation_id'])
         workspace.mkdir(mode=0o700, parents=True, exist_ok=False)
+        source_revision = context['source_revision']
+        if not valid_source_revision(source_revision):
+            raise PlanError('DELETE_SOURCE_REVISION_INVALID')
         archive = subprocess.run(['git', '-c', f'safe.directory={self.source}', '-C', str(self.source),
-                                  'archive', SOURCE_REVISION], capture_output=True, check=True, timeout=30).stdout
+                                  'archive', source_revision], capture_output=True, check=True, timeout=30).stdout
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             if any(x.issym() or x.islnk() for x in source.getmembers()):
                 raise PlanError('INVALID_SOURCE')
@@ -226,7 +234,7 @@ class DeletionExecutor(TerraformExecutor):
             precondition(env, context['variables'], cancelled)
             saved = root / 'deletion.tfplan'; saved.chmod(0o600)
             salt = secrets.token_hex(32)
-            manifest = {'context': context, 'source_revision': SOURCE_REVISION, 'plan_sha256': digest_file(saved),
+            manifest = {'context': context, 'source_revision': source_revision, 'plan_sha256': digest_file(saved),
                         'state_before': state.metadata(), 'execution_context_salt': salt,
                         'execution_context_sha256': self.context_digest(env, salt)}
             manifest['technical_drift']=technical_drift

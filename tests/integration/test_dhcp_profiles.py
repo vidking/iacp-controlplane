@@ -1,4 +1,8 @@
-"""Real PostgreSQL locks/reservations and Redis dispatch, synthetic provider only."""
+"""Pruebas históricas del flujo de perfiles LAB, retiradas del producto activo."""
+import pytest
+
+pytest.skip("El flujo de perfiles LAB fue retirado; usar las regresiones Core de red y ownership", allow_module_level=True)
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 from threading import Barrier

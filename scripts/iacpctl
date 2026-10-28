@@ -41,7 +41,7 @@ def main():
     p.add_argument('--evidence-dir', type=Path)
     p.add_argument('--compose-file', type=Path, default=ROOT / 'deploy/mng/compose.yaml')
     sub = p.add_subparsers(dest='action', required=True)
-    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete', 'activate-pilot', 'activate-lab', 'activate-core', 'attest-root-transport'):
+    for action in ('status', 'config-check', 'doctor', 'deploy', 'certify', 'smoke', 'rollback', 'admit', 'enable-delete', 'activate-pilot', 'activate-core', 'attest-root-transport', 'migrate-ownership'):
         s = sub.add_parser(action)
         if action == 'certify':
             s.add_argument('--record', action='store_true')
@@ -118,7 +118,6 @@ def main():
         operation.evidence('candidate-environment-comparison', comparison)
         if not comparison['passed']:
             raise ValueError('Candidate environment changes unapproved operating settings')
-        operation.review_commercial_configuration(candidate_cfg)
         args.backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (args.env_file.parent / '.promotion.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -148,6 +147,29 @@ def main():
         raise RuntimeError('Existing operational stack not found; bootstrap is forbidden')
     containers = json.loads(run(docker + ['inspect', *ids]))
     live = [c for c in containers if c['Config']['Labels'].get('com.docker.compose.oneoff', '').lower() != 'true']
+    if args.action == 'migrate-ownership':
+        if not args.evidence_dir:
+            raise ValueError('A new private evidence directory is required')
+        m = json.loads(args.manifest.read_text())
+        if (m.get('configuration_mode') != 'canonical'
+                or m['environment_file'] != str(args.env_file.resolve())
+                or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]):
+            raise ValueError('Manifest must use the reviewed canonical active environment')
+        args.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        from go_live import Promotion
+        operation = Promotion(m, args.evidence_dir)
+        operation.approve('migrate-technical-ownership')
+        api = next(c for c in live if c['Config']['Labels'].get('com.docker.compose.service') == 'api')
+        code = '''import json
+from iacp.db import get_session_factory
+from iacp.services.technical_ownership_migration import migrate
+with get_session_factory()() as session:
+    print(json.dumps(migrate(session), sort_keys=True))
+'''
+        report = json.loads(run(docker + ['exec', '-i', api['Id'], 'python', '-'], input=code))
+        operation.evidence('technical-ownership-migration', report)
+        print(json.dumps(report, sort_keys=True))
+        return
     if args.action == 'docs-install':
         from go_live import Promotion
         if not args.evidence_dir:
@@ -241,7 +263,7 @@ def main():
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-lab':'activate-lab', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport',
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport',
                   'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
         subprocess.run([sys.executable, str(ROOT / 'scripts/go_live.py'), action, '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)], check=True)
 

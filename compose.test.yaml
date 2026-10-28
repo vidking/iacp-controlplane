@@ -32,6 +32,7 @@ services:
     environment:
       IACP_INTEGRATION_DATABASE_URL: postgresql+psycopg://iacp@test-db/iacp_test_suite
       IACP_INTEGRATION_REDIS_URL: redis://test-redis:6379/15
+      CELERY_BROKER_URL: redis://test-redis:6379/15
     depends_on:
       test-db: {condition: service_healthy}
       test-redis: {condition: service_healthy}

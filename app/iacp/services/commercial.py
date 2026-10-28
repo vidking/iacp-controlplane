@@ -1,13 +1,13 @@
-"""Admisión comercial automática; separa catálogo, cuotas, capacidad y ejecución."""
-from datetime import timedelta, timezone
+"""Admisión técnica del contrato único ``provisioning-api-core``.
+
+El nombre del módulo se conserva para no romper imports históricos; el CRM
+puede enviar referencias opacas, pero IACP no evalúa pedidos, cuotas ni
+políticas comerciales.
+"""
 import hashlib
 import json
-import os
-from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -16,53 +16,13 @@ from ..commercial_contract import resolved_resources
 from ..models import CommercialIntent, Instance, Job, Operation, TerraformApply, TerraformExecution, utcnow
 from ..schemas import InstanceAccepted
 from ..security import Principal
-from ..terraform.config import PlanError, SOURCE_REVISION, instance_executor
+from ..terraform.config import PlanError, instance_executor
 from ..terraform.locks import admission_lock
 from .bootstrap_secrets import EphemeralSecrets
 from .catalog import authorized_profile
 from .instances import Conflict, accepted, event
 from .jobs import QueueUnavailable
-from .usage import usage
-from .contracts import COMMERCIAL_CONTRACT, CORE_CONTRACT, is_core_contract
-
-
-class Limits(BaseModel):
-    model_config=ConfigDict(extra='forbid',strict=True)
-    allowed_plans: list[str] = Field(min_length=1,max_length=4)
-    # Excepción operativa explícita: nunca se infiere del rol o del token.
-    lab_mng_physical_capacity_only: bool = False
-    max_instances: int = Field(ge=1)
-    max_vcpus: int = Field(ge=1)
-    max_memory_mb: int = Field(ge=512)
-    max_disk_gb: int = Field(ge=50)
-    max_concurrent_operations: int = Field(ge=1,le=2)
-
-
-def limits_for(tenant_id):
-    try:
-        path=os.environ.get('IACP_COMMERCIAL_LIMITS_FILE') or os.environ['IACP_TERRAFORM_PROFILES_FILE']
-        raw=json.loads(Path(path).read_text())
-        limits=Limits.model_validate((raw.get('tenants') or raw.get('commercial_limits',{}))[tenant_id])
-        for plan in limits.allowed_plans:resolve_plan(plan)
-        validate_lab_mng_scope(tenant_id, limits)
-        return limits
-    except (KeyError,ValueError,OSError,TypeError):
-        raise Conflict('COMMERCIAL_TENANT_NOT_AUTHORIZED') from None
-
-
-def validate_lab_mng_scope(tenant_id, limits):
-    """La excepción comercial no puede extenderse a otro tenant/red/destino."""
-    if not limits.lab_mng_physical_capacity_only:
-        return
-    from ..models import BOOTSTRAP_TENANT_ID
-    profile = authorized_profile(tenant_id)
-    if (tenant_id != BOOTSTRAP_TENANT_ID or profile is None
-            or profile.settings.environment != 'lab'
-            or profile.settings.node_name not in {'mng01', 'mng02'}
-            or not set(profile.settings.allowed_nodes) <= {'mng01', 'mng02'}
-            or not set(profile.target_nodes or [profile.settings.node_name]) <= {'mng01', 'mng02'}
-            or profile.settings.boot_disk.datastore_id != 'DS_CYBERFUEL'):
-        raise Conflict('COMMERCIAL_LAB_MNG_EXCEPTION_SCOPE_INVALID')
+from .contracts import CORE_CONTRACT
 
 
 def live_capacity(session,profile,plan):
@@ -92,84 +52,24 @@ def live_capacity(session,profile,plan):
     except Exception:raise Conflict('COMMERCIAL_PHYSICAL_CAPACITY_UNAVAILABLE') from None
 
 
-def record_for(session,instance):
-    return session.get(CommercialIntent,instance.id)
-
-
-def binding(instance,execution,row):
-    from ..terraform.apply import fingerprint
-    return fingerprint({'instance':{k:getattr(instance,k) for k in ['id','tenant_id','name','image','vcpus',
-        'memory_mb','disk_gb','network_profile','start_on_create','commercial_context']},
-        'allocation':execution.allocation,'state_key':execution.state_key,'source_revision':execution.source_revision,
-        'catalog':row.catalog_sha256,'revision':row.revision,'request':row.request_fingerprint,
-        'plan_id':row.plan_id,'image_id':row.image_id,'specification':row.specification})
-
-
 def member(session,instance,action,*,current_profiles=False,observation=False):
-    from ..models import Tenant
-    row=record_for(session,instance)
-    execution=session.get(TerraformExecution,instance.id)
-    tenant=session.get(Tenant,instance.tenant_id)
-    if (not row or not tenant or not tenant.active or action not in {'create','start','shutdown','reboot','delete'}
-            or not execution or execution.source_revision!=SOURCE_REVISION
-            or execution.vmid is None or execution.vmid<30000 or execution.vmid in {104,106,29000}
-            or row.execution_binding!=binding(instance,execution,row)):
-        raise Conflict('COMMERCIAL_OWNERSHIP_BINDING_CHANGED')
-    if observation:return row
-    # La autorización histórica queda ligada al contrato persistido, no a la
-    # variable del release actual. Un Core existente no adquiere cuotas ni
-    # requiere una política porque cambie el contenedor desplegado.
-    if row.revision == COMMERCIAL_CONTRACT:
-        limits=limits_for(instance.tenant_id)
-        if row.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
-    if current_profiles:
-        current=authorized_profile(instance.tenant_id, instance.image)
-        if current is None or current.model_dump()!=row.specification['profile_snapshot']:
-            raise Conflict('COMMERCIAL_PROFILE_CHANGED')
-    return row
+    from .technical_ownership import member as technical_member
+
+    return technical_member(session, instance, action,
+                            current_profiles=current_profiles,
+                            observation=observation, adopt=True)
 
 
 def authorize_operation(session, instance, action):
-    """Autoriza una mutación técnica sin consultar cuotas o políticas LAB."""
-    row = member(session, instance, action)
-    if getattr(instance, "commercial_revision", None) == CORE_CONTRACT or row.revision == CORE_CONTRACT:
-        return row
-    limits = limits_for(instance.tenant_id)
-    if limits.lab_mng_physical_capacity_only:
-        # La excepción histórica elimina la cuota comercial, pero no los
-        # locks por instancia/state ni la serialización del executor.
-        return row
-    if usage(session, instance.tenant_id)["concurrent_operations"] >= limits.max_concurrent_operations:
-        raise Conflict("COMMERCIAL_QUOTA_EXCEEDED:concurrent_operations")
-    return row
+    """Autoriza una mutación técnica sin cuotas ni políticas comerciales."""
+    return member(session, instance, action)
 
 
 def delegation(session,instance,action,*,current_profiles=False):
-    row=member(session,instance,action,current_profiles=current_profiles)
-    snapshot=dict(row.specification['profile_snapshot'])
-    if snapshot.get('guest_initialization'):
-        from .guest_identity import program_for_mode
-        snapshot['guest_initialization_program_sha256']=program_for_mode(snapshot['guest_initialization'])[1]
-    prefix='provisioning:' if row.revision == CORE_CONTRACT else 'commercial:'
-    return SimpleNamespace(id=prefix+row.catalog_sha256,
-        profile_snapshots={instance.network_profile:snapshot},
-        specification={'actions':['create','start','shutdown','reboot','delete']})
+    from .technical_ownership import member as technical_member
 
-
-def quota(session,tenant_id,limits,resources=None):
-    validate_lab_mng_scope(tenant_id, limits)
-    used=usage(session,tenant_id)
-    additions={'instances':1 if resources else 0,'vcpus':resources['vcpus'] if resources else 0,
-        'memory_mb':resources['memory_mb'] if resources else 0,'disk_gb':resources['disk_gb'] if resources else 0,
-        'concurrent_operations':1}
-    for name in additions:
-        # LAB/MNG autorizado no tiene presupuesto comercial acumulado,
-        # incluida la concurrencia. La serialización técnica por state/VMID
-        # sigue siendo obligatoria en los locks de Terraform y Proxmox.
-        if limits.lab_mng_physical_capacity_only:
-            continue
-        if used[name]+additions[name]>getattr(limits,'max_'+name):
-            raise Conflict('COMMERCIAL_QUOTA_EXCEEDED:'+name)
+    return technical_member(session, instance, action,
+                            current_profiles=current_profiles, adopt=True)
 
 
 def restore_expired(session,instance_id,principal,spec,store):
@@ -202,7 +102,7 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
     from ..terraform.lifecycle import initial_execution
     store=store or EphemeralSecrets.configured()
     capacity=capacity or live_capacity
-    core=is_core_contract()
+    # No existe un selector de motores: toda nueva KVM entra por Core.
     instance_id=str(uuid4())
     sealed=store.seal(principal.tenant_id,instance_id,spec.access.root_password.get_secret_value())
     values=spec.model_dump(mode='json',exclude={'access'})
@@ -231,33 +131,23 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
                     # intención original; no publica planificación ni clonación.
                     restore_expired(session,row.instance_id,principal,spec,store)
                 return response
-            if instance_executor()!='terraform':raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_REAL_EXECUTOR_REQUIRED')
+            if instance_executor()!='terraform':raise Conflict('PROVISIONING_REAL_EXECUTOR_REQUIRED')
             if spec.network.profile_id!='lab-dhcp':raise Conflict('WAN_STATIC_EXECUTION_NOT_CERTIFIED')
-            limits=None if core else limits_for(principal.tenant_id)
             resources=resolved_resources(spec)
-            if not core:
-                if spec.image_id!='ubuntu-2404' and not limits.lab_mng_physical_capacity_only:
-                    raise Conflict('COMMERCIAL_IMAGE_NOT_AUTHORIZED')
-                if spec.plan_id not in limits.allowed_plans:raise Conflict('COMMERCIAL_PLAN_NOT_AUTHORIZED')
             profile=authorized_profile(principal.tenant_id, spec.image_id)
-            if profile is None:raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_PROFILE_NOT_AUTHORIZED')
+            if profile is None:raise Conflict('PROVISIONING_PROFILE_NOT_AUTHORIZED')
             if omitted and (profile.settings.environment != 'lab'
-                    or profile.settings.network_mode != 'dhcp'
-                    or (not core and (spec.plan_id not in {'kvm-1', 'kvm-2'} and not limits.lab_mng_physical_capacity_only))
-                    or (not core and (spec.image_id != 'ubuntu-2404' and not limits.lab_mng_physical_capacity_only))):
-                raise Conflict(('PROVISIONING_DEFAULTS_NOT_AUTHORIZED' if core
-                    else 'COMMERCIAL_PILOT_DEFAULTS_NOT_AUTHORIZED'))
-            if profile.root_password_bootstrap:raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
+                    or profile.settings.network_mode != 'dhcp'):
+                raise Conflict('PROVISIONING_DEFAULTS_NOT_AUTHORIZED')
+            if profile.root_password_bootstrap:raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
             if profile.guest_initialization!=spec.image_id+'-lab-identity-v1':
-                raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_GUEST_INITIALIZATION_REQUIRED')
+                raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
             if session.scalar(select(Instance.id).where(Instance.tenant_id==principal.tenant_id,Instance.name==spec.name)):
-                raise Conflict(('PROVISIONING' if core else 'COMMERCIAL')+'_INSTANCE_NAME_CONFLICT')
+                raise Conflict('PROVISIONING_INSTANCE_NAME_CONFLICT')
             if spec.start_on_create:
                 from ..lifecycle.ownership import mutation_revision
                 mutation_revision()
-            if not core:
-                quota(session,principal.tenant_id,limits,resources)
-            revision=CORE_CONTRACT if core else COMMERCIAL_CONTRACT
+            revision=CORE_CONTRACT
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,
                 commercial_context=spec.commercial_context.model_dump(exclude_none=True) if spec.commercial_context is not None else None,commercial_revision=revision,status='pending',executor='terraform')
@@ -279,8 +169,11 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
                 image_id=spec.image_id,catalog_sha256=catalog_digest(),request_fingerprint=digest,
                 specification={**values,**({'pilot_defaults':{'revision':'lab-dhcp-v1','omitted_fields':omitted}} if omitted else {}),'ssh_public_keys':spec.access.ssh_public_keys,'profile_snapshot':profile.model_dump()},
                 secret_reference=reference,bootstrap_status='pending')
-            row.execution_binding=binding(instance,session.get(TerraformExecution,instance.id),row)
-            session.add(row);event(session,operation,'provisioning_accepted' if core else 'commercial_accepted',principal.subject);session.commit()
+            # ``execution_binding`` pertenece al registro CRM histórico. La
+            # autorización operativa se materializa después del apply en
+            # ``technical_ownership`` y nunca depende de esta fila.
+            row.execution_binding=None
+            session.add(row);event(session,operation,'provisioning_accepted',principal.subject);session.commit()
     except Exception:
         session.rollback()
         # Una referencia de una transacción abortada solo contiene ciphertext y
@@ -311,12 +204,11 @@ def advance(session,instance,publish):
         return approval
     if not approval:
         from .automation import technical_principal
-        contract = CORE_CONTRACT if row.revision == CORE_CONTRACT else COMMERCIAL_CONTRACT
-        automation = technical_principal(instance.tenant_id, contract)
+        automation = technical_principal(instance.tenant_id, CORE_CONTRACT)
         approval=approve(session,execution,{'attempt':execution.attempt,'plan_sha256':execution.plan_sha256,
             'valid_for_seconds':900},automation.subject+':apply:'+instance.id+':'+str(execution.attempt),
             automation)
-    return dispatch(session,execution,approval.id,'commercial-apply:'+approval.id,principal,publish)
+    return dispatch(session,execution,approval.id,'provisioning-api-core-apply:'+approval.id,principal,publish)
 
 
 def advance_deletion(session, instance, operation_id, publish):
@@ -338,7 +230,7 @@ def advance_deletion(session, instance, operation_id, publish):
 
         automation = technical_principal(
             instance.tenant_id,
-            CORE_CONTRACT if instance.commercial_revision == CORE_CONTRACT else COMMERCIAL_CONTRACT,
+            CORE_CONTRACT,
         )
         deletion.approve(
             session,

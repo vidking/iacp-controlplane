@@ -1,15 +1,15 @@
 {
   "name": "crm-demo-03",
-  "image": "ubuntu-2404",
-  "vcpus": 1,
-  "memory_mb": 1536,
-  "disk_gb": 20,
-  "network_profile": "lab-dhcp",
-  "self_service_policy_id": "ac558dfa-4c2b-4e2f-8886-67648e880dc8",
+  "plan_id": "kvm-1",
+  "image_id": "ubuntu-2404",
+  "network": {"profile_id": "lab-dhcp"},
+  "access": {
+    "root_password": "CAMBIAR_CONTRASENA_UNICA_2026",
+    "ssh_public_keys": []
+  },
   "commercial_context": {
-    "customer_id": "cliente-demo-01",
     "order_id": "pedido-demo-01",
-    "product_id": "kvm-small"
+    "product_id": "kvm-1"
   },
   "start_on_create": true
 }

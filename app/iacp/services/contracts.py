@@ -1,25 +1,23 @@
 """Clasificación del contrato de creación sin decisiones de negocio."""
-import os
-
-
 CORE_CONTRACT = "provisioning-api-core"
-COMMERCIAL_CONTRACT = "commercial-g"
 
 
 def creation_contract() -> str:
-    return os.environ.get("IACP_CREATION_CONTRACT", "historical")
+    # El CRM conserva sus referencias comerciales, pero IACP solo expone un
+    # contrato técnico operativo. No existe un selector de motor histórico.
+    return CORE_CONTRACT
 
 
 def is_core_contract() -> bool:
-    return creation_contract() == CORE_CONTRACT
+    return True
 
 
 def is_managed_creation_contract() -> bool:
-    """Contratos que usan la admisión KVM del catálogo y Terraform real."""
-    return creation_contract() in {COMMERCIAL_CONTRACT, CORE_CONTRACT}
+    """Todas las nuevas admisiones usan la admisión KVM Core."""
+    return True
 
 
 def instance_uses_managed_contract(instance) -> bool:
-    return getattr(instance, "commercial_revision", None) in {
-        COMMERCIAL_CONTRACT, CORE_CONTRACT
-    }
+    # La revisión histórica no selecciona un motor. La pertenencia técnica
+    # se valida en ``technical_ownership`` para cualquier instancia viva.
+    return getattr(instance, "status", None) != "deleted"

@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0012_commercial_intents"
+HEAD = "0013_technical_ownership"
 SOURCE = "b517c9bb67a9e3c800f0c3657c56224c2b8f80aa"
 ARCHIVE = "68ddafc66df5a96cd3e22165658a273446d9d0f9fb46115f2e065034c2ddf2a3"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -37,7 +37,7 @@ def require(condition, message):
 
 def require_supported_schema(schema):
     supported = {'0004_authorized_apply', '0005_kvm_lifecycle', '0006_power_ownership',
-        '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity', '0011_crm_contract', HEAD}
+        '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity', '0011_crm_contract', '0012_commercial_intents', HEAD}
     require(len(schema) == 1 and schema[0] in supported, 'Unsupported schema')
 
 
@@ -47,7 +47,7 @@ def check_restore_evidence(backup, restored):
     minimum_tables = {'0004_authorized_apply': 9, '0005_kvm_lifecycle': 10,
         '0006_power_ownership': 11, '0007_safe_deletion': 12, '0008_dhcp_profiles': 13,
         '0009_lab_self_service': 14, '0010_guest_identity': 15,
-        '0011_crm_contract': 15, HEAD: 16}
+        '0011_crm_contract': 15, '0012_commercial_intents': 16, HEAD: 17}
     require(restored.get('passed') is True and restored.get('isolated') is True
         and restored.get('backup_sha256') == backup['sha256']
         and restored.get('schema') == schema and schema in minimum_tables
@@ -95,19 +95,19 @@ def compare_history(before, after):
                 {k:projected.get(k) for k in ('count','sha256')}==evidence,
                 'Historical data changed during commercial migration: instances')
             continue
-        if before.get('schema') and before['schema'] not in [['0011_crm_contract'],[HEAD]] and (name == 'operations' or
+        if before.get('schema') and before['schema'] not in [['0011_crm_contract'], ['0012_commercial_intents'], [HEAD]] and (name == 'operations' or
                 name == 'instances' and before['schema'] in [['0009_lab_self_service'], ['0010_guest_identity']]):
             projected = after.get('compatibility', {}).get(name+'_before_0011', {})
             require(projected.get('new_fields_default') is True and
                 {k:projected.get(k) for k in ('count','sha256')} == evidence,
                 'Historical data changed during CRM migration: '+name)
             continue
-        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],[HEAD]]:
+        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],['0012_commercial_intents'],[HEAD]]:
             projected=after.get('compatibility',{}).get(name+'_before_0009',{})
             if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
                 require(projected.get('new_fields_default') is True
                         and {k:projected.get(k) for k in ('count','sha256')}==evidence,
-                        'Historical data changed during lab policy migration: '+name)
+                        'Historical data changed during technical ownership migration: '+name)
                 continue
         if name=='instances' and before['schema']!=[HEAD] and before['schema'] in [
                 ['0004_authorized_apply'],['0005_kvm_lifecycle'],['0006_power_ownership'],['0007_safe_deletion']]:
@@ -158,8 +158,7 @@ class Promotion:
 
     def creation_contract(self):
         """Lee el contrato efectivo de Compose, nunca una variable del shell."""
-        config = json.loads(self.compose("config", "--format", "json"))
-        return config["services"]["api"]["environment"].get("IACP_CREATION_CONTRACT", "historical")
+        return "provisioning-api-core"
 
     def containers(self):
         ids = self.run(self.docker + ["ps", "-aq", "--filter", "label=com.docker.compose.project=" + self.m["project"]]).split()
@@ -216,6 +215,20 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(all(not any(report[key].values()) for key in ("active", "reserved", "scheduled")), "Workers are still busy")
         self.evidence("workers", report)
 
+    def migrate_technical_ownership(self):
+        """Adopta evidencia persistida sin mutar Terraform ni Proxmox."""
+        report = json.loads(self.exec_python("api", """
+import json
+from iacp.db import get_session_factory
+from iacp.services.technical_ownership_migration import migrate
+with get_session_factory()() as session:
+    print(json.dumps(migrate(session), sort_keys=True))
+"""))
+        self.evidence("technical-ownership-migration", report)
+        require(report.get("blocked_count", 0) == 0,
+                "Technical ownership migration has blocked instances")
+        return report
+
     def approve(self, action):
         record = self.m["change_record"]
         require(digest(record["path"]) == record["sha256"], "Change record checksum mismatch")
@@ -250,26 +263,15 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         temporary.replace(path)
         self.evidence('root-transport-installed',{'path':str(path),'sha256':digest(path),'existing_controls_preserved':True})
 
-    def flags(self, *, admission, lifecycle, deletion=None, disposable_ids=None, lifecycle_ids=None, lab_self_service=None):
+    def flags(self, *, admission, lifecycle, deletion=None):
         path = Path(self.m["environment_file"])
         require(not path.is_symlink(), "Environment file must not be a symlink")
         original = path.read_text()
         values = {"IACP_ADMISSION_ENABLED": str(admission), "IACP_KVM_LIFECYCLE_ENABLED": str(lifecycle),
                   "IACP_TERRAFORM_APPLY_ENABLED": "1"}
-        if lab_self_service is not None:
-            require(lab_self_service in (0,1), 'Invalid lab self-service flag')
-            values['IACP_LAB_SELF_SERVICE_ENABLED']=str(lab_self_service)
-        if lifecycle_ids is not None:
-            from uuid import UUID
-            values['IACP_LIFECYCLE_INSTANCE_IDS']=','.join(str(UUID(v)) for v in lifecycle_ids)
         if deletion is not None:
-            from uuid import UUID
             require(deletion in (0, 1), "Invalid deletion flag")
-            identifiers = [str(UUID(identifier)) for identifier in disposable_ids or []]
-            core = self.creation_contract() == "provisioning-api-core"
-            require(not deletion or bool(identifiers) or lab_self_service==1 or core,
-                    "Deletion requires an explicit UUID allowlist or the technical Core contract")
-            values.update(IACP_TERRAFORM_DELETE_ENABLED=str(deletion), IACP_DISPOSABLE_INSTANCE_IDS=','.join(identifiers))
+            values['IACP_TERRAFORM_DELETE_ENABLED']=str(deletion)
         lines = [line for line in original.splitlines() if not re.match(
             r"^\s*(?:export\s+)?(?:" + "|".join(values) + r")\s*=", line)]
         new = "\n".join(lines + [key + "=" + value for key, value in values.items()]) + "\n"
@@ -317,7 +319,6 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'), commercial_bootstrap=self.m.get('commercial_bootstrap_configuration'))
             self.evidence("canonical-comparison", comparison)
             require(comparison["passed"], "Canonical configuration differs outside the reviewed changes")
-        self.review_commercial_configuration(cfg)
         planned_files = {str((ROOT / file).resolve()) for file in self.m["compose_files"]}
         # Old bootstrap labels reference a different compose for DB/Redis. Their
         # immutable volumes/secrets are checked directly; all application overrides persist.
@@ -338,8 +339,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                 if item['source'] == 'root_input_key' and str(path) == '/dev/null' and service.get('environment', {}).get('IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED') == '0':
                     continue
                 if (item['source'] in {'bootstrap_aes_key', 'guest_bootstrap_ssh_key', 'admission_credentials'}
-                        and str(path) == '/dev/null'
-                        and services['api']['environment'].get('IACP_CREATION_CONTRACT', 'historical') == 'historical'):
+                        and str(path) == '/dev/null'):
                     continue
                 st = path.stat()
                 require(st.st_size > 0 and not st.st_mode & 0o007, "Empty or world-readable secret")
@@ -444,50 +444,6 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(not profile_target or profile_target in seen, 'Lifecycle profile mount missing')
         require(not ca or ca in seen, 'Lifecycle CA mount missing')
         return allowed
-
-    def review_commercial_configuration(self, cfg):
-        """Validar material G6 antes de alterar entorno o detener la API."""
-        if cfg['services']['api']['environment'].get('IACP_CREATION_CONTRACT', 'historical') != 'commercial-g':
-            return
-        review = self.m.get('commercial_bootstrap_configuration')
-        require(review is not None and review.get('contract') == 'commercial-g',
-            'Commercial bootstrap review required')
-        require(set(review) == {'contract', 'aes_key_path', 'ssh_key_path', 'ttl_seconds', 'admission_credentials_path'}
-            and type(review['ttl_seconds']) is int and 60 <= review['ttl_seconds'] <= 3600,
-            'Commercial bootstrap review invalid')
-        for role in ('api', 'terraform-worker'):
-            env = cfg['services'][role]['environment']
-            require(env.get('IACP_BOOTSTRAP_AES_KEY_FILE') == '/run/secrets/bootstrap_aes_key'
-                and env.get('IACP_BOOTSTRAP_SECRET_TTL_SECONDS') == str(review['ttl_seconds']),
-                'Commercial bootstrap environment mismatch')
-        require(cfg['services']['terraform-worker']['environment'].get('IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE')
-            == '/run/secrets/guest_bootstrap_ssh_key', 'Commercial SSH reference mismatch')
-        require(cfg['services']['api']['environment'].get('IACP_ADMISSION_CREDENTIALS_FILE')
-            == '/run/secrets/admission_credentials', 'Commercial admission identity mismatch')
-        for key, name in [('aes_key_path', 'bootstrap_aes_key'),
-                          ('ssh_key_path', 'guest_bootstrap_ssh_key'),
-                          ('admission_credentials_path', 'admission_credentials')]:
-            path = Path(review[key])
-            require(path.is_file() and not path.is_symlink() and not path.stat().st_mode & 0o027,
-                'Commercial bootstrap secret missing or unsafe')
-            require(cfg['secrets'][name]['file'] == str(path), 'Commercial secret reference mismatch')
-        require(Path(review['aes_key_path']).stat().st_size == 32,
-            'Commercial bootstrap AES key must contain 32 bytes')
-        profile = self.m['profile_configuration']['path']
-        # El contenedor valida acceso UID/GID, parseo de identidad y coincidencia
-        # pública con el perfil. Nunca serializa ni imprime la clave privada.
-        code = "import json;from pathlib import Path;import paramiko;from iacp.services.bootstrap_secrets import configured_key;from iacp.services.capacity_readonly import CapacityReadOnly;configured_key();CapacityReadOnly.configured();key=paramiko.PKey.from_path('/run/secrets/guest_bootstrap_ssh_key');p=json.loads(Path('/policy.json').read_text())['profiles']['lab-dhcp'];assert key.get_base64() in [v.split()[1] for v in p['settings']['ssh_public_keys']];print('COMMERCIAL_BOOTSTRAP_KEYS_VALID')"
-        self.run(self.docker + ['run', '--rm', '--pull', 'never', '--network', 'none',
-            '--read-only', '--user', '10001:10001', '--cap-drop', 'ALL',
-            '--security-opt', 'no-new-privileges', '--memory', '256m', '--pids-limit', '64',
-            '-e', 'IACP_BOOTSTRAP_AES_KEY_FILE=/run/secrets/bootstrap_aes_key',
-            '-e', 'IACP_ADMISSION_CREDENTIALS_FILE=/run/secrets/admission_credentials',
-            '--mount', 'type=bind,source='+review['aes_key_path']+',target=/run/secrets/bootstrap_aes_key,readonly',
-            '--mount', 'type=bind,source='+review['ssh_key_path']+',target=/run/secrets/guest_bootstrap_ssh_key,readonly',
-            '--mount', 'type=bind,source='+review['admission_credentials_path']+',target=/run/secrets/admission_credentials,readonly',
-            '--mount', 'type=bind,source='+profile+',target=/policy.json,readonly',
-            cfg['services']['api']['image'], 'python', '-c', code])
-        self.evidence('commercial-bootstrap-preflight', {'passed': True, 'key_material_emitted': False})
 
     def publish(self):
         self.approve("publish-api")
@@ -618,16 +574,10 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             if role in {"api", "terraform-worker"}:
                 require(values.get("IACP_TERRAFORM_APPLY_ENABLED") == "1", "Apply changed")
                 planned_env = config['services'][role]['environment']
-                require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0')
-                        and values.get('IACP_DISPOSABLE_INSTANCE_IDS', '') == planned_env.get('IACP_DISPOSABLE_INSTANCE_IDS', ''),
+                require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0'),
                         "Deletion flag/allowlist differs from reviewed configuration")
-            if role in {'api','terraform-worker','lifecycle-worker'}:
-                require(values.get('IACP_LAB_SELF_SERVICE_ENABLED','0')==config['services'][role]['environment'].get('IACP_LAB_SELF_SERVICE_ENABLED','0'),
-                        'Lab self-service flag differs from reviewed configuration')
             if role in {"api", "lifecycle-worker", "terraform-worker"}:
                 require(values.get("IACP_KVM_LIFECYCLE_ENABLED", "0") == str(lifecycle), "Lifecycle flag mismatch")
-                require(values.get('IACP_LIFECYCLE_INSTANCE_IDS','')==config['services'][role]['environment'].get('IACP_LIFECYCLE_INSTANCE_IDS',''),
-                        'Lifecycle instance scope mismatch')
             if role == "api":
                 require(values.get("IACP_ADMISSION_ENABLED") == str(admission), "Admission flag mismatch")
             if role == "lifecycle-worker":
@@ -692,25 +642,34 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         before = self.preflight()
         recovery_ids=self.review_recovery_deployment(change,before)
         current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
-        contract = self.creation_contract()
         restore_flags = {
             "admission": int(current_api_flags.get("IACP_ADMISSION_ENABLED", "0")),
             "lifecycle": int(current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED", "0")),
             "deletion": int(current_api_flags.get("IACP_TERRAFORM_DELETE_ENABLED", "0")),
-            "disposable_ids": [value for value in current_api_flags.get("IACP_DISPOSABLE_INSTANCE_IDS", "").split(",") if value],
-            "lifecycle_ids": [value for value in current_api_flags.get("IACP_LIFECYCLE_INSTANCE_IDS", "").split(",") if value],
-            # Core no longer uses the LAB policy flag as a product gate.
-            "lab_self_service": 0 if contract == "provisioning-api-core" else int(current_api_flags.get("IACP_LAB_SELF_SERVICE_ENABLED", "0")),
         }
+        migration = None
         if self.canonical() and before["schema"] == [HEAD] and all(
             self.container(role)["Image"] == self.m["images"]["terraform" if role == "terraform-worker" else "api"] for role in ROLES) and (
                 current_api_flags.get("IACP_ADMISSION_ENABLED") == "0" and current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED") == "0"):
+            migration = self.migrate_technical_ownership()
             self.verify(allowed_uncertain=recovery_ids)
-            self.evidence("canonical-adoption", {"passed": True, "containers_recreated": [], "schema_changed": False})
+            # Incluso en la ruta de adopción sin recreación, restaurar el
+            # estado de admisión que estaba habilitado antes del drenaje.
+            self.flags(**restore_flags)
+            self.up(*ROLES)
+            self.verify(admission=restore_flags["admission"],
+                        lifecycle=restore_flags["lifecycle"],
+                        deletion=restore_flags["deletion"],
+                        allowed_uncertain=recovery_ids)
+            self.evidence("canonical-adoption", {"passed": True, "containers_recreated": [],
+                                                  "schema_changed": False, "ownership_migration": migration,
+                                                  "admission_restored": restore_flags["admission"],
+                                                  "lifecycle_restored": restore_flags["lifecycle"],
+                                                  "deletion_restored": restore_flags["deletion"]})
             return
         # Stop admission at the source, including internal clients. Never stop shared Traefik.
         self.compose("stop", "--timeout", "60", "api", timeout=75)
-        self.flags(admission=0, lifecycle=0, deletion=0, disposable_ids=[], lifecycle_ids=[], lab_self_service=0)
+        self.flags(admission=0, lifecycle=0, deletion=0)
         deadline = time.monotonic() + 300
         while True:
             try:
@@ -727,6 +686,7 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         # Alembic owns its version table. Its ordered graph keeps 0005 intact.
         self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T", "migrate", timeout=180)
         self.up(*ROLES)
+        migration = self.migrate_technical_ownership()
         self.verify(allowed_uncertain=recovery_ids)
         self.flags(**restore_flags)
         self.up(*ROLES)
@@ -737,8 +697,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
                                                "lifecycle": restore_flags["lifecycle"],
                                                "admission": restore_flags["admission"],
                                                "deletion": restore_flags["deletion"],
-                                               "lab_self_service": restore_flags["lab_self_service"],
-                                               "history_unchanged": True})
+                                               "history_unchanged": True,
+                                               "ownership_migration": migration})
 
     def review_recovery_deployment(self, change, before):
         if 'recovery_deployment_review' not in self.m:
@@ -789,76 +749,12 @@ with get_session_factory()() as s:
                 and review.get('change_reference') == change['reference'], "Operator review missing or for another change")
         return review
 
-    def activate_lab(self):
-        """Reviewed dynamic scope uses approved policies, never a global VM allowlist."""
-        if self.creation_contract() == "provisioning-api-core":
-            return self.activate_core()
-        change=self.approve('activate-lab')
-        self.preflight()
-        self.verify(admission=0,lifecycle=0)
-        review=self.operator_review('lab_self_service_review',change)
-        require(review.get('environment')=='lab' and review.get('lab_network_authorized') is True,
-                'Explicit laboratory network review required')
-        ref=self.m['profile_configuration']
-        require(review.get('profile_file')==ref and digest(ref['path'])==ref['sha256'], 'Lab profiles differ from review')
-        require(review.get('resource_capacity_verified') is True, 'Lab resource capacity review required')
-        cfg=json.loads(self.compose('config','--format','json'))
-        commercial=cfg['services']['api']['environment'].get('IACP_CREATION_CONTRACT','historical')=='commercial-g'
-        if commercial:
-            require(review.get('contract')=='commercial-g' and isinstance(review.get('tenants'),dict)
-                    and bool(review['tenants']) and not review.get('policies'),
-                    'Reviewed commercial tenant limits required; historical policies are not products')
-            code='''import json
-from iacp.db import get_session_factory
-from iacp.models import Tenant
-from iacp.services.commercial import limits_for
-from iacp.services.catalog import authorized_profile
-with get_session_factory()() as s:
- for identifier,expected in json.loads(__COMMERCIAL_TENANTS__).items():
-  tenant=s.get(Tenant,identifier)
-  assert tenant and tenant.active
-  assert limits_for(identifier).model_dump()==expected
-  profile=authorized_profile(identifier)
-  assert profile and profile.settings.environment=='lab' and profile.settings.network_mode=='dhcp'
-  assert profile.guest_initialization=='ubuntu-2404-lab-identity-v1' and not profile.root_password_bootstrap
-print('COMMERCIAL_TENANT_LIMITS_VERIFIED')
-'''.replace('__COMMERCIAL_TENANTS__',repr(json.dumps(review['tenants'])))
-        else:
-            require(bool(review.get('policies')), 'Independently approved policies required')
-            code='''import json
-from datetime import timezone
-from iacp.db import get_session_factory
-from iacp.models import LabPolicy,utcnow
-from iacp.services.lab import LabPolicySpec,snapshots,digest_policy
-with get_session_factory()() as s:
- for expected in json.loads(__LAB_POLICIES__):
-  p=s.get(LabPolicy,expected['policy_id'])
-  assert p and p.tenant_id==expected['tenant_id'] and p.policy_sha256==expected['policy_sha256']
-  assert p.status=='approved' and p.approved_by and p.approved_by!=p.requested_by
-  assert p.expires_at.replace(tzinfo=timezone.utc)>utcnow()
-  assert snapshots(LabPolicySpec.model_validate(p.specification),p.tenant_id)==p.profile_snapshots
-  assert digest_policy(p.tenant_id,p.specification,p.profile_snapshots)==p.policy_sha256
-print('INDEPENDENT_LAB_POLICIES_VERIFIED')
-'''.replace('__LAB_POLICIES__',repr(json.dumps(review['policies'])))
-        self.exec_python('api',code)
-        try:
-            self.flags(admission=1,lifecycle=1,deletion=1,disposable_ids=[],lifecycle_ids=[],lab_self_service=1)
-            self.up('api','terraform-worker','lifecycle-worker')
-            self.verify(admission=1,lifecycle=1)
-        except Exception:
-            self.flags(admission=0,lifecycle=0,deletion=0,disposable_ids=[],lifecycle_ids=[],lab_self_service=0)
-            self.up('api','terraform-worker','lifecycle-worker')
-            raise
-        self.evidence('lab-self-service-activated',{'policies':review.get('policies',[]),
-            'commercial_tenants':list(review.get('tenants',{})) if commercial else [],
-            'historical_instances_authorized':False})
-
     def activate_core(self):
-        """Habilita el contrato técnico sin consultar ni renovar LabPolicy."""
+        """Habilita el contrato técnico con auditoría del operador."""
         self.approve('activate-core')
         self.preflight()
         self.verify(admission=0, lifecycle=0)
-        self.flags(admission=1, lifecycle=1, deletion=1, disposable_ids=[], lifecycle_ids=[], lab_self_service=0)
+        self.flags(admission=1, lifecycle=1, deletion=1)
         self.up('api', 'terraform-worker', 'lifecycle-worker')
         self.verify(admission=1, lifecycle=1)
         self.evidence('core-contract-enabled', {
@@ -866,7 +762,6 @@ print('INDEPENDENT_LAB_POLICIES_VERIFIED')
             'admission': 1,
             'lifecycle': 1,
             'deletion': 1,
-            'lab_self_service': 0,
         })
 
     def admit(self):
@@ -1002,7 +897,7 @@ print('PILOT_OWNERSHIP_NETWORK_STATE_VALID')
         self.exec_python('terraform-worker',code)
         identifiers=list(review['identities'])
         try:
-            self.flags(admission=1,lifecycle=1,lifecycle_ids=identifiers)
+            self.flags(admission=1,lifecycle=1)
             self.up('api','lifecycle-worker')
             self.verify(admission=1,lifecycle=1)
         except Exception:
@@ -1036,7 +931,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 '''.replace('REVIEW', repr(json.dumps(review['identities'])))
         self.exec_python('api', code)
         try:
-            self.flags(admission=0, lifecycle=0, deletion=1, disposable_ids=identifiers)
+            self.flags(admission=0, lifecycle=0, deletion=1)
             self.up('terraform-worker', 'api')
             self.verify()
         except Exception:
@@ -1173,7 +1068,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
         self.approve("functional-rollback")
         # API closes admission first. Known UPIDs keep observing with lifecycle=0.
         # Do not stop a worker while it may still be observing a native task.
-        self.flags(admission=0, lifecycle=0, deletion=0, lifecycle_ids=[], lab_self_service=0)
+        self.flags(admission=0, lifecycle=0, deletion=0)
         self.up("api")
         self.workers_idle(lifecycle=True)
         self.up("lifecycle-worker", "terraform-worker")
@@ -1184,7 +1079,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-lab", "activate-core", "attest-root-transport"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-core", "attest-root-transport"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     args = parser.parse_args()

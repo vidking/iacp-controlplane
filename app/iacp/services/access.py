@@ -63,15 +63,16 @@ def admit_access(spec, tenant_id):
     from ..terraform.profiles import load_profile
     if os.environ.get('IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED', '0') != '1':
         raise Conflict('ROOT_PASSWORD_BOOTSTRAP_DISABLED')
-    if not spec.network_profile or not spec.self_service_policy_id:
-        raise Conflict('ROOT_ACCESS_REQUIRES_REVIEWED_LAB_POLICY')
+    if not spec.network_profile:
+        raise Conflict('ROOT_ACCESS_REQUIRES_TECHNICAL_PROFILE')
     profile = load_profile(spec.network_profile, tenant_id)
     if not profile.root_password_bootstrap:
         raise Conflict('ROOT_ACCESS_PROFILE_NOT_AUTHORIZED')
 
 
 def request_verification(session, instance, principal, key, publish):
-    if getattr(instance,'commercial_revision',None):
+    from ..models import CommercialIntent
+    if session.get(CommercialIntent, instance.id) is not None:
         from .commercial_bootstrap import request
         from ..api.dependencies import get_commercial_bootstrap_publisher
         return request(session,instance,principal,key,get_commercial_bootstrap_publisher())
@@ -217,7 +218,8 @@ def after_initialization(identifier, sessions):
         if not row or row.status != 'completed':
             return
         instance = session.get(Instance, row.instance_id)
-        if instance.commercial_revision:
+        from ..models import CommercialIntent
+        if session.get(CommercialIntent, instance.id) is not None:
             from .commercial_bootstrap import after_initialization as bootstrap
             bootstrap(instance.id,sessions)
             return

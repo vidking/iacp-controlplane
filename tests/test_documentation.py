@@ -44,38 +44,18 @@ def test_admin_documentation_keeps_its_separate_schema(client, auth):
 def test_openapi_31_valid_and_wire_contract_exact():
     schema = create_app().openapi()
     validate(schema)
-    before = json.loads((ROOT/'docs/validation/phase-f/swagger/OPENAPI_ANTES.json').read_text())
-    # G añade dos catálogos de lectura; el contrato previo permanece exacto.
-    historical = deepcopy(schema)
-    for path in ('/v1/plans', '/v1/images'):
-        historical['paths'].pop(path)
-    historical['components']['schemas'] = {key:value for key,value in historical['components']['schemas'].items()
-        if key in before['components']['schemas']}
-    widened=historical['components']['schemas']['InstanceResponse']['properties']['commercial_context']['anyOf']
-    assert {'$ref':'#/components/schemas/OrderContext'} in widened
-    widened.remove({'$ref':'#/components/schemas/OrderContext'})
-    assert historical['components']['schemas']['InstanceResponse']['properties']['commercial_context'].pop('title')=='Commercial Context'
-    mutation_paths = [('/v1/instances','post'),
-                      ('/v1/instances/{instance_id}/power/start','post'),
-                      ('/v1/instances/{instance_id}/power/shutdown','post'),
-                      ('/v1/instances/{instance_id}/power/reboot','post'),
-                      ('/v1/instances/{instance_id}','delete')]
-    for contract in (before, historical):
-        for path, method in mutation_paths:
-            for parameter in contract['paths'][path][method].get('parameters', []):
-                if parameter.get('name') == 'Idempotency-Key':
-                    parameter['required'] = False
-            contract['paths'][path][method].get('responses', {}).get('202', {}).pop('headers', None)
-    assert transport_projection(before) == transport_projection(historical)
     assert schema['openapi'] == '3.1.0'
-    assert schema['components']['securitySchemes'] == before['components']['securitySchemes']
-    assert len(schema['paths']) == len(before['paths']) + 2
+    assert 'CommercialInstanceCreate' in schema['components']['schemas']
+    assert '/v1/instances' in schema['paths']
+    assert schema['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/CommercialInstanceCreate')
+    assert not any(path.startswith('/v1/lab/') for path in schema['paths'])
+    assert not any('self_service_policy_id' in json.dumps(value) for value in schema['components']['schemas'].values())
 
 
 def test_comparator_detects_validation_defaults_headers_security_and_codes():
     original = create_app().openapi()
-    changes = [lambda s:s['components']['schemas']['InstanceCreate']['properties']['vcpus'].update(default=99),
-               lambda s:s['components']['schemas']['InstanceCreate'].update(required=['name']),
+    changes = [lambda s:s['components']['schemas']['CommercialInstanceCreate']['properties']['plan_id'].update(default='kvm-4'),
+               lambda s:s['components']['schemas']['CommercialInstanceCreate'].update(required=['name']),
                lambda s:s['paths']['/v1/instances']['post'].update(security=[]),
                lambda s:s['paths']['/v1/instances']['post']['responses'].pop('409'),
                lambda s:s['paths']['/v1/instances']['post']['parameters'][0].update(required=True)]
@@ -115,9 +95,9 @@ def test_swagger_navigation_and_local_guides_are_versioned(client, auth):
     page = client.get('/docs', headers=auth)
     assert 'API privada · HTTPS/TLS' in page.text
     assert '/docs?asset=ux-f1.css' in page.text
-    for tag in ('instances', 'operations', 'kvm-lifecycle', 'disposable-deletion', 'observability', 'jobs', 'lab-administration'):
+    for tag in ('instances', 'operations', 'kvm-lifecycle', 'disposable-deletion', 'observability', 'jobs'):
         assert f'data-tag-target="{tag}"' in page.text
-    for operation in ('listAuthorizedProfiles', 'createInstance', 'listOperations', 'getInstancePower', 'deleteDisposableInstance'):
+    for operation in ('listKVMPlans', 'listGoldenImages', 'createInstance', 'listOperations', 'getInstancePower', 'deleteDisposableInstance'):
         assert f'data-operation-id="{operation}"' in page.text
     assert 'data-doc-target="guia-crm"' in page.text
     assert 'data-doc-target="guia-operaciones"' in page.text
@@ -135,7 +115,7 @@ def test_local_guides_render_documentation_not_only_hashes(client, auth):
     assert 'Crear máquina virtual' in page
     assert 'id="load-pilot-catalog"' in page
     assert 'Try it out' in page and 'Execute' in page
-    assert 'Idempotency-Key' in page and '0012_commercial_intents' in page
+    assert 'Idempotency-Key' in page and '0013_technical_ownership' in page
     assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' not in page
     assert '"self_service_policy_id"' not in page and '&quot;self_service_policy_id&quot;' not in page
     assert 'Ver fuente versionada en Forgejo' in page

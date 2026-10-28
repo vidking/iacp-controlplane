@@ -52,7 +52,7 @@ def binding(session, row, operation, *, check_ownership=False):
         raise PowerError("POWER_BINDING_CHANGED")
     if check_ownership and instance_ownership(session, instance, approval) != row.ownership_certificate_id:
         raise PowerError("POWER_BINDING_CHANGED")
-    if check_ownership and (instance.self_service_policy_id or getattr(instance,'commercial_revision',None)):
+    if check_ownership:
         from ..services.authorization import member
         try:
             member(session, instance, row.action)
@@ -68,6 +68,8 @@ def response(session, operation):
 
 
 def request_power(session, instance, principal, action, key, publish, client_factory):
+    if principal.tenant_id != instance.tenant_id:
+        raise Conflict("TENANT_NOT_AUTHORIZED")
     digest = hashlib.sha256(json.dumps({"instance_id": instance.id, "action": action}, sort_keys=True).encode()).hexdigest()
     query = select(Operation).where(Operation.tenant_id == principal.tenant_id, Operation.idempotency_key == key)
 
@@ -99,7 +101,8 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                     raise Conflict("DELETE_OPERATION_ACTIVE")
                 from ..services.guest_identity import active as active_initialization
                 if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
-                if instance.commercial_revision:
+                from ..models import CommercialIntent
+                if session.get(CommercialIntent, instance.id) is not None:
                     from ..services.commercial_bootstrap import active as bootstrap_active
                     if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
                 from ..services.authorization import authorize_operation

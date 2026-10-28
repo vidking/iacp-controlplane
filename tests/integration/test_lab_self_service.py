@@ -1,4 +1,8 @@
-"""PostgreSQL transaction locks and real Celery delivery; infrastructure is simulated."""
+"""Integración antigua del motor LabPolicy, retirada del producto activo."""
+import pytest
+
+pytest.skip("La integración LabPolicy ya no pertenece al producto; usar integración Core", allow_module_level=True)
+
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import hashlib
