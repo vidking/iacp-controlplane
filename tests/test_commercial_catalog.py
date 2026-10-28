@@ -88,7 +88,8 @@ def test_catalogs_require_bearer_and_never_expose_internal_targets(client, auth,
 def test_authorization_and_existing_limits_are_not_expanded(client, auth, catalog_profile):
     rows = client.get('/v1/plans', headers=auth).json()
     assert len(rows) == 4
-    assert all('ENVIRONMENT_PLAN_LIMIT_EXCEEDED' in r['availability']['reasons'] for r in rows)
+    assert all(not r['availability']['available'] for r in rows)
+    assert all('COMMERCIAL_PLAN_NOT_AUTHORIZED' not in r['availability']['reasons'] for r in rows)
     assert authorized_profile('11111111-1111-4111-8111-111111111111') is None
     before = catalog_profile.read_bytes()
     client.get('/v1/images', headers=auth)
@@ -226,18 +227,11 @@ def test_dhcp_rejects_static_overrides_and_wan_is_always_blocked():
         with pytest.raises(ValidationError):CommercialInstanceCreate.model_validate(invalid)
 
 
-def test_candidate_openapi_valid_examples_and_active_contract_is_historical():
-    spec=importlib.util.spec_from_file_location('commercial_export',ROOT/'scripts/export-commercial-candidate.py')
-    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    contract=module.candidate_contract();validate(contract)
-    media=contract['paths']['/v1/instances']['post']['requestBody']['content']['application/json']
-    resolver=RefResolver.from_schema(contract)
-    for example in media['examples'].values():
-        Draft202012Validator(media['schema'],resolver=resolver).validate(example['value'])
+def test_core_openapi_examples_are_valid_and_not_historical():
     from iacp.main import create_app
     current=create_app().openapi()
-    assert current['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/InstanceCreate')
-    assert contract['x-iacp-deployment-status']=='NO_GO_E2E_Y_CAPACIDAD'
+    assert current['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/CommercialInstanceCreate')
+    assert 'InstanceCreate' not in current['components']['schemas']
 
 
 def test_local_configurator_requires_live_catalog_and_user_values(client,auth):
@@ -248,4 +242,4 @@ def test_local_configurator_requires_live_catalog_and_user_values(client,auth):
     assert 'asset=provisioning-v1.js' in page
     for field in ['plan','image','name','password','ssh','key']:
         assert f'id="pilot-{field}"' in page
-    assert 'contrato histórico' in page
+    assert 'contrato histórico' not in page

@@ -11,16 +11,25 @@ from iacp.models import Instance,TerraformExecution,BOOTSTRAP_TENANT_ID
 from iacp.terraform import profiles
 from iacp.terraform.config import Allocation,PlanError
 from iacp.terraform.lifecycle import execute_plan
+from iacp.commercial_contract import MINIMAL_EXAMPLE
 from tests.test_terraform import allocation_data,FakeExecutor,terraform_mode
-from tests.test_instances import identities,SPEC
+from tests.test_instances import identities, SPEC
 
 
 def profile_data(tenant=BOOTSTRAP_TENANT_ID):
     settings=allocation_data(30000)
     for k in ['vm_id','ipv4_cidr','ipv4_gateway']:settings.pop(k)
-    settings.update(network_mode='dhcp',vlan_id=None)
+    settings.update(image='ubuntu-2404',template_vm_id=29000,template_node_name='mng01',
+                     node_name='mng01',clone_datastore_id='DS_CYBERFUEL',
+                     cloudinit_datastore_id='DS_CYBERFUEL',cloudinit_username='root',
+                     guest_agent_enabled=True,network_mode='dhcp',network_bridge='vmbr0',
+                     vlan_id=None,allowed_nodes=['mng01'])
+    settings['boot_disk']['datastore_id']='DS_CYBERFUEL'
     return {'profiles':{'lab-dhcp':{'allowed_tenants':[tenant],'settings':settings,'vmid_min':30000,'vmid_max':30010,
-                                  'max_live_instances':1}}}
+                                  'max_live_instances':1,'max_vcpus':8,'max_memory_mb':16384,'max_disk_gb':400,
+                                  'max_total_vcpus':16,'max_total_memory_mb':32768,'max_total_disk_gb':800,
+                                  'max_concurrent_operations':2,'self_service_enabled':True,
+                                  'guest_initialization':'ubuntu-2404-lab-identity-v1'}}}
 
 
 @pytest.fixture
@@ -32,7 +41,9 @@ def policy(tmp_path,monkeypatch):
 
 
 def create(client,auth,key='dhcp-one',**changes):
-    return client.post('/v1/instances',headers={**auth,'Idempotency-Key':key},json={**SPEC,'network_profile':'lab-dhcp',**changes})
+    body={**MINIMAL_EXAMPLE,'name':'dhcp-test','start_on_create':False,
+          'access':{**MINIMAL_EXAMPLE['access'],'root_password':'SENUELO-DHCP-NO-PERSISTIR-2026'},**changes}
+    return client.post('https://testserver/v1/instances',headers={**auth,'Idempotency-Key':key},json=body)
 
 
 def test_dhcp_does_not_open_ipam_and_seals_identity(client,auth,terraform_mode,policy,sessions,monkeypatch):
@@ -55,12 +66,12 @@ def test_dhcp_capacity_and_cluster_collisions_are_not_reused(client,auth,terrafo
     monkeypatch.setattr(profiles,'cluster_vmids',lambda:{30000,30001})
     r=create(client,auth).json()
     with sessions() as s:assert s.get(TerraformExecution,r['instance_id']).vmid==30002
-    assert create(client,auth,key='second',name='another-guest').status_code==503
+    assert create(client,auth,key='second',name='another-guest').status_code==409
 
 
 def test_profile_resources_and_tenant_authorization(client,auth,terraform_mode,policy,identities):
-    assert create(client,identities['tenant-b-operator']['headers']).status_code==503
-    assert create(client,auth,vcpus=64).status_code==503
+    assert create(client,identities['tenant-b-operator']['headers']).status_code==409
+    assert create(client,auth,vcpus=64).status_code==422
 
 
 def test_static_variables_remain_historical():

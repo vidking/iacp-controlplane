@@ -146,7 +146,13 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
                 raise Conflict('PROVISIONING_INSTANCE_NAME_CONFLICT')
             if spec.start_on_create:
                 from ..lifecycle.ownership import mutation_revision
-                mutation_revision()
+                from ..lifecycle.proxmox import PowerError
+                try:
+                    mutation_revision()
+                except PowerError as error:
+                    # Una precondición del proveedor no debe filtrarse como
+                    # 500: la admisión queda rechazada sin crear intención.
+                    raise Conflict(error.code) from None
             revision=CORE_CONTRACT
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,

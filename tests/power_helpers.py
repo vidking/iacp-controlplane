@@ -1,8 +1,11 @@
 """Disposable identities only; this module never connects to a real hypervisor."""
 from uuid import uuid4
+from sqlalchemy import select
 
-from iacp.models import Instance, Job, Operation, TerraformApply, TerraformExecution, utcnow
+from iacp.models import (Instance, Job, Operation, TechnicalOwnership, TerraformApply,
+                         TerraformExecution, utcnow)
 from iacp.lifecycle.proxmox import readiness
+from iacp.services.ownership_binding import binding_digest
 from iacp.terraform.config import SOURCE_REVISION
 
 
@@ -36,16 +39,53 @@ def managed_instance(sessions, tenant_id, *, vmid=30001, name="fixture-kvm"):
         session.flush()
         session.add(Job(id=job_id, tenant_id=tenant_id, operation_id=operation_id, operation="instance.plan", status="completed"))
         session.flush()
-        session.add(TerraformExecution(instance_id=identifier, job_id=job_id, operation_id=operation_id,
+        execution = TerraformExecution(instance_id=identifier, job_id=job_id, operation_id=operation_id,
             status="planned", attempt=1, state_key="synthetic/" + identifier, vmid=vmid,
             allocation={"image": "synthetic-image", "node_name": "mng01", "vm_id": vmid},
-            plan_sha256="a" * 64, source_revision=SOURCE_REVISION))
+            plan_sha256="a" * 64, source_revision=SOURCE_REVISION)
+        session.add(execution)
         session.flush()
-        session.add(TerraformApply(id=approval_id, instance_id=identifier, attempt=1, plan_sha256="a" * 64,
+        apply = TerraformApply(id=approval_id, instance_id=identifier, attempt=1, plan_sha256="a" * 64,
             approval_key="synthetic-approval", request_hash="a" * 64, approved_by="synthetic-reviewer",
-            expires_at=utcnow(), status="completed", result=result, started_at=utcnow(), finished_at=utcnow()))
+            expires_at=utcnow(), status="completed", result=result, started_at=utcnow(), finished_at=utcnow())
+        session.add(apply)
+        session.flush()
+        if ("technical_ownership" in inspect(session.connection()).get_table_names()
+                and vmid not in {104, 106, 29000}):
+            session.add(TechnicalOwnership(
+                instance_id=identifier, tenant_id=tenant_id, vmid=vmid, node="mng01", name=name,
+                state_key=execution.state_key, source_revision=execution.source_revision,
+                binding_sha256=binding_digest(instance, execution, apply),
+                allocation=execution.allocation, evidence={"apply_id": apply.id, "attempt": apply.attempt,
+                    "plan_sha256": apply.plan_sha256}, verified_at=utcnow()))
         session.commit()
     return identifier
+
+
+def refresh_technical_ownership(session, identifier):
+    """Actualiza el fixture tras cambios intencionales de su identidad sellada."""
+    from sqlalchemy import inspect
+
+    if "technical_ownership" not in inspect(session.connection()).get_table_names():
+        return
+    ownership = session.get(TechnicalOwnership, identifier)
+    if ownership is None:
+        return
+    instance = session.get(Instance, identifier)
+    execution = session.get(TerraformExecution, identifier)
+    apply = session.scalar(select(TerraformApply).where(
+        TerraformApply.instance_id == identifier,
+        TerraformApply.attempt == execution.attempt,
+        TerraformApply.plan_sha256 == execution.plan_sha256,
+    ))
+    ownership.tenant_id = instance.tenant_id
+    ownership.vmid = execution.vmid
+    ownership.node = instance.node
+    ownership.name = instance.name
+    ownership.state_key = execution.state_key
+    ownership.source_revision = execution.source_revision
+    ownership.allocation = execution.allocation
+    ownership.binding_sha256 = binding_digest(instance, execution, apply)
 
 
 class FakePower:

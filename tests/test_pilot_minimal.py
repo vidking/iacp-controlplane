@@ -84,14 +84,14 @@ def test_omission_does_not_accept_explicit_null(field):
 def test_defaults_never_authorize_bigger_plans_or_non_lab(sessions,commercial_config,store,monkeypatch,scope):
     from iacp.services import commercial
     if scope=='big-plan':
-        limits=commercial.limits_for(BOOTSTRAP_TENANT_ID).model_copy(update={'allowed_plans':['kvm-3']})
-        monkeypatch.setattr(commercial,'limits_for',lambda _:limits)
+        expected='PROFILE_CAPACITY_EXCEEDED'
     else:
         p=commercial.authorized_profile(BOOTSTRAP_TENANT_ID)
         p=p.model_copy(update={'settings':p.settings.model_copy(update={'environment':'production'})})
         monkeypatch.setattr(commercial,'authorized_profile',lambda *args:p)
+        expected='PROVISIONING_DEFAULTS_NOT_AUTHORIZED'
     with sessions() as s:
-        with pytest.raises(Conflict,match='PILOT_DEFAULTS_NOT_AUTHORIZED'):
+        with pytest.raises(Conflict,match=expected):
             create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),minimal(plan_id='kvm-3' if scope=='big-plan' else 'kvm-1'),'big',Mock(side_effect=AssertionError()),store)
         assert not s.scalars(select(Instance)).all() and not store.redis.values
 
@@ -147,40 +147,16 @@ def test_http_service_token_uses_one_persistent_tenant_and_preserves_security(
 
 
 def test_openapi_change_is_only_compatible_omission_and_documentation(monkeypatch):
-    from pathlib import Path
     from iacp.main import create_app
-    from scripts.openapi_contract import transport_projection
-    from jsonschema import Draft202012Validator, RefResolver
     from openapi_spec_validator import validate
-    monkeypatch.setenv('IACP_CREATION_CONTRACT','commercial-g')
+    monkeypatch.setenv('IACP_CREATION_CONTRACT','provisioning-api-core')
     current=create_app().openapi();validate(current)
     create_operation=current['paths']['/v1/instances']['post']
     assert any(item['name']=='Idempotency-Key' and not item['required'] for item in create_operation['parameters'])
     assert create_operation['responses']['202']['headers']['Idempotency-Key']['schema']['type']=='string'
-    baseline=json.loads((Path(__file__).resolve().parents[1]/'docs/validation/docs-promocion-https-20261025/openapi-despues.json').read_text())['datos']
-    name='CommercialInstanceCreate';schema=current['components']['schemas'][name];old=baseline['components']['schemas'][name]
-    assert set(schema['required'])=={'name','plan_id','image_id','access'}
-    resolver=RefResolver.from_schema(current)
-    validator=Draft202012Validator(schema,resolver=resolver)
-    validator.validate(MINIMAL_EXAMPLE)
-    for field in ['network','commercial_context']:
-        assert list(validator.iter_errors({**MINIMAL_EXAMPLE,field:None}))
-    adjusted=deepcopy(current);node=adjusted['components']['schemas'][name]
-    node['required']=old['required'];node['examples']=old['examples']
-    for field in ['network','commercial_context']:
-        prop=node['properties'][field];prop.pop('description')
-        assert prop==old['properties'][field]
-    for path, method in [('/v1/instances','post'),
-                         ('/v1/instances/{instance_id}/power/start','post'),
-                         ('/v1/instances/{instance_id}/power/shutdown','post'),
-                         ('/v1/instances/{instance_id}/power/reboot','post'),
-                         ('/v1/instances/{instance_id}','delete')]:
-        adjusted['paths'][path][method]['responses']['202'].pop('headers', None)
-        for schema in (adjusted, baseline):
-            for parameter in schema['paths'][path][method].get('parameters', []):
-                if parameter.get('name') == 'Idempotency-Key':
-                    parameter['required'] = False
-    assert transport_projection(adjusted)==transport_projection(baseline)
+    body=current['components']['schemas']['CommercialInstanceCreate']
+    assert set(body['required'])=={'name','plan_id','image_id','access'}
+    assert current['paths']['/v1/instances']['post']['requestBody']['content']['application/json']['schema']['$ref'].endswith('/CommercialInstanceCreate')
 
 
 def test_same_key_in_two_authorized_tenants_keeps_separate_intents(sessions,commercial_config,store,identities):

@@ -92,7 +92,7 @@ def upgrade():
     import json
     now = datetime.now(timezone.utc)
     for row in _rows(connection):
-        values = row._mapping
+        values = row
         instance = SimpleNamespace(
             id=values["instance_id"], tenant_id=values["tenant_id"], name=values["instance_name"],
             image=values["image"], vcpus=values["vcpus"], memory_mb=values["memory_mb"],

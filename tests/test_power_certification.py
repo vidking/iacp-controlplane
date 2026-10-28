@@ -12,7 +12,8 @@ from sqlalchemy import select, text
 from iacp.lifecycle import certify as certification, ownership
 from iacp.lifecycle.execution import execute_power
 from iacp.models import (BOOTSTRAP_TENANT_ID, Instance, Operation, OperationEvent,
-                         PowerOwnershipCertificate, TerraformApply, TerraformExecution)
+                         PowerOwnershipCertificate, TechnicalOwnership, TerraformApply,
+                         TerraformExecution)
 from iacp.terraform.config import Allocation, PlanError
 from iacp.terraform.executor import ADDRESS, write_private
 from iacp.terraform.state import StateSnapshot
@@ -62,17 +63,6 @@ def history(sessions):
     with sessions() as session:
         return {name: session.execute(text(f'SELECT * FROM "{name}"')).all() for name in (
             "instances", "terraform_executions", "terraform_attempts", "terraform_applies", "operations", "jobs")}
-
-
-def test_pins_and_flags_cannot_promote_a_historical_instance(client, auth, sessions, power):
-    identifier, native, publisher = power
-    with sessions() as session:
-        session.get(TerraformExecution, identifier).source_revision = ownership.LEGACY_TERRAFORM_POWER_SOURCE
-        session.commit()
-    assert request(client, auth, identifier).json()["detail"] == "POWER_OWNERSHIP_CERTIFICATION_REQUIRED"
-    publisher.assert_not_called()
-    assert not native.calls
-    assert client.get(f'/v1/instances/{identifier}/power', headers=auth).json()["blocked_reason"] == "POWER_OWNERSHIP_CERTIFICATION_REQUIRED"
 
 
 def test_validation_is_readonly_and_recording_is_audited_without_rewriting_history(historical, sessions):
@@ -185,18 +175,20 @@ def test_non_destructive_plan_policy(historical, change):
 
 
 @pytest.mark.parametrize("changed_at", ["claim", "dispatch"])
-def test_certificate_admits_historical_instance_and_is_rechecked_before_dispatch(
-        historical, sessions, application, client, auth, monkeypatch, changed_at):
+def test_technical_ownership_is_rechecked_before_dispatch(
+        power, sessions, application, client, auth, monkeypatch, changed_at):
     from iacp.api.dependencies import get_power_client, get_power_publisher
-    expected, executor, runner, native, planner = historical
-    certification.certify(expected, sessions, executor, record=True, client=native)
+    identifier, native, publisher = power
     application.dependency_overrides[get_power_client] = lambda: lambda: native
     application.dependency_overrides[get_power_publisher] = lambda: Mock()
     monkeypatch.setenv("IACP_KVM_LIFECYCLE_ENABLED", "1")
-    accepted = request(client, auth, expected.instance_id).json()
+    accepted_response = request(client, auth, identifier)
+    assert accepted_response.status_code == 202, accepted_response.text
+    accepted = accepted_response.json()
+
     def change_binding():
         with sessions() as session:
-            row = session.get(TerraformExecution, expected.instance_id)
+            row = session.get(TechnicalOwnership, identifier)
             row.state_key = "changed-binding"
             session.commit()
     if changed_at == "claim":
@@ -210,7 +202,7 @@ def test_certificate_admits_historical_instance_and_is_rechecked_before_dispatch
         monkeypatch.setattr(native, "observe", observe)
     execute_power(accepted["operation_id"], sessions, native)
     result = client.get('/v1/operations/' + accepted["operation_id"], headers=auth).json()
-    assert result["status"] == "failed" and result["error_code"] == "POWER_OWNERSHIP_CERTIFICATION_REQUIRED"
+    assert result["status"] == "failed" and result["error_code"] == "TECHNICAL_OWNERSHIP_BINDING_CHANGED"
     assert not any(call[0] == "submit" for call in native.calls)
 
 
@@ -269,12 +261,12 @@ def test_offline_planner_rejects_wrong_source_archive_before_terraform(historica
 
 
 @pytest.mark.parametrize("revision", ["0" * 40, "f" * 40])
-def test_unrecognized_historical_revision_is_rejected(client, auth, sessions, power, revision):
+def test_changed_historical_revision_is_rejected_by_technical_binding(client, auth, sessions, power, revision):
     identifier, native, publisher = power
     with sessions() as session:
         session.get(TerraformExecution, identifier).source_revision = revision
         session.commit()
-    assert request(client, auth, identifier).json()["detail"] == "POWER_SOURCE_REVISION_UNSUPPORTED"
+    assert request(client, auth, identifier).json()["detail"] == "TECHNICAL_OWNERSHIP_BINDING_CHANGED"
     publisher.assert_not_called()
     assert not native.calls
 

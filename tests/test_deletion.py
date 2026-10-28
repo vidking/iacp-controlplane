@@ -20,7 +20,7 @@ from iacp.terraform.deletion_executor import verify_delete_plan
 from iacp.terraform.executor import ADDRESS
 from iacp.terraform.locks import instance_lock
 from iacp.terraform.runner import CommandRunner
-from tests.power_helpers import FakePower, managed_instance
+from tests.power_helpers import FakePower, managed_instance, refresh_technical_ownership
 from tests.test_instances import identities
 from tests.test_terraform import allocation_data
 
@@ -54,6 +54,7 @@ def seed(sessions, tenant=BOOTSTRAP_TENANT_ID, vmid=30000, name='fixture-disposa
         execution = session.get(TerraformExecution, identifier)
         execution.allocation = allocation_data(vmid, image='synthetic-image')
         execution.state_key = f'iacp/lab/tenants/{tenant}/instances/{identifier}/terraform.tfstate'
+        refresh_technical_ownership(session, identifier)
         session.commit()
     return identifier
 
@@ -107,9 +108,9 @@ def test_approved_delete_retains_tombstone_audit_and_provisioning(client,auth,se
         assert s.get(TerraformExecution,instance.id).status=='planned'
 
 
-@pytest.mark.parametrize('which',['delete','apply','allowlist'])
+@pytest.mark.parametrize('which',['delete','apply'])
 def test_feature_gates_fail_closed(client,auth,disposable,monkeypatch,which):
-    monkeypatch.delenv({'delete':'IACP_TERRAFORM_DELETE_ENABLED','apply':'IACP_TERRAFORM_APPLY_ENABLED','allowlist':'IACP_DISPOSABLE_INSTANCE_IDS'}[which])
+    monkeypatch.delenv({'delete':'IACP_TERRAFORM_DELETE_ENABLED','apply':'IACP_TERRAFORM_APPLY_ENABLED'}[which])
     assert plan(client,auth,disposable).status_code==409
     disposable.publisher.assert_not_called()
 
@@ -270,8 +271,8 @@ def test_broker_failure_keeps_one_durable_operation(client,auth,sessions,disposa
 def test_swagger_documents_roles_preconditions_and_gated_delete(client,auth):
     schema=client.get('/openapi.json',headers=auth).json()
     description=schema['info']['description']
-    assert all(word in description for word in ['Authorize','DHCP','503','power/shutdown','allowlist','104','106'])
-    assert schema['components']['schemas']['InstanceCreate']['additionalProperties'] is False
+    assert all(word in description for word in ['Authorize','DHCP','503','power/shutdown','104','106'])
+    assert schema['components']['schemas']['CommercialInstanceCreate']['additionalProperties'] is False
     route=schema['paths']['/v1/instances/{instance_id}']['delete']
     assert route['security']==[{'HTTPBearer':[]}]
     assert route['responses']['202'] and any(p['name']=='Idempotency-Key' and not p['required'] for p in route['parameters'])

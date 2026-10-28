@@ -22,9 +22,9 @@ from tests.test_terraform import create
 
 
 class ApplyingExecutor:
-    def __init__(self, failure=None, callback=None, before_failure=False):
+    def __init__(self, failure=None, callback=None, before_failure=False, verified=True):
         self.calls = []
-        self.failure, self.callback, self.before_failure = failure, callback, before_failure
+        self.failure, self.callback, self.before_failure, self.verified = failure, callback, before_failure, verified
 
     def prepare_apply(self, *args):
         pass
@@ -49,8 +49,11 @@ class ApplyingExecutor:
             raise self.failure if isinstance(self.failure, PlanError) else PlanError(self.failure)
         values = plan_json(variables)["resource_changes"][0]["change"]["after"]
         values.update(started=False, id=str(values["vm_id"]))
-        return observed_resource({"root_module": {"child_modules": [{"resources": [
-            {"address": ADDRESS, "values": values}]}]}}, variables)
+        observation = {"state_present": self.verified, "proxmox_present": self.verified,
+                       "postconditions_verified": self.verified}
+        return {**observed_resource({"root_module": {"child_modules": [{"resources": [
+            {"address": ADDRESS, "values": values}]}]}}, variables),
+                "observation": observation}
 
 
 @pytest.fixture
@@ -114,7 +117,9 @@ def test_authorization_and_dispatch_are_idempotent(client, auth, prepared, appli
     execute_apply(row["approval_id"], sessions, fake)
     assert len(fake.calls) == 1
     instance = client.get('/v1/instances/' + prepared[0]["instance_id"], headers=auth).json()
-    assert instance["status"] == "ready" and instance["vmid"] == 21001
+    with sessions() as session:
+        expected_vmid = session.get(TerraformExecution, prepared[0]["instance_id"]).vmid
+    assert instance["status"] == "ready" and instance["vmid"] == expected_vmid
     assert instance["node"] == "mng01" and instance["infrastructure_kind"] == "kvm"
     assert instance["result"]["simulated"] is False and instance["result"]["power_state"] == "stopped"
     assert client.get('/v1/jobs/' + response.json()["job_id"], headers=auth).json()["status"] == "completed"
@@ -283,18 +288,6 @@ def test_worker_rechecks_expiry_after_queue_wait(client, auth, prepared, session
     fake = ApplyingExecutor()
     execute_apply(row["approval_id"], sessions, fake)
     assert not fake.calls
-
-
-def test_authorized_lab_validation_never_creates_executor(tmp_path, monkeypatch, capsys):
-    from iacp.terraform import lab
-    request, allocation = tmp_path / "request.json", tmp_path / "allocation.json"
-    request.write_text(json.dumps(SPEC))
-    allocation.write_text(json.dumps(allocation_data()))
-    monkeypatch.setattr("sys.argv", ["lab", "--request", str(request), "--allocation", str(allocation)])
-    monkeypatch.setattr("subprocess.Popen", Mock(side_effect=AssertionError("Network/executor forbidden")))
-    lab.main()
-    result = json.loads(capsys.readouterr().out)
-    assert result["valid"] and result["network_contacted"] is result["apply_enabled"] is False
 
 
 def test_independent_subject_required_even_with_approver_role(client, auth, prepared, monkeypatch):

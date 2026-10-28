@@ -31,12 +31,17 @@ PROTECTED_VMIDS = frozenset({104, 106, 29000})
 def _completed_apply(session, execution):
     if execution is None or execution.plan_sha256 is None:
         return None
-    return session.scalar(select(TerraformApply).where(
+    # El worker marca el apply como completed en la misma sesión antes de
+    # materializar ownership. El proyecto usa autoflush=False; por eso el
+    # estado se comprueba sobre la entidad cargada, después de filtrar por
+    # identidad, en lugar de incluirlo en el WHERE contra una fila aún no
+    # flush-eada.
+    result = session.scalar(select(TerraformApply).where(
         TerraformApply.instance_id == execution.instance_id,
         TerraformApply.attempt == execution.attempt,
         TerraformApply.plan_sha256 == execution.plan_sha256,
-        TerraformApply.status == "completed",
     ))
+    return result if result is not None and result.status == "completed" else None
 
 
 def _evidence(instance, execution, apply):

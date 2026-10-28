@@ -263,6 +263,8 @@ class TerraformExecutor:
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
+            if not isinstance(manifest, dict):
+                raise ValueError("Invalid manifest")
             revision = revision or manifest.get("source_revision")
             if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
                 raise ValueError("Invalid source revision")

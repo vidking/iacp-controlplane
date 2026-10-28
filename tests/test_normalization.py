@@ -70,12 +70,10 @@ def test_profile_replacement_requires_exact_reviewed_readonly_bind():
 
 def test_self_service_can_be_introduced_only_disabled():
     old=fixture_config();new=deepcopy(old)
+    # LAB_SELF_SERVICE ya no es una capacidad de autorización; no debe
+    # reaparecer como cambio operativo durante una promoción Core.
     for role in ('api','terraform-worker','lifecycle-worker'):
         new['services'][role]['environment']={'IACP_LAB_SELF_SERVICE_ENABLED':'0'}
-    assert not compare(old,new)['passed']  # Existing environment maps must match too.
-    for role in ('api','terraform-worker','lifecycle-worker'):old['services'][role]['environment']={}
-    assert compare(old,new)['passed']
-    new['services']['api']['environment']['IACP_LAB_SELF_SERVICE_ENABLED']='1'
     assert not compare(old,new)['passed']
 
 

@@ -1,7 +1,7 @@
 """Compile-time ownership handoff, promoted only with a reviewed IaC revision."""
 import os
 
-from ..terraform import config
+from ..services.ownership_binding import valid_source_revision
 from .proxmox import PowerError
 
 # Pinned hardware-fidelity source (iac-proxmox), preserving the lifecycle
@@ -19,8 +19,10 @@ LEGACY_TERRAFORM_POWER_SOURCE = "40dc5d10387cfb50384ecd3ddddfd75289fe7bc4"
 
 
 def ownership_revision() -> str | None:
-    if (KVM_POWER_SOURCE_REVISION and KVM_POWER_SOURCE_REVISION == config.SOURCE_REVISION
-            and config.SOURCE_REVISION != LEGACY_TERRAFORM_POWER_SOURCE):
+    # El pin del proveedor identifica el runtime de Lifecycle desplegado. No
+    # se compara con la revisión histórica de la VM: esa revisión pertenece al
+    # vínculo técnico persistido y se valida en ``technical_ownership``.
+    if KVM_POWER_SOURCE_REVISION and valid_source_revision(KVM_POWER_SOURCE_REVISION):
         return KVM_POWER_SOURCE_REVISION
     return None
 

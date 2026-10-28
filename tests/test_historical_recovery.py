@@ -162,7 +162,10 @@ def test_tampering_is_rejected_before_any_observation(tmp_path, monkeypatch, cha
     elif change == "backend-file": write_private(root / "backend.tfbackend.json", {})
     elif change == "variables": manifest["variables"]["instance"]["vm_id"] = 104
     elif change == "variables-file": write_private(root / "iacp.auto.tfvars.json", {})
-    elif change == "revision": manifest["source_revision"] = "0" * 40
+    # Un SHA histórico de 40 hexadecimales es válido: las VMs conservan la
+    # revisión con la que fueron creadas. El caso de integridad usa una
+    # revisión malformada, no un pin histórico distinto del actual.
+    elif change == "revision": manifest["source_revision"] = "0" * 39 + "g"
     elif change == "partial-context": manifest["execution_context_salt"] = "1" * 64
     elif change == "invalid-context": manifest.update(execution_context_salt=None, execution_context_sha256="invalid")
     elif change == "invalid-manifest": manifest = []

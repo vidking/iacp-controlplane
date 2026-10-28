@@ -315,7 +315,7 @@ def test_c02_mutation_fence_survives_interruption_and_recovery_is_readonly(
         assert s.get(Job, current.job_id).status == 'running'
     execute_apply(row['approval_id'], sessions, executor)
     assert len(mutations) == 1
-    observer = ApplyingExecutor()
+    observer = ApplyingExecutor(verified=False)
     execute_apply(row['approval_id'], sessions, observer, reconcile=True)
     assert not observer.calls
     with sessions() as s:
