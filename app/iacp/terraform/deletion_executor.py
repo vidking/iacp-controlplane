@@ -20,6 +20,8 @@ from .observation import proxmox_resource
 from .state import S3StateReader
 from ..services.technical_ownership import is_managed_vmid
 
+HISTORICAL_LAB_POOL_ID = "iacp-lab"
+
 
 def allow_historical_delete_hardware(context):
     """Limita la compatibilidad al DELETE de KVM históricas administradas.
@@ -167,14 +169,19 @@ def verify_topology(approved, current, *, persisted=None,
                 previous['cpu'][0]['numa']=expected_numa
     expected_pool_id = change['after'].get('pool_id')
     actual_pool_id = observed.get('pool_id')
-    if (allow_historical_pool_id_default and expected_pool_id is None
+    if (allow_historical_pool_id_default and expected_pool_id in (None, "")
             and actual_pool_id not in (None, '')):
-        if (previous is not None
-                and previous.get('pool_id') != actual_pool_id):
+        # Las revisiones históricas omitían el pool y el State podía conservar
+        # el default vacío. El provider lo materializa al refrescar desde el
+        # inventario de Proxmox. Solo se admite el pool LAB canónico y solo si
+        # el State previo también estaba vacío; otro pool sigue siendo drift.
+        if actual_pool_id != HISTORICAL_LAB_POOL_ID:
             raise PlanError('DELETE_TOPOLOGY_CHANGED')
-        # The provider's non-empty historical pool value is accepted only
-        # after the exact state/PVE identity checks above. ``checked`` is a
-        # copy, so the sealed creation plan is never rewritten.
+        if (previous is not None
+                and previous.get('pool_id') not in (None, '', actual_pool_id)):
+            raise PlanError('DELETE_TOPOLOGY_CHANGED')
+        # "checked" es una copia: el plan de creación sellado nunca se
+        # reescribe.
         change['after']['pool_id'] = actual_pool_id
     verify_postconditions(checked, observed, source='delete.topology', persisted=previous)
     return technical_drift
