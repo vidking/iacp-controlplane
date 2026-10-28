@@ -31,16 +31,23 @@ if marker.exists():
 def write(path,content,mode):
  assert not path.is_symlink()
  path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+ os.chmod(path.parent,0o700)
+ os.chown(path.parent,0,0)
  fd,tmp=tempfile.mkstemp(prefix='.iacp-',dir=path.parent)
  try:
   with os.fdopen(fd,'w') as stream:
    os.fchmod(stream.fileno(),mode);stream.write(content);stream.flush();os.fsync(stream.fileno())
   os.replace(tmp,path)
+  os.chown(path,0,0)
+  os.chmod(path,mode)
  finally:
   if os.path.exists(tmp):os.unlink(tmp)
 # La contraseña root autoriza también SSH en el piloto LAB aprobado.
+ssh_directory=Path('/root/.ssh')
+ssh_directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+os.chmod(ssh_directory,0o700);os.chown(ssh_directory,0,0)
 if p['ssh_public_keys']:
- write(Path('/root/.ssh/authorized_keys'),'\n'.join(p['ssh_public_keys'])+'\n',0o600)
+ write(ssh_directory/'authorized_keys','\n'.join(p['ssh_public_keys'])+'\n',0o600)
 write(Path('/etc/ssh/sshd_config.d/00-iacp-commercial-root.conf'),
  'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n',0o600)
 Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)

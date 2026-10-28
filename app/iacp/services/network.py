@@ -1,16 +1,89 @@
 """Authenticated asynchronous guest-network discovery; no network/state mutations."""
 from uuid import uuid4
 import ipaddress
+import time
+from datetime import timedelta
 
 from sqlalchemy import select
 
-from ..models import Instance, Job, NetworkDiscovery, Operation, Tenant, TerraformExecution
+from ..models import Instance, Job, NetworkDiscovery, Operation, Tenant, TerraformExecution, utcnow
 from ..lifecycle.certification_binding import binding_digest
 from ..lifecycle.service import managed_target
 from .instances import Conflict,event
 from .jobs import QueueUnavailable
 from ..terraform.apply import fingerprint
 from ..terraform.locks import ExecutionBusy,instance_lock
+
+
+# QGA and systemd-networkd can be unavailable for a short interval after a
+# START/REBOOT.  Discovery is deliberately bounded, but a transient empty
+# answer is never a successful observation.
+DISCOVERY_TIMEOUT_SECONDS = 120
+DISCOVERY_MAX_ATTEMPTS = 18
+
+
+def _last_verified(instance):
+    observation = instance.network_observation or {}
+    if observation.get('status') == 'observed':
+        addresses = observation.get('ip_addresses') or instance.ip_addresses or []
+        verified_at = observation.get('verified_at') or observation.get('observed_at')
+    else:
+        addresses = (observation.get('last_known_ip_addresses')
+                     or observation.get('ip_addresses')
+                     or instance.ip_addresses or [])
+        verified_at = observation.get('last_known_verified_at')
+    return sorted(set(addresses)), verified_at
+
+
+def _pending_observation(instance, result, *, attempt=None, deadline=None):
+    addresses, verified_at = _last_verified(instance)
+    observation = {**result, 'status': 'pending', 'ip_addresses': [],
+                   'current_ip_addresses': [], 'current_ip_verified': False}
+    if addresses:
+        observation['last_known_ip_addresses'] = addresses
+    if verified_at:
+        observation['last_known_verified_at'] = verified_at
+    if attempt is not None:
+        observation['attempt'] = attempt
+    if deadline is not None:
+        observation['deadline_at'] = deadline
+    return observation
+
+
+def _observed_observation(instance, result):
+    addresses = sorted(set(result.get('ip_addresses') or []))
+    previous, _ = _last_verified(instance)
+    observed_at = result.get('observed_at')
+    observation = {**result, 'status': 'observed', 'ip_addresses': addresses,
+                   'current_ip_addresses': addresses, 'current_ip_verified': True,
+                   'last_known_ip_addresses': addresses,
+                   'last_known_verified_at': observed_at}
+    if previous and previous != addresses:
+        observation['previous_ip_addresses'] = previous
+    return observation
+
+
+def _store_pending(instance, row, result, *, attempt, deadline):
+    observation = _pending_observation(instance, result, attempt=attempt, deadline=deadline)
+    if row is not None:
+        row.result = observation
+    instance.network_observation = observation
+    # An empty value means "no current verified address".  The previous value
+    # is retained in network_observation.last_known_ip_addresses instead of
+    # being presented as live connectivity.
+    instance.ip_addresses = []
+    return observation
+
+
+def _store_observed(instance, row, result):
+    observation = _observed_observation(instance, result)
+    row.result = instance.network_observation = observation
+    instance.ip_addresses = observation['ip_addresses']
+    return observation
+
+
+def _backoff(attempt):
+    return min(10, 2 ** min(max(attempt - 1, 0), 3))
 
 
 def request_discovery(session,instance,principal,key,publish):
@@ -101,8 +174,13 @@ def agent_addresses(result,expected_mac):
             'mac_address':expected_mac}
 
 
-def execute_discovery(identifier,sessions,observer=observe_guest):
-    from ..models import TerraformExecution,utcnow
+def execute_discovery(identifier, sessions, observer=observe_guest,
+                      timeout=DISCOVERY_TIMEOUT_SECONDS, pause=time.sleep):
+    """Observe DHCP until a verified address exists or the real timeout expires.
+
+    A pending QGA/DHCP answer keeps the operation running and is persisted as
+    pending.  It is never converted to a successful empty observation.
+    """
     with sessions() as s:
         row=s.get(NetworkDiscovery,identifier)
         if row is None:return
@@ -115,6 +193,10 @@ def execute_discovery(identifier,sessions,observer=observe_guest):
                 row=s.get(NetworkDiscovery,identifier);instance=s.get(Instance,instance_id)
                 job=s.scalar(select(Job).where(Job.operation_id==identifier))
                 operation.status=job.status='running';s.commit()
+                deadline=time.monotonic()+max(float(timeout),0)
+                deadline_at=(utcnow()+timedelta(seconds=max(float(timeout),0))).isoformat()
+                attempt=0
+                pending_event=False
                 try:
                     tenant=s.get(Tenant,instance.tenant_id)
                     if (not tenant or not tenant.active or operation.tenant_id!=instance.tenant_id or job.tenant_id!=instance.tenant_id
@@ -129,26 +211,64 @@ def execute_discovery(identifier,sessions,observer=observe_guest):
                         policy=delegation(s,instance,'start')
                     requires_identity=bool(policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'))
                     initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
-                    if requires_identity and (not initialization or initialization.status!='completed'):
-                        result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],'reason':'GUEST_INITIALIZATION_REQUIRED'}
-                    else:result=observer(execution,instance)
-                    if result.get('ip_addresses'):
-                        others=s.scalars(select(Instance).where(Instance.id!=instance.id,Instance.status!='deleted',
-                            Instance.network_mode=='dhcp')).all()
-                        if any(set(result['ip_addresses']) & set(other.ip_addresses or []) for other in others):
-                            result={**result,'status':'pending','ip_addresses':[],'reason':'DHCP_ADDRESS_CONFLICT'}
-                    heartbeat()
-                    s.refresh(instance)
-                    if instance.status!='ready':raise Conflict('NETWORK_BINDING_CHANGED')
-                    result={**result,'observed_at':utcnow().isoformat()}
-                    row.result=instance.network_observation=result
-                    instance.ip_addresses=result['ip_addresses']
-                    operation.status=job.status='completed'
-                    event(s,operation,'network_'+result['status'],'worker:terraform')
-                except Exception:
-                    operation.status=job.status='failed';operation.error_code='NETWORK_DISCOVERY_FAILED'
-                    event(s,operation,'network_discovery_failed','worker:terraform')
-                s.commit()
+
+                    while True:
+                        attempt += 1
+                        s.refresh(instance)
+                        if instance.status!='ready':raise Conflict('NETWORK_BINDING_CHANGED')
+                        if requires_identity and (not initialization or initialization.status!='completed'):
+                            result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],
+                                    'reason':'GUEST_INITIALIZATION_REQUIRED'}
+                        else:
+                            try:
+                                result=observer(execution,instance)
+                            except Exception as failure:
+                                from ..lifecycle.proxmox import PowerError
+                                if isinstance(failure,PowerError):
+                                    result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],
+                                            'reason':failure.code}
+                                else:
+                                    raise
+                        if not isinstance(result,dict):raise Conflict('NETWORK_DISCOVERY_INVALID_RESULT')
+                        addresses=sorted(set(result.get('ip_addresses') or []))
+                        if addresses:
+                            others=s.scalars(select(Instance).where(Instance.id!=instance.id,Instance.status!='deleted',
+                                Instance.network_mode=='dhcp')).all()
+                            if any(set(addresses) & set(other.ip_addresses or []) for other in others):
+                                result={**result,'status':'pending','ip_addresses':[],
+                                        'reason':'DHCP_ADDRESS_CONFLICT'}
+                        result={**result,'ip_addresses':addresses,'observed_at':utcnow().isoformat(),
+                                'attempt':attempt}
+                        if result.get('status')=='observed' and addresses:
+                            _store_observed(instance,row,result)
+                            operation.status=job.status='completed';operation.error_code=None
+                            event(s,operation,'network_observed','worker:terraform');s.commit();return
+
+                        observation=_store_pending(instance,row,result,attempt=attempt,
+                                                  deadline=deadline_at)
+                        if not pending_event:
+                            event(s,operation,'network_pending','worker:terraform')
+                            pending_event=True
+                        operation.status=job.status='running'
+                        s.commit()
+                        heartbeat()
+                        if observation.get('reason')=='DHCP_ADDRESS_CONFLICT':
+                            operation.status=job.status='failed';operation.error_code='DHCP_ADDRESS_CONFLICT'
+                            event(s,operation,'network_discovery_failed','worker:terraform');s.commit();return
+                        if attempt>=DISCOVERY_MAX_ATTEMPTS or time.monotonic()>=deadline:
+                            observation={**observation,'reason':'NETWORK_DISCOVERY_TIMEOUT',
+                                         'last_pending_reason':result.get('reason')}
+                            row=s.get(NetworkDiscovery,identifier)
+                            row.result=instance.network_observation=observation
+                            instance.ip_addresses=[]
+                            operation.status=job.status='failed';operation.error_code='NETWORK_DISCOVERY_TIMEOUT'
+                            event(s,operation,'network_discovery_timeout','worker:terraform');s.commit();return
+                        pause(min(_backoff(attempt),max(deadline-time.monotonic(),0)))
+                except Exception as failure:
+                    operation.status=job.status='failed'
+                    operation.error_code=(str(failure)[:64] if isinstance(failure,Conflict)
+                        else 'NETWORK_DISCOVERY_FAILED')
+                    event(s,operation,'network_discovery_failed','worker:terraform');s.commit()
     except ExecutionBusy:return
 
 
@@ -186,15 +306,19 @@ def after_power(identifier,sessions):
             from ..api.dependencies import get_network_publisher
             request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                               'network-after-'+identifier,get_network_publisher())
-    except Exception:
+    except Exception as failure:
         # Caller can retry discovery via the authenticated API; never retry power.
+        reason = (str(failure)[:64] if isinstance(failure, Conflict)
+                  else 'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED')
         with sessions() as s:
             operation=s.get(Operation,identifier)
             if operation:
                 event(s,operation,'network_followup_dispatch_unconfirmed','worker:lifecycle')
                 instance=s.get(Instance,operation.instance_id)
                 if instance and (instance.self_service_policy_id or instance.commercial_revision):
-                    instance.ip_addresses=[]
-                    instance.network_observation={'status':'pending','ip_addresses':[],'reason':'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED'}
+                    _store_pending(instance, None, {
+                        'source':'qemu-guest-agent','ip_addresses':[],
+                        'reason':reason}, attempt=0,
+                        deadline=utcnow().isoformat())
                 s.commit()
         return

@@ -16,15 +16,15 @@ const images=['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10'].map(id=>
   const browser=await engine.launch({headless:true});
   try{
    const context=await browser.newContext({viewport:mode.includes('movil')?{width:390,height:844}:{width:1536,height:1000},httpCredentials:{username:'iacp',password:'identidad-sintetica-solo-pruebas-documentales'}});
-   const sent=[],errors=[];
+   const sent=[],errors=[];let acceptedOnServer=false;
    await context.addInitScript(()=>{window.testClipboard='';Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.testClipboard=text;}}});});
    await context.route('**/v1/**',async route=>{
     const request=route.request(),url=new URL(request.url());
     if(['POST','DELETE'].includes(request.method())){
-     sent.push({key:request.headers()['idempotency-key'],body:request.postDataJSON()});
+     sent.push({key:request.headers()['idempotency-key'],body:request.postDataJSON()});acceptedOnServer=true;
      return route.fulfill({status:202,json:{instance_id:'11111111-1111-4111-8111-111111111111',operation_id:'22222222-2222-4222-8222-222222222222',status:'queued'}});
     }
-    let json=url.pathname.endsWith('/power')?{power_state:'stopped',mutations_available:true}:url.pathname==='/v1/plans'?plans:url.pathname==='/v1/images'?images:url.pathname==='/v1/instances'?[]:url.pathname==='/v1/lab/usage'?{tenant_id:'fixture-tenant'}:url.pathname.startsWith('/v1/operations/')?{status:'completed',normalized_status:'completed'}:{status:'ready',ip_addresses:['192.0.2.10'],access:{status:'completed'}};
+    let json=url.pathname.endsWith('/power')?{power_state:'stopped',mutations_available:true}:url.pathname==='/v1/plans'?plans:url.pathname==='/v1/images'?images:url.pathname==='/v1/instances'?(acceptedOnServer?[{instance_id:'11111111-1111-4111-8111-111111111111',name:'prueba-configurador',status:'pending',vmid:null}]:[]):url.pathname==='/v1/operations'?[{id:'22222222-2222-4222-8222-222222222222',status:'completed',normalized_status:'completed',created_at:'2026-10-27T00:00:00Z',events:[]}]:url.pathname==='/v1/lab/usage'?{tenant_id:'fixture-tenant'}:url.pathname.startsWith('/v1/operations/')?{status:'completed',normalized_status:'completed'}:{status:'ready',ip_addresses:['192.0.2.10'],network_observation:{status:'observed',current_ip_verified:true},access:{status:'completed'}};
     return route.fulfill({status:200,json});
    });
    const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
