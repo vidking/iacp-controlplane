@@ -204,31 +204,23 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
                         raise Conflict('TENANT_OR_NETWORK_BINDING_CHANGED')
                     target,approval=managed_target(s,instance);execution=s.get(TerraformExecution,instance.id)
                     if row.provisioning_binding!=binding_digest(instance,execution,approval):raise Conflict('NETWORK_BINDING_CHANGED')
-                    from ..models import GuestInitialization,LabPolicy
-                    policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
-                    if instance.commercial_revision:
-                        from .commercial import delegation
-                        policy=delegation(s,instance,'start')
-                    requires_identity=bool(policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'))
-                    initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
-
                     while True:
                         attempt += 1
                         s.refresh(instance)
                         if instance.status!='ready':raise Conflict('NETWORK_BINDING_CHANGED')
-                        if requires_identity and (not initialization or initialization.status!='completed'):
-                            result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],
-                                    'reason':'GUEST_INITIALIZATION_REQUIRED'}
-                        else:
-                            try:
-                                result=observer(execution,instance)
-                            except Exception as failure:
-                                from ..lifecycle.proxmox import PowerError
-                                if isinstance(failure,PowerError):
-                                    result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],
-                                            'reason':failure.code}
-                                else:
-                                    raise
+                        # Network observation is read-only and independent from
+                        # guest identity/SSH initialization.  QGA can prove a
+                        # DHCP address while a separate guest-exec operation is
+                        # still pending, failed, or awaiting reconciliation.
+                        try:
+                            result=observer(execution,instance)
+                        except Exception as failure:
+                            from ..lifecycle.proxmox import PowerError
+                            if isinstance(failure,PowerError):
+                                result={'status':'pending','source':'qemu-guest-agent','ip_addresses':[],
+                                        'reason':failure.code}
+                            else:
+                                raise
                         if not isinstance(result,dict):raise Conflict('NETWORK_DISCOVERY_INVALID_RESULT')
                         addresses=sorted(set(result.get('ip_addresses') or []))
                         if addresses:
@@ -273,20 +265,28 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
 
 
 def after_power(identifier,sessions):
-    """Called after the power task releases its lock; discovery cannot fail power."""
+    """Queue independent guest initialization and network observation.
+
+    A lifecycle operation must never make network visibility depend on the
+    outcome of guest-exec.  Both follow-ups are best-effort and independently
+    auditable; neither one changes power, Terraform, or guest configuration.
+    """
     from ..security import Principal
-    try:
-        with sessions() as s:
-            operation=s.get(Operation,identifier)
-            if not operation or operation.status!='completed' or operation.kind not in {'instance.power.start','instance.power.reboot'}:return
-            instance=s.get(Instance,operation.instance_id)
-            if instance.network_mode!='dhcp':return
-            from ..models import LabPolicy
-            policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
-            if instance.commercial_revision:
-                from .commercial import delegation
-                policy=delegation(s,instance,'start')
-            if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
+    with sessions() as s:
+        operation=s.get(Operation,identifier)
+        if not operation or operation.status!='completed' or operation.kind not in {'instance.power.start','instance.power.reboot'}:return
+        instance=s.get(Instance,operation.instance_id)
+        if instance.network_mode!='dhcp':return
+        policy=None
+        from ..models import LabPolicy
+        policy=s.get(LabPolicy,instance.self_service_policy_id) if instance.self_service_policy_id else None
+        if instance.commercial_revision:
+            from .commercial import delegation
+            policy=delegation(s,instance,'start')
+
+        initialization_failure=None
+        if policy and policy.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
+            try:
                 from .guest_identity import request_initialization
                 from ..api.dependencies import get_guest_initialization_publisher
                 from ..models import GuestInitialization
@@ -294,31 +294,47 @@ def after_power(identifier,sessions):
                 if initialization is None:
                     request_initialization(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                         'identity-'+instance.id,get_guest_initialization_publisher(),current_profiles=False)
-                    return
-                if initialization.status!='completed':
+                elif initialization.status!='completed':
                     if initialization.status=='failed' and not initialization.started_at:
                         previous=s.get(Operation,initialization.operation_id)
                         request_initialization(s,instance,Principal(instance.tenant_id,previous.requested_by,'operator'),
                             previous.idempotency_key,get_guest_initialization_publisher(),current_profiles=False)
                     elif initialization.status!='failed':
                         get_guest_initialization_publisher()(initialization.operation_id)
-                    return
+            except Exception as failure:
+                # A guest-exec dispatch failure must not suppress the
+                # independent, read-only network observation below.
+                s.rollback()
+                initialization_failure=failure
+
+        network_failure=None
+        try:
+            s.expire_all()
+            operation=s.get(Operation,identifier)
+            instance=s.get(Instance,operation.instance_id)
             from ..api.dependencies import get_network_publisher
+            # The power operation is part of the idempotency scope.  A stable
+            # per-instance key would incorrectly reuse a completed discovery
+            # after a later REBOOT and leave a changed DHCP address stale.
             request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
-                              'network-after-'+identifier,get_network_publisher())
-    except Exception as failure:
-        # Caller can retry discovery via the authenticated API; never retry power.
-        reason = (str(failure)[:64] if isinstance(failure, Conflict)
-                  else 'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED')
-        with sessions() as s:
+                              'network-after-'+identifier+'-'+operation.id,get_network_publisher())
+        except Exception as failure:
+            s.rollback()
+            network_failure=failure
+
+        if initialization_failure or network_failure:
             operation=s.get(Operation,identifier)
             if operation:
-                event(s,operation,'network_followup_dispatch_unconfirmed','worker:lifecycle')
-                instance=s.get(Instance,operation.instance_id)
-                if instance and (instance.self_service_policy_id or instance.commercial_revision):
-                    _store_pending(instance, None, {
-                        'source':'qemu-guest-agent','ip_addresses':[],
-                        'reason':reason}, attempt=0,
-                        deadline=utcnow().isoformat())
+                if initialization_failure:
+                    event(s,operation,'guest_initialization_followup_unconfirmed','worker:lifecycle')
+                if network_failure:
+                    reason = (str(network_failure)[:64] if isinstance(network_failure, Conflict)
+                              else 'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED')
+                    event(s,operation,'network_followup_dispatch_unconfirmed','worker:lifecycle')
+                    instance=s.get(Instance,operation.instance_id)
+                    if instance:
+                        _store_pending(instance, None, {
+                            'source':'qemu-guest-agent','ip_addresses':[],
+                            'reason':reason}, attempt=0,
+                            deadline=utcnow().isoformat())
                 s.commit()
-        return
