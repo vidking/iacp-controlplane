@@ -26,9 +26,14 @@ from .contracts import CORE_CONTRACT
 
 
 def live_capacity(session,profile,plan):
-    """Capacidad con identidad de lectura; el worker verifica salud antes de aplicar."""
+    """Validate current physical capacity without using historical DB counters.
+
+    ``Instance`` rows are inventory/audit data, not a physical reservation:
+    failed, deleted or stale rows may outlive the resource they describe.
+    The authoritative admission inputs here are the read-only Proxmox node and
+    datastore measurements; the worker revalidates them before apply.
+    """
     from .capacity_readonly import CapacityReadOnly
-    from ..models import Instance
     try:
         client=CapacityReadOnly.configured()
         node=profile.settings.node_name
@@ -37,15 +42,10 @@ def live_capacity(session,profile,plan):
         n=client._request('GET',f'/nodes/{node}/status')
         s=client._request('GET',f'/nodes/{node}/storage/{storage}/status')
         if not s.get('active') or not s.get('enabled',1):raise ValueError()
-        pending=session.scalars(select(Instance).where(Instance.status!='deleted')).all()
-        # Presupuesto completo, incluso discos thin de ready. Puede descontar
-        # otra vez uso físico ya materializado: conservador, nunca sobreventa.
-        disk_reserved=sum(i.disk_gb for i in pending)*1024**3
-        memory_reserved=sum(i.memory_mb for i in pending)*1024**2
         cpus=int(n['cpuinfo']['cpus'])
-        cpu_available=cpus*(1-float(n['cpu']))-sum(i.vcpus for i in pending)
-        if (int(s['avail'])-disk_reserved < plan.disk_gb*1024**3
-                or int(n['memory']['free'])-memory_reserved < plan.memory_mb*1024**2
+        cpu_available=cpus*(1-float(n['cpu']))
+        if (int(s['avail']) < plan.disk_gb*1024**3
+                or int(n['memory']['free']) < plan.memory_mb*1024**2
                 or cpu_available<plan.vcpus):
             raise Conflict('COMMERCIAL_PHYSICAL_CAPACITY_EXCEEDED')
     except Conflict:raise

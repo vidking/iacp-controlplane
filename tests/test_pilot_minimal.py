@@ -138,12 +138,14 @@ def test_http_service_token_uses_one_persistent_tenant_and_preserves_security(
         assert own.json()['tenant_id']==tenant and own.json()['commercial_context'] is None
         assert set(first.json())=={'instance_id','status','operation_id','job_id','executor','provisioning_service'}
         assert body['access']['root_password'] not in first.text+own.text+caplog.text
-        assert client.post('/v1/instances',json={**body,'name':'otra'},headers={**headers,'Idempotency-Key':'second'}).status_code==409
+        second=client.post('/v1/instances',json={**body,'name':'otra'},
+            headers={**headers,'Idempotency-Key':'second'})
+        assert second.status_code==202,second.text
         with sessions() as s:
             assert s.scalar(select(func.count()).select_from(Tenant))==tenants
             t=s.get(Tenant,tenant);t.active=False;s.commit()
         assert client.post('/v1/instances',json=body,headers=headers).status_code==403
-    assert len(published)==1
+    assert len(published)==2
 
 
 def test_openapi_change_is_only_compatible_omission_and_documentation(monkeypatch):

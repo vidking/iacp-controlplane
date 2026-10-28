@@ -143,15 +143,16 @@ def test_rejections_do_not_publish_or_persist_intents(sessions,commercial_config
     assert published==[] and store.redis.values=={}
 
 
-def test_body_conflict_and_quota_keep_original_intent(sessions,commercial_config,store):
+def test_body_conflict_and_stale_rows_do_not_block_new_intent(sessions,commercial_config,store):
     principal=Principal(BOOTSTRAP_TENANT_ID,'crm','operator')
     with sessions() as s:
         result=create(s,principal,specification(),'same',lambda _:None,store,capacity=lambda *_:None)
         with pytest.raises(Conflict,match='another request'):
             create(s,principal,specification('kvm-2'),'same',lambda _:None,store,capacity=lambda *_:None)
-        with pytest.raises(Conflict,match='PROFILE_CAPACITY_EXCEEDED'):
-            create(s,principal,specification(name='otra-vm'),'second',lambda _:None,store,capacity=lambda *_:None)
+        second=create(s,principal,specification(name='otra-vm'),'second',lambda _:None,store,capacity=lambda *_:None)
         assert s.get(Instance,result.instance_id).disk_gb==50
+        assert s.get(Instance,second.instance_id).disk_gb==50
+        assert len(s.scalars(select(Instance)).all())==2
 
 
 @pytest.mark.parametrize('plan_id', ['kvm-1','kvm-2','kvm-3','kvm-4'])
@@ -245,6 +246,28 @@ def test_capacity_read_identity_does_not_need_global_ceph_access(sessions,commer
     with sessions() as session:
         physical_live_capacity(session,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-2'))
     assert len(calls)==2
+
+
+def test_physical_capacity_ignores_stale_inventory_rows_without_resource(
+        sessions,commercial_config,monkeypatch):
+    from iacp.catalog import resolve_plan
+    from iacp.services.catalog import authorized_profile
+    from iacp.services.capacity_readonly import CapacityReadOnly
+
+    def read(method,path):
+        assert method=='GET'
+        if '/storage/' in path:
+            return {'active':1,'enabled':1,'type':'rbd','avail':60*1024**3}
+        return {'memory':{'free':3*1024**3},'cpuinfo':{'cpus':2},'cpu':0.1}
+
+    with sessions() as s:
+        s.add(Instance(id='stale-30029',tenant_id=BOOTSTRAP_TENANT_ID,
+            name='stale-30029',image='ubuntu-2404',network_profile='lab-dhcp',
+            network_mode='dhcp',vcpus=8,memory_mb=8192,disk_gb=100,
+            status='ready',executor='terraform',vmid=30029,node='mng01'))
+        s.commit()
+        monkeypatch.setattr(CapacityReadOnly,'configured',lambda:SimpleNamespace(_request=read))
+        physical_live_capacity(s,authorized_profile(BOOTSTRAP_TENANT_ID),resolve_plan('kvm-1'))
 
 
 def test_core_openapi_and_runtime_use_one_creation_contract(monkeypatch):

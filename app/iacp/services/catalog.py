@@ -1,8 +1,7 @@
-"""Disponibilidad conservadora por tenant. Consultar no reserva capacidad."""
+"""Disponibilidad técnica. Consultar no reserva capacidad ni aplica cuotas."""
 from ..catalog import IMAGES, PENDING_IMAGES, PLANS, resolve_image
 from ..terraform.config import PlanError
 from ..terraform.profiles import load_profile
-from .usage import usage
 from .contracts import is_managed_creation_contract
 
 
@@ -25,7 +24,14 @@ def authorized_profile(tenant_id, image_id="ubuntu-2404"):
     return profile
 
 
-def plan_availability(plan, profile, used):
+def plan_availability(plan, profile, used=None):
+    """Return static technical checks before live-capacity verification.
+
+    ``used`` is retained in the signature for callers of the historical
+    catalog helper.  Persisted instance counts are deliberately not used as
+    quotas; only the live capacity read performed by ``plans_for`` is
+    authoritative for admission.
+    """
     reasons = []
     if profile is None:
         reasons.append("TENANT_PROFILE_NOT_AUTHORIZED")
@@ -35,12 +41,6 @@ def plan_availability(plan, profile, used):
             reasons.append("ENVIRONMENT_PLAN_LIMIT_EXCEEDED")
         if plan.disk_gb < profile.settings.boot_disk.minimum_size_gb:
             reasons.append("DISK_SHRINK_FORBIDDEN")
-        if (used["instances"] + 1 > profile.max_live_instances
-                or used["vcpus"] + plan.vcpus > profile.max_total_vcpus
-                or used["memory_mb"] + plan.memory_mb > profile.max_total_memory_mb
-                or used["disk_gb"] + plan.disk_gb > profile.max_total_disk_gb
-                or used["concurrent_operations"] + 1 > min(2, profile.max_concurrent_operations)):
-            reasons.append("TENANT_TECHNICAL_QUOTA_EXCEEDED")
     # No convertir un catálogo estático en un certificado de capacidad física.
     reasons.append("PHYSICAL_CAPACITY_NOT_VERIFIED")
     return {"available": False, "capacity_verified": False, "reasons": reasons}
@@ -49,10 +49,9 @@ def plan_availability(plan, profile, used):
 def plans_for(session, tenant_id):
     from dataclasses import asdict
     p = authorized_profile(tenant_id)
-    used = usage(session, tenant_id)
     result=[]
     for plan in PLANS:
-        availability=plan_availability(plan,p,used)
+        availability=plan_availability(plan,p)
         from .commercial import live_capacity
         from .bootstrap_secrets import configured_key, BootstrapSecretError
         from .instances import Conflict

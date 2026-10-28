@@ -26,6 +26,7 @@ from iacp.models import (
     TerraformExecution,
 )
 from iacp.services.instances import Conflict, event
+from iacp.services.technical_ownership import is_managed_vmid
 from iacp.terraform.locks import admission_lock, instance_lock
 
 
@@ -33,7 +34,7 @@ ERROR_CODE = "GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH"
 EVENT_CODE = "guest_initialization_cancelled_before_dispatch"
 ACTIVE_OPERATION_STATUSES = ("queued", "running", "uncertain")
 ACTIVE_APPLY_STATUSES = ("approved", "queued", "running", "uncertain")
-PROTECTED_VMIDS = frozenset({104, 106, 29000, 29001, 29010, 29011})
+PROTECTED_VMIDS = frozenset({104, 29000, 29001, 29010, 29011})
 
 
 class RecoveryError(RuntimeError):
@@ -68,7 +69,7 @@ def validate_request(request: dict) -> dict:
         vmid = int(request.get("vmid"))
     except (TypeError, ValueError) as exc:
         raise RecoveryError("VMID_INVALID") from exc
-    _require(vmid >= 30000 and vmid not in PROTECTED_VMIDS,
+    _require(is_managed_vmid(vmid) and vmid not in PROTECTED_VMIDS,
              "VMID_NOT_RECOVERABLE")
     actor = request.get("actor")
     reference = request.get("change_reference")

@@ -22,7 +22,7 @@ from ..services.technical_ownership import is_managed_vmid
 
 
 def allow_historical_delete_hardware(context):
-    """Limita la compatibilidad al DELETE de KVM históricas desechables.
+    """Limita la compatibilidad al DELETE de KVM históricas administradas.
 
     No relaja CREATE, apply, observación ni recursos protegidos. El vínculo
     criptográfico del plan, ownership, state y la topología siguen siendo
@@ -34,8 +34,7 @@ def allow_historical_delete_hardware(context):
     return (
         valid_source_revision(source_revision)
         and source_revision != SOURCE_REVISION
-        and type(instance.get('vm_id')) is int
-        and instance['vm_id'] >= 30000
+        and is_managed_vmid(instance.get('vm_id'))
         and isinstance(variables.get('iacp_golden_hardware'), dict)
     )
 
