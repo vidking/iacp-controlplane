@@ -170,6 +170,104 @@ def test_delete_supersedes_queued_initialization_without_job(client, auth, sessi
         assert session.scalar(select(Job).where(Job.operation_id == initialization_id)) is None
 
 
+@pytest.mark.parametrize('event_code', [
+    'guest_initialization_superseded_by_delete',
+    'guest_initialization_cancelled_before_dispatch',
+])
+@pytest.mark.parametrize('with_job', [True, False])
+def test_delete_accepts_failed_never_dispatched_initialization_without_rewriting_history(
+        client, auth, sessions, disposable, application, event_code, with_job):
+    initialization_id = queue_guest_initialization(sessions, disposable.id, with_job=with_job)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = 'failed'
+        row.finished_at = utcnow()
+        operation.error_code = ('GUEST_INITIALIZATION_SUPERSEDED_BY_DELETE'
+                                if event_code == 'guest_initialization_superseded_by_delete'
+                                else 'GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH')
+        if job is not None:
+            job.status = 'failed'
+        session.add(OperationEvent(operation_id=initialization_id,
+                                   status='failed', code=event_code, actor='operator:previous'))
+        session.commit()
+        old_finished, old_error = row.finished_at, operation.error_code
+    publisher = Mock()
+    application.dependency_overrides[get_deletion_publisher] = lambda: publisher
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-terminal-' + event_code + str(with_job)})
+    assert response.status_code == 202, response.text
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        assert row.status == operation.status == 'failed'
+        assert (row.finished_at.replace(tzinfo=None) == old_finished.replace(tzinfo=None)
+                and operation.error_code == old_error)
+        assert len(session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id == initialization_id,
+            OperationEvent.code == event_code)).all()) == 1
+    deletion_id = response.json()['operation_id']
+    execute_deletion(deletion_id, 'plan', sessions, FakeDeletion())
+    observed = client.get('/v1/operations/' + deletion_id, headers=auth).json()
+    assert observed['deletion']['phase'] == 'awaiting_approval'
+
+
+def test_delete_accepts_verified_completed_guest_initialization(client, auth, sessions, disposable):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'completed'
+        row.started_at = row.finished_at = utcnow()
+        row.pid = 42
+        row.result = {'verified': True}
+        session.add(OperationEvent(operation_id=initialization_id, status='running',
+            code='guest_initialization_dispatch_consumed', actor='worker:iac'))
+        session.commit()
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-completed-initialization'})
+    assert response.status_code == 202, response.text
+    with sessions() as session:
+        assert session.get(GuestInitialization, initialization_id).status == 'completed'
+
+
+@pytest.mark.parametrize('corruption', [
+    'started', 'pid', 'result', 'consumed_event', 'job_queued', 'operation_queued',
+])
+def test_delete_rejects_ambiguous_failed_guest_initialization(
+        client, auth, sessions, disposable, application, corruption):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'failed'
+        row.finished_at = utcnow()
+        if corruption == 'started':
+            row.started_at = utcnow()
+        elif corruption == 'pid':
+            row.pid = 42
+        elif corruption == 'result':
+            row.result = {'unexpected': True}
+        elif corruption == 'consumed_event':
+            session.add(OperationEvent(operation_id=initialization_id, status='running',
+                code='guest_initialization_dispatch_consumed', actor='worker:iac'))
+        elif corruption == 'job_queued':
+            job.status = 'queued'
+        else:
+            operation.status = 'queued'
+        session.commit()
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-ambiguous-failed-' + corruption})
+    assert response.status_code == 409, response.text
+    assert response.json()['detail'] == 'GUEST_INITIALIZATION_RECONCILIATION_REQUIRED'
+    with sessions() as session:
+        assert session.scalar(select(DeletionExecution).where(
+            DeletionExecution.instance_id == disposable.id)) is None
+
+
 def test_delete_with_consumed_initialization_requires_reconciliation(
         client, auth, sessions, disposable, application):
     initialization_id = queue_guest_initialization(sessions, disposable.id)

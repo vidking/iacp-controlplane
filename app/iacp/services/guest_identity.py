@@ -132,11 +132,12 @@ def active(session, instance_id):
 
 
 def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
-    """Retire only an unconsumed initializer while its owner's DELETE is locked.
+    """Honor terminal initialization; retire only a queued, unconsumed one.
 
-    This is an explicit mutation invoked by the authorized DELETE intent. A
-    read of an active initializer never changes its state, and any evidence
-    that guest-exec was consumed remains a reconciliation requirement.
+    The authorized DELETE transaction owns the instance lock. Historical
+    failed-without-dispatch and verified completed initializations are already
+    terminal: leave their operation, job and evidence unmodified. Any ambiguous
+    execution remains fenced and requires reconciliation.
     """
     row = session.scalar(select(GuestInitialization).where(
         GuestInitialization.instance_id == instance.id).with_for_update())
@@ -147,16 +148,37 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
     consumed = session.scalar(select(OperationEvent.id).where(
         OperationEvent.operation_id == row.operation_id,
         OperationEvent.code == 'guest_initialization_dispatch_consumed').limit(1))
-    if (row.status != 'queued' or operation is None or operation.status != 'queued'
-            or row.started_at is not None or row.pid is not None or row.finished_at is not None
-            or row.result is not None or consumed is not None
-            or (job is not None and job.status != 'queued')):
-        raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
     delete_operation = session.get(Operation, delete_operation_id, with_for_update=True)
     if (delete_operation is None or delete_operation.instance_id != instance.id
             or delete_operation.tenant_id != instance.tenant_id
             or delete_operation.kind != 'instance.delete'):
         raise Conflict('DELETE_BINDING_CHANGED')
+    if (operation is None or operation.instance_id != instance.id
+            or operation.tenant_id != instance.tenant_id
+            or operation.kind != 'instance.network.initialize'
+            or (job is not None and (job.operation_id != operation.id
+                or job.tenant_id != instance.tenant_id or job.operation != operation.kind))):
+        raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+    if row.status == 'failed':
+        # The earlier supersession or admin recovery is already terminal.
+        # finished_at may be populated; it does not constitute a guest-exec.
+        if (operation.status != 'failed' or (job is not None and job.status != 'failed')
+                or row.started_at is not None or row.pid is not None
+                or row.result is not None or consumed is not None):
+            raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+        return False
+    if row.status == 'completed':
+        # Successfully completed work is no longer an active fence. Do not
+        # reset or supersede its immutable execution evidence.
+        if (operation.status != 'completed' or (job is not None and job.status != 'completed')
+                or row.started_at is None or row.finished_at is None or row.result is None):
+            raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+        return False
+    if (row.status != 'queued' or operation.status != 'queued'
+            or row.started_at is not None or row.pid is not None or row.finished_at is not None
+            or row.result is not None or consumed is not None
+            or (job is not None and job.status != 'queued')):
+        raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
     row.status = operation.status = 'failed'
     row.finished_at = utcnow()
     operation.error_code = 'GUEST_INITIALIZATION_SUPERSEDED_BY_DELETE'
