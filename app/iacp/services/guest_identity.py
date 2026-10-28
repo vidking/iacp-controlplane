@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from ..lifecycle.proxmox import PowerError, ProxmoxPower, granted
 from ..lifecycle.service import managed_target
-from ..models import GuestInitialization, Instance, Job, Operation, Tenant, TerraformExecution, utcnow
+from ..models import GuestInitialization, Instance, Job, Operation, OperationEvent, Tenant, TerraformExecution, utcnow
 from ..terraform.apply import fingerprint
 from ..terraform.locks import ExecutionBusy, admission_lock, instance_lock
 from ..terraform.observation import NoRedirect
@@ -129,6 +129,43 @@ def program_for_mode(mode, *, root=False):
 def active(session, instance_id):
     return session.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance_id,
         GuestInitialization.status.in_(['queued','running','uncertain'])))
+
+
+def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
+    """Retire only an unconsumed initializer while its owner's DELETE is locked.
+
+    This is an explicit mutation invoked by the authorized DELETE intent. A
+    read of an active initializer never changes its state, and any evidence
+    that guest-exec was consumed remains a reconciliation requirement.
+    """
+    row = session.scalar(select(GuestInitialization).where(
+        GuestInitialization.instance_id == instance.id).with_for_update())
+    if row is None:
+        return False
+    operation = session.get(Operation, row.operation_id, with_for_update=True)
+    job = session.scalar(select(Job).where(Job.operation_id == row.operation_id).with_for_update())
+    consumed = session.scalar(select(OperationEvent.id).where(
+        OperationEvent.operation_id == row.operation_id,
+        OperationEvent.code == 'guest_initialization_dispatch_consumed').limit(1))
+    if (row.status != 'queued' or operation is None or operation.status != 'queued'
+            or row.started_at is not None or row.pid is not None or row.finished_at is not None
+            or row.result is not None or consumed is not None
+            or (job is not None and job.status != 'queued')):
+        raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+    delete_operation = session.get(Operation, delete_operation_id, with_for_update=True)
+    if (delete_operation is None or delete_operation.instance_id != instance.id
+            or delete_operation.tenant_id != instance.tenant_id
+            or delete_operation.kind != 'instance.delete'):
+        raise Conflict('DELETE_BINDING_CHANGED')
+    row.status = operation.status = 'failed'
+    row.finished_at = utcnow()
+    operation.error_code = 'GUEST_INITIALIZATION_SUPERSEDED_BY_DELETE'
+    if job is not None:
+        job.status = 'failed'
+    code = 'guest_initialization_superseded_by_delete'
+    event(session, operation, code, 'delete:' + delete_operation.id)
+    event(session, delete_operation, code, actor)
+    return True
 
 
 def configured_mode(session, instance, *, current_profiles=True):

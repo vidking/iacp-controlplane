@@ -12,8 +12,9 @@ import pytest
 from sqlalchemy import select
 
 from iacp.api.dependencies import get_deletion_publisher, get_power_client
-from iacp.models import (BOOTSTRAP_TENANT_ID, DeletionExecution, Instance, Job, Operation,
-                         OperationEvent, TerraformExecution, utcnow)
+from iacp.models import (BOOTSTRAP_TENANT_ID, DeletionExecution, GuestInitialization, Instance, Job,
+                         Operation, OperationEvent, TechnicalOwnership, TerraformExecution, utcnow)
+from iacp.services.guest_identity import MODE, PROGRAM_SHA256, execute_initialization
 from iacp.terraform.config import Allocation, PlanError
 from iacp.terraform.deletion import execute_deletion
 from iacp.terraform.deletion_executor import verify_delete_plan
@@ -57,6 +58,27 @@ def seed(sessions, tenant=BOOTSTRAP_TENANT_ID, vmid=30000, name='fixture-disposa
         refresh_technical_ownership(session, identifier)
         session.commit()
     return identifier
+
+
+def queue_guest_initialization(sessions, instance_id, *, with_job=True):
+    with sessions() as session:
+        instance = session.get(Instance, instance_id)
+        ownership = session.get(TechnicalOwnership, instance_id)
+        operation_id = str(uuid4())
+        operation = Operation(id=operation_id, instance_id=instance_id, tenant_id=instance.tenant_id,
+                              kind='instance.network.initialize', status='queued',
+                              idempotency_key='queued-init-' + operation_id,
+                              request_hash='c' * 64, requested_by='operator')
+        session.add(operation)
+        session.flush()
+        session.add(GuestInitialization(operation_id=operation_id, instance_id=instance_id,
+            provisioning_binding=ownership.binding_sha256, mode=MODE, program_sha256=PROGRAM_SHA256,
+            mac_address='bc:24:11:12:34:56', status='queued'))
+        if with_job:
+            session.add(Job(id=str(uuid4()), tenant_id=instance.tenant_id,
+                            operation_id=operation_id, operation=operation.kind, status='queued'))
+        session.commit()
+    return operation_id
 
 
 @pytest.fixture
@@ -106,6 +128,64 @@ def test_approved_delete_retains_tombstone_audit_and_provisioning(client,auth,se
         instance=s.get(Instance,disposable.id)
         assert instance.status=='deleted' and instance.result==before and instance.vmid==30000
         assert s.get(TerraformExecution,instance.id).status=='planned'
+
+
+def test_delete_supersedes_only_queued_unconsumed_initialization(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    publisher = Mock()
+    application.dependency_overrides[get_deletion_publisher] = lambda: publisher
+    headers = {**auth, 'Idempotency-Key': 'delete-queued-initialization'}
+    response = client.delete(disposable.path, headers=headers)
+    assert response.status_code == 202, response.text
+    delete_id = response.json()['operation_id']
+    with sessions() as session:
+        initialization = session.get(GuestInitialization, initialization_id)
+        initialization_operation = session.get(Operation, initialization_id)
+        initialization_job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        delete_operation = session.get(Operation, delete_id)
+        codes = {row.code for row in session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id.in_([initialization_id, delete_id])))}
+        assert initialization.status == initialization_operation.status == 'failed'
+        assert initialization.finished_at is not None
+        assert initialization_operation.error_code == 'GUEST_INITIALIZATION_SUPERSEDED_BY_DELETE'
+        assert initialization_job.status == 'failed'
+        assert delete_operation.status == 'queued'
+        assert 'guest_initialization_superseded_by_delete' in codes
+    # A delayed Celery delivery observes the terminal fence and does nothing.
+    execute_initialization(initialization_id, sessions,
+                           lambda: (_ for _ in ()).throw(AssertionError('guest-exec replayed')))
+    repeated = client.delete(disposable.path, headers=headers)
+    assert repeated.status_code == 202 and repeated.json()['operation_id'] == delete_id
+
+
+def test_delete_supersedes_queued_initialization_without_job(client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id, with_job=False)
+    application.dependency_overrides[get_deletion_publisher] = lambda: Mock()
+    response = client.delete(disposable.path,
+                             headers={**auth, 'Idempotency-Key': 'delete-without-init-job'})
+    assert response.status_code == 202, response.text
+    with sessions() as session:
+        assert session.get(GuestInitialization, initialization_id).status == 'failed'
+        assert session.scalar(select(Job).where(Job.operation_id == initialization_id)) is None
+
+
+def test_delete_with_consumed_initialization_requires_reconciliation(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        row.status = 'running'
+        row.started_at = utcnow()
+        row.pid = 42
+        session.get(Operation, initialization_id).status = 'running'
+        session.scalar(select(Job).where(Job.operation_id == initialization_id)).status = 'running'
+        session.commit()
+    application.dependency_overrides[get_deletion_publisher] = lambda: Mock()
+    response = client.delete(disposable.path,
+                             headers={**auth, 'Idempotency-Key': 'delete-consumed-initialization'})
+    assert response.status_code == 409
+    assert response.json()['detail'] == 'GUEST_INITIALIZATION_RECONCILIATION_REQUIRED'
 
 
 @pytest.mark.parametrize('which',['delete','apply'])

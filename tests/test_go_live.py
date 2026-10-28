@@ -57,6 +57,7 @@ def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
         'tables': {
             'technical_ownership': {'count': 1, 'sha256': 'before'},
             'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+            'operations': {'count': 3, 'sha256': 'operations'},
         },
         'technical_ownership_entries': {'existing': 'digest-existing'},
     }
@@ -65,6 +66,7 @@ def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
         'tables': {
             'technical_ownership': {'count': 2, 'sha256': 'after'},
             'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+            'operations': {'count': 3, 'sha256': 'operations'},
         },
         'technical_ownership_entries': {
             'existing': 'digest-existing', 'adopted': 'digest-adopted',
@@ -125,7 +127,46 @@ def test_compare_history_0013_to_0014_rejects_missing_historical_table():
         'tables': {'technical_ownership': {'count': 0, 'sha256': 'after'}},
         'technical_ownership_entries': {},
     }
-    with pytest.raises(RuntimeError, match='Historical rows changed: deletion_executions'):
+    with pytest.raises(RuntimeError, match='Historical table disappeared'):
+        driver.compare_history(before, after, {'adopted_instances': []})
+
+
+def test_compare_history_0013_to_0014_rejects_changed_operations():
+    before = {
+        'schema': ['0013_technical_ownership'],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'before'},
+            'operations': {'count': 3, 'sha256': 'operations'},
+        },
+        'technical_ownership_entries': {},
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'after'},
+            'operations': {'count': 4, 'sha256': 'operations'},
+        },
+        'technical_ownership_entries': {},
+    }
+    with pytest.raises(RuntimeError, match='Historical rows changed: operations'):
+        driver.compare_history(before, after, {'adopted_instances': []})
+
+
+def test_compare_history_0013_to_0014_rejects_unexpected_table():
+    before = {
+        'schema': ['0013_technical_ownership'],
+        'tables': {'technical_ownership': {'count': 0, 'sha256': 'before'}},
+        'technical_ownership_entries': {},
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'after'},
+            'unexpected': {'count': 1, 'sha256': 'unexpected'},
+        },
+        'technical_ownership_entries': {},
+    }
+    with pytest.raises(RuntimeError, match='Unexpected historical table'):
         driver.compare_history(before, after, {'adopted_instances': []})
 
 

@@ -175,15 +175,13 @@ def test_changed_identity_fails_closed_before_guest_exec(client, auth, guest, se
         assert session.get(GuestInitialization, operation_id).started_at is None
 
 
-def test_pending_guest_initialization_blocks_incompatible_power_and_delete(client, auth, guest, monkeypatch):
+def test_pending_guest_initialization_blocks_incompatible_power(client, auth, guest, monkeypatch):
     monkeypatch.setenv("IACP_TERRAFORM_DELETE_ENABLED", "1")
     monkeypatch.setenv("IACP_TERRAFORM_APPLY_ENABLED", "1")
     assert accept(client, auth, guest).status_code == 202
     headers = {**auth, "Idempotency-Key": "power-during-init"}
     power = client.post(f"/v1/instances/{guest.id}/power/shutdown", headers=headers, json={})
-    deletion = client.delete(f"/v1/instances/{guest.id}", headers=headers)
     assert power.status_code == 409 and power.json()["detail"] == "GUEST_INITIALIZATION_ACTIVE"
-    assert deletion.status_code == 409 and deletion.json()["detail"] == "GUEST_INITIALIZATION_ACTIVE"
 
 
 def test_definitive_guest_failure_is_terminal_and_never_resubmitted(client, auth, guest, sessions):
