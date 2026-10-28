@@ -37,17 +37,19 @@ def require(condition, message):
 
 def require_supported_schema(schema):
     supported = {'0004_authorized_apply', '0005_kvm_lifecycle', '0006_power_ownership',
-        '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity', '0011_crm_contract', '0012_commercial_intents', HEAD}
+        '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity',
+        '0011_crm_contract', '0012_commercial_intents', '0013_technical_ownership', HEAD}
     require(len(schema) == 1 and schema[0] in supported, 'Unsupported schema')
 
 
 def check_restore_evidence(backup, restored):
-    """Aceptar respaldos comprobados de 0011 sin confundirlos con el HEAD 0012."""
+    """Aceptar respaldos comprobados de un esquema admitido sin confundirlos con HEAD."""
     schema = backup.get('schema', '0004_authorized_apply')
     minimum_tables = {'0004_authorized_apply': 9, '0005_kvm_lifecycle': 10,
         '0006_power_ownership': 11, '0007_safe_deletion': 12, '0008_dhcp_profiles': 13,
         '0009_lab_self_service': 14, '0010_guest_identity': 15,
-        '0011_crm_contract': 15, '0012_commercial_intents': 16, HEAD: 17}
+        '0011_crm_contract': 15, '0012_commercial_intents': 16,
+        '0013_technical_ownership': 17, HEAD: 17}
     require(restored.get('passed') is True and restored.get('isolated') is True
         and restored.get('backup_sha256') == backup['sha256']
         and restored.get('schema') == schema and schema in minimum_tables
@@ -87,8 +89,28 @@ def check_idle(report, allowed_uncertain=()):
     require(not any(report["queues"].values()) and report["unacked"] == 0, "Broker has pending work")
 
 
-def compare_history(before, after):
+def compare_history(before, after, ownership_migration=None):
+    if before.get('schema') == ['0013_technical_ownership']:
+        require(isinstance(ownership_migration, dict),
+                'Technical ownership migration evidence is required for 0013→0014')
+        adopted = ownership_migration.get('adopted_instances')
+        require(isinstance(adopted, list) and all(
+            isinstance(row, dict) and row.get('instance_id') and isinstance(row.get('vmid'), int)
+            for row in adopted), 'Technical ownership adoption report is incomplete')
+        before_entries = before.get('technical_ownership_entries')
+        after_entries = after.get('technical_ownership_entries')
+        require(isinstance(before_entries, dict) and isinstance(after_entries, dict),
+                'Technical ownership row evidence is missing')
+        before_ids, after_ids = set(before_entries), set(after_entries)
+        adopted_ids = {row['instance_id'] for row in adopted}
+        require(before_ids <= after_ids, 'Technical ownership rows were removed during 0013→0014')
+        require(after_ids - before_ids == adopted_ids,
+                'Unexpected technical ownership rows were materialized during 0013→0014')
+        require(all(after_entries[identifier] == before_entries[identifier] for identifier in before_ids),
+                'Existing technical ownership changed during 0013→0014')
     for name, evidence in before["tables"].items():
+        if name == 'technical_ownership' and before.get('schema') == ['0013_technical_ownership']:
+            continue
         if name=='instances' and before.get('schema')==['0011_crm_contract']:
             projected=after.get('compatibility',{}).get('instances_before_0012',{})
             require(projected.get('new_fields_default') is True and
@@ -692,7 +714,7 @@ with get_session_factory()() as session:
         self.up(*ROLES)
         after = self.verify(admission=restore_flags["admission"], lifecycle=restore_flags["lifecycle"],
                             allowed_uncertain=recovery_ids)
-        compare_history(before, after)
+        compare_history(before, after, migration)
         self.evidence("promotion-completed", {"schema": HEAD,
                                                "lifecycle": restore_flags["lifecycle"],
                                                "admission": restore_flags["admission"],

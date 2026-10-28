@@ -26,6 +26,7 @@ def migrate(session):
     report = {
         "scanned": 0,
         "adopted": 0,
+        "adopted_instances": [],
         "already_bound": 0,
         "deleted": 0,
         "blocked": [],
@@ -100,8 +101,12 @@ def migrate(session):
             continue
         try:
             with session.begin_nested():
-                record(session, instance, adopt=True)
+                ownership = record(session, instance, adopt=True)
             report["adopted"] += 1
+            report["adopted_instances"].append({
+                "instance_id": instance.id,
+                "vmid": ownership.vmid,
+            })
         except Conflict as error:
             item = {"instance_id": instance.id, "reason": str(error)}
             report["reconciliation_required"].append(item)
