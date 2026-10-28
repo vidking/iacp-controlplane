@@ -18,10 +18,11 @@ from .executor import (ADDRESS, TerraformExecutor, digest_file, managed_resource
                        state_resource, verify_identity, verify_plan, verify_postconditions, write_private)
 from .observation import proxmox_resource
 from .state import S3StateReader
+from ..services.technical_ownership import is_managed_vmid
 
 
 def verify_delete_plan(plan, variables, *, absence_only=False):
-    if variables['instance']['vm_id'] < 30000 or variables['instance']['vm_id'] in {104, 106}:
+    if not is_managed_vmid(variables['instance']['vm_id']):
         raise PlanError('DELETE_UNSAFE_PLAN')
     if (plan.get('errored') is not False or plan.get('complete') is not True
             or plan.get('deferred_changes') or plan.get('action_invocations')

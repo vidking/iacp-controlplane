@@ -13,7 +13,9 @@ DESCRIPTION = (
     'Las operaciones administrativas requieren su ámbito específico.'
     '\n\n**Precondiciones:** los perfiles DHCP y los destinos proceden de la autorización técnica vigente. '
     'Usa `power/shutdown` para apagar ordenadamente. DELETE requiere ownership técnico verificable y autorización; '
-    'VM 104, VM 106 y Golden Image 29000 permanecen protegidas. La admisión cerrada devuelve 503.'
+    'VM 104 y las Golden Images 29000, 29001, 29010 y 29011 permanecen protegidas. '
+    'Las KVM administradas, incluida la histórica VM 106, dependen de ownership técnico verificable. '
+    'La admisión cerrada devuelve 503.'
 )
 TAGS = [
     {'name': 'instances', 'description': '01 · Perfiles, creación y consulta de instancias propias del tenant.'},

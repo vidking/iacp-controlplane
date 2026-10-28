@@ -90,6 +90,43 @@ def test_migration_is_repeatable_and_preserves_deleted_history(sessions):
         assert session.get(TechnicalOwnership, deleted) is None
 
 
+def test_migration_adopts_historical_vmid_106_idempotently(sessions):
+    historical = managed_instance(sessions, "00000000-0000-0000-0000-000000000001", vmid=106,
+                                  name="historical-lab-vm")
+    with sessions() as session:
+        # La fixture normalmente ya materializa ownership para una KVM
+        # administrable; aquí simulamos el estado real previo a Alembic 0014.
+        session.delete(session.get(TechnicalOwnership, historical))
+        session.commit()
+    with sessions() as session:
+        first = migrate(session)
+        second = migrate(session)
+        assert first["adopted"] == 1
+        assert first["protected_excluded"] == []
+        assert first["blocked_count"] == 0
+        assert second["adopted"] == 0
+        assert second["already_bound"] == 1
+        assert second["blocked_count"] == 0
+        assert session.get(TechnicalOwnership, historical).vmid == 106
+
+
+def test_migration_excludes_control_plane_without_blocking(sessions):
+    protected = managed_instance(sessions, "00000000-0000-0000-0000-000000000001", vmid=30001,
+                                 name="control-plane-fixture")
+    with sessions() as session:
+        session.delete(session.get(TechnicalOwnership, protected))
+        session.get(Instance, protected).vmid = 104
+        session.commit()
+        report = migrate(session)
+        assert report["protected_excluded"] == [{
+            "instance_id": protected,
+            "vmid": 104,
+            "reason": "PROTECTED_RESOURCE_EXCLUDED",
+        }]
+        assert report["blocked_count"] == 0
+        assert session.get(TechnicalOwnership, protected) is None
+
+
 def test_other_tenant_cannot_use_the_same_instance_from_api(client, identities, sessions):
     identifier = managed_instance(sessions, identities["tenant-a-operator"]["tenant_id"], vmid=30013,
                                   name="tenant-owned")

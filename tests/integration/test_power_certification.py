@@ -26,8 +26,8 @@ def test_historical_certificate_is_audit_only_and_does_not_grant_lifecycle(
     assert history(sessions) == before
     with sessions() as session:
         assert session.scalar(select(PowerOwnershipCertificate)) is not None
-    # VM 106 permanece protegida; el certificado histórico no sustituye al
-    # vínculo técnico único ni habilita Lifecycle.
+    # El certificado histórico no sustituye al vínculo técnico único ni
+    # habilita Lifecycle cuando la evidencia del vínculo no coincide.
     assert request(client, auth, expected.instance_id).status_code == 409
     assert not any(call[0] == "submit" for call in fake.calls)
 
@@ -73,7 +73,7 @@ def test_0006_preserves_0005_rows_and_never_backfills_certificates(pg_engine, mo
     assert snapshot() == before
     with pg_engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM power_ownership_certificates")) == 0
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0013_technical_ownership"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0014_allow_historical_kvm_106"
         assert connection.scalar(text("SELECT ownership_certificate_id FROM power_executions")) is None
     native = FakePower()
     execute_power(operation_id, factory, native)

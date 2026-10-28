@@ -47,7 +47,7 @@ def test_migration_0012_preserves_0011_rows_and_historical_sensitive_ciphertext(
             "VALUES ('historical-g',:tenant,'historical-g','ubuntu-2404',2,2048,20,'ready','terraform',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'fixture-historical-ciphertext')"),{'tenant':BOOTSTRAP_TENANT_ID})
     before=snapshot.snapshot();upgrade(pg_engine);after=snapshot.snapshot()
     promotion.compare_history(before,after)
-    assert after['schema']==['0013_technical_ownership']
+    assert after['schema']==['0014_allow_historical_kvm_106']
     assert after['tables']['commercial_intents']['count']==0
     with pg_engine.connect() as c:
         assert c.execute(text('SELECT commercial_revision,initial_access_ciphertext FROM instances')).one()==(None,'fixture-historical-ciphertext')

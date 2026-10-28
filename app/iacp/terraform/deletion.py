@@ -17,6 +17,7 @@ from .config import Allocation, PlanError
 from .deletion_executor import DeletionExecutor
 from .lifecycle import build_executor
 from .locks import ExecutionBusy, instance_lock, admission_lock
+from ..services.technical_ownership import is_managed_vmid
 
 
 def gate(instance, session=None):
@@ -29,7 +30,7 @@ def gate(instance, session=None):
         if session.get(CommercialIntent, instance.id) is not None:
             from ..services.commercial_bootstrap import active as bootstrap_active
             if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
-    if instance.vmid is None or instance.vmid < 30000 or instance.vmid in {104, 106, 29000}:
+    if not is_managed_vmid(instance.vmid):
         raise Conflict('DELETE_DISPOSABLE_INSTANCE_REQUIRED')
 
 
@@ -45,7 +46,7 @@ def context(session, row):
     if (instance is None or job is None or instance.tenant_id != operation.tenant_id
             or job.tenant_id != operation.tenant_id or operation.instance_id != instance.id
             or operation.kind != 'instance.delete' or job.operation != 'instance.delete'
-            or row.vmid < 30000 or row.vmid in {104, 106}
+            or not is_managed_vmid(row.vmid)
             or instance.status != ('deleting' if row.started_at else 'ready')):
         raise PlanError('DELETE_BINDING_CHANGED')
     # Deleting is an explicit tombstone transition, not a rewrite of provisioning.

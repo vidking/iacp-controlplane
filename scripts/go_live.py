@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0013_technical_ownership"
+HEAD = "0014_allow_historical_kvm_106"
 SOURCE = "b517c9bb67a9e3c800f0c3657c56224c2b8f80aa"
 ARCHIVE = "68ddafc66df5a96cd3e22165658a273446d9d0f9fb46115f2e065034c2ddf2a3"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]

@@ -115,8 +115,8 @@ def test_feature_gates_fail_closed(client,auth,disposable,monkeypatch,which):
     disposable.publisher.assert_not_called()
 
 
-@pytest.mark.parametrize('vmid',[104,106,29999])
-def test_controlplane_historical_and_non_disposable_ids_protected(sessions,client,auth,disposable,monkeypatch,vmid):
+@pytest.mark.parametrize('vmid',[104,29000,29001,29010,29011,29999])
+def test_controlplane_templates_and_non_disposable_ids_protected(sessions,client,auth,disposable,monkeypatch,vmid):
     with sessions() as s:s.get(Instance,disposable.id).vmid=vmid;s.commit()
     assert plan(client,auth,disposable).status_code==409
     disposable.publisher.assert_not_called()
@@ -271,7 +271,7 @@ def test_broker_failure_keeps_one_durable_operation(client,auth,sessions,disposa
 def test_swagger_documents_roles_preconditions_and_gated_delete(client,auth):
     schema=client.get('/openapi.json',headers=auth).json()
     description=schema['info']['description']
-    assert all(word in description for word in ['Authorize','DHCP','503','power/shutdown','104','106'])
+    assert all(word in description for word in ['Authorize','DHCP','503','power/shutdown','104','29000','29001','29010','29011'])
     assert schema['components']['schemas']['CommercialInstanceCreate']['additionalProperties'] is False
     route=schema['paths']['/v1/instances/{instance_id}']['delete']
     assert route['security']==[{'HTTPBearer':[]}]

@@ -85,12 +85,17 @@ def test_real_celery_queue_plan_then_apply(client,auth,integrated,application,tm
             except subprocess.TimeoutExpired:process.kill();process.wait(timeout=3)
 
 
-def test_real_postgres_constraints_reject_protected_id_and_two_active_deletions(client,auth,integrated):
+def test_real_postgres_constraints_allow_historical_106_and_reject_protected_ids(client,auth,integrated):
     from uuid import uuid4
     sessions,fixture=integrated;op=plan(client,auth,fixture).json()
-    with pytest.raises(IntegrityError):
-        with sessions() as s:
-            s.get(DeletionExecution,op['operation_id']).vmid=106;s.commit()
+    with sessions() as s:
+        s.get(DeletionExecution,op['operation_id']).vmid=106;s.commit()
+    with sessions() as s:
+        s.get(DeletionExecution,op['operation_id']).vmid=30000;s.commit()
+    for protected in (104, 29000, 29001, 29010, 29011):
+        with pytest.raises(IntegrityError):
+            with sessions() as s:
+                s.get(DeletionExecution,op['operation_id']).vmid=protected;s.commit()
     with pytest.raises(IntegrityError):
         with sessions() as s:
             original=s.get(DeletionExecution,op['operation_id']);identifier=str(uuid4())
@@ -113,4 +118,4 @@ def test_upgrade_from_0006_preserves_real_postgres_provisioning(pg_engine,runtim
     with pg_engine.connect() as c:
         for name,rows in before.items():assert list(c.execute(select(metadata.tables[name])).mappings())==rows
         assert c.scalar(text('SELECT count(*) FROM deletion_executions'))==0
-        assert c.scalar(text('SELECT version_num FROM alembic_version'))=='0013_technical_ownership'
+        assert c.scalar(text('SELECT version_num FROM alembic_version'))=='0014_allow_historical_kvm_106'

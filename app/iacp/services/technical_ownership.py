@@ -25,7 +25,27 @@ from .ownership_binding import binding_digest, valid_source_revision
 from ..terraform.config import PlanError
 
 TECHNICAL_ACTIONS = frozenset({"create", "start", "shutdown", "reboot", "delete"})
-PROTECTED_VMIDS = frozenset({104, 106, 29000})
+# Recursos que nunca pueden ser administrados como KVM de tenant.
+# VM 106 es una KVM histórica de laboratorio, no una imagen ni el Control
+# Plane; su administración depende de ownership técnico verificable.
+PROTECTED_VMIDS = frozenset({104, 29000, 29001, 29010, 29011})
+HISTORICAL_MANAGED_VMIDS = frozenset({106})
+
+
+def is_managed_vmid(vmid):
+    """Indica si un VMID puede tener ownership técnico administrable."""
+    return vmid in HISTORICAL_MANAGED_VMIDS or (
+        isinstance(vmid, int) and vmid >= 30000 and vmid not in PROTECTED_VMIDS
+    )
+
+
+def is_new_vmid(vmid):
+    """Indica si el VMID es válido para una creación nueva.
+
+    Las KVM históricas como 106 pueden administrarse, pero no pueden usarse
+    como destino de una nueva intención CREATE.
+    """
+    return isinstance(vmid, int) and vmid >= 30000 and vmid not in PROTECTED_VMIDS
 
 
 def _completed_apply(session, execution):
@@ -52,9 +72,7 @@ def _evidence(instance, execution, apply):
         or instance.status == "deleted"
         or not execution.state_key
         or not valid_source_revision(execution.source_revision)
-        or execution.vmid is None
-        or execution.vmid < 30000
-        or execution.vmid in PROTECTED_VMIDS
+        or not is_managed_vmid(execution.vmid)
         or instance.vmid != execution.vmid
         or instance.node != result.get("node")
         or instance.vmid != result.get("vmid")
@@ -247,8 +265,7 @@ def _precreate_member(session, instance):
         tenant is None or not tenant.active or instance.status == "deleted"
         or instance.executor != "terraform" or execution is None
         or not execution.state_key or not valid_source_revision(execution.source_revision)
-        or execution.vmid is None or execution.vmid < 30000
-        or execution.vmid in PROTECTED_VMIDS
+        or not is_new_vmid(execution.vmid)
     ):
         raise Conflict("TECHNICAL_OWNERSHIP_EVIDENCE_REQUIRED")
     return SimpleNamespace(

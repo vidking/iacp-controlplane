@@ -152,7 +152,8 @@ def validate_binding(session, row, operation):
     from .technical_ownership import record as technical_record
     ownership=technical_record(session, instance, adopt=True)
     mac=(instance.result or {}).get('network',{}).get('mac_address','').lower()
-    if (target.vmid<30000 or target.vmid in {104,106,29000}
+    from .technical_ownership import is_managed_vmid
+    if (not is_managed_vmid(target.vmid)
             or instance.network_mode!='dhcp' or row.mode not in {MODE, 'ubuntu-2604-lab-identity-v1', 'almalinux-9-lab-identity-v1', 'almalinux-10-lab-identity-v1'} or mac!=row.mac_address
             or row.provisioning_binding!=ownership.binding_sha256):
         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')

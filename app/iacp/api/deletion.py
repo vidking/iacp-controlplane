@@ -74,7 +74,9 @@ def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Da
                            "IaC Worker aplica únicamente el plan guardado. "
                            "Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. "
                            "Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. "
-                           "VM 104 y VM 106 quedan prohibidas. No invoca DELETE nativo ni borra volúmenes Docker.")
+                           "VM 104 y las Golden Images 29000, 29001, 29010 y 29011 quedan prohibidas. "
+                           "Las KVM administradas se eliminan únicamente mediante el plan Terraform auditado; "
+                           "no invoca DELETE nativo ni borra volúmenes Docker.")
 def delete(instance_id: str, response: Response, session: Database, publish: Publisher,
            principal: Annotated[Principal, Depends(authorize_write)],
            key: DeleteKey = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),

@@ -244,7 +244,7 @@ class TechnicalOwnership(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "state_key", name="uq_technical_ownership_tenant_state"),
         UniqueConstraint("vmid", name="uq_technical_ownership_vmid"),
-        CheckConstraint("vmid >= 30000 AND vmid NOT IN (104,106,29000)",
+        CheckConstraint("(vmid = 106 OR vmid >= 30000) AND vmid NOT IN (104,29000,29001,29010,29011)",
                         name="ck_technical_ownership_disposable_vmid"),
     )
     instance_id: Mapped[str] = mapped_column(ForeignKey("instances.id"), primary_key=True)
@@ -312,7 +312,8 @@ class DeletionExecution(Base):
     __tablename__ = "deletion_executions"
     __table_args__ = (
         CheckConstraint("status IN ('queued','running','planned','approved','uncertain','completed','failed')", name="ck_deletion_status"),
-        CheckConstraint("vmid >= 30000 AND vmid NOT IN (104,106)", name="ck_deletion_disposable_vmid"),
+        CheckConstraint("(vmid = 106 OR vmid >= 30000) AND vmid NOT IN (104,29000,29001,29010,29011)",
+                        name="ck_deletion_disposable_vmid"),
         Index("uq_deletion_active_instance", "instance_id", unique=True,
               postgresql_where=text("status <> 'failed'"), sqlite_where=text("status <> 'failed'")),
     )
