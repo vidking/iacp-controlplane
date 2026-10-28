@@ -124,7 +124,7 @@ def compare_history(before, after, ownership_migration=None):
                 {k:projected.get(k) for k in ('count','sha256')} == evidence,
                 'Historical data changed during CRM migration: '+name)
             continue
-        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],['0012_commercial_intents'],[HEAD]]:
+        if name in {'instances','deletion_executions'} and before['schema'] not in [['0009_lab_self_service'],['0010_guest_identity'],['0011_crm_contract'],['0012_commercial_intents'],['0013_technical_ownership'],[HEAD]]:
             projected=after.get('compatibility',{}).get(name+'_before_0009',{})
             if name=='deletion_executions' or before['schema']==['0008_dhcp_profiles']:
                 require(projected.get('new_fields_default') is True

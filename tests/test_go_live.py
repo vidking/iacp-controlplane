@@ -54,12 +54,18 @@ def test_restore_evidence_accepts_actual_0013_backup_before_0014():
 def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
     before = {
         'schema': ['0013_technical_ownership'],
-        'tables': {'technical_ownership': {'count': 1, 'sha256': 'before'}},
+        'tables': {
+            'technical_ownership': {'count': 1, 'sha256': 'before'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
         'technical_ownership_entries': {'existing': 'digest-existing'},
     }
     after = {
         'schema': [driver.HEAD],
-        'tables': {'technical_ownership': {'count': 2, 'sha256': 'after'}},
+        'tables': {
+            'technical_ownership': {'count': 2, 'sha256': 'after'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
         'technical_ownership_entries': {
             'existing': 'digest-existing', 'adopted': 'digest-adopted',
         },
@@ -78,6 +84,49 @@ def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
                 **after['technical_ownership_entries'], 'unexpected': 'digest-unexpected',
             },
         }, migration)
+
+
+@pytest.mark.parametrize('changed', [
+    {'count': 3, 'sha256': 'deletions'},
+    {'count': 2, 'sha256': 'rewritten'},
+])
+def test_compare_history_0013_to_0014_rejects_changed_historical_deletions(changed):
+    before = {
+        'schema': ['0013_technical_ownership'],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'before'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
+        'technical_ownership_entries': {},
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'after'},
+            'deletion_executions': changed,
+        },
+        'technical_ownership_entries': {},
+    }
+    with pytest.raises(RuntimeError, match='Historical rows changed: deletion_executions'):
+        driver.compare_history(before, after, {'adopted_instances': []})
+
+
+def test_compare_history_0013_to_0014_rejects_missing_historical_table():
+    before = {
+        'schema': ['0013_technical_ownership'],
+        'tables': {
+            'technical_ownership': {'count': 0, 'sha256': 'before'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
+        'technical_ownership_entries': {},
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {'technical_ownership': {'count': 0, 'sha256': 'after'}},
+        'technical_ownership_entries': {},
+    }
+    with pytest.raises(RuntimeError, match='Historical rows changed: deletion_executions'):
+        driver.compare_history(before, after, {'adopted_instances': []})
 
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
