@@ -169,7 +169,7 @@ effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,a
     check=True,capture_output=True,text=True,timeout=10).stdout
 assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
 failure_stage='technical_password'
-subprocess.run(['/usr/bin/chpasswd'],input=('root:'+password+'\n').encode(),
+subprocess.run(['/usr/sbin/chpasswd'],input=('root:'+password+'\n').encode(),
     check=True,capture_output=True,timeout=15)
 service='ssh' if 'ID=ubuntu\n' in release else 'sshd'
 failure_stage='technical_ssh_reload'
