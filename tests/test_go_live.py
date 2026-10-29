@@ -234,6 +234,81 @@ def test_promote_keeps_partial_runtime_fail_closed_on_final_verification_error()
     assert promotion.up.call_count == 1
 
 
+def _activation_promotion(*, operation_id=None):
+    promotion = object.__new__(driver.Promotion)
+    operation_id = operation_id or "4652c4aa-58bb-4f92-94c9-c81790e74150"
+    promotion.authorize = Mock(return_value={"reference": "lab:test:activate-core"})
+    promotion.preflight = Mock(return_value={"schema": [driver.HEAD]})
+    promotion.review_recovery_deployment = Mock(return_value=())
+    promotion.reviewed_operation_fences = ({"operation_id": operation_id},)
+    promotion.verify = Mock()
+    promotion.flags = Mock()
+    promotion.up = Mock()
+    promotion.evidence = Mock()
+    return promotion
+
+
+def test_activate_core_reuses_the_reviewed_operation_fence_for_both_verifications():
+    promotion = _activation_promotion()
+
+    driver.Promotion.activate_core(promotion)
+
+    promotion.review_recovery_deployment.assert_called_once_with(
+        {"reference": "lab:test:activate-core"}, {"schema": [driver.HEAD]}
+    )
+    assert promotion.verify.call_count == 2
+    assert promotion.verify.call_args_list[0].kwargs == {
+        "admission": 0,
+        "lifecycle": 0,
+        "deletion": 0,
+        "allowed_operation_uncertain": (
+            "4652c4aa-58bb-4f92-94c9-c81790e74150",
+        ),
+    }
+    assert promotion.verify.call_args_list[1].kwargs == {
+        "admission": 1,
+        "lifecycle": 1,
+        "deletion": 1,
+        "allowed_operation_uncertain": (
+            "4652c4aa-58bb-4f92-94c9-c81790e74150",
+        ),
+    }
+    promotion.flags.assert_called_once_with(admission=1, lifecycle=1, deletion=1)
+    promotion.up.assert_called_once_with('api', 'terraform-worker', 'lifecycle-worker')
+    assert any(call.args[0] == 'core-contract-enabled'
+               for call in promotion.evidence.call_args_list)
+
+
+def test_activate_core_does_not_enable_capabilities_when_attestation_precheck_fails():
+    promotion = _activation_promotion()
+    promotion.verify.side_effect = RuntimeError(
+        "Nonterminal DB work; use its approved recovery workflow"
+    )
+
+    with pytest.raises(RuntimeError, match="Nonterminal DB work"):
+        driver.Promotion.activate_core(promotion)
+
+    promotion.flags.assert_not_called()
+    promotion.up.assert_not_called()
+
+
+def test_activate_core_restores_fail_closed_flags_after_post_enable_failure():
+    promotion = _activation_promotion()
+    promotion.verify.side_effect = [None, RuntimeError("fence changed")]
+
+    with pytest.raises(RuntimeError, match="fence changed"):
+        driver.Promotion.activate_core(promotion)
+
+    assert [call.kwargs for call in promotion.flags.call_args_list] == [
+        {"admission": 1, "lifecycle": 1, "deletion": 1},
+        {"admission": 0, "lifecycle": 0, "deletion": 0},
+    ]
+    assert [call.args for call in promotion.up.call_args_list] == [
+        ('api', 'terraform-worker', 'lifecycle-worker'),
+        ('api', 'terraform-worker', 'lifecycle-worker'),
+    ]
+
+
 def test_operation_fence_uses_terraform_worker_after_workers_are_drained():
     promotion = object.__new__(driver.Promotion)
     promotion.container = Mock(return_value={"State": {"Running": False}})
