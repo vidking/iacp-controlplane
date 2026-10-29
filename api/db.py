@@ -12,6 +12,7 @@ def connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA busy_timeout=30000")
+    connection.execute("PRAGMA foreign_keys=ON")
     return connection
 
 
@@ -22,6 +23,26 @@ def database():
         yield connection
     finally:
         connection.close()
+
+
+def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+
+
+def _add_missing_columns(db: sqlite3.Connection) -> None:
+    existing = _columns(db, "operations")
+    additions = {
+        "instance_id": "TEXT",
+        "action": "TEXT NOT NULL DEFAULT 'provision'",
+        "vmid": "INTEGER",
+        "workspace_path": "TEXT",
+        "plan_path": "TEXT",
+        "plan_operation_id": "TEXT",
+        "stack": "TEXT NOT NULL DEFAULT 'mng01'",
+    }
+    for name, definition in additions.items():
+        if name not in existing:
+            db.execute(f"ALTER TABLE operations ADD COLUMN {name} {definition}")
 
 
 def initialize() -> None:
@@ -60,6 +81,27 @@ def initialize() -> None:
                 last_heartbeat TEXT NOT NULL,
                 current_operation_id TEXT
             );
+            CREATE TABLE IF NOT EXISTS instances (
+                instance_id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                image TEXT NOT NULL,
+                vmid INTEGER,
+                node TEXT NOT NULL DEFAULT 'mng01',
+                status TEXT NOT NULL,
+                spec_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_instances_vmid ON instances(vmid);
+            CREATE TABLE IF NOT EXISTS vmid_leases (
+                vmid INTEGER PRIMARY KEY,
+                operation_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                released_at TEXT
+            );
             """
         )
+        _add_missing_columns(db)
 

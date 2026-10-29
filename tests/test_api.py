@@ -7,7 +7,15 @@ def test_health_and_operation(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         assert client.get("/health/live").json()["status"] == "alive"
-        response = client.post("/v1/operations", json={"command": "plan", "variables": {}})
+        response = client.post(
+            "/v1/operations",
+            json={
+                "command": "plan",
+                "action": "provision",
+                "stack": "local",
+                "spec": {"name": "local-test", "image": "ubuntu-2404"},
+            },
+        )
         assert response.status_code == 200
         operation_id = response.json()["operation_id"]
         detail = client.get(f"/v1/operations/{operation_id}")

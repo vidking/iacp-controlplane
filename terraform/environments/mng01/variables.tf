@@ -52,16 +52,27 @@ variable "instance" {
     template_vm_id         = number
     template_node_name     = optional(string)
     cpu_cores              = optional(number, 2)
+    cpu_type               = optional(string, null)
+    cpu_flags              = optional(set(string), [])
+    cpu_sockets            = optional(number, 1)
+    numa                   = optional(bool, false)
+    cpu_hotplugged         = optional(number, null)
     memory_mb              = optional(number, 2048)
     network_bridge         = string
-    vlan_id                = number
-    ipv4_cidr              = string
-    ipv4_gateway           = string
+    network_mode           = optional(string, "dhcp")
+    vlan_id                = optional(number, null)
+    ipv4_cidr              = optional(string, null)
+    ipv4_gateway           = optional(string, null)
     cloudinit_datastore_id = string
     cloudinit_username     = string
     ssh_public_keys        = list(string)
     guest_agent_enabled    = optional(bool, false)
     started                = optional(bool, false)
+    bios                   = optional(string, null)
+    machine                = optional(string, null)
+    scsi_hardware          = optional(string, null)
+    hotplug                = optional(string, null)
+    boot_order             = optional(list(string), null)
     tags                   = optional(set(string), ["iacp"])
   })
 
@@ -71,5 +82,19 @@ variable "instance" {
       var.instance.node_name
     )
     error_message = "El nodo destino no pertenece a allowed_nodes."
+  }
+
+  validation {
+    condition     = contains(["dhcp", "static"], var.instance.network_mode)
+    error_message = "network_mode debe ser dhcp o static."
+  }
+
+  validation {
+    condition = var.instance.network_mode == "dhcp" ? (
+      var.instance.ipv4_cidr == null && var.instance.ipv4_gateway == null
+      ) : (
+      var.instance.ipv4_cidr != null && var.instance.ipv4_gateway != null
+    )
+    error_message = "DHCP no acepta IPv4/gateway y static requiere ambos valores."
   }
 }
