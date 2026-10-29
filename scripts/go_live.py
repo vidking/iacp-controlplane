@@ -509,8 +509,13 @@ print(json.dumps({"passed":True,"operation_id":review["operation_id"],"instance_
                 result = json.loads(self.exec_python(role, code))
                 require(result.get("passed") is True, "Operation fence rejected")
                 return result
+        # ``migrate`` only mounts the database secret.  It cannot attest a
+        # Terraform state or Proxmox resource after the workers are drained.
+        # Reuse the reviewed Terraform worker service as a read-only
+        # maintenance container; its credentials and IaC source are already
+        # part of the canonical isolation contract.
         result = json.loads(self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T",
-                                         "--entrypoint", "python", "migrate", "-", input=code))
+                                         "--entrypoint", "python", "terraform-worker", "-", input=code))
         require(result.get("passed") is True, "Operation fence rejected")
         return result
 
