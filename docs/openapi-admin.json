@@ -1193,12 +1193,17 @@
             "type": "boolean"
           },
           "error_code": {
-            "const": "GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH",
-            "title": "Error Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
           },
           "event_code": {
-            "const": "guest_initialization_cancelled_before_dispatch",
             "title": "Event Code",
             "type": "string"
           },
@@ -1210,12 +1215,24 @@
             "title": "Job Id",
             "type": "string"
           },
+          "mode": {
+            "default": "cancel-queued",
+            "enum": [
+              "cancel-queued",
+              "verify-consumed"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
           "operation_id": {
             "title": "Operation Id",
             "type": "string"
           },
           "status": {
-            "const": "failed",
+            "enum": [
+              "failed",
+              "completed"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -1225,7 +1242,6 @@
           "operation_id",
           "job_id",
           "status",
-          "error_code",
           "event_code",
           "changed"
         ],
@@ -1234,11 +1250,20 @@
       },
       "GuestInitializationRecoveryRequest": {
         "additionalProperties": false,
-        "description": "Identidad exacta de una inicialización que nunca fue despachada.",
+        "description": "Identidad exacta y modo de recuperación de una inicialización.",
         "properties": {
           "job_id": {
             "pattern": "^[a-f0-9-]{36}$",
             "title": "Job Id",
+            "type": "string"
+          },
+          "mode": {
+            "default": "cancel-queued",
+            "enum": [
+              "cancel-queued",
+              "verify-consumed"
+            ],
+            "title": "Mode",
             "type": "string"
           },
           "operation_id": {
@@ -6460,8 +6485,8 @@
     },
     "/v1/instances/{instance_id}/provisioning/guest-initialization/recover": {
       "post": {
-        "description": "Cancela una Guest Initialization queued que nunca consumió guest-exec. Requiere identidad administrativa operator del tenant, ownership técnico, UUIDs exactos, locks exclusivos, Redis/Celery inactivos y ausencia de operaciones concurrentes. La operación es idempotente; una entrega Celery tardía observa el estado terminal y no ejecuta comandos.",
-        "operationId": "recoverQueuedGuestInitialization",
+        "description": "Cancela una Guest Initialization queued que nunca consumió guest-exec o verifica, en modo verify-consumed, una ejecución técnica UNCERTAIN sin repetir guest-exec. Requiere identidad administrativa operator del tenant, ownership técnico, UUIDs exactos, locks exclusivos, Redis/Celery inactivos y ausencia de operaciones concurrentes. La operación es idempotente; una entrega Celery tardía observa el estado terminal y no ejecuta comandos.",
+        "operationId": "recoverGuestInitialization",
         "parameters": [
           {
             "in": "path",

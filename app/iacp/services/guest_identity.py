@@ -30,6 +30,14 @@ MODE = 'ubuntu-2404-lab-identity-v1'
 MARKER = '/var/lib/iacp/guest-identity.json'
 NETWORK_FILE = '/etc/netplan/99-iacp-identity.yaml'
 TERMINAL_GUEST_PROGRAM_FAILURE = 'GUEST_INITIALIZATION_PROGRAM_FAILED'
+TERMINAL_GUEST_RECONCILIATION_FAILURE = 'GUEST_INITIALIZATION_RECONCILIATION_UNVERIFIED'
+TERMINAL_GUEST_RECONCILIATION_ERRORS = frozenset({
+    TERMINAL_GUEST_RECONCILIATION_FAILURE,
+    'ROOT_ACCESS_CONFIGURATION_MISMATCH',
+    'ROOT_ACCESS_EVIDENCE_INVALID',
+    'ROOT_SSH_AUTHENTICATION_FAILED',
+    'ROOT_SSH_HOST_KEY_MISMATCH',
+})
 
 
 class GuestProgramFailed(Conflict):
@@ -236,6 +244,9 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
     consumed = session.scalar(select(OperationEvent.id).where(
         OperationEvent.operation_id == row.operation_id,
         OperationEvent.code == 'guest_initialization_dispatch_consumed').limit(1))
+    reconciliation_failed = session.scalar(select(OperationEvent.id).where(
+        OperationEvent.operation_id == row.operation_id,
+        OperationEvent.code == 'guest_initialization_reconciliation_failed').limit(1))
     delete_operation = session.get(Operation, delete_operation_id, with_for_update=True)
     if (delete_operation is None or delete_operation.instance_id != instance.id
             or delete_operation.tenant_id != instance.tenant_id
@@ -263,6 +274,14 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
                 and row.started_at is not None and row.pid is not None
                 and consumed is not None and row.result is None):
             code = 'guest_initialization_failed_retained_for_delete'
+            event(session, operation, code, 'delete:' + delete_operation.id)
+            event(session, delete_operation, code, actor)
+            return False
+        if (operation.error_code in TERMINAL_GUEST_RECONCILIATION_ERRORS and job is not None
+                and job.status == 'failed'
+                and row.started_at is not None and row.pid is not None
+                and consumed is not None and reconciliation_failed is not None):
+            code = 'guest_initialization_reconciliation_failed_retained_for_delete'
             event(session, operation, code, 'delete:' + delete_operation.id)
             event(session, delete_operation, code, actor)
             return False

@@ -291,6 +291,31 @@ def test_delete_rejects_consumed_guest_program_failure_with_other_error_code(
     assert response.json()['detail'] == 'GUEST_INITIALIZATION_RECONCILIATION_REQUIRED'
 
 
+def test_delete_accepts_terminal_access_reconciliation_failure(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'failed'
+        row.started_at = utcnow()
+        row.finished_at = utcnow()
+        row.pid = 1088
+        row.result = {'reconciliation': {'status': 'failed',
+                                         'error_code': 'ROOT_SSH_AUTHENTICATION_FAILED'}}
+        operation.error_code = 'ROOT_SSH_AUTHENTICATION_FAILED'
+        session.add(OperationEvent(operation_id=initialization_id, status='failed',
+            code='guest_initialization_dispatch_consumed', actor='worker:iac'))
+        session.add(OperationEvent(operation_id=initialization_id, status='failed',
+            code='guest_initialization_reconciliation_failed', actor='operator:test'))
+        session.commit()
+    application.dependency_overrides[get_deletion_publisher] = lambda: Mock()
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-reconciled-access-failure'})
+    assert response.status_code == 202, response.text
+
+
 @pytest.mark.parametrize('corruption', [
     'started', 'pid', 'result', 'consumed_event', 'job_queued', 'operation_queued',
 ])
