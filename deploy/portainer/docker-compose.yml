@@ -20,6 +20,9 @@ services:
       IACP_LOCAL_TERRAFORM_DIR: fixtures/local
       IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
       IACP_API_TOKEN: "${IACP_API_TOKEN:?Definir IACP_API_TOKEN en Portainer}"
+      IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
+      IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
+      IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
     expose:
       - "8080"
     volumes:
@@ -67,6 +70,7 @@ services:
       IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
       IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
       IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
+      IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
     volumes:
       - iacp_data:/var/lib/iacp-v2
     networks:
@@ -101,6 +105,7 @@ services:
       IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
       IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
       IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
+      IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
     volumes:
       - iacp_data:/var/lib/iacp-v2
     networks:

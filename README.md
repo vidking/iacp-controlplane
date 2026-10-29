@@ -105,8 +105,16 @@ SQLite: pending -> worker -> Terraform
         +-- destroy: usa el state del mismo workspace
 ```
 
-Endpoints de observación: `/v1/operations`, `/v1/instances/{id}`,
-`/v1/events`, `/v1/workers` y `/v1/observability`.
+Endpoints principales: `/v1/instances`, `/v1/instances/{id}`,
+`/v1/instances/{id}/provision`, `DELETE /v1/instances/{id}` y
+`/v1/instances/{id}/power/{start|shutdown|reboot}`. Observación:
+`/v1/operations`, `/v1/events`, `/v1/workers` y `/v1/observability`.
+
+La consola técnica está disponible en `/console`; Swagger continúa en `/docs`.
+Power Lifecycle aparece en el contrato aunque el token no tenga todavía
+`VM.PowerMgmt`: en ese caso la operación termina con
+`POWER_PERMISSION_DENIED`. El V2 utiliza el mismo endpoint y token de
+Provisioning de Proxmox; no consulta la API antigua de Lifecycle.
 
 ## Archivos editables
 
@@ -123,6 +131,7 @@ Endpoints de observación: `/v1/operations`, `/v1/instances/{id}`,
 | Imágenes, secretos, puertos y volúmenes | `compose.yaml` y `.env` |
 | Stack Portainer y Traefik | `deploy/portainer/docker-compose.yml` |
 | Publicación manual de imagen | `scripts/publish-image.sh` |
+| Consola visual técnica | `api/static/console/` |
 
 Para cambiar el comportamiento basta normalmente con editar el módulo
 Terraform, el catálogo o `worker/main.py`. No se editan manifests dispersos ni

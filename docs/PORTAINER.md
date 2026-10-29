@@ -41,4 +41,10 @@ curl --fail https://dev.iac.cyberfuel.com/health/ready
 
 Luego abrir `/docs`, autorizarse con Bearer y probar primero `plan`. El API no
 publica un puerto del host; el único acceso externo es Traefik por
-`websecure`.
+`websecure`. La consola operativa simplificada queda disponible en `/console`.
+
+La API recibe también las variables Proxmox para consultar el estado de energía
+en modo lectura. Los workers son quienes ejecutan `start`, `shutdown` y
+`reboot`; si el mismo token aún no tiene `VM.PowerMgmt`, Swagger y `/console`
+siguen mostrando las rutas y la operación termina con
+`POWER_PERMISSION_DENIED`.

@@ -89,6 +89,7 @@ def initialize() -> None:
                 vmid INTEGER,
                 node TEXT NOT NULL DEFAULT 'mng01',
                 status TEXT NOT NULL,
+                power_state TEXT,
                 spec_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -104,4 +105,6 @@ def initialize() -> None:
             """
         )
         _add_missing_columns(db)
+        if "power_state" not in _columns(db, "instances"):
+            db.execute("ALTER TABLE instances ADD COLUMN power_state TEXT")
 

@@ -8,11 +8,19 @@ class Command(str, Enum):
     plan = "plan"
     apply = "apply"
     destroy = "destroy"
+    power = "power"
 
 
 class Action(str, Enum):
     provision = "provision"
     destroy = "destroy"
+    power = "power"
+
+
+class PowerAction(str, Enum):
+    start = "start"
+    shutdown = "shutdown"
+    reboot = "reboot"
 
 
 class InstanceSpec(BaseModel):
@@ -45,6 +53,44 @@ class InstanceSpec(BaseModel):
             raise ValueError("network_mode=dhcp no acepta direccionamiento estatico")
         return self
 
+
+class InstanceCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "stack": "mng01",
+                    "spec": {
+                        "name": "iacp-v2-demo",
+                        "image": "ubuntu-2404",
+                        "vcpus": 2,
+                        "memory_mb": 2048,
+                        "disk_gb": 20,
+                        "network_mode": "dhcp",
+                        "started": False,
+                        "ssh_public_keys": [],
+                    },
+                }
+            ]
+        }
+    )
+
+    stack: Literal["mng01", "local"] = "mng01"
+    spec: InstanceSpec
+
+
+class ProvisionRequest(BaseModel):
+    plan_operation_id: str | None = None
+
+
+class PowerRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"action": "start"}, {"action": "shutdown"}, {"action": "reboot"}]}
+    )
+
+    action: PowerAction
+
+
 class OperationRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
@@ -74,6 +120,12 @@ class OperationRequest(BaseModel):
                     "action": "destroy",
                     "plan_operation_id": "<operation_id_del_plan>",
                 },
+                {
+                    "command": "power",
+                    "action": "power",
+                    "instance_id": "<instance_id>",
+                    "power_action": "shutdown",
+                },
             ]
         }
     )
@@ -82,10 +134,23 @@ class OperationRequest(BaseModel):
     spec: InstanceSpec | None = None
     instance_id: str | None = None
     plan_operation_id: str | None = None
+    power_action: PowerAction | None = None
     stack: Literal["mng01", "local"] = "mng01"
 
     @model_validator(mode="after")
     def valid_command(self):
+        if self.command == Command.power:
+            if self.action != Action.power:
+                raise ValueError("power requiere action=power")
+            if not self.instance_id:
+                raise ValueError("power requiere instance_id")
+            if self.power_action is None:
+                raise ValueError("power requiere power_action")
+            if self.spec is not None or self.plan_operation_id is not None:
+                raise ValueError("power no acepta spec ni plan_operation_id")
+            return self
+        if self.power_action is not None:
+            raise ValueError("power_action solo aplica a command=power")
         if self.command == Command.plan and self.action == Action.provision and self.spec is None:
             raise ValueError("spec es obligatorio para plan de provision")
         if self.command == Command.apply and not self.plan_operation_id:

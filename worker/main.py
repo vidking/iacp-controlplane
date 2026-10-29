@@ -10,7 +10,7 @@ from api.db import database, initialize
 from worker.allocation import allocate, release
 from worker.golden import observe, variables as golden_variables
 from worker.heartbeat import heartbeat
-from worker.proxmox import ProxmoxClient, load_environment
+from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
 
 
 def now() -> str:
@@ -64,7 +64,13 @@ def update_operation(operation_id: str, **values) -> None:
         )
 
 
-def update_instance(instance_id: str | None, status: str, *, vmid: int | None = None) -> None:
+def update_instance(
+    instance_id: str | None,
+    status: str,
+    *,
+    vmid: int | None = None,
+    power_state: str | None = None,
+) -> None:
     if not instance_id:
         return
     with database() as db:
@@ -77,6 +83,11 @@ def update_instance(instance_id: str | None, status: str, *, vmid: int | None = 
             db.execute(
                 "UPDATE instances SET status=?, vmid=?, updated_at=? WHERE instance_id=?",
                 (status, vmid, now(), instance_id),
+            )
+        if power_state is not None:
+            db.execute(
+                "UPDATE instances SET power_state=?, updated_at=? WHERE instance_id=?",
+                (power_state, now(), instance_id),
             )
 
 
@@ -185,15 +196,55 @@ def terraform_commands(command: str, plan_path: str) -> list[list[str]]:
         ]
     if command == "apply":
         return [init, ["terraform", "apply", "-input=false", "-no-color", plan_path]]
-    return [
-        init,
-        ["terraform", "destroy", "-input=false", "-auto-approve", "-no-color"],
-    ]
+    if command == "destroy":
+        return [
+            init,
+            ["terraform", "destroy", "-input=false", "-auto-approve", "-no-color"],
+        ]
+    raise RuntimeError(f"orden Terraform no soportada: {command}")
 
 
 def physical_presence(client: ProxmoxClient, vmid: int, expected: bool) -> bool:
     present = any(int(item.get("vmid", -1)) == vmid for item in client.inventory())
     return present is expected
+
+
+def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> None:
+    operation_id = operation["operation_id"]
+    payload = json.loads(operation["payload_json"])
+    action = payload.get("power_action")
+    instance_id = payload.get("instance_id") or operation.get("instance_id")
+    with database() as db:
+        row = db.execute(
+            "SELECT instance_id, vmid, node, name, status FROM instances WHERE instance_id=?",
+            (instance_id,),
+        ).fetchone()
+    if row is None or row["vmid"] is None:
+        raise RuntimeError("POWER_INSTANCE_NOT_PROVISIONED")
+    if row["status"] == "deleted":
+        raise RuntimeError("POWER_INSTANCE_DELETED")
+    if action not in {"start", "shutdown", "reboot"}:
+        raise RuntimeError("POWER_ACTION_INVALID")
+
+    vmid = int(row["vmid"])
+    node = row["node"] or "mng01"
+    update_operation(operation_id, vmid=vmid)
+    update_instance(instance_id, "powering", vmid=vmid, power_state="unknown")
+    emit(operation_id, f"power.{action}.started", "running")
+    heartbeat(worker_id, "running", operation_id)
+    result = client.power(node, vmid, row["name"], action)
+    power_state = result.get("power_state")
+    update_operation(
+        operation_id,
+        status="succeeded",
+        finished_at=now(),
+        last_heartbeat=now(),
+        exit_code=0,
+        output=json.dumps(result, sort_keys=True),
+        error="",
+    )
+    update_instance(instance_id, "ready", vmid=vmid, power_state=power_state)
+    emit(operation_id, f"power.{action}.completed", "succeeded")
 
 
 def execute(worker_id: str, operation: dict) -> None:
@@ -209,6 +260,15 @@ def execute(worker_id: str, operation: dict) -> None:
         command = payload["command"]
         stack = payload.get("stack") or stack
         instance_id = payload.get("instance_id") or instance_id
+
+        if command == "power":
+            if stack != "mng01":
+                raise RuntimeError("POWER_STACK_UNSUPPORTED")
+            load_environment()
+            client = ProxmoxClient()
+            execute_power(worker_id, operation, client)
+            return
+
         source_operation_id = operation_id
         source_operation = operation
 
@@ -320,15 +380,22 @@ def execute(worker_id: str, operation: dict) -> None:
         if command == "plan":
             update_instance(instance_id, "planned", vmid=vmid)
         elif command == "apply":
-            update_instance(instance_id, "ready", vmid=vmid)
+            started = bool(source_payload.get("spec", {}).get("started", True))
+            update_instance(
+                instance_id,
+                "ready",
+                vmid=vmid,
+                power_state="running" if started else "stopped",
+            )
         else:
-            update_instance(instance_id, "deleted", vmid=vmid)
+            update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
             if vmid is not None:
                 release(int(vmid))
         emit(operation_id, f"terraform.{command}.completed", "succeeded")
     except Exception as error:
         physical = stack == "mng01" and command in {"apply", "destroy"}
-        status = "uncertain" if physical else "failed"
+        power_uncertain = command == "power" and isinstance(error, ProxmoxError) and error.uncertain
+        status = "uncertain" if physical or power_uncertain else "failed"
         if command == "plan" and allocated_here and vmid is not None:
             release(int(vmid))
         update_operation(
@@ -338,7 +405,15 @@ def execute(worker_id: str, operation: dict) -> None:
             last_heartbeat=now(),
             error=str(error),
         )
-        update_instance(instance_id, status, vmid=vmid)
+        if command == "power" and not power_uncertain:
+            update_instance(instance_id, "ready", vmid=vmid)
+        else:
+            update_instance(
+                instance_id,
+                status,
+                vmid=vmid,
+                power_state="unknown" if command == "power" else None,
+            )
         emit(operation_id, f"terraform.{command}.failed", status, str(error))
     finally:
         heartbeat(worker_id, "idle")
