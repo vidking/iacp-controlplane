@@ -165,19 +165,21 @@ class NetworkAccepted(PowerAccepted):
 
 
 class GuestInitializationRecoveryRequest(BaseModel):
-    """Identidad exacta de una inicialización que nunca fue despachada."""
+    """Identidad exacta y modo de recuperación de una inicialización."""
     model_config = ConfigDict(extra="forbid", strict=True)
     operation_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
     job_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    mode: Literal["cancel-queued", "verify-consumed"] = "cancel-queued"
 
 
 class GuestInitializationRecoveryAccepted(BaseModel):
     instance_id: str
     operation_id: str
     job_id: str
-    status: Literal["failed"]
-    error_code: Literal["GUEST_INITIALIZATION_CANCELLED_BEFORE_DISPATCH"]
-    event_code: Literal["guest_initialization_cancelled_before_dispatch"]
+    status: Literal["failed", "completed"]
+    error_code: str | None = None
+    event_code: str
+    mode: Literal["cancel-queued", "verify-consumed"] = "cancel-queued"
     changed: bool
     already_completed: bool = False
 

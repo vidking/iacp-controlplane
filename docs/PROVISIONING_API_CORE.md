@@ -45,6 +45,9 @@ terminal. No repita `apply` mientras el resultado sea `uncertain`.
 El flujo efectivo de `provisioning-api-core` es: autenticación técnica,
 validación, catálogo, capacidad física, reserva de VMID, Terraform plan/apply,
 Cloud-Init, QGA y SSH. `READY` solo se publica con la evidencia persistida.
+La señal explícita de esa certificación es `fulfillment.certified_ready` en la
+operación; `status=ready` conserva únicamente el estado físico interno por
+compatibilidad y no sustituye la verificación de acceso root.
 IACP no consulta ni exige `LabPolicy`, `policy_sha256`, aprobación independiente,
 renovación, caducidad o `activate-lab`, y no aplica cuotas comerciales.
 

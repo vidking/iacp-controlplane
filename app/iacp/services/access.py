@@ -23,6 +23,26 @@ from .instances import Conflict, event
 from .jobs import QueueUnavailable
 
 
+SAFE_ACCESS_ERROR_CODES = frozenset({
+    'ROOT_ACCESS_BINDING_CHANGED', 'ROOT_ACCESS_CONFIGURATION_MISMATCH',
+    'ROOT_ACCESS_EVIDENCE_INVALID', 'CLOUD_INIT_FAILED',
+    'ROOT_SSH_IDENTITY_MISMATCH', 'ROOT_SSH_AUTHENTICATION_FAILED',
+    'ROOT_SSH_HOST_KEY_MISMATCH',
+})
+
+
+def access_error_code(failure):
+    """Convierte fallos de acceso en códigos públicos y sanitizados."""
+    import paramiko
+
+    if isinstance(failure, paramiko.AuthenticationException):
+        return 'ROOT_SSH_AUTHENTICATION_FAILED'
+    if isinstance(failure, paramiko.BadHostKeyException):
+        return 'ROOT_SSH_HOST_KEY_MISMATCH'
+    code = str(failure) if isinstance(failure, Conflict) else None
+    return code if code in SAFE_ACCESS_ERROR_CODES else 'ROOT_ACCESS_VERIFICATION_UNCONFIRMED'
+
+
 def encryption_key():
     try:
         path = Path(os.environ['IACP_ROOT_INPUT_KEY_FILE'])
@@ -133,7 +153,11 @@ class AccessVerifier:
         client = GuestClient.configured().client
         client.observe(target, preflight=True)
         config = client._request('GET', target.path + '/config?current=1')
-        if config.get('ciuser') != 'root' or config.get('name') != instance.name:
+        # ``ciuser`` identifica el usuario inicial de Cloud-Init, no el usuario
+        # que debe autenticar el contrato de acceso técnico. Las Golden Images
+        # Ubuntu usan ``ubuntu`` y pueden habilitar root por SSH de forma
+        # explícita durante Guest Initialization.
+        if config.get('name') != instance.name:
             raise Conflict('ROOT_ACCESS_CONFIGURATION_MISMATCH')
 
         def read(path):
@@ -143,6 +167,11 @@ class AccessVerifier:
             return value['content']
 
         read('/var/lib/cloud/instance/boot-finished')
+        passwd = read('/etc/passwd')
+        root_entries = [line.split(':') for line in passwd.splitlines()
+                        if line.startswith('root:')]
+        if not any(len(fields) > 2 and fields[2] == '0' for fields in root_entries):
+            raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID')
         result = json.loads(read('/var/lib/cloud/data/result.json'))
         if result.get('v1', {}).get('errors') != []:
             raise Conflict('CLOUD_INIT_FAILED')
@@ -206,16 +235,8 @@ def execute_verification(identifier, sessions, verifier=None):
                     operation.status = job.status = 'completed'; operation.error_code = None
                     event(session, operation, 'root_cloud_init_ssh_verified', 'worker:iac')
                 except Exception as failure:
-                    import paramiko
-                    safe_codes = {'ROOT_ACCESS_BINDING_CHANGED', 'ROOT_ACCESS_CONFIGURATION_MISMATCH',
-                        'ROOT_ACCESS_EVIDENCE_INVALID', 'CLOUD_INIT_FAILED', 'ROOT_SSH_IDENTITY_MISMATCH',
-                        'ROOT_SSH_AUTHENTICATION_FAILED', 'ROOT_SSH_HOST_KEY_MISMATCH'}
-                    code = str(failure) if isinstance(failure, Conflict) and str(failure) in safe_codes else 'ROOT_ACCESS_VERIFICATION_UNCONFIRMED'
-                    if isinstance(failure, paramiko.AuthenticationException):
-                        code = 'ROOT_SSH_AUTHENTICATION_FAILED'
-                    elif isinstance(failure, paramiko.BadHostKeyException):
-                        code = 'ROOT_SSH_HOST_KEY_MISMATCH'
-                    operation.status = 'failed' if code in safe_codes else 'uncertain'
+                    code = access_error_code(failure)
+                    operation.status = 'failed' if code in SAFE_ACCESS_ERROR_CODES else 'uncertain'
                     if job:
                         job.status = 'failed'
                     operation.error_code = code

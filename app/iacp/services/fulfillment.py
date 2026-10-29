@@ -7,6 +7,33 @@ from ..security import Principal
 from .instances import Conflict, event
 
 
+def is_certified_ready(session, instance, provisioning_status):
+    """Predicado único de READY técnico para la proyección de fulfillment."""
+    if provisioning_status != 'completed':
+        return False
+    initialization = session.scalar(select(GuestInitialization).where(
+        GuestInitialization.instance_id == instance.id))
+    if initialization is None:
+        return not instance.initial_access_ciphertext
+    access = instance.access_verification or {}
+    from .guest_identity import technical_program_for_mode
+    try:
+        technical = initialization.program_sha256 == technical_program_for_mode(initialization.mode)[1]
+    except Conflict:
+        technical = False
+    if technical:
+        return (
+            initialization.status == 'completed'
+            and access.get('status') == 'completed'
+            and access.get('cloud_init_complete') is True
+            and access.get('ssh_authenticated') is True
+            and bool(instance.ip_addresses)
+        )
+    return initialization.status == 'completed' and (
+        not instance.initial_access_ciphertext or access.get('status') == 'completed'
+    )
+
+
 def advance(instance_id, sessions, publish=None, client_factory=None):
     from ..api.dependencies import get_power_client, get_power_publisher
     from ..lifecycle.service import request_power
@@ -100,7 +127,9 @@ def progress(session, instance, provisioning_status):
                 Operation.idempotency_key == 'access-verify-' + instance.id))
             phase, status = 'access_verification', access.status if access else 'queued'
         if status == 'completed':
-            phase = 'verified'
+            phase = 'ready' if is_certified_ready(session, instance, provisioning_status) else 'verified'
+    certified_ready = is_certified_ready(session, instance, provisioning_status)
     return {'status': status, 'phase': phase, 'start_operation_id': start.id if start else None,
         'initialization_operation_id': initialization.operation_id if initialization else None,
-        'guest_ready': None, 'resume_endpoint': '/v1/instances/' + instance.id + '/provision'}
+        'guest_ready': None, 'certified_ready': certified_ready,
+        'resume_endpoint': '/v1/instances/' + instance.id + '/provision'}
