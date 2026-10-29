@@ -53,6 +53,7 @@ PROGRAM = r'''
 import hashlib,json,os,re,subprocess,sys,tempfile,uuid
 from pathlib import Path
 import yaml
+os.environ['PATH']='/usr/sbin:/usr/bin:/sbin:/bin'
 identifier,mac,program_sha=sys.argv[1:]
 failure_stage='validate_image'
 def _iacp_failure(_type,_value,_traceback):
