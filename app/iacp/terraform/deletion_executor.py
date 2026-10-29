@@ -213,7 +213,8 @@ class DeletionExecutor(TerraformExecutor):
     def provisioning_plan(self, context, root, env, cancelled, *, allow_historical_hotplugged_zero=False):
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
                               context['state_key'], context['allocation'], context['variables'],
-                              context.get('source_revision'))
+                              context.get('source_revision'),
+                              allow_legacy_optional_golden_vmtag=True)
         saved = self.workspace(context['instance_id'], context['attempt']) / 'source/stacks/kvm-instance/saved.tfplan'
         plan = self.read_json(['show', '-json', str(saved)], root, env, cancelled, 'delete.provisioning_plan')
         verify_plan(plan, context['variables'],
@@ -224,7 +225,8 @@ class DeletionExecutor(TerraformExecutor):
         # The original immutable provisioning plan must still belong to this instance.
         self.verify_artifacts(context['instance_id'], context['attempt'], context['provisioning_plan_sha256'],
                               context['state_key'], context['allocation'], context['variables'],
-                              context.get('source_revision'))
+                              context.get('source_revision'),
+                              allow_legacy_optional_golden_vmtag=True)
         workspace = self.deletion_workspace(context['instance_id'], context['operation_id'])
         workspace.mkdir(mode=0o700, parents=True, exist_ok=False)
         source_revision = context['source_revision']

@@ -37,6 +37,33 @@ def digest_file(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def matches_sealed_variables(manifest_variables: dict, variables: dict, *,
+                             allow_legacy_optional_golden_vmtag: bool = False) -> bool:
+    """Compara variables selladas y actuales con una compatibilidad acotada.
+
+    ``vmtag`` fue añadido posteriormente al contrato de hardware de Golden
+    Image. En DELETE únicamente, la materialización actual ``vmtag=None``
+    puede equivaler a la ausencia de esa clave en un plan histórico. No se
+    acepta ningún otro cambio ni se relaja esta comparación para CREATE,
+    APPLY u observación.
+    """
+    if manifest_variables == variables:
+        return True
+    if not allow_legacy_optional_golden_vmtag:
+        return False
+    if not isinstance(manifest_variables, dict) or not isinstance(variables, dict):
+        return False
+    sealed_hardware = manifest_variables.get("iacp_golden_hardware")
+    current_hardware = variables.get("iacp_golden_hardware")
+    if (not isinstance(sealed_hardware, dict) or not isinstance(current_hardware, dict)
+            or "vmtag" in sealed_hardware or current_hardware.get("vmtag") is not None):
+        return False
+    normalized_hardware = {key: value for key, value in current_hardware.items()
+                           if key != "vmtag"}
+    normalized = {**variables, "iacp_golden_hardware": normalized_hardware}
+    return normalized == manifest_variables
+
+
 def write_private(path: Path, value: dict) -> None:
     with open(path, "w", opener=lambda name, flags: os.open(name, flags, 0o600)) as stream:
         json.dump(value, stream, sort_keys=True)
@@ -256,7 +283,8 @@ class TerraformExecutor:
         return hashlib.sha256((salt + json.dumps(payload, sort_keys=True, separators=(",", ":"))).encode()).hexdigest()
 
     def verify_artifacts(self, instance_id: str, attempt: int, sha256: str, state_key: str,
-                         allocation: dict, variables: dict, revision: str | None = None) -> dict:
+                         allocation: dict, variables: dict, revision: str | None = None,
+                         *, allow_legacy_optional_golden_vmtag: bool = False) -> dict:
         """Verifica el vínculo usando la revisión IaC sellada en la ejecución.
 
         Una instancia histórica conserva su revisión original. La revisión
@@ -266,9 +294,11 @@ class TerraformExecutor:
         """
         return self._verify_artifacts_revision(
             instance_id, attempt, sha256, state_key, allocation, variables, revision,
+            allow_legacy_optional_golden_vmtag=allow_legacy_optional_golden_vmtag,
         )
 
-    def _verify_artifacts_revision(self, instance_id, attempt, sha256, state_key, allocation, variables, revision=None):
+    def _verify_artifacts_revision(self, instance_id, attempt, sha256, state_key, allocation, variables,
+                                   revision=None, *, allow_legacy_optional_golden_vmtag=False):
         workspace = self.workspace(instance_id, attempt)
         try:
             manifest = json.loads((workspace / "manifest.json").read_text())
@@ -282,12 +312,19 @@ class TerraformExecutor:
             from .golden_adapter import verify as verify_golden_adapter
             verify_golden_adapter(workspace / 'source', manifest, variables)
             saved = workspace / "source" / "stacks" / "kvm-instance" / "saved.tfplan"
+            backend = json.loads((saved.parent / "backend.tfbackend.json").read_text())
+            tfvars = json.loads((saved.parent / "iacp.auto.tfvars.json").read_text())
+            variables_match = matches_sealed_variables(
+                manifest["variables"], variables,
+                allow_legacy_optional_golden_vmtag=allow_legacy_optional_golden_vmtag,
+            )
+            tfvars_match = tfvars == variables or (
+                allow_legacy_optional_golden_vmtag and tfvars == manifest["variables"] and variables_match
+            )
             if (manifest["sha256"] != sha256 or digest_file(saved) != sha256 or manifest["state_key"] != state_key
-                    or manifest["source_revision"] != revision
-                    or manifest["variables"] != variables
+                    or manifest["source_revision"] != revision or not variables_match
                     or manifest["backend"] != Allocation.model_validate(allocation).backend.arguments(state_key)
-                    or json.loads((saved.parent / "backend.tfbackend.json").read_text()) != manifest["backend"]
-                    or json.loads((saved.parent / "iacp.auto.tfvars.json").read_text()) != variables):
+                    or backend != manifest["backend"] or not tfvars_match):
                 raise ValueError("Plan changed")
             context_keys = {"execution_context_salt", "execution_context_sha256"}
             present = context_keys.intersection(manifest)

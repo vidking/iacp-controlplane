@@ -17,7 +17,7 @@ from iacp.terraform.deletion_executor import (
     allow_historical_delete_hardware,
     allow_historical_delete_plan_defaults,
 )
-from iacp.terraform.executor import ADDRESS
+from iacp.terraform.executor import ADDRESS, matches_sealed_variables
 from iacp.terraform.runner import CommandRunner
 from iacp.terraform.state import StateSnapshot
 from tests.test_deletion import deletion_plan
@@ -59,7 +59,7 @@ def deletion_executor(tmp_path,monkeypatch):
         def destroy(self,cwd,env,cancelled,**kwargs):
             cancelled();self.calls.append(['destroy',kwargs]);store.state['resources']=[];store.state['serial']=2;store.version='v2';store.absent=True
     runner=Runner();executor=DeletionExecutor(tmp_path/'source',tmp_path/'artifacts',runner)
-    monkeypatch.setattr(executor,'verify_artifacts',lambda *args:None)
+    monkeypatch.setattr(executor,'verify_artifacts',lambda *args,**kwargs:None)
     monkeypatch.setattr(executor,'environment',lambda *args:{'PROXMOX_VE_ENDPOINT':'https://fixture.invalid','PROXMOX_VE_API_TOKEN':'synthetic-token'})
     archive=io.BytesIO()
     with tarfile.open(fileobj=archive,mode='w') as tar:
@@ -70,6 +70,34 @@ def deletion_executor(tmp_path,monkeypatch):
     monkeypatch.setattr(module,'S3StateReader',Reader)
     monkeypatch.setattr(module,'proxmox_resource',lambda *args:{'present':not store.absent and store.state['serial']<2})
     return executor,ctx,store
+
+
+def test_delete_compatibility_accepts_only_missing_optional_golden_vmtag():
+    sealed = {
+        'instance': {'vm_id': 30000, 'node_name': 'mng01'},
+        'iacp_golden_hardware': {'base': 'golden', 'disk': {'size': 20}},
+    }
+    current = deepcopy(sealed)
+    current['iacp_golden_hardware']['vmtag'] = None
+
+    assert not matches_sealed_variables(sealed, current)
+    assert matches_sealed_variables(sealed, current, allow_legacy_optional_golden_vmtag=True)
+
+    changed = deepcopy(current)
+    changed['iacp_golden_hardware']['vmtag'] = 'ubuntu-2404'
+    assert not matches_sealed_variables(sealed, changed, allow_legacy_optional_golden_vmtag=True)
+
+    changed = deepcopy(current)
+    changed['instance']['vm_id'] = 30001
+    assert not matches_sealed_variables(sealed, changed, allow_legacy_optional_golden_vmtag=True)
+
+
+def test_delete_passes_legacy_golden_compatibility_only_to_artifact_gate(deletion_executor):
+    executor,ctx,store=deletion_executor
+    calls=[]
+    executor.verify_artifacts=lambda *args, **kwargs: calls.append(kwargs)
+    executor.plan_deletion(ctx,lambda:False)
+    assert calls and all(call.get('allow_legacy_optional_golden_vmtag') is True for call in calls)
 
 
 def test_saved_delete_plan_apply_and_readonly_reconciliation(deletion_executor):
