@@ -1,5 +1,4 @@
 """Bootstrap root por SSH con host key fijada; datos sensibles solo por stdin."""
-import base64
 import json
 import os
 from pathlib import Path
@@ -68,6 +67,45 @@ COMMAND='sudo -n /usr/bin/python3 -c '+shlex.quote(PROGRAM)
 
 
 class SecureSSHBootstrap:
+    def preflight(self, instance, target, reference, username):
+        """Realiza únicamente lecturas antes de consumir la entrega SSH.
+
+        La clave pública se obtiene por el canal específico autorizado para la
+        imagen. No se leen contraseñas, claves privadas ni ``authorized_keys``.
+        """
+        from urllib.parse import urlencode
+        from .guest_identity import GuestClient
+        from .ssh_host_identity import read as read_host_key
+        from ipaddress import IPv4Address
+
+        if username not in {'ubuntu', 'root'} or not instance.ip_addresses:
+            raise BootstrapSecretError('BOOTSTRAP_GUEST_NOT_READY')
+        try:
+            client=GuestClient.configured().client
+            client.observe(target,preflight=True)
+            def read(path):
+                result=client._request('GET',target.path+'/agent/file-read?'+urlencode({'file':path,'count':8192}))
+                if result.get('truncated'):raise ValueError()
+                return result['content']
+            read('/var/lib/cloud/instance/boot-finished')
+            if json.loads(read('/var/lib/cloud/data/result.json')).get('v1',{}).get('errors')!=[]:
+                raise BootstrapSecretError('BOOTSTRAP_CLOUD_INIT_FAILED')
+            host=read_host_key(client,target,getattr(instance,'image',None))
+            address=str(IPv4Address(instance.ip_addresses[0]))
+            # Validate the technical key before the irreversible delivery
+            # fence is consumed. The key never leaves this process.
+            keyfile=Path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE'])
+            if keyfile.stat().st_mode & 0o027:
+                raise ValueError()
+            import paramiko
+            paramiko.PKey.from_path(keyfile)
+            return {'address':address,'host_key':host}
+        except BootstrapSecretError:
+            raise
+        except Exception as failure:
+            code=str(failure) if str(failure).startswith('BOOTSTRAP_') else 'BOOTSTRAP_PREFLIGHT_FAILED'
+            raise BootstrapSecretError(code) from None
+
     def observe(self,instance,target,reference):
         from urllib.parse import urlencode
         from .guest_identity import GuestClient
@@ -83,34 +121,19 @@ class SecureSSHBootstrap:
             raise BootstrapSecretError('BOOTSTRAP_RECONCILIATION_REQUIRED') from None
         return {'status':'completed'}
 
-    def apply(self,instance,target,reference,password,public_keys,username):
+    def apply(self,instance,target,reference,password,public_keys,username,*,preflight=None):
         import paramiko
-        from urllib.parse import urlencode
-        from .guest_identity import GuestClient
-        from ipaddress import IPv4Address
-        if username not in {'ubuntu','root'} or not instance.ip_addresses:
-            raise BootstrapSecretError('BOOTSTRAP_GUEST_NOT_READY')
         try:
+            preflight=preflight or self.preflight(instance,target,reference,username)
             keyfile=Path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE'])
             if keyfile.stat().st_mode & 0o027:
                 raise ValueError()
             # Clave operativa montada; no se copia, serializa ni incorpora a DB.
             key=paramiko.PKey.from_path(keyfile)
-            client=GuestClient.configured().client
-            client.observe(target,preflight=True)
-            def read(path):
-                result=client._request('GET',target.path+'/agent/file-read?'+urlencode({'file':path,'count':8192}))
-                if result.get('truncated'):raise ValueError()
-                return result['content']
-            read('/var/lib/cloud/instance/boot-finished')
-            if json.loads(read('/var/lib/cloud/data/result.json')).get('v1',{}).get('errors')!=[]:
-                raise ValueError()
-            host=read('/etc/ssh/ssh_host_ed25519_key.pub').split()
-            if host[0]!='ssh-ed25519':raise ValueError()
-            hostkey=paramiko.Ed25519Key(data=base64.b64decode(host[1],validate=True))
-            address=str(IPv4Address(instance.ip_addresses[0]))
+            host=preflight['host_key']
+            address=preflight['address']
             with paramiko.SSHClient() as ssh:
-                ssh.get_host_keys().add(address,'ssh-ed25519',hostkey)
+                ssh.get_host_keys().add(address,'ssh-ed25519',host.key)
                 ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
                 ssh.connect(address,username=username,pkey=key,timeout=10,auth_timeout=10,
                     banner_timeout=10,allow_agent=False,look_for_keys=False)

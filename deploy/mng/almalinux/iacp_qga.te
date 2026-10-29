@@ -1,4 +1,4 @@
-module iacp_qga 2.0;
+module iacp_qga 2.1;
 
 require {
  type virt_qemu_ga_t;
@@ -19,6 +19,9 @@ require {
 type iacp_guest_data_t;
 typeattribute iacp_guest_data_t file_type;
 
+type iacp_guest_host_public_t;
+typeattribute iacp_guest_host_public_t file_type;
+
 allow virt_qemu_ga_t cloud_init_exec_t:file { execute execute_no_trans getattr ioctl open read map };
 allow virt_qemu_ga_t cloud_var_lib_t:dir { getattr open read search };
 allow virt_qemu_ga_t cloud_var_lib_t:file { getattr ioctl open read };
@@ -31,4 +34,6 @@ allow virt_qemu_ga_t NetworkManager_etc_rw_t:file { create getattr open read set
 allow virt_qemu_ga_t NetworkManager_t:dbus send_msg;
 allow virt_qemu_ga_t iacp_guest_data_t:dir { add_name getattr open read remove_name search write };
 allow virt_qemu_ga_t iacp_guest_data_t:file { create getattr open read setattr write rename unlink };
+allow virt_qemu_ga_t iacp_guest_host_public_t:dir { getattr open read search };
+allow virt_qemu_ga_t iacp_guest_host_public_t:file { getattr ioctl map open read };
 allow virt_qemu_ga_t virt_qemu_ga_t:process setsched;

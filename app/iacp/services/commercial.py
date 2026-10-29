@@ -25,6 +25,15 @@ from .jobs import QueueUnavailable
 from .contracts import CORE_CONTRACT
 
 
+RECOVERABLE_BOOTSTRAP_FAILURES = frozenset({
+    'BOOTSTRAP_SECRET_EXPIRED_OR_MISSING',
+    'BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE',
+    'BOOTSTRAP_HOST_KEY_EVIDENCE_INVALID',
+    'BOOTSTRAP_CLOUD_INIT_FAILED',
+    'BOOTSTRAP_PREFLIGHT_FAILED',
+})
+
+
 def live_capacity(session,profile,plan):
     """Validate current physical capacity without using historical DB counters.
 
@@ -78,7 +87,8 @@ def restore_expired(session,instance_id,principal,spec,store):
     try:
         with instance_lock(session.get_bind(),instance_id):
             row=session.get(CommercialIntent,instance_id,with_for_update=True,populate_existing=True)
-            if not row or row.bootstrap_status!='failed' or row.bootstrap_started_at or row.error_code!='BOOTSTRAP_SECRET_EXPIRED_OR_MISSING':return
+            if (not row or row.bootstrap_status!='failed' or row.bootstrap_started_at
+                    or row.error_code not in RECOVERABLE_BOOTSTRAP_FAILURES):return
             instance=session.get(Instance,instance_id,populate_existing=True)
             member(session,instance,'start',current_profiles=True)
             store.restore(row.secret_reference,principal.tenant_id,row.instance_id,spec.access.root_password.get_secret_value())
@@ -126,7 +136,8 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             if previous:
                 response=accepted(session,previous,digest)
                 row=session.get(CommercialIntent,previous.instance_id)
-                if row and row.bootstrap_status=='failed' and not row.bootstrap_started_at and row.error_code=='BOOTSTRAP_SECRET_EXPIRED_OR_MISSING':
+                if (row and row.bootstrap_status=='failed' and not row.bootstrap_started_at
+                        and row.error_code in RECOVERABLE_BOOTSTRAP_FAILURES):
                     # Mismo tenant, cuerpo y HMAC: solo reentrega cifrada de la
                     # intención original; no publica planificación ni clonación.
                     restore_expired(session,row.instance_id,principal,spec,store)

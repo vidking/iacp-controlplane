@@ -65,6 +65,7 @@ def execute(identifier,sessions,store=None,delivery=None):
                 if op.tenant_id!=instance.tenant_id or not job or job.tenant_id!=instance.tenant_id:
                     return
                 reference=row.secret_reference
+                preflight_failed=False
                 try:
                     if row.bootstrap_status=='completed':
                         if reference:
@@ -77,14 +78,30 @@ def execute(identifier,sessions,store=None,delivery=None):
                         result=delivery.observe(instance,target,reference)
                         if not result:raise BootstrapSecretError('BOOTSTRAP_RECONCILIATION_REQUIRED')
                     else:
+                        # El preflight es estrictamente de lectura. Debe terminar
+                        # antes de leer el secreto o marcar la ejecución como
+                        # consumida; un fallo aquí es recuperable y nunca puede
+                        # convertirse en una entrega incierta.
+                        username=row.specification['profile_snapshot']['settings']['cloudinit_username']
+                        preflight_fn=getattr(delivery,'preflight',None)
+                        preflight=None
+                        if preflight_fn:
+                            try:
+                                preflight=preflight_fn(instance,target,reference,username)
+                            except Exception:
+                                preflight_failed=True
+                                raise
                         store=store or EphemeralSecrets.configured()
                         password=store.read(reference,instance.tenant_id,instance.id)
                         row.bootstrap_started_at=utcnow();row.bootstrap_status='running'
                         op.status=job.status='running'
                         event(s,op,'commercial_bootstrap_dispatch_consumed','worker:iac');s.commit()
                         try:
-                            result=delivery.apply(instance,target,reference,password,
-                                row.specification['ssh_public_keys'],row.specification['profile_snapshot']['settings']['cloudinit_username'])
+                            args=(instance,target,reference,password,row.specification['ssh_public_keys'],username)
+                            if preflight_fn:
+                                result=delivery.apply(*args,preflight=preflight)
+                            else:
+                                result=delivery.apply(*args)
                         finally:
                             password=None
                     if result.get('status')!='completed':raise BootstrapSecretError('BOOTSTRAP_RECONCILIATION_REQUIRED')
@@ -104,7 +121,15 @@ def execute(identifier,sessions,store=None,delivery=None):
                     s.get(Job,job.id).status='failed'
                     instance=s.get(Instance,instance_id)
                     instance.access_verification={'status':row.bootstrap_status,'error_code':code}
-                    event(s,op,'commercial_bootstrap_'+row.bootstrap_status,'worker:iac');s.commit()
+                    event_code=('commercial_bootstrap_preflight_failed'
+                        if preflight_failed and not row.bootstrap_started_at
+                        else 'commercial_bootstrap_'+row.bootstrap_status)
+                    event(s,op,event_code,'worker:iac');s.commit()
+                    if preflight_failed and not row.bootstrap_started_at and reference:
+                        try:
+                            (store or EphemeralSecrets.configured()).delete(reference)
+                        except Exception:
+                            pass
     except ExecutionBusy:return
     except Exception:
         with sessions() as s:
