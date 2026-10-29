@@ -32,6 +32,7 @@ BASELINE_INVENTORY=None
 CREATED_INSTANCE_IDS=set()
 
 SUPPORTED_E2E_IMAGES=frozenset({'ubuntu-2404','ubuntu-2604'})
+PILOT_NAME_PREFIX={'ubuntu-2404':'prueba-kvm-2404','ubuntu-2604':'prueba-kvm-2604'}
 NON_TERMINAL_OPERATION_STATUSES=frozenset({'queued','running','uncertain'})
 FATAL_WAIT_ERROR_PREFIXES=(
     'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E',
@@ -485,7 +486,7 @@ def main():
         if args.plan and args.plan!='kvm-'+str(n):continue
         assert_no_global_mutations()
         plan='kvm-'+str(n);PASSWORD=secrets.token_urlsafe(28)+'A9!'
-        body={'name':'e2e-g-kvm'+str(n)+'-'+run,'plan_id':plan,'image_id':args.image,
+        body={'name':PILOT_NAME_PREFIX[args.image]+'-'+f'{n:03d}','plan_id':plan,'image_id':args.image,
               'network':{'profile_id':'lab-dhcp'},'access':{'root_password':PASSWORD,'ssh_public_keys':[key]},
               'start_on_create':True,'commercial_context':{'order_id':'E2E-G-'+run+'-'+str(n),'product_id':'CRM-KVM-'+str(n)}}
         if args.minimal:

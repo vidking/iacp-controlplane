@@ -71,7 +71,7 @@ def approve(instance_id: str, body: DeleteApprovalRequest, key: Key, session: Da
                summary="Eliminar una KVM descartable con plan aprobado",
                description="Operator original y una Idempotency-Key opcional. Si se omite, IACP genera una intención y la devuelve en la respuesta. Requiere habilitación explícita, "
                            "ownership técnico y ausencia de fences activos. El cuerpo es opcional en el flujo Core: prepara, valida y ejecuta el plan por delegación auditada. "
-                           "Una GuestInitialization queued sin started_at, PID ni evidencia de guest-exec se supersede de forma atómica por esta intención DELETE; una ejecución consumida exige reconciliación. "
+                           "Una GuestInitialization queued sin started_at, PID ni evidencia de guest-exec se supersede de forma atómica por esta intención DELETE; una ejecución consumida solo puede continuar si terminó con el código terminal exacto GUEST_INITIALIZATION_PROGRAM_FAILED y la eliminación se reconcilia mediante el State y el recurso físico. "
                            "IaC Worker aplica únicamente el plan guardado. "
                            "Tras empezar una mutación, un replay solo reconcilia por lectura; nunca repite Apply. "
                            "Completed exige ausencia en state y Proxmox. Conserva inventario y auditoría con tombstone deleted. "

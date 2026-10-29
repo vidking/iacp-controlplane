@@ -233,6 +233,64 @@ def test_delete_accepts_verified_completed_guest_initialization(client, auth, se
         assert session.get(GuestInitialization, initialization_id).status == 'completed'
 
 
+def test_delete_reconciles_exact_terminal_guest_program_failure_without_replay(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'failed'
+        row.started_at = utcnow()
+        row.finished_at = utcnow()
+        row.pid = 1048
+        operation.error_code = 'GUEST_INITIALIZATION_PROGRAM_FAILED'
+        session.add(OperationEvent(operation_id=initialization_id, status='running',
+            code='guest_initialization_dispatch_consumed', actor='worker:iac'))
+        session.commit()
+    publisher = Mock()
+    application.dependency_overrides[get_deletion_publisher] = lambda: publisher
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-terminal-guest-program-failure'})
+    assert response.status_code == 202, response.text
+    deletion_id = response.json()['operation_id']
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        assert row.status == operation.status == 'failed'
+        assert operation.error_code == 'GUEST_INITIALIZATION_PROGRAM_FAILED'
+        codes = {item.code for item in session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id.in_([initialization_id, deletion_id]))) }
+        assert 'guest_initialization_failed_retained_for_delete' in codes
+    execute_deletion(deletion_id, 'plan', sessions, FakeDeletion())
+    observed = client.get('/v1/operations/' + deletion_id, headers=auth).json()
+    assert observed['deletion']['phase'] == 'awaiting_approval'
+    execute_initialization(initialization_id, sessions,
+                           lambda: (_ for _ in ()).throw(AssertionError('guest-exec replayed')))
+
+
+def test_delete_rejects_consumed_guest_program_failure_with_other_error_code(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'failed'
+        row.started_at = utcnow()
+        row.finished_at = utcnow()
+        row.pid = 1048
+        operation.error_code = 'GUEST_INITIALIZATION_OBSERVATION_FAILED'
+        session.add(OperationEvent(operation_id=initialization_id, status='running',
+            code='guest_initialization_dispatch_consumed', actor='worker:iac'))
+        session.commit()
+    application.dependency_overrides[get_deletion_publisher] = lambda: Mock()
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-terminal-guest-other-failure'})
+    assert response.status_code == 409, response.text
+    assert response.json()['detail'] == 'GUEST_INITIALIZATION_RECONCILIATION_REQUIRED'
+
+
 @pytest.mark.parametrize('corruption', [
     'started', 'pid', 'result', 'consumed_event', 'job_queued', 'operation_queued',
 ])
