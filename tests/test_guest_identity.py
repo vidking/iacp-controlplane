@@ -394,6 +394,11 @@ def test_technical_initializer_prepares_sshd_runtime_directory_before_validation
     assert TECHNICAL_ACCESS_PROGRAM.index(prepare) < TECHNICAL_ACCESS_PROGRAM.index(validate)
 
 
+def test_technical_initializer_uses_ubuntu_chpasswd_path():
+    assert "subprocess.run(['/usr/sbin/chpasswd']" in TECHNICAL_ACCESS_PROGRAM
+    assert "/usr/bin/chpasswd" not in TECHNICAL_ACCESS_PROGRAM
+
+
 def test_technical_initializer_verifies_root_and_cleans_ephemeral_reference(
         client, auth, guest, sessions, monkeypatch):
     from iacp.services.bootstrap_secrets import EphemeralSecrets
