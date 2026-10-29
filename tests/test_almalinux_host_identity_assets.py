@@ -23,7 +23,16 @@ def test_file_context_is_dedicated_and_publisher_is_root_only():
     assert '/var/lib/iacp/host-identity' in publisher
     assert 'install -o root -g root -m 0444' in publisher
     assert 'restorecon -F' in publisher
+    assert '${SOURCE%.pub}' in publisher
     assert 'sshd -T' in publisher
     assert 'hostkey' in publisher
     assert 'Before=cloud-init-final.service' in unit
     assert 'ExecStart=/usr/local/sbin/iacp-publish-host-key' in unit
+
+
+def test_functional_publisher_harness_covers_both_alma_versions_and_handshake():
+    harness = (ROOT / 'scripts' / 'test-almalinux-host-key-publisher.sh').read_text()
+    assert 'almalinux:9' in harness and 'almalinux:10' in harness
+    assert 'ssh-keyscan' in harness
+    assert 'cmp -s /etc/ssh/ssh_host_ed25519_key.pub' in harness
+    assert '/usr/sbin/sshd -D' in harness

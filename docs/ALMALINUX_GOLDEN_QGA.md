@@ -33,7 +33,10 @@ permisivo y no se habilitan RPC adicionales.
 ### Canal de clave pública del host
 
 Las copias de construcción de AlmaLinux instalan el módulo SELinux y el
-archivo de contextos de este directorio. El servicio
+archivo de contextos de este directorio. En AlmaLinux 9 y 10, `sshd -T`
+publica la ruta privada `/etc/ssh/ssh_host_ed25519_key` en sus líneas
+`hostkey`; el publicador compara esa ruta derivada con el archivo `.pub`, sin
+leer el contenido privado. El servicio
 `iacp-publish-host-key.service` ejecuta
 `iacp-publish-host-key` después de generar las claves de `sshd` y antes de
 `cloud-init-final.service`. El publicador lee únicamente

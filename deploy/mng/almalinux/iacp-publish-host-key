@@ -24,8 +24,11 @@ fi
     echo 'host public key cannot be parsed' >&2
     exit 1
 }
+# ``sshd -T`` reports the private HostKey path. Compare only that path with
+# the corresponding public-file path; never read or copy the private key.
+effective_hostkey=${SOURCE%.pub}
 hostkeys=$(/usr/sbin/sshd -T | /usr/bin/awk '$1 == "hostkey" {print $2}')
-/usr/bin/printf '%s\n' "$hostkeys" | /usr/bin/grep -Fxq "$SOURCE" || {
+/usr/bin/printf '%s\n' "$hostkeys" | /usr/bin/grep -Fxq "$effective_hostkey" || {
     echo 'host public key is not an effective sshd host key' >&2
     exit 1
 }
@@ -47,5 +50,12 @@ fi
 
 /usr/bin/chown root:root "$TARGET"
 /usr/bin/chmod 0444 "$TARGET"
-/usr/bin/restorecon -F "$DIRECTORY" "$TARGET"
+if [ -x /usr/sbin/restorecon ]; then
+    /usr/sbin/restorecon -F "$DIRECTORY" "$TARGET"
+elif [ -x /usr/bin/restorecon ]; then
+    /usr/bin/restorecon -F "$DIRECTORY" "$TARGET"
+else
+    echo 'restorecon is unavailable' >&2
+    exit 1
+fi
 /usr/bin/test "$(/usr/bin/stat -c '%U:%G:%a' "$TARGET")" = 'root:root:444'
