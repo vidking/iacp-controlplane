@@ -467,9 +467,9 @@ with get_session_factory()() as session:
             "FENCE_APPLY_ACTIVE")
     allocation=Allocation.model_validate(execution.allocation)
     variables=allocation.variables(instance)
-    # Terraform credentials are deliberately injected by the worker from its
-    # protected credentials file.  Do not use the container's ambient
-    # os.environ: it does not contain the backend or Proxmox credentials.
+    # El worker inyecta deliberadamente las credenciales de Terraform desde su
+    # archivo protegido. No usar el os.environ ambiental del contenedor: no
+    # contiene las credenciales del backend ni de Proxmox.
     executor=build_executor(observation=True)
     with tempfile.TemporaryDirectory() as scratch:
         env=executor.environment(Path(scratch))
