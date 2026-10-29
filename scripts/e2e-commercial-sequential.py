@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Certificación LAB explícita de planes e imágenes por HTTPS, secuencial y sin secretos en evidencias."""
+"""Certificación LAB explícita de Ubuntu por HTTPS.
+
+La ejecución es secuencial, captura inventario histórico antes/después y se
+detiene ante cualquier operación global no terminal. Cada VM que crea queda
+registrada por UUID y solo esos UUID pueden ser administrados por la corrida.
+AlmaLinux permanece suspendido en este runner hasta una certificación separada.
+"""
 import argparse
 import base64
 from datetime import datetime
@@ -12,6 +18,7 @@ import subprocess
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 BASE='https://iac.cyberfuel.com'
@@ -21,6 +28,123 @@ PASSWORD=''
 OUT=None
 LAST_RESPONSE_IDEMPOTENCY_KEY=None
 LAST_ERROR=None
+BASELINE_INVENTORY=None
+CREATED_INSTANCE_IDS=set()
+
+SUPPORTED_E2E_IMAGES=frozenset({'ubuntu-2404','ubuntu-2604'})
+NON_TERMINAL_OPERATION_STATUSES=frozenset({'queued','running','uncertain'})
+FATAL_WAIT_ERROR_PREFIXES=(
+    'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E',
+    'OPERATION_',
+    'FULFILLMENT_',
+    'INSTANCE_UNCERTAIN',
+)
+INVENTORY_IDENTITY_FIELDS=(
+    'instance_id','tenant_id','name','image','vmid','node','vcpus',
+    'memory_mb','disk_gb','network_mode','network_profile','executor',
+    'infrastructure_kind',
+)
+
+
+def _operation_status(row):
+    return row.get('normalized_status',row.get('status'))
+
+
+def _safe_instance_record(row):
+    """Conserva inventario útil sin copiar access/commercial_context ni secretos."""
+    record={key:row.get(key) for key in (
+        'instance_id','tenant_id','name','image','vmid','node','vcpus',
+        'memory_mb','disk_gb','network_mode','network_profile','executor',
+        'infrastructure_kind','status','operation_id','job_id',
+        'created_at','updated_at',
+    )}
+    observation=row.get('network_observation') or {}
+    record.update({
+        'ip_addresses':list(row.get('ip_addresses') or []),
+        'network_observation_status':observation.get('status'),
+        'current_ip_verified':observation.get('current_ip_verified'),
+    })
+    return record
+
+
+def _safe_operation_record(row):
+    return {
+        key:row.get(key) for key in (
+            'operation_id','instance_id','kind','status','normalized_status',
+            'error_code','recovery_required','created_at','updated_at',
+        )
+    }
+
+
+def _list_collection(path,params=None):
+    params=dict(params or {})
+    offset=0
+    rows=[]
+    while True:
+        query=dict(params,limit=100,offset=offset)
+        payload=api(path+'?'+urlencode(query))[1]
+        if not isinstance(payload,list):
+            raise RuntimeError('API_COLLECTION_NOT_LIST:'+path)
+        rows.extend(payload)
+        if len(payload)<100:
+            return rows
+        offset+=len(payload)
+
+
+def list_instance_inventory():
+    return [_safe_instance_record(row) for row in _list_collection('/v1/instances')]
+
+
+def list_non_terminal_operations():
+    rows=[]
+    for status in sorted(NON_TERMINAL_OPERATION_STATUSES):
+        rows.extend(_list_collection('/v1/operations',{'status':status}))
+    unique={row.get('operation_id'):row for row in rows if row.get('operation_id')}
+    return [_safe_operation_record(row) for row in unique.values()
+            if _operation_status(row) in NON_TERMINAL_OPERATION_STATUSES]
+
+
+def inventory_scope_diff(before,after,created_ids):
+    before_by_id={row['instance_id']:row for row in before}
+    after_by_id={row['instance_id']:row for row in after}
+    baseline_ids=set(before_by_id)
+    after_ids=set(after_by_id)
+    missing_baseline=sorted(baseline_ids-after_ids)
+    unexpected_after=sorted(after_ids-baseline_ids-set(created_ids))
+    changed=[]
+    for instance_id in sorted(baseline_ids & after_ids):
+        previous=before_by_id[instance_id]
+        current=after_by_id[instance_id]
+        differences={
+            field:(previous.get(field),current.get(field))
+            for field in INVENTORY_IDENTITY_FIELDS
+            if previous.get(field)!=current.get(field)
+        }
+        if differences:
+            changed.append({'instance_id':instance_id,'fields':differences})
+    return {
+        'baseline_count':len(before),
+        'final_count':len(after),
+        'created_instance_ids':sorted(created_ids),
+        'missing_baseline_instance_ids':missing_baseline,
+        'unexpected_instance_ids':unexpected_after,
+        'baseline_identity_changes':changed,
+        'scope_ok':not (missing_baseline or unexpected_after or changed),
+    }
+
+
+def assert_no_global_mutations():
+    blocking=list_non_terminal_operations()
+    if blocking:
+        raise RuntimeError(
+            'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E:'+
+            json.dumps(blocking,ensure_ascii=False,sort_keys=True,default=str)
+        )
+    return blocking
+
+
+def _must_abort_guest_wait(error):
+    return str(error).startswith(FATAL_WAIT_ERROR_PREFIXES)
 
 
 def validate_storage(guest,disk_gb):
@@ -77,6 +201,7 @@ def lifecycle_intent(instance_id, path, method, body, label, explicit, key=None)
     explícito el runner genera la clave antes del primer envío. Nunca se crea una
     clave nueva dentro del bucle de reintento.
     """
+    assert_no_global_mutations()
     intent_key=key if explicit else None
     for attempt in range(1,7):
         try:
@@ -98,16 +223,15 @@ def lifecycle_intent(instance_id, path, method, body, label, explicit, key=None)
     raise RuntimeError('INSTANCE_BUSY_RETRY_EXHAUSTED')
 
 
-def wait_operation(identifier,fulfillment=False):
+def wait_operation(identifier,fulfillment=False,allow_reconcile=False):
     deadline=time.monotonic()+900
-    reconciled=False
     while time.monotonic()<deadline:
         _,row,_=api('/v1/operations/'+identifier)
-        if (not reconciled and row.get('recovery_required')
+        if (allow_reconcile and row.get('recovery_required')
                 and (row.get('provisioning') or {}).get('phase')=='uncertain'):
             _,response,_=api('/v1/instances/'+row['instance_id']+'/reconcile','POST',{})
             save('reconciliacion-'+identifier,{'antes':row,'respuesta':response,'alcance':'Observación sin segundo apply'})
-            reconciled=True;time.sleep(2);continue
+            time.sleep(2);continue
         status=row.get('normalized_status',row['status'])
         if status in {'failed','uncertain','cancelled'}:
             save('operacion-fallida-'+identifier,row)
@@ -140,12 +264,16 @@ def wait_guest(data):
         try:
             instance=api('/v1/instances/'+data['instance_id'])[1]
             if not instance.get('ip_addresses') and discoveries<3:
+                assert_no_global_mutations()
                 _,op,_=api('/v1/instances/'+data['instance_id']+'/network/discover','POST',{},
                     'e2e-g-network-'+secrets.token_hex(12))
                 save('network-discovery-'+op['operation_id'],wait_operation(op['operation_id']))
                 discoveries+=1
             return worker(PROBE,{**data,'without_password':True})
-        except RuntimeError:time.sleep(3)
+        except RuntimeError as error:
+            if _must_abort_guest_wait(error):
+                raise
+            time.sleep(3)
     raise RuntimeError('GUEST_READINESS_TIMEOUT')
 
 
@@ -318,12 +446,12 @@ print(json.dumps(result,default=str))
 
 
 def main():
-    global TOKEN,PASSWORD,OUT
+    global TOKEN,PASSWORD,OUT,BASELINE_INVENTORY,CREATED_INSTANCE_IDS
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute',action='store_true');parser.add_argument('--evidence-dir',type=Path,required=True)
     parser.add_argument('--resume-instance');parser.add_argument('--accepted-file',type=Path)
     parser.add_argument('--plan',choices=['kvm-1','kvm-2','kvm-3','kvm-4'])
-    parser.add_argument('--image',choices=['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10'],default='ubuntu-2404')
+    parser.add_argument('--image',choices=sorted(SUPPORTED_E2E_IMAGES),default='ubuntu-2404')
     parser.add_argument('--token-file',type=Path)
     parser.add_argument('--minimal',action='store_true',help='Cuerpo mínimo del piloto; exige token de integración explícito')
     parser.add_argument('--idempotency-mode',choices=['generated','explicit'],default='generated',
@@ -332,15 +460,21 @@ def main():
     if not args.execute:print('Preparado: requiere --execute explícito; no se ejecutaron solicitudes.');return
     assert socket.gethostname()=='iacp-controlplane-01'
     os.umask(0o077);OUT=args.evidence_dir;OUT.mkdir(mode=0o700,parents=True,exist_ok=False)
+    if args.image not in SUPPORTED_E2E_IMAGES:
+        raise RuntimeError('ALMALINUX_E2E_SUSPENDIDO')
+    if args.resume_instance or args.accepted_file:
+        raise RuntimeError('RESUME_INSTANCE_NOT_ALLOWED_IN_ISOLATED_E2E')
     explicit_idempotency=args.idempotency_mode=='explicit'
     containers=json.loads(subprocess.check_output(['docker','inspect','iacp-controlplane-api-1'],text=True))
     assert not args.minimal or args.token_file, 'El piloto requiere identidad de integración explícita'
     tokenpath=args.token_file or next(m['Source'] for m in containers[0]['Mounts'] if m['Destination']=='/run/secrets/api_token')
     TOKEN=Path(tokenpath).read_text().strip()
     key=worker("import os,paramiko\nk=paramiko.PKey.from_path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE']);print(json.dumps({'public':k.get_name()+' '+k.get_base64()}))")['public']
-    live=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
-    baseline_live=live['live']
-    if not args.minimal:assert live['live']==(1 if args.resume_instance else 0)
+    BASELINE_INVENTORY=list_instance_inventory()
+    CREATED_INSTANCE_IDS=set()
+    save('inventario-inicial',BASELINE_INVENTORY)
+    initial_non_terminal=assert_no_global_mutations()
+    save('operaciones-no-terminales-iniciales',initial_non_terminal)
     _,contract,_=api('/openapi.json')
     assert contract['openapi']=='3.1.0' and 'plan_id' in json.dumps(contract['paths']['/v1/instances']['post'])+json.dumps(contract['components']['schemas']['CommercialInstanceCreate'])
     save('openapi',contract);save('planes',api('/v1/plans')[1]);save('imagenes',api('/v1/images')[1])
@@ -349,6 +483,7 @@ def main():
     for n,cpus,ram,disk in sizes:
         if n>2 and not args.plan:continue
         if args.plan and args.plan!='kvm-'+str(n):continue
+        assert_no_global_mutations()
         plan='kvm-'+str(n);PASSWORD=secrets.token_urlsafe(28)+'A9!'
         body={'name':'e2e-g-kvm'+str(n)+'-'+run,'plan_id':plan,'image_id':args.image,
               'network':{'profile_id':'lab-dhcp'},'access':{'root_password':PASSWORD,'ssh_public_keys':[key]},
@@ -382,6 +517,7 @@ def main():
             replay=api('/v1/instances','POST',body,resolved_create_key)[1]
             assert replay==accepted
             idem=resolved_create_key
+        CREATED_INSTANCE_IDS.add(accepted['instance_id'])
         fixture=worker("from iacp.db import get_session_factory\nfrom iacp.models import Instance\nfrom iacp.services.bootstrap_secrets import EphemeralSecrets\nwith get_session_factory()() as s:\n i=s.get(Instance,P['instance_id']);store=EphemeralSecrets.configured();ref=store.put(i.tenant_id,i.id,P['password'])\n print(json.dumps({'reference':ref,'tenant_id':i.tenant_id,'instance_id':i.id,'ttl_seconds':store.redis.ttl('iacp:bootstrap:v1:'+ref)}))",{'instance_id':accepted['instance_id'],'password':PASSWORD})
         # Fixture cifrada de cliente, independiente de la referencia productiva.
         # Solo referencia opaca en archivo privado; nunca exportar este archivo a Git.
@@ -415,11 +551,14 @@ def main():
             if PASSWORD.encode() in logs.stdout+logs.stderr:raise RuntimeError('SECRET_IN_LOGS')
         cleaned=worker("from iacp.services.bootstrap_secrets import EphemeralSecrets\ns=EphemeralSecrets.configured();s.delete(P['reference']);print(json.dumps({'removed':not s.redis.exists('iacp:bootstrap:v1:'+P['reference'])}))",fixture)
         assert cleaned['removed'];save(plan+'-client-fixture-cleanup',cleaned)
-        if args.minimal:
-            remaining=worker("from sqlalchemy import select,func\nfrom iacp.db import get_session_factory\nfrom iacp.models import Instance,CommercialIntent\nwith get_session_factory()() as s:\n print(json.dumps({'live':s.scalar(select(func.count()).select_from(CommercialIntent).join(Instance).where(Instance.status!='deleted'))}))")
-            assert remaining['live']==baseline_live, 'No se restauró la ocupación inicial'
         save(plan+'-resultado',{'estado':'PASS','fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
         print(json.dumps({'plan':plan,'estado':'PASS','instance_id':identifier}),flush=True)
+    final_inventory=list_instance_inventory()
+    save('inventario-final',final_inventory)
+    scope=inventory_scope_diff(BASELINE_INVENTORY,final_inventory,CREATED_INSTANCE_IDS)
+    save('alcance-inventario',scope)
+    if not scope['scope_ok']:
+        raise RuntimeError('INVENTORY_SCOPE_CHANGED:'+json.dumps(scope,ensure_ascii=False,sort_keys=True))
     save('resultado',{'estado':'PASS','image_id':args.image,'planes':[args.plan] if args.plan else ['kvm-1','kvm-2'],'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
 
 
@@ -427,6 +566,15 @@ if __name__=='__main__':
     try:main()
     except Exception as error:
         message=str(error) if isinstance(error,RuntimeError) else type(error).__name__
-        if OUT is not None:save('resultado',{'estado':'FAIL','motivo':message,'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
+        if OUT is not None:
+            if TOKEN and BASELINE_INVENTORY is not None:
+                try:
+                    final_inventory=list_instance_inventory()
+                    save('inventario-final',final_inventory)
+                    save('alcance-inventario',inventory_scope_diff(
+                        BASELINE_INVENTORY,final_inventory,CREATED_INSTANCE_IDS))
+                except Exception:
+                    save('inventario-final',{'estado':'NO_DISPONIBLE'})
+            save('resultado',{'estado':'FAIL','motivo':message,'fecha_local':datetime.now(ZoneInfo('America/Costa_Rica')).isoformat()})
         print(json.dumps({'estado':'FAIL','motivo':message,'sin_reintento_de_clonacion':True}),flush=True)
         raise SystemExit(1)
