@@ -28,6 +28,7 @@ from .jobs import QueueUnavailable
 MODE = 'ubuntu-2404-lab-identity-v1'
 MARKER = '/var/lib/iacp/guest-identity.json'
 NETWORK_FILE = '/etc/netplan/99-iacp-identity.yaml'
+TERMINAL_GUEST_PROGRAM_FAILURE = 'GUEST_INITIALIZATION_PROGRAM_FAILED'
 
 
 class GuestProgramFailed(Conflict):
@@ -216,7 +217,22 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
         # The earlier supersession or admin recovery is already terminal.
         # finished_at may be populated; it does not constitute a guest-exec.
         if (operation.status != 'failed' or (job is not None and job.status != 'failed')
-                or row.started_at is not None or row.pid is not None
+                or row.finished_at is None):
+            raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+        # A consumed guest-exec that exited with the definitive program-failure
+        # code is terminal, but it did not prove guest readiness.  The normal
+        # DELETE workflow may therefore reconcile an externally removed VM and
+        # its State.  No operation is reset, no PID is replayed, and every
+        # other consumed/ambiguous shape remains fenced below.
+        if (operation.error_code == TERMINAL_GUEST_PROGRAM_FAILURE and job is not None
+                and job.status == 'failed'
+                and row.started_at is not None and row.pid is not None
+                and consumed is not None and row.result is None):
+            code = 'guest_initialization_failed_retained_for_delete'
+            event(session, operation, code, 'delete:' + delete_operation.id)
+            event(session, delete_operation, code, actor)
+            return False
+        if (row.started_at is not None or row.pid is not None
                 or row.result is not None or consumed is not None):
             raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
         return False
