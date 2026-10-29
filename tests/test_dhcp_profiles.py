@@ -73,6 +73,33 @@ def test_dhcp_allocates_multiple_instances_without_stale_profile_quota(
         assert s.get(TerraformExecution,second.json()['instance_id']).vmid==30003
 
 
+def test_dhcp_expanded_pool_starts_after_historical_segment(
+        client, auth, terraform_mode, policy, sessions):
+    raw=json.loads(policy.read_text())
+    raw['profiles']['lab-dhcp'].update(vmid_min=30100, vmid_max=999999999)
+    policy.write_text(json.dumps(raw))
+
+    response=create(client, auth, key='expanded-first', name='prueba-kvm-2404-002')
+    assert response.status_code == 202, response.text
+    with sessions() as s:
+        execution=s.get(TerraformExecution, response.json()['instance_id'])
+        assert execution.vmid == 30100
+
+
+def test_dhcp_expanded_pool_skips_cluster_occupied_vmid(
+        client, auth, terraform_mode, policy, sessions, monkeypatch):
+    raw=json.loads(policy.read_text())
+    raw['profiles']['lab-dhcp'].update(vmid_min=30100, vmid_max=999999999)
+    policy.write_text(json.dumps(raw))
+    monkeypatch.setattr(profiles, 'cluster_vmids', lambda: {30100})
+
+    response=create(client, auth, key='expanded-skip', name='prueba-kvm-2404-003')
+    assert response.status_code == 202, response.text
+    with sessions() as s:
+        execution=s.get(TerraformExecution, response.json()['instance_id'])
+        assert execution.vmid == 30101
+
+
 def test_profile_resources_and_tenant_authorization(client,auth,terraform_mode,policy,identities):
     assert create(client,identities['tenant-b-operator']['headers']).status_code==409
     assert create(client,auth,vcpus=64).status_code==422
