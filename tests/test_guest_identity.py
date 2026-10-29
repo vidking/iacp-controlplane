@@ -5,6 +5,7 @@ del guest se autoriza mediante el vínculo técnico persistido y se observa sin
 repetir un guest-exec ya consumido.
 """
 
+import base64
 import ast
 import hashlib
 import json
@@ -253,11 +254,16 @@ def test_pending_guest_initialization_blocks_incompatible_power(client, auth, gu
 
 def test_definitive_guest_failure_is_terminal_and_never_resubmitted(client, auth, guest, sessions):
     operation_id = accept(client, auth, guest).json()["operation_id"]
-    fake = FakeGuest(observe_error=GuestProgramFailed("GUEST_INITIALIZATION_PROGRAM_FAILED"))
+    fake = FakeGuest(observe_error=GuestProgramFailed(
+        "GUEST_INITIALIZATION_PROGRAM_FAILED", stage="technical_password", exit_code=23))
     execute_initialization(operation_id, sessions, lambda: fake)
     execute_initialization(operation_id, sessions, lambda: fake)
     assert len(fake.calls) == 1
     assert client.get(f"/v1/operations/{operation_id}", headers=auth).json()["status"] == "failed"
+    with sessions() as session:
+        assert session.scalar(select(OperationEvent.code).where(
+            OperationEvent.operation_id == operation_id,
+            OperationEvent.code == 'guest_init_program_failed_technical_password_exit_23'))
 
 
 def test_disabled_guest_commands_are_terminal_without_consuming_exec(client, auth, guest, sessions):
@@ -333,6 +339,23 @@ def test_guest_client_accepts_only_durable_marker_and_matching_dhcp_lease():
     files[lease_path] = "ADDRESS=192.0.2.10\nCLIENTID=ff-duplicate-duid\n"
     assert client.observe(target, row) is None
     ast.parse(PROGRAM)
+
+
+def test_guest_program_failure_persists_only_sanitized_stage_and_exit_code():
+    process = {
+        'exited': True,
+        'exitcode': 23,
+        'err-data': base64.b64encode(
+            b'IACP_GUEST_FAILURE_STAGE=technical-password\nroot:do-not-persist\n').decode(),
+    }
+    stage, exit_code = GuestClient._program_failure_diagnostic(process)
+    assert stage is None and exit_code == 23
+
+    process['err-data'] = base64.b64encode(
+        b'IACP_GUEST_FAILURE_STAGE=technical_password\nroot:do-not-persist\n').decode()
+    stage, exit_code = GuestClient._program_failure_diagnostic(process)
+    assert stage == 'technical_password' and exit_code == 23
+    assert 'do-not-persist' not in str((stage, exit_code))
 
 
 def test_technical_initializer_uses_qga_stdin_for_access_without_commercial_marker():

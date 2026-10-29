@@ -3,6 +3,7 @@
 POST is fenced before dispatch. A consumed intent is only observed, even when
 the response (and PID) was lost. Guest Agent is reached without guest networking.
 """
+import base64
 import hashlib
 import json
 import re
@@ -34,6 +35,11 @@ TERMINAL_GUEST_PROGRAM_FAILURE = 'GUEST_INITIALIZATION_PROGRAM_FAILED'
 class GuestProgramFailed(Conflict):
     """The consumed process has definitively exited unsuccessfully."""
 
+    def __init__(self, code=TERMINAL_GUEST_PROGRAM_FAILURE, *, stage=None, exit_code=None):
+        super().__init__(code)
+        self.stage = stage if isinstance(stage, str) and re.fullmatch(r'[a-z0-9_]{1,24}', stage) else None
+        self.exit_code = exit_code if type(exit_code) is int and -128 <= exit_code <= 255 else None
+
 
 GUEST_INITIALIZER_COMMANDS = frozenset({
     "guest-exec",
@@ -48,6 +54,10 @@ import hashlib,json,os,re,subprocess,sys,tempfile,uuid
 from pathlib import Path
 import yaml
 identifier,mac,program_sha=sys.argv[1:]
+failure_stage='validate_image'
+def _iacp_failure(_type,_value,_traceback):
+    print('IACP_GUEST_FAILURE_STAGE='+failure_stage,file=sys.stderr)
+sys.excepthook=_iacp_failure
 assert str(uuid.UUID(identifier))==identifier and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac)
 assert re.fullmatch(r'[0-9a-f]{64}',program_sha)
 release=Path('/etc/os-release').read_text()
@@ -55,8 +65,10 @@ assert 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release
 interfaces=[p for p in Path('/sys/class/net').glob('*/address') if p.read_text().strip().lower()==mac]
 assert len(interfaces)==1
 ifindex=int((interfaces[0].parent/'ifindex').read_text())
+failure_stage='cloud_init'
 subprocess.run(['/usr/bin/cloud-init','status','--wait'],capture_output=True,timeout=90)
 assert Path('/var/lib/cloud/instance/boot-finished').is_file()
+failure_stage='validate_network'
 config=yaml.safe_load(Path('/etc/netplan/50-cloud-init.yaml').read_text())['network']
 assert config['version']==2 and set(config)<= {'version','renderer','ethernets'}
 assert config.get('renderer','networkd')=='networkd' and len(config['ethernets'])==1
@@ -78,9 +90,12 @@ def write(path,value):
         os.replace(temporary,path)
     finally:
         if os.path.exists(temporary):os.unlink(temporary)
+failure_stage='write_network'
 content=json.dumps({'network':{'version':2,'ethernets':{name:{'dhcp-identifier':'mac'}}}},sort_keys=True)+'\n'
 write(network,content)
+failure_stage='netplan_generate'
 subprocess.run(['/usr/sbin/netplan','generate'],check=True,capture_output=True,timeout=30)
+failure_stage='machine_identity'
 machine=uuid.uuid4().hex+'\n'
 write(Path('/etc/machine-id'),machine)
 os.chmod('/etc/machine-id',0o444)
@@ -89,7 +104,9 @@ if dbus.is_symlink():
     assert dbus.resolve()==Path('/etc/machine-id')
 elif dbus.exists():
     write(dbus,machine);os.chmod(dbus,0o444)
+failure_stage='netplan_apply'
 subprocess.run(['/usr/sbin/netplan','apply'],check=True,capture_output=True,timeout=60)
+failure_stage='write_marker'
 result={'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-lab-identity-v1',
         'program_sha256':program_sha,'machine_id_sha256':hashlib.sha256(machine.encode()).hexdigest(),
         'network_sha256':hashlib.sha256(content.encode()).hexdigest(),'ifindex':ifindex}
@@ -101,13 +118,17 @@ PROGRAM_SHA256 = hashlib.sha256(PROGRAM.encode()).hexdigest()
 # enter guest-exec arguments or files; Cloud-Init alone sets the initial password.
 ROOT_SSH_CONFIG = 'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n'
 ROOT_POLICY_PROGRAM = r'''
+failure_stage='root_ssh_config'
 ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-root-lab.conf')
 # ssh.socket may be listening before ssh.service creates its RuntimeDirectory.
 Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)
 write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
+failure_stage='root_sshd_validate'
 subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
+failure_stage='root_sshd_effective'
 effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],check=True,capture_output=True,text=True,timeout=10).stdout
 assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
+failure_stage='root_ssh_reload'
 subprocess.run(['/usr/bin/systemctl','reload-or-restart','ssh'],check=True,capture_output=True,timeout=15)
 '''
 ROOT_PROGRAM = PROGRAM.replace("write(marker,json.dumps(result,sort_keys=True)+'\\n')",
@@ -118,6 +139,7 @@ ROOT_PROGRAM_SHA256 = hashlib.sha256(ROOT_PROGRAM.encode()).hexdigest()
 # solicitado por el consumidor. La contraseña entra únicamente por stdin de
 # QGA; nunca forma parte de los argumentos del proceso ni del marcador.
 TECHNICAL_ACCESS_PROGRAM = r'''
+failure_stage='technical_input'
 payload=json.loads(sys.stdin.read())
 assert isinstance(payload,dict) and set(payload)=={'password','ssh_public_keys'}
 password=payload['password']
@@ -127,6 +149,7 @@ assert isinstance(keys,list) and len(keys)<=16
 assert all(isinstance(key,str) and key.startswith(('ssh-ed25519 ','ssh-rsa ','ecdsa-sha2-'))
            and '\n' not in key and '\r' not in key for key in keys)
 ssh_directory=Path('/root/.ssh')
+failure_stage='technical_ssh_keys'
 ssh_directory.mkdir(mode=0o700,parents=True,exist_ok=True)
 os.chmod(ssh_directory,0o700);os.chown(ssh_directory,0,0)
 if keys:
@@ -134,19 +157,26 @@ if keys:
     os.chmod(ssh_directory/'authorized_keys',0o600)
     os.chown(ssh_directory/'authorized_keys',0,0)
 ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-technical-root.conf')
+failure_stage='technical_ssh_config'
 write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
+failure_stage='technical_sshd_validate'
 subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
+failure_stage='technical_sshd_effective'
 effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],
     check=True,capture_output=True,text=True,timeout=10).stdout
 assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
+failure_stage='technical_password'
 subprocess.run(['/usr/bin/chpasswd'],input=('root:'+password+'\n').encode(),
     check=True,capture_output=True,timeout=15)
 service='ssh' if 'ID=ubuntu\n' in release else 'sshd'
+failure_stage='technical_ssh_reload'
 subprocess.run(['/usr/bin/systemctl','reload-or-restart',service],check=True,capture_output=True,timeout=20)
 if 'ID=almalinux\n' in release:
+    failure_stage='technical_selinux'
     for path in ['/root/.ssh','/etc/ssh/sshd_config.d/00-iacp-technical-root.conf']:
         if Path(path).exists():
             subprocess.run(['/usr/sbin/restorecon','-RF',path],check=True,capture_output=True,timeout=15)
+failure_stage='technical_result'
 authorized_keys_sha256=hashlib.sha256(('\n'.join(keys)+'\n').encode()).hexdigest()
 result['technical_access']={'password_configured':True,
     'ssh_public_keys_sha256':authorized_keys_sha256}
@@ -438,7 +468,9 @@ class GuestClient:
             try:process=self.client._request('GET',target.path+'/agent/exec-status?'+urlencode({'pid':row.pid}))
             except PowerError:pass  # QGA may have reaped the result; verify durable guest evidence.
             if process and not process.get('exited'):return None
-            if process and process.get('exitcode')!=0:raise GuestProgramFailed('GUEST_INITIALIZATION_PROGRAM_FAILED')
+            if process and process.get('exitcode')!=0:
+                stage, exit_code = self._program_failure_diagnostic(process)
+                raise GuestProgramFailed(stage=stage, exit_code=exit_code)
         def read(path):
             value=self.client._request('GET',target.path+'/agent/file-read?'+urlencode({'file':path,'count':8192}))
             if value.get('truncated'):raise Conflict('GUEST_INITIALIZATION_EVIDENCE_INVALID')
@@ -466,6 +498,31 @@ class GuestClient:
         clientid=lease.get('CLIENTID','').lower().replace(':','')
         if clientid!='01'+row.mac_address.replace(':','') or lease.get('ADDRESS') not in network['ip_addresses']:return None
         return {**evidence,'network':network,'source':'qemu-guest-agent','guest_ready':None}
+
+    @staticmethod
+    def _program_failure_diagnostic(process):
+        """Extract only the fixed stage marker; never retain QGA output."""
+        exit_code = process.get('exitcode') if isinstance(process, dict) else None
+        if type(exit_code) is not int or not -128 <= exit_code <= 255:
+            exit_code = None
+        stage = None
+        for field in ('err-data', 'out-data'):
+            value = process.get(field) if isinstance(process, dict) else None
+            if not isinstance(value, str):
+                continue
+            candidates = [value]
+            try:
+                candidates.append(base64.b64decode(value, validate=True).decode('utf-8', 'ignore'))
+            except (ValueError, UnicodeError):
+                pass
+            for candidate in candidates:
+                match = re.search(r'IACP_GUEST_FAILURE_STAGE=([a-z0-9_]{1,24})(?:\r?\n|$)', candidate)
+                if match:
+                    stage = match.group(1)
+                    break
+            if stage:
+                break
+        return stage, exit_code
 
 
 def execute_initialization(identifier,sessions,client_factory=GuestClient.configured,timeout=210):
@@ -607,7 +664,12 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                     if job:job.status='failed'
                     operation.error_code=(str(failure)[:64] if isinstance(failure,Conflict) else failure.code
                         if isinstance(failure,PowerError) else 'GUEST_INITIALIZATION_OBSERVATION_FAILED')
-                    event(s,operation,'guest_initialization_'+row.status,'worker:iac');s.commit()
+                    event_code = 'guest_initialization_' + row.status
+                    if isinstance(failure, GuestProgramFailed):
+                        stage = failure.stage or 'unknown'
+                        exit_code = 'na' if failure.exit_code is None else str(failure.exit_code)
+                        event_code = f'guest_init_program_failed_{stage}_exit_{exit_code}'[:64]
+                    event(s,operation,event_code,'worker:iac');s.commit()
     except ExecutionBusy:return
     if cleanup_reference:
         _cleanup_technical_access_reference(instance_id, cleanup_reference, sessions)
