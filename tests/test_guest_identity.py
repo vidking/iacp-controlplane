@@ -399,6 +399,25 @@ def test_technical_initializer_uses_ubuntu_chpasswd_path():
     assert "/usr/bin/chpasswd" not in TECHNICAL_ACCESS_PROGRAM
 
 
+def test_guest_initializer_uses_explicit_safe_path_and_absolute_tools_for_ubuntu_images():
+    safe_path = "os.environ['PATH']='/usr/sbin:/usr/bin:/sbin:/bin'"
+    required_tools = (
+        "/usr/bin/cloud-init",
+        "/usr/sbin/netplan",
+        "/usr/sbin/sshd",
+        "/usr/sbin/chpasswd",
+        "/usr/bin/systemctl",
+    )
+    for mode in (MODE, "ubuntu-2604-lab-identity-v1"):
+        program, digest = technical_program_for_mode(mode)
+        assert digest == hashlib.sha256(program.encode()).hexdigest()
+        assert safe_path in program
+        assert all(tool in program for tool in required_tools)
+        assert "subprocess.run(['cloud-init'" not in program
+        assert "subprocess.run(['sshd'" not in program
+        ast.parse(program)
+
+
 def test_technical_initializer_verifies_root_and_cleans_ephemeral_reference(
         client, auth, guest, sessions, monkeypatch):
     from iacp.services.bootstrap_secrets import EphemeralSecrets
