@@ -32,3 +32,78 @@ def test_storage_validation_rejects_incomplete_growth(change):
     module.validate_storage(guest,50)
     guest[change]-=1024**3
     with pytest.raises(AssertionError):module.validate_storage(guest,50)
+
+
+def instance(instance_id,status='ready',vmid=30093,name='historica'):
+    return {
+        'instance_id':instance_id,'tenant_id':'tenant-lab','name':name,
+        'image':'ubuntu-2404','vmid':vmid,'node':'mng01','vcpus':1,
+        'memory_mb':2048,'disk_gb':50,'network_mode':'dhcp',
+        'network_profile':'lab-dhcp','executor':'provisioning',
+        'infrastructure_kind':'kvm','status':status,'operation_id':'op-'+instance_id,
+        'job_id':'job-'+instance_id,'ip_addresses':[],'network_observation':None,
+    }
+
+
+def test_inventory_scope_accepts_historical_instances_and_deleted_test_instance():
+    module=runner()
+    historical=instance('historical-30093',status='ready',vmid=30093)
+    created=instance('created-ubuntu',status='deleted',vmid=30100,name='e2e-ubuntu')
+    before=[module._safe_instance_record(historical)]
+    after=[module._safe_instance_record(historical),module._safe_instance_record(created)]
+
+    diff=module.inventory_scope_diff(before,after,{'created-ubuntu'})
+
+    assert diff['scope_ok'] is True
+    assert diff['created_instance_ids']==['created-ubuntu']
+    assert diff['missing_baseline_instance_ids']==[]
+    assert diff['unexpected_instance_ids']==[]
+
+
+def test_inventory_scope_rejects_untracked_resource_and_identity_change():
+    module=runner()
+    historical=instance('historical-30093',status='ready',vmid=30093)
+    changed=instance('historical-30093',status='ready',vmid=39999)
+    untracked=instance('untracked',status='ready',vmid=30101)
+
+    diff=module.inventory_scope_diff(
+        [module._safe_instance_record(historical)],
+        [module._safe_instance_record(changed),module._safe_instance_record(untracked)],
+        set(),
+    )
+
+    assert diff['scope_ok'] is False
+    assert diff['unexpected_instance_ids']==['untracked']
+    assert diff['baseline_identity_changes'][0]['instance_id']=='historical-30093'
+
+
+def test_runner_blocks_almalinux_and_preserves_global_uncertainty():
+    module=runner()
+    assert module.SUPPORTED_E2E_IMAGES=={'ubuntu-2404','ubuntu-2604'}
+    assert module._operation_status({'status':'uncertain'})=='uncertain'
+    assert 'allow_reconcile' in module.wait_operation.__code__.co_varnames
+
+
+def test_global_uncertainty_blocks_before_any_create(monkeypatch):
+    module=runner()
+    monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
+        'operation_id':'bootstrap-uncertain','instance_id':'historical-30093',
+        'kind':'commercial_bootstrap','status':'uncertain',
+        'normalized_status':'uncertain','error_code':'BOOTSTRAP_RECONCILIATION_REQUIRED',
+        'recovery_required':True,
+    }])
+
+    with pytest.raises(RuntimeError,match='GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E'):
+        module.assert_no_global_mutations()
+
+
+@pytest.mark.parametrize('message',[
+    'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E:bootstrap-uncertain',
+    'OPERATION_UNCERTAIN',
+    'FULFILLMENT_FAILED',
+    'INSTANCE_UNCERTAIN',
+])
+def test_guest_wait_does_not_swallow_terminal_or_uncertain_errors(message):
+    module=runner()
+    assert module._must_abort_guest_wait(RuntimeError(message))
+    assert not module._must_abort_guest_wait(RuntimeError('WORKER_PROBE_FAILED'))
