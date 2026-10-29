@@ -159,6 +159,9 @@ if keys:
 ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-technical-root.conf')
 failure_stage='technical_ssh_config'
 write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
+# Ubuntu 24.04 may not create the privilege-separation directory until the
+# service starts; validate the configuration only after preparing it.
+Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)
 failure_stage='technical_sshd_validate'
 subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
 failure_stage='technical_sshd_effective'

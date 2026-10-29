@@ -387,6 +387,13 @@ def test_technical_initializer_uses_qga_stdin_for_access_without_commercial_mark
     assert 'SENUELO-TECNICO-NO-PERSISTIR-2026' not in command_values
 
 
+def test_technical_initializer_prepares_sshd_runtime_directory_before_validation():
+    prepare = "Path('/run/sshd').mkdir(mode=0o755,exist_ok=True)"
+    validate = "subprocess.run(['/usr/sbin/sshd','-t']"
+    assert prepare in TECHNICAL_ACCESS_PROGRAM
+    assert TECHNICAL_ACCESS_PROGRAM.index(prepare) < TECHNICAL_ACCESS_PROGRAM.index(validate)
+
+
 def test_technical_initializer_verifies_root_and_cleans_ephemeral_reference(
         client, auth, guest, sessions, monkeypatch):
     from iacp.services.bootstrap_secrets import EphemeralSecrets
