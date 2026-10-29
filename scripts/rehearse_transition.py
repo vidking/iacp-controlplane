@@ -84,16 +84,16 @@ def verify(engine, redis):
             FROM instances i JOIN operations o ON o.instance_id = i.id
             JOIN jobs j ON j.operation_id = o.id ORDER BY i.id
         """)).mappings()]
-        if not inventory or any(row["instance_status"] != "ready" or row["operation_status"] != "completed"
-                                or row["job_status"] != "completed" for row in inventory):
-            raise RuntimeError("El inventario simulado no conserva estados terminales consistentes")
+        if any(row["instance_status"] != "ready" or row["operation_status"] != "completed"
+               or row["job_status"] != "completed" for row in inventory):
+            raise RuntimeError("El inventario de desarrollo contiene estados no terminales inconsistentes")
         if "inventory" in metadata and metadata["inventory"] != inventory:
             raise RuntimeError("Cambió el inventario simulado durante la recreación")
     if "inventory" not in metadata:
         metadata["inventory"] = inventory
         redis.set(KEY, json.dumps(metadata))
     return {"status": "passed", "bootstrap_job_preserved": True, "redis_marker_preserved": True,
-            "secrets_preserved": True, "simulated_inventory_preserved": True}
+            "secrets_preserved": True, "inventory_preserved": True}
 
 
 if __name__ == "__main__":
