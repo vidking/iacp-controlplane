@@ -8,6 +8,7 @@ fallo previo a ``ssh.connect()``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from iacp.models import (
     TerraformApply,
     TerraformExecution,
 )
-from iacp.services.bootstrap_secrets import EphemeralSecrets
+from iacp.services.bootstrap_secrets import BootstrapSecretError, EphemeralSecrets
 from iacp.services.instances import event
 from iacp.services.technical_ownership import is_managed_vmid
 from iacp.terraform.locks import admission_lock, instance_lock
@@ -70,6 +71,26 @@ def _require(condition: bool, reason: str) -> None:
 
 def _utcnow():
     return datetime.now(timezone.utc)
+
+
+def build_audit_actor(actor: str, change_reference: str, evidence_sha256: str) -> str:
+    """Construye un actor auditable acotado y determinista.
+
+    El actor efectivo se muestra de forma limitada; los digests se calculan
+    sobre los valores completos y la evidencia privada conserva la referencia
+    completa. Así el valor persistido siempre cabe en ``OperationEvent.actor``
+    sin perder la correlación criptográfica.
+    """
+    actor_label = re.sub(r"[^A-Za-z0-9_.:@-]", "_", actor)[:16] or "actor"
+    actor_digest = hashlib.sha256(actor.encode("utf8")).hexdigest()[:16]
+    reference_digest = hashlib.sha256(change_reference.encode("utf8")).hexdigest()[:16]
+    evidence_digest = evidence_sha256[:16]
+    value = (
+        f"recover-commercial-bootstrap-preconnect:{actor_label}"
+        f":a{actor_digest}:r{reference_digest}:e{evidence_digest}"
+    )
+    _require(len(value) <= 128, "AUDIT_ACTOR_TOO_LONG")
+    return value
 
 
 def _canonical_uuid(value, field: str) -> str:
@@ -312,8 +333,49 @@ def _already_resolved(state: dict) -> bool:
         and intent.bootstrap_completed_at is None
         and EVENT_CODE in state["event_codes"]
         and not state["event_codes"].intersection(FORBIDDEN_EVENTS)
-        and intent.secret_reference is None
     )
+
+
+def _cleanup_secret_reference_after_commit(session, instance_id, reference, store):
+    """Limpia Redis después del commit y conserva un reintento durable.
+
+    PostgreSQL y Redis no comparten una transacción. Primero se conserva el
+    estado terminal y su auditoría en PostgreSQL; la referencia opaca queda
+    como marcador durable hasta que la eliminación idempotente de Redis y su
+    posterior limpieza SQL concluyan.
+    """
+    if reference is None:
+        return {"cleanup_pending": False, "cleanup_completed": True}
+
+    try:
+        (store or EphemeralSecrets.configured()).delete(reference)
+    except BootstrapSecretError as error:
+        if str(error) != "BOOTSTRAP_SECRET_CLEANUP_PENDING":
+            raise
+        return {
+            "cleanup_pending": True,
+            "cleanup_error_code": "BOOTSTRAP_SECRET_CLEANUP_PENDING",
+        }
+
+    try:
+        with admission_lock(session), instance_lock(session.get_bind(), instance_id):
+            intent = session.get(CommercialIntent, instance_id, with_for_update=True,
+                                 populate_existing=True)
+            _require(intent is not None, "COMMERCIAL_INTENT_NOT_FOUND")
+            _require(intent.secret_reference in {None, reference},
+                     "BOOTSTRAP_SECRET_REFERENCE_CHANGED")
+            if intent.secret_reference == reference:
+                intent.secret_reference = None
+                session.commit()
+            else:
+                session.rollback()
+    except Exception:
+        session.rollback()
+        return {
+            "cleanup_pending": True,
+            "cleanup_error_code": "BOOTSTRAP_SECRET_REFERENCE_CLEANUP_PENDING",
+        }
+    return {"cleanup_pending": False, "cleanup_completed": True}
 
 
 def recover_in_session(session, request: dict, *, runtime_idle=None, store=None) -> dict:
@@ -322,10 +384,13 @@ def recover_in_session(session, request: dict, *, runtime_idle=None, store=None)
     if runtime_idle is None:
         runtime_idle = assert_broker_and_workers_idle
     try:
+        result = None
+        secret_reference = None
         with admission_lock(session), instance_lock(session.get_bind(), request["instance_id"]):
             state = _load_locked_state(session, request)
             if _already_resolved(state):
-                return {
+                secret_reference = state["intent"].secret_reference
+                result = {
                     "changed": False,
                     "already_completed": True,
                     "instance_id": request["instance_id"],
@@ -335,56 +400,56 @@ def recover_in_session(session, request: dict, *, runtime_idle=None, store=None)
                     "event_code": EVENT_CODE,
                     "evidence_sha256": request["evidence"]["evidence_sha256"],
                 }
+            else:
+                _validate_uncertain_state(state)
+                runtime_evidence = runtime_idle()
+                session.expire_all()
+                state = _load_locked_state(session, request)
+                _validate_uncertain_state(state)
 
-            _validate_uncertain_state(state)
-            runtime_evidence = runtime_idle()
-            session.expire_all()
-            state = _load_locked_state(session, request)
-            _validate_uncertain_state(state)
-
-            intent, operation, job, instance = (
-                state["intent"], state["operation"], state["job"], state["instance"])
-            # Solo se elimina la referencia efímera opaca; nunca se descifra ni
-            # se vuelve a entregar la contraseña. Si Redis falla, el rollback
-            # deja intacto el fence y no se cambia ningún estado ORM.
-            if intent.secret_reference:
-                (store or EphemeralSecrets.configured()).delete(intent.secret_reference)
-                intent.secret_reference = None
-
-            now = _utcnow()
-            intent.bootstrap_status = "failed"
-            intent.error_code = ERROR_CODE
-            operation.status = "failed"
-            operation.error_code = ERROR_CODE
-            job.status = "failed"
-            instance.access_verification = {
-                **(instance.access_verification or {}),
-                "status": "failed",
-                "error_code": ERROR_CODE,
-            }
-            audit_actor = (
-                f"recover-commercial-bootstrap-preconnect:{request['actor']}"
-                f":{request['change_reference']}:{request['evidence']['evidence_sha256'][:16]}"
-            )
-            _require(len(audit_actor) <= 128, "AUDIT_ACTOR_TOO_LONG")
-            event(session, operation, EVENT_CODE, audit_actor)
-            session.commit()
-            return {
-                "changed": True,
-                "already_completed": False,
-                "instance_id": request["instance_id"],
-                "operation_id": request["operation_id"],
-                "job_id": request["job_id"],
-                "vmid": request["vmid"],
-                "status": "failed",
-                "error_code": ERROR_CODE,
-                "event_code": EVENT_CODE,
-                "event_actor": audit_actor,
-                "finished_at": now.isoformat(),
-                "evidence_reference": request["evidence"]["evidence_reference"],
-                "evidence_sha256": request["evidence"]["evidence_sha256"],
-                "runtime": runtime_evidence,
-            }
+                intent, operation, job, instance = (
+                    state["intent"], state["operation"], state["job"], state["instance"])
+                # Construir el identificador antes de cualquier efecto externo
+                # o cambio ORM irreversible.
+                audit_actor = build_audit_actor(
+                    request["actor"], request["change_reference"],
+                    request["evidence"]["evidence_sha256"],
+                )
+                secret_reference = intent.secret_reference
+                now = _utcnow()
+                intent.bootstrap_status = "failed"
+                intent.error_code = ERROR_CODE
+                operation.status = "failed"
+                operation.error_code = ERROR_CODE
+                job.status = "failed"
+                instance.access_verification = {
+                    **(instance.access_verification or {}),
+                    "status": "failed",
+                    "error_code": ERROR_CODE,
+                }
+                event(session, operation, EVENT_CODE, audit_actor)
+                # Este commit hace durable el estado terminal y la auditoría;
+                # la referencia opaca se limpia después, con reintento.
+                session.commit()
+                result = {
+                    "changed": True,
+                    "already_completed": False,
+                    "instance_id": request["instance_id"],
+                    "operation_id": request["operation_id"],
+                    "job_id": request["job_id"],
+                    "vmid": request["vmid"],
+                    "status": "failed",
+                    "error_code": ERROR_CODE,
+                    "event_code": EVENT_CODE,
+                    "event_actor": audit_actor,
+                    "finished_at": now.isoformat(),
+                    "evidence_reference": request["evidence"]["evidence_reference"],
+                    "evidence_sha256": request["evidence"]["evidence_sha256"],
+                    "runtime": runtime_evidence,
+                }
+        result.update(_cleanup_secret_reference_after_commit(
+            session, request["instance_id"], secret_reference, store))
+        return result
     except Exception:
         session.rollback()
         raise

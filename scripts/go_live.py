@@ -413,6 +413,13 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         IACP; nunca se reenvía una credencial ni se ejecuta guest-exec.
         """
         change = self.authorize("recover-consumed-commercial-bootstrap")
+        self.evidence("recover-consumed-commercial-bootstrap-authorization", {
+            "action": "recover-consumed-commercial-bootstrap",
+            "actor": change["actor"],
+            "change_reference": change["reference"],
+            "authorization_source": change.get("authorization_source", "change-record"),
+            "release": self.m["release"],
+        })
         evidence_argument = Path(request.pop("evidence_file"))
         require(not evidence_argument.is_symlink(),
                 "Recovery evidence may not be a symlink")
