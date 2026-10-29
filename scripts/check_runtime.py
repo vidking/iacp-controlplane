@@ -49,30 +49,26 @@ def check(base_url: str, timeout: float = 60) -> dict:
         if result["status"] == "failed" or time.monotonic() >= deadline:
             raise RuntimeError("El worker no completó el job smoke")
         time.sleep(0.2)
+    # La admisión comercial vigente requiere un cuerpo completo y HTTPS antes
+    # de crear una intención. El smoke interno usa HTTP deliberadamente, por
+    # lo que debe comprobar el rechazo seguro y no una respuesta simulada.
     key = uuid4().hex
-    spec = {"name": "check-" + key[:12], "image": "simulation-test"}
+    spec = {
+        "name": "check-" + key[:12],
+        "plan_id": "kvm-1",
+        "image_id": "ubuntu-2404",
+        "network": {"profile_id": "lab-dhcp"},
+        "access": {"root_password": "dev-check-" + key + "-password", "ssh_public_keys": []},
+        "start_on_create": False,
+    }
     headers = {"Idempotency-Key": key}
-    status, instance_job = request(base_url, "/v1/instances", token, "POST", spec, headers)
-    assert status == 202 and instance_job["executor"] == "simulated"
-    assert request(base_url, "/v1/instances", token, "POST", spec, headers) == (202, instance_job)
-    deadline = time.monotonic() + timeout
-    while True:
-        status, instance = request(base_url, f'/v1/instances/{instance_job["instance_id"]}', token)
-        assert status == 200
-        if instance["status"] == "ready":
-            break
-        if instance["status"] == "failed" or time.monotonic() >= deadline:
-            raise RuntimeError("El worker no completó la instancia simulada")
-        time.sleep(0.2)
-    assert instance["vmid"] is instance["node"] is None
-    assert instance["result"]["simulated"] is True
-    status, operation = request(base_url, f'/v1/operations/{instance_job["operation_id"]}', token)
-    assert status == 200 and operation["status"] == "completed"
-    assert [item["code"] for item in operation["events"]] == ["accepted", "started", "completed"]
+    rejected = (422, {"detail": "ROOT_ACCESS_REQUIRES_HTTPS"})
+    assert request(base_url, "/v1/instances", token, "POST", spec, headers) == rejected
+    assert request(base_url, "/v1/instances", token, "POST", spec, headers) == rejected
     status, contract = request(base_url, "/openapi.json", token)
     assert status == 200 and "/v1/jobs/smoke" in contract["paths"]
     return {"status": "passed", "job_id": job_id, "job_status": result["status"],
-            "instance_id": instance_job["instance_id"], "operation_status": operation["status"], "provisioning": "simulated"}
+            "operation_status": "not-admitted", "provisioning": "https-required"}
 
 
 if __name__ == "__main__":
