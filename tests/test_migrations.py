@@ -71,5 +71,5 @@ def test_downgrade_cannot_drop_persistent_jobs(engine):
         config.attributes["connection"] = connection
         with pytest.raises(RuntimeError, match="conservar autorizaciones"):
             command.downgrade(config, "base")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0014_allow_historical_kvm_106"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0015_technical_access"
     assert "jobs" in inspect(engine).get_table_names()

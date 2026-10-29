@@ -73,7 +73,7 @@ def test_0006_preserves_0005_rows_and_never_backfills_certificates(pg_engine, mo
     assert snapshot() == before
     with pg_engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM power_ownership_certificates")) == 0
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0014_allow_historical_kvm_106"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0015_technical_access"
         assert connection.scalar(text("SELECT ownership_certificate_id FROM power_executions")) is None
     native = FakePower()
     execute_power(operation_id, factory, native)

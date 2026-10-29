@@ -101,8 +101,13 @@ def request_power(session, instance, principal, action, key, publish, client_fac
                     raise Conflict("DELETE_OPERATION_ACTIVE")
                 from ..services.guest_identity import active as active_initialization
                 if active_initialization(session,instance.id):raise Conflict('GUEST_INITIALIZATION_ACTIVE')
+                # Las instancias nuevas consumen el acceso dentro de
+                # GuestInitialization. Solo una instancia histórica sin el
+                # vínculo técnico conserva la barrera del bootstrap legado.
                 from ..models import CommercialIntent
-                if session.get(CommercialIntent, instance.id) is not None:
+                from ..services.contracts import instance_uses_technical_access
+                if (not instance_uses_technical_access(instance)
+                        and session.get(CommercialIntent, instance.id) is not None):
                     from ..services.commercial_bootstrap import active as bootstrap_active
                     if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
                 from ..services.authorization import authorize_operation

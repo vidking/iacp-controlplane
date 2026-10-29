@@ -15,7 +15,7 @@ from uuid import uuid4
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 
-from ..models import Instance, Job, Operation, Tenant, utcnow
+from ..models import GuestInitialization, Instance, Job, Operation, Tenant, utcnow
 from ..security import Principal
 from ..terraform.config import PlanError
 from ..terraform.locks import ExecutionBusy, instance_lock
@@ -71,6 +71,18 @@ def admit_access(spec, tenant_id):
 
 def request_verification(session, instance, principal, key, publish):
     from ..models import CommercialIntent
+    from .guest_identity import technical_program_for_mode
+    initialization = session.scalar(select(GuestInitialization).where(
+        GuestInitialization.instance_id == instance.id))
+    if (initialization is not None
+            and initialization.program_sha256 == technical_program_for_mode(initialization.mode)[1]):
+        # El acceso técnico ya fue verificado dentro de GuestInitialization.
+        # No se crea una segunda operación ni se deriva a commercial_bootstrap.
+        if initialization.status != 'completed' or (instance.access_verification or {}).get('status') != 'completed':
+            raise Conflict('ROOT_ACCESS_NOT_READY')
+        from ..lifecycle.service import response
+        operation = session.get(Operation, initialization.operation_id)
+        return response(session, operation)
     if session.get(CommercialIntent, instance.id) is not None:
         from .commercial_bootstrap import request
         from ..api.dependencies import get_commercial_bootstrap_publisher
@@ -115,7 +127,7 @@ def request_verification(session, instance, principal, key, publish):
 
 
 class AccessVerifier:
-    def verify(self, target, instance):
+    def verify(self, target, instance, *, password=None, ip_addresses=None):
         from .guest_identity import GuestClient
         import paramiko
         client = GuestClient.configured().client
@@ -139,15 +151,16 @@ class AccessVerifier:
             host_key = read_host_key(client, target, getattr(instance, 'image', None))
         except Exception:
             raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID') from None
-        if not instance.ip_addresses:
+        addresses = ip_addresses or instance.ip_addresses
+        if not addresses:
             raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID')
         # The host key comes from the same inventory-bound QGA, never TOFU or
         # AutoAddPolicy. IP ownership was verified by DHCP/MAC initialization.
-        address = str(ipaddress.IPv4Address(instance.ip_addresses[0]))
+        address = str(ipaddress.IPv4Address(addresses[0]))
         with paramiko.SSHClient() as ssh:
             ssh.get_host_keys().add(address, 'ssh-ed25519', host_key.key)
             ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-            ssh.connect(address, username='root', password=decrypt_password(instance), timeout=10,
+            ssh.connect(address, username='root', password=password if password is not None else decrypt_password(instance), timeout=10,
                 auth_timeout=10, banner_timeout=10, allow_agent=False, look_for_keys=False)
             _, stdout, _ = ssh.exec_command('/usr/bin/id -u', timeout=5)
             if stdout.read(32).strip() != b'0' or stdout.channel.recv_exit_status() != 0:
@@ -221,6 +234,12 @@ def after_initialization(identifier, sessions):
         if not row or row.status != 'completed':
             return
         instance = session.get(Instance, row.instance_id)
+        # La inicialización técnica nueva ya configura y verifica el acceso
+        # root dentro de su único fence QGA. Solo las instancias históricas
+        # sin ese digest continúan usando la ruta de compatibilidad comercial.
+        from .guest_identity import technical_program_for_mode
+        if row.program_sha256 == technical_program_for_mode(row.mode)[1]:
+            return
         from ..models import CommercialIntent
         if session.get(CommercialIntent, instance.id) is not None:
             from .commercial_bootstrap import after_initialization as bootstrap
