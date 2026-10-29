@@ -6,4 +6,9 @@ data
 logs
 *.tfstate
 *.tfstate.*
+.terraform
+*.tfplan
+generated.auto.tfvars.json
+secrets
+.env
 

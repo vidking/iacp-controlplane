@@ -1,0 +1,127 @@
+name: iacp-controlplanev2
+
+services:
+  api:
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /app/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+      IACP_API_TOKEN: "${IACP_API_TOKEN:?Definir IACP_API_TOKEN en Portainer}"
+    expose:
+      - "8080"
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+    networks:
+      - internal
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "${IACP_PROXY_NETWORK:-proxy_network}"
+      traefik.http.routers.iacp-v2.rule: "Host(`${IACP_PUBLIC_DOMAIN:?Definir IACP_PUBLIC_DOMAIN en Portainer}`)"
+      traefik.http.routers.iacp-v2.entrypoints: websecure
+      traefik.http.routers.iacp-v2.tls: "true"
+      traefik.http.routers.iacp-v2.service: iacp-v2
+      traefik.http.services.iacp-v2.loadbalancer.server.port: "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  worker-1:
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-1"]
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /app/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+      IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
+      IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
+      IACP_DEFAULT_SSH_PUBLIC_KEY: "${IACP_DEFAULT_SSH_PUBLIC_KEY:?Definir IACP_DEFAULT_SSH_PUBLIC_KEY en Portainer}"
+      IACP_VMID_MIN: "${IACP_VMID_MIN:-40000}"
+      IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
+      IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
+      IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+    networks:
+      - internal
+      - egress
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-2:
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /app/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+      IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
+      IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
+      IACP_DEFAULT_SSH_PUBLIC_KEY: "${IACP_DEFAULT_SSH_PUBLIC_KEY:?Definir IACP_DEFAULT_SSH_PUBLIC_KEY en Portainer}"
+      IACP_VMID_MIN: "${IACP_VMID_MIN:-40000}"
+      IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
+      IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
+      IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+    networks:
+      - internal
+      - egress
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+
+  egress:
+    driver: bridge
+
+  proxy:
+    external: true
+    name: ${IACP_PROXY_NETWORK:-proxy_network}
+
+volumes:
+  iacp_data:
+    name: iacp_controlplanev2_data

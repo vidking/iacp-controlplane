@@ -13,6 +13,13 @@ class ProxmoxError(RuntimeError):
 
 
 def credentials() -> tuple[str, str]:
+    endpoint_env = os.getenv("IACP_PROXMOX_ENDPOINT") or os.getenv("PROXMOX_VE_ENDPOINT")
+    token_env = os.getenv("IACP_PROXMOX_API_TOKEN") or os.getenv("PROXMOX_VE_API_TOKEN")
+    if endpoint_env or token_env:
+        if not endpoint_env or not token_env:
+            raise ProxmoxError("credencial Proxmox por entorno incompleta")
+        return str(endpoint_env).rstrip("/"), str(token_env)
+
     path = os.getenv("IACP_PROXMOX_CREDENTIALS_FILE", "/run/secrets/proxmox_credentials")
     try:
         with open(path, encoding="utf-8") as handle:
@@ -58,6 +65,7 @@ class ProxmoxClient:
         except (URLError, TimeoutError, ValueError) as error:
             raise ProxmoxError(f"Proxmox GET {path} falló: {error}") from error
         return body.get("data")
+
     def inventory(self) -> list[dict]:
         return self.get("/cluster/resources?type=vm") or []
 

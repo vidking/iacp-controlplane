@@ -4,7 +4,11 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    IACP_TERRAFORM_PATH=/app/terraform \
+    IACP_TERRAFORM_DIR=environments/mng01 \
+    IACP_LOCAL_TERRAFORM_DIR=fixtures/local \
+    IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog.json
 
 RUN groupadd --system iacp && useradd --system --gid iacp --home-dir /app iacp
 COPY --from=terraform /bin/terraform /usr/local/bin/terraform
@@ -16,6 +20,7 @@ RUN pip install --no-cache-dir \
     "pydantic==2.11.3"
 COPY api ./api
 COPY worker ./worker
+COPY terraform ./terraform
 RUN mkdir -p /var/lib/iacp-v2 /workspace/terraform && chown -R iacp:iacp /app /var/lib/iacp-v2 /workspace
 USER iacp
 
