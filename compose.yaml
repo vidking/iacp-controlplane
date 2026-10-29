@@ -1,0 +1,61 @@
+services:
+  api:
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplanev2:local}
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_API_TOKEN: ${IACP_API_TOKEN:-}
+      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
+    ports:
+      - "${IACP_API_PORT:-8080}:8080"
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+      - ./terraform:/workspace/terraform:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker-1:
+    build: .
+    image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
+    command: python -m worker.main --worker-id worker-1
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
+      PROXMOX_VE_API_TOKEN_FILE: /run/secrets/proxmox_api_token
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+      - ./terraform:/workspace/terraform:ro
+      - ${IACP_PROXMOX_TOKEN_FILE:-./secrets/proxmox_api_token}:/run/secrets/proxmox_api_token:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-2:
+    build: .
+    image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
+    command: python -m worker.main --worker-id worker-2
+    environment:
+      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
+      PROXMOX_VE_API_TOKEN_FILE: /run/secrets/proxmox_api_token
+    volumes:
+      - iacp_data:/var/lib/iacp-v2
+      - ./terraform:/workspace/terraform:ro
+      - ${IACP_PROXMOX_TOKEN_FILE:-./secrets/proxmox_api_token}:/run/secrets/proxmox_api_token:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  iacp_data:
+

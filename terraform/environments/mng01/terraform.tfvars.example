@@ -1,0 +1,23 @@
+environment  = "mng01"
+allowed_nodes = ["mng01"]
+
+instance = {
+  vm_name                = "example-vm"
+  vm_id                  = 0
+  node_name              = "mng01"
+  template_vm_id         = 29000
+  template_node_name     = "mng01"
+  cpu_cores              = 2
+  memory_mb              = 2048
+  network_bridge         = "vmbr0"
+  vlan_id                = 1
+  ipv4_cidr              = "192.0.2.10/24"
+  ipv4_gateway           = "192.0.2.1"
+  cloudinit_datastore_id = "local-lvm"
+  cloudinit_username     = "ubuntu"
+  ssh_public_keys        = ["ssh-ed25519 AAAA... reemplazar"]
+  guest_agent_enabled    = false
+  started                = false
+  tags                   = ["iacp", "mng01"]
+}
+
