@@ -234,6 +234,20 @@ def test_promote_keeps_partial_runtime_fail_closed_on_final_verification_error()
     assert promotion.up.call_count == 1
 
 
+def test_operation_fence_uses_terraform_worker_after_workers_are_drained():
+    promotion = object.__new__(driver.Promotion)
+    promotion.container = Mock(return_value={"State": {"Running": False}})
+    promotion.compose = Mock(return_value=json.dumps({"passed": True}))
+    review = {"operation_id": "4652c4aa-58bb-4f92-94c9-c81790e74150"}
+
+    result = driver.Promotion._run_operation_fence_probe(promotion, review)
+
+    assert result["passed"] is True
+    args, kwargs = promotion.compose.call_args
+    assert args[-2:] == ("terraform-worker", "-")
+    assert kwargs["input"]
+
+
 def test_promote_is_idempotent_from_schema_head_partial_runtime():
     promotion = _canonical_promotion()
     driver.Promotion.promote(promotion)
