@@ -36,6 +36,25 @@ def test_each_catalog_golden_carries_its_own_hardware_contract(template, cpu, sc
     verify_base_plan(hardware['terraform_base'], variables)
 
 
+def test_ubuntu_vmtag_is_observed_and_added_to_new_clone_variables():
+    from tests.test_terraform import allocation_data
+
+    raw = {**golden(), 'tags': 'golden-image;iacp;ubuntu-2604;v20261016'}
+    hardware = parse(raw, 29001, 'mng01', 1, image_id='ubuntu-2604').model_dump()
+    data = allocation_data(30000, image='ubuntu-2604')
+    data.update(template_vm_id=29001, golden_hardware=hardware)
+    allocation = Allocation.model_validate(data)
+    variables = allocation.variables(SimpleNamespace(name='ubuntu-vmtag', image='ubuntu-2604',
+                                                     disk_gb=20, vcpus=1, memory_mb=2048))
+    assert hardware['vmtag'] == 'ubuntu-2604'
+    assert variables['instance']['tags'] == ['ubuntu-2604']
+
+
+def test_ubuntu_vmtag_missing_from_source_is_rejected():
+    with pytest.raises(PlanError, match='GOLDEN_HARDWARE_UNSUPPORTED'):
+        parse(golden(), 29001, 'mng01', 1, image_id='ubuntu-2604')
+
+
 def test_memory_hotplug_without_numa_rejected_before_plan():
     with pytest.raises(PlanError,match='HOTPLUG_REQUIRES_NUMA'):parse(golden(numa=0),29001,'mng01',1)
 

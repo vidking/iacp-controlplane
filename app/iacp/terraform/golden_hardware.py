@@ -27,6 +27,10 @@ class GoldenHardware(StrictModel):
     # Snapshot técnico del disco de arranque. Es opcional únicamente para
     # snapshots históricos anteriores a la captura de hardware de disco.
     disk: "GoldenDisk | None" = None
+    # Etiqueta de identidad de la imagen que debe conservar el clon. Es
+    # opcional para mantener compatibles los snapshots históricos que fueron
+    # sellados antes de observar tags en la Golden Image.
+    vmtag: str | None = Field(default=None, pattern=r"^ubuntu-(?:2204|2404|2604)$")
 
 
 class GoldenDisk(StrictModel):
@@ -64,6 +68,26 @@ _DISK_TECHNICAL_FIELDS = (
     "file_format", "aio", "cache", "discard", "backup", "replicate",
     "iothread", "ssd", "serial", "queues",
 )
+
+_VMTAG_IMAGES = frozenset({"ubuntu-2204", "ubuntu-2404", "ubuntu-2604"})
+
+
+def _image_vmtag(raw, image_id):
+    """Obtiene la etiqueta de identidad Ubuntu directamente de Proxmox.
+
+    No se copian tags administrativos como ``golden-image`` o la versión de
+    la plantilla. Solo se hereda el tag que identifica la imagen solicitada y
+    únicamente para las imágenes Ubuntu autorizadas por este adaptador.
+    """
+    if image_id not in _VMTAG_IMAGES:
+        return None
+    raw_tags = raw.get("tags")
+    if not isinstance(raw_tags, str):
+        raise ValueError()
+    tags = {item for item in raw_tags.split(";") if item}
+    if image_id not in tags:
+        raise ValueError()
+    return image_id
 
 
 def _storage_observation(client, node, storage_id):
@@ -187,7 +211,7 @@ def read(env, allocation, vcpus):
         build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context(cafile=env.get('SSL_CERT_FILE'))),NoRedirect()))
     try:
         raw=client._request('GET',f'/nodes/{quote(node,safe="")}/qemu/{image.template_vm_id}/config?current=1')
-        hardware = parse(raw,image.template_vm_id,node,vcpus)
+        hardware = parse(raw,image.template_vm_id,node,vcpus,image.image_id)
         if hardware.disk is not None:
             try:
                 storage_type, storage_krbd = _storage_observation(
@@ -205,7 +229,7 @@ def read(env, allocation, vcpus):
         raise PlanError('GOLDEN_HARDWARE_READ_UNAVAILABLE') from None
 
 
-def parse(raw, vmid, node, vcpus):
+def parse(raw, vmid, node, vcpus, image_id=None):
     try:
         if raw.get('template')!=1:raise ValueError()
         parts=raw['cpu'].split(',');options=dict(part.split('=',1) for part in parts[1:])
@@ -233,7 +257,7 @@ def parse(raw, vmid, node, vcpus):
         return GoldenHardware(template_vm_id=vmid,template_node=node,cpu_type=parts[0],flags=flags,
             numa=bool(numa),sockets=sockets,source_sockets=source_sockets,source_cpu=raw['cpu'],base=base,
             terraform_base=terraform_base,
-            disk=disk)
+            disk=disk, vmtag=_image_vmtag(raw, image_id))
     except (KeyError,TypeError,ValueError):
         raise PlanError('GOLDEN_HARDWARE_UNSUPPORTED') from None
 

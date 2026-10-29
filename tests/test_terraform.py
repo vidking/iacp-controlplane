@@ -279,6 +279,18 @@ def test_plan_policy_rejects_destructive_or_foreign_resources(kind):
         verify_plan(plan, variables)
 
 
+def test_plan_requires_the_observed_ubuntu_vmtag_on_a_new_clone():
+    allocation = Allocation.model_validate(allocation_data())
+    variables = allocation.variables(SimpleNamespace(**SPEC))
+    variables['instance']['tags'] = ['ubuntu-2604']
+    plan = plan_json(variables)
+    plan['resource_changes'][0]['change']['after']['tags'] = ['iacp', 'lab', 'ubuntu-2604']
+    verify_plan(plan, variables)
+    plan['resource_changes'][0]['change']['after']['tags'] = ['iacp', 'lab']
+    with pytest.raises(PlanError, match='UNSAFE_PLAN'):
+        verify_plan(plan, variables)
+
+
 def test_real_adapter_builds_plan_from_pinned_archive_and_preserves_integrity(tmp_path, monkeypatch):
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as tar:
