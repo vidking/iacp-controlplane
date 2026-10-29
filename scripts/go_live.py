@@ -151,7 +151,7 @@ def private_json(path, value):
         stream.write("\n")
 
 
-def check_idle(report, allowed_uncertain=()):
+def check_idle(report, allowed_uncertain=(), allowed_operation_uncertain=()):
     nonterminal={k:list(v) for k,v in report["nonterminal"].items()}
     if allowed_uncertain:
         expected=set(allowed_uncertain)
@@ -159,6 +159,12 @@ def check_idle(report, allowed_uncertain=()):
         found={r['id'] for r in rows if r['status']=='uncertain' and r['id'] in expected}
         require(found==expected,'Reviewed uncertainty fence changed')
         nonterminal['terraform_applies']=[r for r in rows if not (r['status']=='uncertain' and r['id'] in expected)]
+    if allowed_operation_uncertain:
+        expected=set(allowed_operation_uncertain)
+        rows=nonterminal.get('operations',[])
+        found={r['id'] for r in rows if r['status']=='uncertain' and r['id'] in expected}
+        require(found==expected,'Reviewed operation uncertainty fence changed')
+        nonterminal['operations']=[r for r in rows if not (r['status']=='uncertain' and r['id'] in expected)]
     require(not any(nonterminal.values()), "Nonterminal DB work; use its approved recovery workflow")
     require(not any(report["queues"].values()) and report["unacked"] == 0, "Broker has pending work")
 
@@ -295,6 +301,7 @@ class Promotion:
         exposure_mode(manifest)  # A typo must never silently select a weaker mode.
         if exposure_mode(manifest) == "corporate-internal":
             internal_target(manifest)
+        self.reviewed_operation_fences = ()
 
     def evidence(self, name, data):
         self.sequence += 1
@@ -373,6 +380,149 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         require(all(set(report[key]) == set(expected) for key in ("active", "reserved", "scheduled")), "Partial worker inventory")
         require(all(not any(report[key].values()) for key in ("active", "reserved", "scheduled")), "Workers are still busy")
         self.evidence("workers", report)
+
+    def _run_operation_fence_probe(self, review):
+        """Revalida una incertidumbre exacta sin ejecutar Terraform ni mutaciones.
+
+        El resultado se usa únicamente como fence de drenaje. La atestación no
+        convierte la operación en terminal ni autoriza su reintento.
+        """
+        code = r'''import hashlib,json,tempfile
+from pathlib import Path
+from sqlalchemy import select
+from botocore.exceptions import ClientError
+from redis import Redis
+from iacp.config import broker_url
+from iacp.db import get_session_factory
+from iacp.models import (CommercialIntent,DeletionExecution,Instance,Job,Operation,
+    OperationEvent,PowerExecution,TechnicalOwnership,TerraformApply,TerraformExecution)
+from iacp.terraform.config import Allocation
+from iacp.terraform.executor import state_resource
+from iacp.terraform.observation import proxmox_resource
+from iacp.terraform.state import S3StateReader
+from iacp.terraform.lifecycle import build_executor
+from iacp.services import commercial_bootstrap
+
+review=json.loads(REVIEW_JSON)
+def require(condition, reason):
+    if not condition:
+        raise RuntimeError(reason)
+
+with get_session_factory()() as session:
+    operation=session.get(Operation, review["operation_id"])
+    job=session.get(Job, review["job_id"])
+    instance=session.get(Instance, review["instance_id"])
+    execution=session.get(TerraformExecution, review["instance_id"])
+    ownership=session.get(TechnicalOwnership, review["instance_id"])
+    intent=session.get(CommercialIntent, review["instance_id"])
+    require(operation is not None and job is not None and instance is not None and execution is not None and ownership is not None,
+            "FENCE_BINDING_MISSING")
+    require(operation.id == review["operation_id"] and operation.instance_id == instance.id
+            and operation.kind == "instance.access.bootstrap"
+            and operation.status == "uncertain"
+            and operation.error_code == "BOOTSTRAP_RECONCILIATION_REQUIRED",
+            "FENCE_OPERATION_CHANGED")
+    require(job.operation_id == operation.id and job.tenant_id == instance.tenant_id
+            and job.status == "failed", "FENCE_JOB_CHANGED")
+    require(instance.tenant_id == review["tenant_id"] and instance.vmid == review["vmid"]
+            and instance.node == review["node"] and instance.name == review["name"]
+            and instance.status == "ready", "FENCE_INSTANCE_CHANGED")
+    require(ownership.tenant_id == instance.tenant_id and ownership.vmid == instance.vmid
+            and ownership.node == instance.node and ownership.name == instance.name
+            and ownership.state_key == execution.state_key
+            and ownership.binding_sha256 == review["ownership_binding_sha256"],
+            "FENCE_OWNERSHIP_CHANGED")
+    require(execution.vmid == instance.vmid
+            and execution.source_revision == review["source_revision"]
+            and hashlib.sha256(execution.state_key.encode()).hexdigest() == review["state_key_sha256"],
+            "FENCE_EXECUTION_CHANGED")
+    require(intent is not None and intent.bootstrap_started_at is not None
+            and intent.bootstrap_status == "uncertain",
+            "FENCE_BOOTSTRAP_STATE_CHANGED")
+    with open(commercial_bootstrap.__file__, "rb") as stream:
+        bootstrap_executor_sha256=hashlib.sha256(stream.read()).hexdigest()
+    require(bootstrap_executor_sha256 == review["bootstrap_executor_sha256"],
+            "FENCE_BOOTSTRAP_EXECUTOR_CHANGED")
+    events=session.scalars(select(OperationEvent).where(OperationEvent.operation_id == operation.id)).all()
+    codes={item.code for item in events}
+    require("commercial_bootstrap_dispatch_consumed" in codes
+            and "commercial_bootstrap_uncertain" in codes
+            and "commercial_bootstrap_completed" not in codes,
+            "FENCE_BOOTSTRAP_EVENTS_CHANGED")
+    require(not session.scalars(select(Operation).where(
+        Operation.instance_id == instance.id,
+        Operation.status.in_(("queued", "running", "uncertain")),
+        Operation.id != operation.id)).all(), "FENCE_OTHER_OPERATION_ACTIVE")
+    require(not session.scalars(select(PowerExecution).where(
+        PowerExecution.instance_id == instance.id,
+        PowerExecution.status.in_(("queued", "running", "uncertain")))).all(),
+            "FENCE_POWER_ACTIVE")
+    require(not session.scalars(select(DeletionExecution).where(
+        DeletionExecution.instance_id == instance.id,
+        DeletionExecution.status.in_(("queued", "running", "uncertain")))).all(),
+            "FENCE_DELETE_ACTIVE")
+    require(not session.scalars(select(TerraformApply).where(
+        TerraformApply.instance_id == instance.id,
+        TerraformApply.status.in_(("approved", "queued", "running", "uncertain")))).all(),
+            "FENCE_APPLY_ACTIVE")
+    allocation=Allocation.model_validate(execution.allocation)
+    variables=allocation.variables(instance)
+    # El worker inyecta deliberadamente las credenciales de Terraform desde su
+    # archivo protegido. No usar el os.environ ambiental del contenedor: no
+    # contiene las credenciales del backend ni de Proxmox.
+    executor=build_executor(observation=True)
+    with tempfile.TemporaryDirectory() as scratch:
+        env=executor.environment(Path(scratch))
+        reader=S3StateReader(allocation.backend.arguments(execution.state_key), env)
+        try:
+            snapshot=reader.read(lambda:False)
+            resource=state_resource(snapshot.state, variables)
+            require(str(resource["id"]) == str(review["state_resource_id"]), "FENCE_STATE_RESOURCE_CHANGED")
+            require(snapshot.metadata() == review["state_snapshot"], "FENCE_STATE_CHANGED")
+            try:
+                reader.client.head_object(Bucket=reader.bucket, Key=reader.key + ".tflock")
+            except ClientError as error:
+                require(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404,
+                        "FENCE_STATE_LOCK_PRESENT")
+            else:
+                raise RuntimeError("FENCE_STATE_LOCK_PRESENT")
+        finally:
+            reader.close()
+        observed=proxmox_resource(env, variables["instance"], lambda:False,
+                                  golden_hardware=variables.get("iacp_golden_hardware"))
+        require(observed.get("present") is True, "FENCE_PROXMOX_RESOURCE_MISSING")
+
+with Redis.from_url(broker_url(), socket_connect_timeout=3, socket_timeout=3) as redis:
+    for key in redis.scan_iter(count=100):
+        name=key.decode("utf8", errors="replace")
+        if name.split("\x06\x16")[0] in {"celery", "terraform", "lifecycle"}:
+            require(redis.llen(key) == 0, "FENCE_BROKER_PENDING")
+    require(redis.hlen("unacked") == 0, "FENCE_BROKER_UNACKED")
+print(json.dumps({"passed":True,"operation_id":review["operation_id"],"instance_id":review["instance_id"],
+                  "state_snapshot":review["state_snapshot"],"redelivery":"observe-only-fenced",
+                  "physical_resource":"present-read-only","broker":"empty"},sort_keys=True))
+'''.replace("REVIEW_JSON", repr(json.dumps(review, sort_keys=True)))
+        roles = ("terraform-worker", "worker", "api", "lifecycle-worker")
+        for role in roles:
+            container = self.container(role)
+            if container["State"]["Running"]:
+                result = json.loads(self.exec_python(role, code))
+                require(result.get("passed") is True, "Operation fence rejected")
+                return result
+        result = json.loads(self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T",
+                                         "--entrypoint", "python", "migrate", "-", input=code))
+        require(result.get("passed") is True, "Operation fence rejected")
+        return result
+
+    def revalidate_operation_fences(self):
+        for review in getattr(self, "reviewed_operation_fences", ()):
+            result = self._run_operation_fence_probe(review)
+            self.evidence("operation-fence-revalidated", {
+                "operation_id": result["operation_id"],
+                "instance_id": result["instance_id"],
+                "redelivery": result["redelivery"],
+                "broker": result["broker"],
+            })
 
     def recover_queued_guest_init(self, request):
         """Cancela una sola inicialización queued no despachada en el API activo.
@@ -871,7 +1021,8 @@ with get_session_factory()() as session:
     def up(self, *roles):
         self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *roles, timeout=180)
 
-    def verify(self, *, admission=0, lifecycle=0, idle=True, allowed_uncertain=()):
+    def verify(self, *, admission=0, lifecycle=0, idle=True, allowed_uncertain=(),
+               allowed_operation_uncertain=()):
         config = json.loads(self.compose("config", "--format", "json"))
         if self.canonical():
             self.internal_live_bindings()
@@ -908,7 +1059,8 @@ with get_session_factory()() as session:
         report = self.snapshot()
         require(report["schema"] == [HEAD], "Schema is not current head")
         if idle:
-            check_idle(report, allowed_uncertain)
+            self.revalidate_operation_fences()
+            check_idle(report, allowed_uncertain, allowed_operation_uncertain)
             self.workers_idle(lifecycle=True)
         deadline = time.monotonic() + 60
         while True:
@@ -957,6 +1109,7 @@ with get_session_factory()() as session:
         change=self.authorize("deploy")
         before = self.preflight()
         recovery_ids=self.review_recovery_deployment(change,before)
+        operation_recovery_ids=tuple(review["operation_id"] for review in self.reviewed_operation_fences)
         current_api_flags = dict(v.split("=", 1) for v in self.container("api")["Config"]["Env"] if "=" in v)
         restore_flags = {
             "admission": int(current_api_flags.get("IACP_ADMISSION_ENABLED", "0")),
@@ -968,7 +1121,8 @@ with get_session_factory()() as session:
             self.container(role)["Image"] == self.m["images"]["terraform" if role == "terraform-worker" else "api"] for role in ROLES) and (
                 current_api_flags.get("IACP_ADMISSION_ENABLED") == "0" and current_api_flags.get("IACP_KVM_LIFECYCLE_ENABLED") == "0"):
             migration = self.migrate_technical_ownership()
-            self.verify(allowed_uncertain=recovery_ids)
+            self.verify(allowed_uncertain=recovery_ids,
+                        allowed_operation_uncertain=operation_recovery_ids)
             # Incluso en la ruta de adopción sin recreación, restaurar el
             # estado de admisión que estaba habilitado antes del drenaje.
             self.flags(**restore_flags)
@@ -976,7 +1130,8 @@ with get_session_factory()() as session:
             self.verify(admission=restore_flags["admission"],
                         lifecycle=restore_flags["lifecycle"],
                         deletion=restore_flags["deletion"],
-                        allowed_uncertain=recovery_ids)
+                        allowed_uncertain=recovery_ids,
+                        allowed_operation_uncertain=operation_recovery_ids)
             self.evidence("canonical-adoption", {"passed": True, "containers_recreated": [],
                                                   "schema_changed": False, "ownership_migration": migration,
                                                   "admission_restored": restore_flags["admission"],
@@ -990,7 +1145,8 @@ with get_session_factory()() as session:
         while True:
             try:
                 before = self.snapshot()
-                check_idle(before,recovery_ids)
+                self.revalidate_operation_fences()
+                check_idle(before, recovery_ids, operation_recovery_ids)
                 self.workers_idle(lifecycle=any(c["Config"]["Labels"].get("com.docker.compose.service") == "lifecycle-worker" for c in self.containers()))
                 break
             except RuntimeError:
@@ -998,16 +1154,20 @@ with get_session_factory()() as session:
                     raise
                 time.sleep(5)
         self.compose("stop", "--timeout", "60", "worker", "terraform-worker", "lifecycle-worker", timeout=75)
-        check_idle(self.snapshot_stopped(),recovery_ids)
+        stopped_snapshot = self.snapshot_stopped()
+        self.revalidate_operation_fences()
+        check_idle(stopped_snapshot, recovery_ids, operation_recovery_ids)
         # Alembic owns its version table. Its ordered graph keeps 0005 intact.
         self.compose("run", "--rm", "--no-deps", "--pull", "never", "-T", "migrate", timeout=180)
         self.up(*ROLES)
         migration = self.migrate_technical_ownership()
-        self.verify(allowed_uncertain=recovery_ids)
+        self.verify(allowed_uncertain=recovery_ids,
+                    allowed_operation_uncertain=operation_recovery_ids)
         self.flags(**restore_flags)
         self.up(*ROLES)
         after = self.verify(admission=restore_flags["admission"], lifecycle=restore_flags["lifecycle"],
-                            allowed_uncertain=recovery_ids)
+                            allowed_uncertain=recovery_ids,
+                            allowed_operation_uncertain=operation_recovery_ids)
         compare_history(before, after, migration)
         self.evidence("promotion-completed", {"schema": HEAD,
                                                "lifecycle": restore_flags["lifecycle"],
@@ -1017,11 +1177,13 @@ with get_session_factory()() as session:
                                                "ownership_migration": migration})
 
     def review_recovery_deployment(self, change, before):
+        self.reviewed_operation_fences = ()
         if 'recovery_deployment_review' not in self.m:
             return ()
         review=self.operator_review('recovery_deployment_review',change)
-        require(self.canonical() and before['schema']==[HEAD] and review.get('mode')=='readonly-apply-recovery'
-                and review.get('source_revision')==SOURCE,'Recovery deployment must preserve schema/source')
+        require(self.canonical() and before['schema']==[HEAD]
+                and review.get('source_revision')==SOURCE,
+                'Recovery deployment must preserve schema/source')
         cfg=json.loads(self.compose('config','--format','json'))
         api=cfg['services']['api']['environment']
         require(api.get('IACP_ADMISSION_ENABLED')=='0' and api.get('IACP_KVM_LIFECYCLE_ENABLED')=='0'
@@ -1029,6 +1191,30 @@ with get_session_factory()() as session:
         current=next(v['Source'] for v in self.container('terraform-worker')['Mounts'] if v['Destination']=='/iac-source')
         require(current==next(v['source'] for v in cfg['services']['terraform-worker']['volumes'] if v['target']=='/iac-source'),
                 'Recovery deployment cannot change IaC source mount')
+        if review.get('mode') == 'readonly-operation-fence':
+            required = ('operation_id', 'instance_id', 'job_id', 'tenant_id', 'vmid',
+                        'node', 'name', 'source_revision', 'state_key_sha256',
+                        'ownership_binding_sha256', 'state_resource_id', 'state_snapshot',
+                        'bootstrap_executor_sha256')
+            require(all(review.get(field) not in (None, '') for field in required),
+                    'Operation fence attestation is incomplete')
+            require(review.get('operation_kind') == 'instance.access.bootstrap'
+                    and review.get('operation_status') == 'uncertain'
+                    and review.get('job_status') == 'failed'
+                    and review.get('redelivery_mode') == 'observe-only-fenced',
+                    'Operation fence attestation is not a consumed read-only fence')
+            result = self._run_operation_fence_probe(review)
+            self.reviewed_operation_fences = (review,)
+            self.evidence('operation-fence-attested', {
+                'operation_id': result['operation_id'],
+                'instance_id': result['instance_id'],
+                'redelivery': result['redelivery'],
+                'broker': result['broker'],
+                'state_snapshot': result['state_snapshot'],
+            })
+            return ()
+        require(review.get('mode')=='readonly-apply-recovery',
+                'Recovery deployment mode is not supported')
         from uuid import UUID
         identifier=str(UUID(review['approval_id']))
         code="""import json
