@@ -1,6 +1,7 @@
 from worker.allocation import allocate, release
 from worker.golden import variables
 from worker.main import local_variables
+from worker.proxmox import credentials
 
 
 class FakeProxmox:
@@ -88,3 +89,12 @@ def test_local_fixture_variables_are_small_and_portable():
     })
     assert result["environment"] == "local"
     assert result["instance"]["name"] == "local-test"
+
+
+def test_proxmox_credentials_accept_portainer_environment(monkeypatch):
+    monkeypatch.delenv("IACP_PROXMOX_CREDENTIALS_FILE", raising=False)
+    monkeypatch.setenv("IACP_PROXMOX_ENDPOINT", "https://mng01.cyberfuel.com:8006/")
+    monkeypatch.setenv("IACP_PROXMOX_API_TOKEN", "user@pam!token=example")
+    endpoint, token = credentials()
+    assert endpoint == "https://mng01.cyberfuel.com:8006"
+    assert token == "user@pam!token=example"

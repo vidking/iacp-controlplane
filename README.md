@@ -31,6 +31,12 @@ IACP_STACK=local IACP_NAME=local-demo ./scripts/plan.sh
 En el host de desarrollo la API queda disponible en `dev.iac.cyberfuel.com`; el
 puerto publicado se controla con `IACP_API_PORT`.
 
+Para Portainer se usa el manifiesto separado
+[`deploy/portainer/docker-compose.yml`](deploy/portainer/docker-compose.yml),
+que consume una imagen del registry, no publica puertos y expone la API por
+Traefik. El Compose standalone de la raíz conserva el flujo local con `build`
+y montaje editable de Terraform.
+
 Para ejecutar un apply se necesita el identificador de un plan:
 
 ```bash
@@ -55,7 +61,7 @@ colisiones; el límite normal es de dos operaciones simultáneas. La VM 104, VM
 106 y las Golden Images 29000, 29001, 29010 y 29011 no son destinos de
 aprovisionamiento.
 
-El worker necesita un archivo fuera del repositorio con esta forma:
+El worker standalone puede usar un archivo fuera del repositorio con esta forma:
 
 ```json
 {
@@ -77,6 +83,12 @@ requieren el repositorio, Docker, la conectividad HTTPS al Proxmox objetivo,
 el archivo de credenciales y una clave pública SSH. El Compose monta
 `terraform/` en solo lectura; cada operación crea su copia editable dentro del
 volumen de trabajo.
+
+El Stack de Portainer usa las variables `IACP_PROXMOX_ENDPOINT`,
+`IACP_PROXMOX_API_TOKEN` e `IACP_DEFAULT_SSH_PUBLIC_KEY`; así no necesita
+copiar código ni credenciales a carpetas del host. El flujo de publicación está
+documentado en [`docs/PORTAINER.md`](docs/PORTAINER.md) y el contrato de la API
+en [`docs/API.md`](docs/API.md).
 
 ## Flujo de una orden
 
@@ -109,6 +121,8 @@ Endpoints de observación: `/v1/operations`, `/v1/instances/{id}`,
 | Reserva de VMID | `worker/allocation.py` |
 | Heartbeat | `worker/heartbeat.py` |
 | Imágenes, secretos, puertos y volúmenes | `compose.yaml` y `.env` |
+| Stack Portainer y Traefik | `deploy/portainer/docker-compose.yml` |
+| Publicación manual de imagen | `scripts/publish-image.sh` |
 
 Para cambiar el comportamiento basta normalmente con editar el módulo
 Terraform, el catálogo o `worker/main.py`. No se editan manifests dispersos ni

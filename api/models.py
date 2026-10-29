@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Command(str, Enum):
@@ -46,6 +46,37 @@ class InstanceSpec(BaseModel):
         return self
 
 class OperationRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "command": "plan",
+                    "action": "provision",
+                    "stack": "mng01",
+                    "spec": {
+                        "name": "iacp-v2-demo",
+                        "image": "ubuntu-2404",
+                        "vcpus": 2,
+                        "memory_mb": 2048,
+                        "disk_gb": 20,
+                        "network_mode": "dhcp",
+                        "started": True,
+                        "ssh_public_keys": [],
+                    },
+                },
+                {
+                    "command": "apply",
+                    "action": "provision",
+                    "plan_operation_id": "<operation_id_del_plan>",
+                },
+                {
+                    "command": "destroy",
+                    "action": "destroy",
+                    "plan_operation_id": "<operation_id_del_plan>",
+                },
+            ]
+        }
+    )
     command: Command
     action: Action = Action.provision
     spec: InstanceSpec | None = None
