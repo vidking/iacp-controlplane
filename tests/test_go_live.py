@@ -1,8 +1,10 @@
 import base64
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import func, select
@@ -21,6 +23,225 @@ def load(name, filename):
 
 driver = load("go_live", "go_live.py")
 tls = load("go_live_tls", "render-tls.py")
+
+
+def _verification_promotion(*, admission=0, lifecycle=0, planned_deletion=None,
+                            actual_deletion=None):
+    """Construye un Promotion aislado para ejercitar verify sin Docker físico."""
+    planned_deletion = str(0 if planned_deletion is None else planned_deletion)
+    actual_deletion = planned_deletion if actual_deletion is None else str(actual_deletion)
+    images = {"api": "api-image", "terraform": "terraform-image"}
+    planned_environment = {
+        "IACP_ADMISSION_ENABLED": str(admission),
+        "IACP_KVM_LIFECYCLE_ENABLED": str(lifecycle),
+        "IACP_TERRAFORM_APPLY_ENABLED": "1",
+        "IACP_TERRAFORM_DELETE_ENABLED": planned_deletion,
+    }
+    config = {"services": {
+        role: {"environment": dict(planned_environment)} for role in driver.ROLES
+    }}
+    containers = {}
+    for role in driver.ROLES:
+        values = dict(planned_environment)
+        values["IACP_TERRAFORM_DELETE_ENABLED"] = actual_deletion
+        containers[role] = {
+            "State": {"Running": True},
+            "Image": images["terraform" if role == "terraform-worker" else "api"],
+            "Config": {"Env": [f"{key}={value}" for key, value in values.items()], "Labels": {}},
+            "HostConfig": {"PortBindings": {}, "ReadonlyRootfs": role == "lifecycle-worker"},
+            "Mounts": [],
+        }
+    promotion = object.__new__(driver.Promotion)
+    promotion.m = {"images": images}
+    promotion.compose = Mock(return_value=json.dumps(config))
+    promotion.canonical = Mock(return_value=False)
+    promotion.container = Mock(side_effect=containers.__getitem__)
+    promotion.planned_mounts = Mock(return_value={})
+    promotion.lifecycle_mount_targets = Mock(return_value=set())
+    promotion.evidence = Mock()
+    promotion.revalidate_operation_fences = Mock()
+    promotion.workers_idle = Mock()
+    promotion.snapshot = Mock(return_value={
+        "schema": [driver.HEAD],
+        "nonterminal": {
+            "operations": [], "jobs": [], "guest_initializations": [],
+            "terraform_applies": [], "power_executions": [],
+            "deletion_executions": [],
+        },
+        "queues": {}, "unacked": 0,
+    })
+
+    def exec_python(_role, code):
+        if "SOURCE_REVISION" in code:
+            return json.dumps({"source": driver.SOURCE, "terraform": "1.16.6"})
+        if "ownership_revision" in code:
+            return json.dumps(driver.SOURCE)
+        return ""
+
+    promotion.exec_python = Mock(side_effect=exec_python)
+    return promotion
+
+
+def _canonical_promotion(*, operation_id=None):
+    promotion = object.__new__(driver.Promotion)
+    api_image, terraform_image = "api-image", "terraform-image"
+    operation_id = operation_id or "4652c4aa-58bb-4f92-94c9-c81790e74150"
+    env = {
+        "IACP_ADMISSION_ENABLED": "0",
+        "IACP_KVM_LIFECYCLE_ENABLED": "0",
+        "IACP_TERRAFORM_APPLY_ENABLED": "1",
+        "IACP_TERRAFORM_DELETE_ENABLED": "0",
+    }
+    containers = {}
+    for role in driver.ROLES:
+        containers[role] = {
+            "Image": terraform_image if role == "terraform-worker" else api_image,
+            "Config": {"Env": [f"{key}={value}" for key, value in env.items()], "Labels": {}},
+        }
+    promotion.m = {"project": "iacp-controlplane", "images": {
+        "api": api_image, "terraform": terraform_image,
+    }}
+    promotion.execution_profile = {"environment": "lab"}
+    promotion.authorize = Mock(return_value={"reference": "lab:test:deploy"})
+    promotion.preflight = Mock(return_value={"schema": [driver.HEAD]})
+    promotion.reviewed_operation_fences = ({"operation_id": operation_id},)
+    promotion.review_recovery_deployment = Mock(return_value=())
+    promotion.canonical = Mock(return_value=True)
+    promotion.container = Mock(side_effect=containers.__getitem__)
+    promotion.migrate_technical_ownership = Mock(return_value={"blocked_count": 0})
+    promotion.verify = Mock()
+    promotion.flags = Mock()
+    promotion.up = Mock()
+    promotion.evidence = Mock()
+    return promotion
+
+
+def test_verify_signature_exposes_the_explicit_delete_contract():
+    parameters = inspect.signature(driver.Promotion.verify).parameters
+    assert parameters["deletion"].default is None
+    assert {"admission", "lifecycle", "deletion", "idle",
+            "allowed_uncertain", "allowed_operation_uncertain"} <= set(parameters)
+
+
+@pytest.mark.parametrize("admission,lifecycle,deletion", [
+    (0, 0, 0),
+    (1, 1, 1),
+    (1, 0, 1),
+    (0, 1, 0),
+])
+def test_verify_checks_apply_and_all_runtime_capability_flags(admission, lifecycle, deletion):
+    promotion = _verification_promotion(
+        admission=admission, lifecycle=lifecycle,
+        planned_deletion=deletion, actual_deletion=deletion,
+    )
+    driver.Promotion.verify(
+        promotion, admission=admission, lifecycle=lifecycle, deletion=deletion,
+    )
+
+
+def test_verify_preserves_compose_delete_default_for_existing_callers():
+    promotion = _verification_promotion(
+        admission=0, lifecycle=0, planned_deletion=1, actual_deletion=1,
+    )
+    driver.Promotion.verify(promotion, admission=0, lifecycle=0)
+
+
+@pytest.mark.parametrize("planned_deletion,actual_deletion,expected", [
+    ("0", "1", "solicitado"),
+    ("1", "0", "efectivo"),
+])
+def test_verify_rejects_delete_contract_drift(planned_deletion, actual_deletion, expected):
+    promotion = _verification_promotion(
+        admission=0, lifecycle=0,
+        planned_deletion=planned_deletion, actual_deletion=actual_deletion,
+    )
+    with pytest.raises(RuntimeError, match=expected):
+        driver.Promotion.verify(promotion, admission=0, lifecycle=0, deletion=1)
+
+
+def test_verify_rejects_invalid_delete_contract():
+    promotion = _verification_promotion(admission=0, lifecycle=0)
+    with pytest.raises(RuntimeError, match="Indicador DELETE inválido"):
+        driver.Promotion.verify(promotion, admission=0, lifecycle=0, deletion=2)
+    promotion.compose.assert_not_called()
+
+
+def test_promote_passes_restored_delete_to_final_canonical_verification():
+    promotion = _canonical_promotion()
+    driver.Promotion.promote(promotion)
+    assert promotion.verify.call_count == 2
+    for call in promotion.verify.call_args_list:
+        assert call.kwargs["allowed_operation_uncertain"] == (
+            "4652c4aa-58bb-4f92-94c9-c81790e74150",
+        )
+    assert promotion.verify.call_args_list[1].kwargs["deletion"] == 0
+    promotion.flags.assert_called_once_with(admission=0, lifecycle=0, deletion=0)
+    promotion.up.assert_called_once_with(*driver.ROLES)
+    promotion.migrate_technical_ownership.assert_called_once_with()
+    assert any(call.args[0] == "canonical-adoption" for call in promotion.evidence.call_args_list)
+
+
+def test_promote_passes_restored_delete_through_the_normal_path():
+    promotion = object.__new__(driver.Promotion)
+    before = {
+        "schema": ["0014_allow_historical_kvm_106"],
+        "nonterminal": {
+            "operations": [], "jobs": [], "guest_initializations": [],
+            "terraform_applies": [], "power_executions": [],
+            "deletion_executions": [],
+        },
+        "queues": {}, "unacked": 0, "tables": {},
+    }
+    after = {**before, "schema": [driver.HEAD]}
+    api = {"Config": {"Env": [
+        "IACP_ADMISSION_ENABLED=0",
+        "IACP_KVM_LIFECYCLE_ENABLED=0",
+        "IACP_TERRAFORM_DELETE_ENABLED=1",
+    ]}}
+    promotion.m = {"project": "iacp-controlplane"}
+    promotion.docker = []
+    promotion.run = Mock(side_effect=["id", "[]"])
+    promotion.authorize = Mock(return_value={"reference": "lab:test:deploy"})
+    promotion.preflight = Mock(return_value=before)
+    promotion.review_recovery_deployment = Mock(return_value=())
+    promotion.reviewed_operation_fences = ()
+    promotion.canonical = Mock(return_value=False)
+    promotion.container = Mock(return_value=api)
+    promotion.compose = Mock(return_value="")
+    promotion.flags = Mock()
+    promotion.snapshot = Mock(return_value=before)
+    promotion.snapshot_stopped = Mock(return_value=before)
+    promotion.revalidate_operation_fences = Mock()
+    promotion.workers_idle = Mock()
+    promotion.up = Mock()
+    promotion.migrate_technical_ownership = Mock(return_value={"blocked_count": 0})
+    promotion.verify = Mock(side_effect=[None, after])
+    promotion.evidence = Mock()
+
+    driver.Promotion.promote(promotion)
+
+    assert promotion.verify.call_args_list[1].kwargs["deletion"] == 1
+    promotion.flags.assert_any_call(admission=0, lifecycle=0, deletion=0)
+    promotion.flags.assert_any_call(admission=0, lifecycle=0, deletion=1)
+
+
+def test_promote_keeps_partial_runtime_fail_closed_on_final_verification_error():
+    promotion = _canonical_promotion()
+    promotion.verify.side_effect = [None, RuntimeError("health check failed")]
+    with pytest.raises(RuntimeError, match="health check failed"):
+        driver.Promotion.promote(promotion)
+    promotion.flags.assert_called_once_with(admission=0, lifecycle=0, deletion=0)
+    assert promotion.up.call_count == 1
+
+
+def test_promote_is_idempotent_from_schema_head_partial_runtime():
+    promotion = _canonical_promotion()
+    driver.Promotion.promote(promotion)
+    driver.Promotion.promote(promotion)
+    assert promotion.migrate_technical_ownership.call_count == 2
+    assert promotion.verify.call_count == 4
+    assert promotion.up.call_count == 2
+    promotion.flags.assert_any_call(admission=0, lifecycle=0, deletion=0)
 
 
 def test_promotion_accepts_the_deployed_0010_schema_before_migrating():
