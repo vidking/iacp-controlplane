@@ -6,8 +6,8 @@
       ],
       "self_service_enabled": true,
       "guest_initialization": "ubuntu-2404-lab-identity-v1",
-      "vmid_min": 30000,
-      "vmid_max": 30099,
+      "vmid_min": 30100,
+      "vmid_max": 999999999,
       "target_nodes": [
         "mng01"
       ],

@@ -33,8 +33,8 @@ class Profile(StrictModel):
     def valid_policy(self):
         for tenant in self.allowed_tenants:
             UUID(tenant)
-        if self.vmid_max < self.vmid_min or self.vmid_max-self.vmid_min > 10000:
-            raise ValueError('Bounded VMID range required')
+        if self.vmid_max < self.vmid_min:
+            raise ValueError('VMID range order is invalid')
         if self.target_nodes and (len(set(self.target_nodes)) != len(self.target_nodes)
                 or not set(self.target_nodes) <= set(self.settings.allowed_nodes)):
             raise ValueError('Explicit authorized target nodes required')

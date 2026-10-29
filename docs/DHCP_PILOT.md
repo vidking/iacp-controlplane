@@ -1,6 +1,6 @@
 # Piloto DHCP y pruebas desde Swagger (0.8)
 
-El perfil del servidor decide el direccionamiento, sin condiciones por nombre de clúster. El perfil de laboratorio `lab-dhcp` autoriza un tenant, rango VMID >=30000 y capacidad máxima de una instancia viva. Usa vmbr0, VirtIO, VLAN `null` (atributo omitido en Proxmox), Cloud-Init `ip=dhcp`, sin gateway estático. Nunca abre, reserva ni libera IPAM. El modo estático existente conserva IPAM, gateway y VLAN 204. Un OFFER diagnóstico demuestra servicio DHCP, no asignación de una dirección a una VM.
+El perfil del servidor decide el direccionamiento, sin condiciones por nombre de clúster. El perfil de laboratorio `lab-dhcp` autoriza un tenant y nuevas reservas desde VMID `30100` hasta el límite técnico de Proxmox; los VMID históricos `30000–30099` no se reutilizan. Usa vmbr0, VirtIO, VLAN `null` (atributo omitido en Proxmox), Cloud-Init `ip=dhcp`, sin gateway estático. Nunca abre, reserva ni libera IPAM. El modo estático existente conserva IPAM, gateway y VLAN 204. Un OFFER diagnóstico demuestra servicio DHCP, no asignación de una dirección a una VM.
 
 ## Swagger como cliente del panel CRM
 

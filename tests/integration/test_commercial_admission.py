@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from iacp.models import BOOTSTRAP_TENANT_ID,CommercialIntent,Instance
+from iacp.models import BOOTSTRAP_TENANT_ID,CommercialIntent,Instance,TerraformExecution
 from iacp.security import Principal
 from iacp.services.commercial import create
 from iacp.services.instances import Conflict
@@ -42,6 +42,8 @@ def test_global_admission_serializes_two_core_requests_without_tenant_quota(
     assert sum(x is not None for x in results)==2
     with sessions() as s:
         assert len(s.scalars(select(Instance)).all())==len(s.scalars(select(CommercialIntent)).all())==2
+        vmids=s.scalars(select(TerraformExecution.vmid)).all()
+        assert len(vmids)==len(set(vmids))==2
     assert len(store.redis.values)==2
 
 
