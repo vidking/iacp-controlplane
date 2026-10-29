@@ -1021,8 +1021,17 @@ with get_session_factory()() as session:
     def up(self, *roles):
         self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *roles, timeout=180)
 
-    def verify(self, *, admission=0, lifecycle=0, idle=True, allowed_uncertain=(),
-               allowed_operation_uncertain=()):
+    def verify(self, *, admission=0, lifecycle=0, deletion=None, idle=True,
+               allowed_uncertain=(), allowed_operation_uncertain=()):
+        """Verifica capacidades efectivas y el estado operativo revisado.
+
+        Cuando ``deletion`` es ``None`` se conserva el valor DELETE de la
+        configuración Compose revisada. Las transiciones de promoción pasan
+        el valor restaurado explícitamente para comprobar también el contrato
+        de recuperación de flags.
+        """
+        if deletion is not None:
+            require(deletion in (0, 1), "Indicador DELETE inválido")
         config = json.loads(self.compose("config", "--format", "json"))
         if self.canonical():
             self.internal_live_bindings()
@@ -1041,8 +1050,13 @@ with get_session_factory()() as session:
             if role in {"api", "terraform-worker"}:
                 require(values.get("IACP_TERRAFORM_APPLY_ENABLED") == "1", "Apply changed")
                 planned_env = config['services'][role]['environment']
-                require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0'),
-                        "Deletion flag/allowlist differs from reviewed configuration")
+                planned_deletion = planned_env.get('IACP_TERRAFORM_DELETE_ENABLED', '0')
+                expected_deletion = planned_deletion if deletion is None else str(deletion)
+                if deletion is not None:
+                    require(expected_deletion == planned_deletion,
+                            "Indicador DELETE solicitado difiere de la configuración revisada")
+                require(values.get('IACP_TERRAFORM_DELETE_ENABLED', '0') == expected_deletion,
+                        "Indicador DELETE efectivo difiere del esperado")
             if role in {"api", "lifecycle-worker", "terraform-worker"}:
                 require(values.get("IACP_KVM_LIFECYCLE_ENABLED", "0") == str(lifecycle), "Lifecycle flag mismatch")
             if role == "api":
@@ -1166,6 +1180,7 @@ with get_session_factory()() as session:
         self.flags(**restore_flags)
         self.up(*ROLES)
         after = self.verify(admission=restore_flags["admission"], lifecycle=restore_flags["lifecycle"],
+                            deletion=restore_flags["deletion"],
                             allowed_uncertain=recovery_ids,
                             allowed_operation_uncertain=operation_recovery_ids)
         compare_history(before, after, migration)
