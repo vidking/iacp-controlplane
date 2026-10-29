@@ -17,6 +17,7 @@ from iacp.models import (
     TerraformExecution,
     utcnow,
 )
+from iacp.services.bootstrap_secrets import BootstrapSecretError
 from iacp.services import commercial_bootstrap_recovery as recovery
 from tests.power_helpers import managed_instance
 from tests.test_commercial_admission import store
@@ -239,9 +240,92 @@ def test_rollback_keeps_uncertain_fence_if_commit_fails(
                 session, request, runtime_idle=lambda: {"redis": True}, store=store
             )
         monkeypatch.setattr(session, "commit", original_commit)
+        assert store.redis.values
     with sessions() as session:
         assert session.get(Operation, request["operation_id"]).status == "uncertain"
         assert session.get(CommercialIntent, request["instance_id"]).bootstrap_status == "uncertain"
+
+
+def test_audit_actor_is_bounded_for_maximum_actor_and_reference_lengths(
+    sessions, uncertain_bootstrap
+):
+    request, store = uncertain_bootstrap
+    request["actor"] = "A" * 128
+    request["change_reference"] = "R" * 256
+    result = run_recovery(sessions, request, store)
+    assert result["changed"] is True
+    assert len(result["event_actor"]) <= 128
+    assert recovery.build_audit_actor(
+        request["actor"], request["change_reference"],
+        request["evidence"]["evidence_sha256"],
+    ) == result["event_actor"]
+
+
+def test_missing_redis_key_is_idempotent_and_clears_persisted_reference(
+    sessions, uncertain_bootstrap
+):
+    request, store = uncertain_bootstrap
+    store.redis.values.clear()
+    result = run_recovery(sessions, request, store)
+    assert result["cleanup_pending"] is False
+    with sessions() as session:
+        assert session.get(CommercialIntent, request["instance_id"]).secret_reference is None
+
+
+class RedisUnavailable:
+    def delete(self, _reference):
+        raise BootstrapSecretError("BOOTSTRAP_SECRET_CLEANUP_PENDING")
+
+
+def test_redis_unavailable_leaves_durable_cleanup_marker_for_retry(
+    sessions, uncertain_bootstrap
+):
+    request, store = uncertain_bootstrap
+    result = run_recovery(sessions, request, RedisUnavailable())
+    assert result["changed"] is True
+    assert result["cleanup_pending"] is True
+    with sessions() as session:
+        assert session.get(Operation, request["operation_id"]).status == "failed"
+        assert session.get(CommercialIntent, request["instance_id"]).secret_reference is not None
+
+    retry = run_recovery(sessions, request, store)
+    assert retry["already_completed"] is True
+    assert retry["cleanup_pending"] is False
+    with sessions() as session:
+        intent = session.get(CommercialIntent, request["instance_id"])
+        assert intent.secret_reference is None
+        assert len(session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id == request["operation_id"],
+            OperationEvent.code == recovery.EVENT_CODE,
+        )).all()) == 1
+
+
+def test_post_commit_reference_clear_failure_is_retryable(
+    sessions, uncertain_bootstrap, monkeypatch
+):
+    request, store = uncertain_bootstrap
+    with sessions() as session:
+        original_commit = session.commit
+        calls = {"count": 0}
+
+        def fail_second_commit():
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise RuntimeError("injected post-commit cleanup failure")
+            return original_commit()
+
+        monkeypatch.setattr(session, "commit", fail_second_commit)
+        result = recovery.recover_in_session(
+            session, request, runtime_idle=lambda: {"redis": True}, store=store
+        )
+        assert result["cleanup_pending"] is True
+    with sessions() as session:
+        assert session.get(Operation, request["operation_id"]).status == "failed"
+        assert session.get(CommercialIntent, request["instance_id"]).secret_reference is not None
+
+    retry = run_recovery(sessions, request, store)
+    assert retry["already_completed"] is True
+    assert retry["cleanup_pending"] is False
 
 
 def test_ownership_mismatch_is_rejected(sessions, uncertain_bootstrap):
