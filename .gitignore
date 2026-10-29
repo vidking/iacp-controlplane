@@ -10,4 +10,6 @@ __pycache__/
 crash.log
 data/
 logs/
+secrets/*
+!secrets/proxmox_credentials.example.json
 

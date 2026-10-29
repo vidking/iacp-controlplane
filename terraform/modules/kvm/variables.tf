@@ -65,6 +65,41 @@ variable "cpu_cores" {
   }
 }
 
+variable "cpu_type" {
+  description = "Tipo de CPU heredado de la Golden Image."
+  type        = string
+  default     = null
+}
+
+variable "cpu_flags" {
+  description = "Flags de CPU heredados de la Golden Image."
+  type        = set(string)
+  default     = []
+}
+
+variable "cpu_sockets" {
+  description = "Cantidad de sockets virtuales."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.cpu_sockets >= 1 && floor(var.cpu_sockets) == var.cpu_sockets
+    error_message = "cpu_sockets debe ser un entero positivo."
+  }
+}
+
+variable "numa" {
+  description = "Habilitar NUMA según la Golden Image."
+  type        = bool
+  default     = false
+}
+
+variable "cpu_hotplugged" {
+  description = "Cantidad efectiva de vCPU expuesta por Proxmox."
+  type        = number
+  default     = null
+}
+
 variable "memory_mb" {
   description = "Memoria RAM dedicada en MiB."
   type        = number
@@ -91,34 +126,75 @@ variable "network_bridge" {
 variable "vlan_id" {
   description = "VLAN de la interfaz principal."
   type        = number
-  nullable    = false
+  default     = null
 
   validation {
-    condition     = var.vlan_id >= 1 && var.vlan_id <= 4094 && floor(var.vlan_id) == var.vlan_id
-    error_message = "vlan_id debe estar entre 1 y 4094."
+    condition     = var.vlan_id == null || (var.vlan_id >= 1 && var.vlan_id <= 4094 && floor(var.vlan_id) == var.vlan_id)
+    error_message = "vlan_id debe estar vacío o entre 1 y 4094."
+  }
+}
+
+variable "network_mode" {
+  description = "Modo de direccionamiento de la interfaz."
+  type        = string
+  default     = "dhcp"
+
+  validation {
+    condition     = contains(["dhcp", "static"], var.network_mode)
+    error_message = "network_mode debe ser dhcp o static."
   }
 }
 
 variable "ipv4_cidr" {
   description = "Dirección IPv4 estática en formato CIDR."
   type        = string
-  nullable    = false
+  default     = null
 
   validation {
-    condition     = can(cidrnetmask(var.ipv4_cidr))
-    error_message = "ipv4_cidr debe contener una dirección IPv4 y prefijo válidos."
+    condition     = var.ipv4_cidr == null || can(cidrnetmask(var.ipv4_cidr))
+    error_message = "ipv4_cidr debe ser null o contener una dirección IPv4 y prefijo válidos."
   }
 }
 
 variable "ipv4_gateway" {
   description = "Gateway IPv4 de la interfaz principal."
   type        = string
-  nullable    = false
+  default     = null
 
   validation {
-    condition     = can(cidrnetmask("${var.ipv4_gateway}/32"))
-    error_message = "ipv4_gateway debe ser una dirección IPv4 válida."
+    condition     = var.ipv4_gateway == null || can(cidrnetmask("${var.ipv4_gateway}/32"))
+    error_message = "ipv4_gateway debe ser null o una dirección IPv4 válida."
   }
+}
+
+variable "bios" {
+  description = "Firmware heredado de la Golden Image."
+  type        = string
+  default     = null
+}
+
+variable "machine" {
+  description = "Tipo de máquina heredado de la Golden Image."
+  type        = string
+  default     = null
+}
+
+variable "scsi_hardware" {
+  description = "Controlador SCSI heredado de la Golden Image."
+  type        = string
+  default     = null
+}
+
+variable "hotplug" {
+  description = "Dispositivos hotplug heredados de la Golden Image."
+  type        = string
+  default     = null
+}
+
+variable "boot_order" {
+  description = "Orden de arranque heredado de la Golden Image."
+  type        = list(string)
+  default     = null
 }
 
 variable "cloudinit_datastore_id" {

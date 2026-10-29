@@ -7,8 +7,9 @@ services:
       IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
       IACP_TERRAFORM_PATH: /workspace/terraform
       IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
       IACP_API_TOKEN: ${IACP_API_TOKEN:-}
-      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
     ports:
       - "${IACP_API_PORT:-8080}:8080"
     volumes:
@@ -24,16 +25,25 @@ services:
     build: .
     image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
     command: python -m worker.main --worker-id worker-1
+    # Compose monta el secreto con los permisos del archivo de origen; el worker
+    # necesita leerlo para que Terraform autentique contra Proxmox.
+    user: "0:0"
     environment:
       IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
       IACP_TERRAFORM_PATH: /workspace/terraform
       IACP_TERRAFORM_DIR: environments/mng01
-      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
-      PROXMOX_VE_API_TOKEN_FILE: /run/secrets/proxmox_api_token
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      IACP_VMID_MIN: ${IACP_VMID_MIN:-40000}
+      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
+      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
+      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
     volumes:
       - iacp_data:/var/lib/iacp-v2
       - ./terraform:/workspace/terraform:ro
-      - ${IACP_PROXMOX_TOKEN_FILE:-./secrets/proxmox_api_token}:/run/secrets/proxmox_api_token:ro
+    secrets:
+      - proxmox_credentials
     depends_on:
       api:
         condition: service_healthy
@@ -42,20 +52,31 @@ services:
     build: .
     image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
     command: python -m worker.main --worker-id worker-2
+    user: "0:0"
     environment:
       IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
       IACP_TERRAFORM_PATH: /workspace/terraform
       IACP_TERRAFORM_DIR: environments/mng01
-      PROXMOX_VE_ENDPOINT: ${PROXMOX_VE_ENDPOINT:-https://mng01.cyberfuel.com:8006/}
-      PROXMOX_VE_API_TOKEN_FILE: /run/secrets/proxmox_api_token
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      IACP_VMID_MIN: ${IACP_VMID_MIN:-40000}
+      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
+      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
+      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
     volumes:
       - iacp_data:/var/lib/iacp-v2
       - ./terraform:/workspace/terraform:ro
-      - ${IACP_PROXMOX_TOKEN_FILE:-./secrets/proxmox_api_token}:/run/secrets/proxmox_api_token:ro
+    secrets:
+      - proxmox_credentials
     depends_on:
       api:
         condition: service_healthy
 
 volumes:
   iacp_data:
+
+secrets:
+  proxmox_credentials:
+    file: ${IACP_PROXMOX_CREDENTIALS_FILE:-./secrets/proxmox_credentials.example.json}
 

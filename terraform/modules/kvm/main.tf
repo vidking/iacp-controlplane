@@ -4,8 +4,13 @@ resource "proxmox_virtual_environment_vm" "this" {
   vm_id     = var.vm_id
   pool_id   = var.pool_id
 
-  description = "IACP-managed KVM instance"
-  tags        = sort(tolist(var.tags))
+  description   = "IACP-managed KVM instance"
+  tags          = sort(tolist(var.tags))
+  bios          = var.bios
+  machine       = var.machine
+  scsi_hardware = var.scsi_hardware
+  hotplug       = var.hotplug
+  boot_order    = var.boot_order
 
   clone {
     vm_id        = var.template_vm_id
@@ -15,8 +20,12 @@ resource "proxmox_virtual_environment_vm" "this" {
   }
 
   cpu {
-    cores   = var.cpu_cores
-    sockets = 1
+    cores      = var.cpu_cores / var.cpu_sockets
+    sockets    = var.cpu_sockets
+    hotplugged = coalesce(var.cpu_hotplugged, var.cpu_cores)
+    type       = var.cpu_type
+    flags      = var.cpu_flags
+    numa       = var.numa
   }
 
   memory {
@@ -53,8 +62,8 @@ resource "proxmox_virtual_environment_vm" "this" {
 
     ip_config {
       ipv4 {
-        address = var.ipv4_cidr
-        gateway = var.ipv4_gateway
+        address = var.network_mode == "dhcp" ? "dhcp" : var.ipv4_cidr
+        gateway = var.network_mode == "dhcp" ? null : var.ipv4_gateway
       }
     }
 
