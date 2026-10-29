@@ -22,6 +22,7 @@ imagen contiene el código y Terraform; el volumen nombrado
 Para desarrollo:
 
 ```bash
+docker login scm.cyberfuel.com
 IACP_IMAGE_TAG=develop ./scripts/publish-image.sh
 ```
 
