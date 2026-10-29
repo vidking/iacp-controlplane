@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+umask 022
+
+SOURCE=/etc/ssh/ssh_host_ed25519_key.pub
+DIRECTORY=/var/lib/iacp/host-identity
+TARGET=$DIRECTORY/ssh_host_ed25519_key.pub
+
+[ "$(id -u)" -eq 0 ] || { echo 'requires root' >&2; exit 1; }
+[ -f "$SOURCE" ] || { echo 'host public key is missing' >&2; exit 1; }
+[ ! -L "$SOURCE" ] || { echo 'host public key must not be a symlink' >&2; exit 1; }
+
+# Validate the public material without printing it. Private-key material is
+# never read or copied by this publisher.
+grep -Eq '^ssh-ed25519[[:space:]]+[A-Za-z0-9+/]+={0,2}([[:space:]].*)?$' "$SOURCE" || {
+    echo 'host public key format is invalid' >&2
+    exit 1
+}
+if grep -q 'PRIVATE KEY' "$SOURCE"; then
+    echo 'private-key material is not allowed' >&2
+    exit 1
+fi
+/usr/bin/ssh-keygen -lf "$SOURCE" >/dev/null 2>&1 || {
+    echo 'host public key cannot be parsed' >&2
+    exit 1
+}
+hostkeys=$(/usr/sbin/sshd -T | /usr/bin/awk '$1 == "hostkey" {print $2}')
+/usr/bin/printf '%s\n' "$hostkeys" | /usr/bin/grep -Fxq "$SOURCE" || {
+    echo 'host public key is not an effective sshd host key' >&2
+    exit 1
+}
+
+/usr/bin/install -d -o root -g root -m 0555 "$DIRECTORY"
+if [ -e "$TARGET" ]; then
+    [ ! -L "$TARGET" ] || { echo 'published key must not be a symlink' >&2; exit 1; }
+    /usr/bin/cmp -s "$SOURCE" "$TARGET" || {
+        echo 'published host key does not match the effective host key' >&2
+        exit 1
+    }
+else
+    temporary=$(/usr/bin/mktemp "$DIRECTORY/.ssh_host_ed25519_key.pub.XXXXXX")
+    trap '/usr/bin/rm -f "$temporary"' EXIT HUP INT TERM
+    /usr/bin/install -o root -g root -m 0444 "$SOURCE" "$temporary"
+    /usr/bin/mv -f "$temporary" "$TARGET"
+    trap - EXIT HUP INT TERM
+fi
+
+/usr/bin/chown root:root "$TARGET"
+/usr/bin/chmod 0444 "$TARGET"
+/usr/bin/restorecon -F "$DIRECTORY" "$TARGET"
+/usr/bin/test "$(/usr/bin/stat -c '%U:%G:%a' "$TARGET")" = 'root:root:444'

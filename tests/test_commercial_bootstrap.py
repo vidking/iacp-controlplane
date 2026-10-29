@@ -1,11 +1,12 @@
 """Entrega, expiración y reconciliación sin volver a clonar ni reenviar secretos."""
 import json
 from unittest.mock import Mock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlalchemy import select
 
-from iacp.models import CommercialIntent,GuestInitialization,Instance,Job,Operation,TerraformApply,TerraformExecution,utcnow,BOOTSTRAP_TENANT_ID
+from iacp.models import CommercialIntent,GuestInitialization,Instance,Job,Operation,OperationEvent,TerraformApply,TerraformExecution,utcnow,BOOTSTRAP_TENANT_ID
 from iacp.security import Principal
 from iacp.services.commercial import create,advance
 from iacp.services.commercial_bootstrap import request,execute
@@ -17,8 +18,12 @@ from uuid import uuid4
 
 
 class Delivery:
-    def __init__(self):self.calls=0;self.observations=0;self.lost=False
-    def apply(self,*args):
+    def __init__(self):self.calls=0;self.observations=0;self.preflights=0;self.lost=False;self.preflight_error=None
+    def preflight(self,*args):
+        self.preflights+=1
+        if self.preflight_error:raise self.preflight_error
+        return {'address':'192.0.2.10','host_key':object()}
+    def apply(self,*args,**kwargs):
         self.calls+=1
         if self.lost:raise RuntimeError(args[3])
         return {'status':'completed'}
@@ -67,7 +72,7 @@ def test_success_deletes_ciphertext_and_duplicate_task_does_not_send_again(sessi
     accepted,bootstrap,executor,published=initialized
     delivery=Delivery();execute(bootstrap.operation_id,sessions,store,delivery)
     execute(bootstrap.operation_id,sessions,store,delivery)
-    assert delivery.calls==1 and len(executor.calls)==1 and len(published)==1
+    assert delivery.calls==1 and delivery.preflights==1 and len(executor.calls)==1 and len(published)==1
     assert store.redis.values=={}
     with sessions() as s:
         row=s.get(CommercialIntent,accepted.instance_id)
@@ -114,9 +119,63 @@ def test_lost_delivery_response_only_observes_even_after_secret_expiry(sessions,
         store.delete(row.secret_reference)
         assert row.error_code=='BOOTSTRAP_DELIVERY_UNCONFIRMED'
     execute(bootstrap.operation_id,sessions,store,delivery)
-    assert delivery.calls==1 and delivery.observations==1
+    assert delivery.calls==1 and delivery.preflights==1 and delivery.observations==1
     with sessions() as s:assert s.get(CommercialIntent,accepted.instance_id).bootstrap_status=='completed'
     assert specification().access.root_password.get_secret_value() not in caplog.text
+
+
+def test_preflight_failure_is_terminal_before_consuming_secret(sessions,initialized,store):
+    accepted,bootstrap,_,published=initialized
+    delivery=Delivery()
+    from iacp.services.bootstrap_secrets import BootstrapSecretError
+    delivery.preflight_error=BootstrapSecretError('BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE')
+
+    execute(bootstrap.operation_id,sessions,store,delivery)
+
+    assert delivery.preflights==1 and delivery.calls==0
+    with sessions() as s:
+        row=s.get(CommercialIntent,accepted.instance_id)
+        operation=s.get(Operation,bootstrap.operation_id)
+        job=s.scalar(select(Job).where(Job.operation_id==bootstrap.operation_id))
+        assert row.bootstrap_status=='failed'
+        assert row.bootstrap_started_at is None
+        assert operation.status==job.status=='failed'
+        assert operation.error_code=='BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE'
+        assert s.scalar(select(Operation).where(Operation.id==bootstrap.operation_id)).error_code == operation.error_code
+        codes=[event.code for event in s.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id==bootstrap.operation_id)).all()]
+        assert 'commercial_bootstrap_preflight_failed' in codes
+    assert store.redis.values=={}
+
+
+def test_preflight_failure_can_replay_same_intent_without_cloning(sessions,initialized,store):
+    accepted,bootstrap,_,published=initialized
+    delivery=Delivery()
+    from iacp.services.bootstrap_secrets import BootstrapSecretError
+    delivery.preflight_error=BootstrapSecretError('BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE')
+    execute(bootstrap.operation_id,sessions,store,delivery)
+
+    with sessions() as s:
+        original=s.get(CommercialIntent,accepted.instance_id)
+        replay_spec=specification()
+        if original.specification.get('pilot_defaults'):
+            from iacp.commercial_contract import CommercialInstanceCreate
+            body=replay_spec.model_dump(mode='json',exclude={'network','commercial_context','access'})
+            body['access']={'root_password':replay_spec.access.root_password.get_secret_value(),
+                'ssh_public_keys':replay_spec.access.ssh_public_keys}
+            replay_spec=CommercialInstanceCreate.model_validate(body)
+        replay=create(s,Principal(BOOTSTRAP_TENANT_ID,'crm','operator'),replay_spec,
+            'creation',published.append,store,capacity=lambda *_:pytest.fail('No volver a reservar capacidad'))
+        assert replay.instance_id==accepted.instance_id
+        assert s.get(CommercialIntent,accepted.instance_id).bootstrap_status=='pending'
+        assert s.get(Operation,bootstrap.operation_id).status=='queued'
+    assert store.redis.values
+
+    retry=Delivery()
+    execute(bootstrap.operation_id,sessions,store,retry)
+    assert retry.preflights==1 and retry.calls==1
+    with sessions() as s:
+        assert s.get(CommercialIntent,accepted.instance_id).bootstrap_status=='completed'
 
 
 @pytest.mark.parametrize('image,username',[('ubuntu-2404','ubuntu'),('ubuntu-2604','root'),('almalinux-9','root'),('almalinux-10','root')])
@@ -155,6 +214,11 @@ def test_ssh_uses_pinned_key_and_stdin_not_password_in_command_or_connect(tmp_pa
     assert isinstance(ssh.set_missing_host_key_policy.call_args.args[0],paramiko.RejectPolicy)
     assert "os.chmod(ssh_directory,0o700)" in PROGRAM
     assert "os.chmod(path.parent,0o700)" in PROGRAM
+    paths=[parse_qs(urlsplit(call.args[1]).query)['file'][0] for call in client._request.call_args_list]
+    expected='/var/lib/iacp/host-identity/ssh_host_ed25519_key.pub' if image.startswith('almalinux-') else '/etc/ssh/ssh_host_ed25519_key.pub'
+    assert expected in paths
+    if image.startswith('almalinux-'):
+        assert '/etc/ssh/ssh_host_ed25519_key.pub' not in paths
 
 
 @pytest.mark.parametrize('vmid',[104,29000,29001,29010,29011])

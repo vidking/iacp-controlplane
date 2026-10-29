@@ -3,7 +3,6 @@
 The user accepted clear initial passwords in private lab plan/state artifacts.
 This module never returns, audits or logs a password or provider exception.
 """
-import base64
 import hashlib
 import hmac
 import ipaddress
@@ -135,15 +134,18 @@ class AccessVerifier:
         result = json.loads(read('/var/lib/cloud/data/result.json'))
         if result.get('v1', {}).get('errors') != []:
             raise Conflict('CLOUD_INIT_FAILED')
-        host_key = read('/etc/ssh/ssh_host_ed25519_key.pub').split()
-        if host_key[0] != 'ssh-ed25519' or not instance.ip_addresses:
+        from .ssh_host_identity import read as read_host_key
+        try:
+            host_key = read_host_key(client, target, getattr(instance, 'image', None))
+        except Exception:
+            raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID') from None
+        if not instance.ip_addresses:
             raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID')
         # The host key comes from the same inventory-bound QGA, never TOFU or
         # AutoAddPolicy. IP ownership was verified by DHCP/MAC initialization.
         address = str(ipaddress.IPv4Address(instance.ip_addresses[0]))
-        key = paramiko.Ed25519Key(data=base64.b64decode(host_key[1], validate=True))
         with paramiko.SSHClient() as ssh:
-            ssh.get_host_keys().add(address, 'ssh-ed25519', key)
+            ssh.get_host_keys().add(address, 'ssh-ed25519', host_key.key)
             ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
             ssh.connect(address, username='root', password=decrypt_password(instance), timeout=10,
                 auth_timeout=10, banner_timeout=10, allow_agent=False, look_for_keys=False)

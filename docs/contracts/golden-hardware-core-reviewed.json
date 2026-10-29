@@ -7,5 +7,5 @@
   "app/iacp/terraform/observation.py": "103a019f9f15b7f3071375abd4610b0f1e5ce0a025878ef7d3b04ba71695e80a",
   "app/iacp/terraform/golden_adapter.py": "9cbf91c05a969107f704b818050b706d243afc7a9a2bc2a5da3d62f13c14f42e",
   "app/iacp/terraform/golden_hardware.py": "64acbdcfe13c3116afbfa531bd837db8a46ba2e5f24c1fe2d4114805424b0e39",
-  "app/iacp/services/secure_bootstrap.py": "23c19284d4c1673328f7917f97be3d9ead78c5d11b59bd117ec88fc7ddb94b58"
+  "app/iacp/services/secure_bootstrap.py": "0b6f778d6a870adf21fab37a0caf435e21e558ca2271f02eb7b12335bb91769b"
 }

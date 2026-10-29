@@ -1,0 +1,13 @@
+[Unit]
+Description=Publicar la identidad SSH del guest para IACP
+After=sshd-keygen.target
+Before=cloud-init-final.service
+ConditionPathExists=/etc/ssh/ssh_host_ed25519_key.pub
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/iacp-publish-host-key
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

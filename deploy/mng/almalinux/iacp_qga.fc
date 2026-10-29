@@ -1,0 +1,1 @@
+/var/lib/iacp/host-identity(/.*)?    gen_context(system_u:object_r:iacp_guest_host_public_t,s0)
