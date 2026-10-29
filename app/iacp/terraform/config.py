@@ -171,6 +171,11 @@ class Allocation(MachineSettings):
                             'replicate', 'iothread', 'ssd', 'serial', 'queues'):
                     values['boot_disk'][key] = getattr(hardware.disk, key)
                 values['boot_disk']['minimum_size_gb'] = hardware.disk.minimum_size_gb
+            if hardware.vmtag is not None:
+                # El módulo IaC aplica además las etiquetas de trazabilidad
+                # ``iacp`` y ``lab``. Esta etiqueta procede de la Golden Image
+                # observada, nunca del JSON del cliente.
+                values['tags'] = [hardware.vmtag]
             result['iacp_golden_hardware']=hardware.model_dump()
         if getattr(instance, 'initial_access_ciphertext', None):
             from ..services.access import decrypt_password

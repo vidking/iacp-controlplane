@@ -94,6 +94,14 @@ def verify_plan(plan: dict, variables: dict, *, allow_historical_hotplugged_zero
     if not correct:
         raise PlanError("UNSAFE_PLAN")
     verify_network(after,instance)
+    if "tags" in instance:
+        try:
+            expected_tags = set(instance["tags"]) | {"iacp", variables["environment"]}
+            planned_tags = set(after["tags"])
+            if planned_tags != expected_tags:
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            raise PlanError("UNSAFE_PLAN") from None
     from .golden_hardware import verify_base_plan, verify_cpu, verify_disk_plan
     verify_cpu(after, variables,
                allow_historical_hotplugged_zero=allow_historical_hotplugged_zero)
