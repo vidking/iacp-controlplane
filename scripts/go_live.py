@@ -1279,11 +1279,12 @@ with get_session_factory()() as s:
         # persistida.  review_recovery_deployment() vuelve a comprobar el
         # binding exacto y ejecuta el probe read-only antes de permitir que
         # check_idle oculte esa única incertidumbre autorizada.
-        self.review_recovery_deployment(change, before)
+        recovery_ids = self.review_recovery_deployment(change, before)
         operation_recovery_ids = tuple(
             review['operation_id'] for review in self.reviewed_operation_fences
         )
         self.verify(admission=0, lifecycle=0, deletion=0,
+                    allowed_uncertain=recovery_ids,
                     allowed_operation_uncertain=operation_recovery_ids)
         transition_started = False
         try:
@@ -1291,6 +1292,7 @@ with get_session_factory()() as s:
             self.flags(admission=1, lifecycle=1, deletion=1)
             self.up('api', 'terraform-worker', 'lifecycle-worker')
             self.verify(admission=1, lifecycle=1, deletion=1,
+                        allowed_uncertain=recovery_ids,
                         allowed_operation_uncertain=operation_recovery_ids)
         except Exception:
             # Una activación incompleta nunca debe dejar capacidades abiertas.

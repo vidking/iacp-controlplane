@@ -261,6 +261,7 @@ def test_activate_core_reuses_the_reviewed_operation_fence_for_both_verification
         "admission": 0,
         "lifecycle": 0,
         "deletion": 0,
+        "allowed_uncertain": (),
         "allowed_operation_uncertain": (
             "4652c4aa-58bb-4f92-94c9-c81790e74150",
         ),
@@ -269,6 +270,7 @@ def test_activate_core_reuses_the_reviewed_operation_fence_for_both_verification
         "admission": 1,
         "lifecycle": 1,
         "deletion": 1,
+        "allowed_uncertain": (),
         "allowed_operation_uncertain": (
             "4652c4aa-58bb-4f92-94c9-c81790e74150",
         ),
