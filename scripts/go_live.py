@@ -387,7 +387,8 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
         El resultado se usa únicamente como fence de drenaje. La atestación no
         convierte la operación en terminal ni autoriza su reintento.
         """
-        code = r'''import hashlib,json,os
+        code = r'''import hashlib,json,tempfile
+from pathlib import Path
 from sqlalchemy import select
 from botocore.exceptions import ClientError
 from redis import Redis
@@ -399,6 +400,7 @@ from iacp.terraform.config import Allocation
 from iacp.terraform.executor import state_resource
 from iacp.terraform.observation import proxmox_resource
 from iacp.terraform.state import S3StateReader
+from iacp.terraform.lifecycle import build_executor
 from iacp.services import commercial_bootstrap
 
 review=json.loads(REVIEW_JSON)
@@ -465,24 +467,30 @@ with get_session_factory()() as session:
             "FENCE_APPLY_ACTIVE")
     allocation=Allocation.model_validate(execution.allocation)
     variables=allocation.variables(instance)
-    reader=S3StateReader(allocation.backend.arguments(execution.state_key), os.environ)
-    try:
-        snapshot=reader.read(lambda:False)
-        resource=state_resource(snapshot.state, variables)
-        require(str(resource["id"]) == str(review["state_resource_id"]), "FENCE_STATE_RESOURCE_CHANGED")
-        require(snapshot.metadata() == review["state_snapshot"], "FENCE_STATE_CHANGED")
+    # Terraform credentials are deliberately injected by the worker from its
+    # protected credentials file.  Do not use the container's ambient
+    # os.environ: it does not contain the backend or Proxmox credentials.
+    executor=build_executor(observation=True)
+    with tempfile.TemporaryDirectory() as scratch:
+        env=executor.environment(Path(scratch))
+        reader=S3StateReader(allocation.backend.arguments(execution.state_key), env)
         try:
-            reader.client.head_object(Bucket=reader.bucket, Key=reader.key + ".tflock")
-        except ClientError as error:
-            require(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404,
-                    "FENCE_STATE_LOCK_PRESENT")
-        else:
-            raise RuntimeError("FENCE_STATE_LOCK_PRESENT")
-    finally:
-        reader.close()
-    observed=proxmox_resource(os.environ, variables["instance"], lambda:False,
-                              golden_hardware=variables.get("iacp_golden_hardware"))
-    require(observed.get("present") is True, "FENCE_PROXMOX_RESOURCE_MISSING")
+            snapshot=reader.read(lambda:False)
+            resource=state_resource(snapshot.state, variables)
+            require(str(resource["id"]) == str(review["state_resource_id"]), "FENCE_STATE_RESOURCE_CHANGED")
+            require(snapshot.metadata() == review["state_snapshot"], "FENCE_STATE_CHANGED")
+            try:
+                reader.client.head_object(Bucket=reader.bucket, Key=reader.key + ".tflock")
+            except ClientError as error:
+                require(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404,
+                        "FENCE_STATE_LOCK_PRESENT")
+            else:
+                raise RuntimeError("FENCE_STATE_LOCK_PRESENT")
+        finally:
+            reader.close()
+        observed=proxmox_resource(env, variables["instance"], lambda:False,
+                                  golden_hardware=variables.get("iacp_golden_hardware"))
+        require(observed.get("present") is True, "FENCE_PROXMOX_RESOURCE_MISSING")
 
 with Redis.from_url(broker_url(), socket_connect_timeout=3, socket_timeout=3) as redis:
     for key in redis.scan_iter(count=100):
