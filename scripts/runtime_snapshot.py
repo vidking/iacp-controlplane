@@ -13,6 +13,15 @@ from iacp.config import broker_url
 from iacp.db import get_engine
 
 CRM_INSTANCE_FIELDS = {'commercial_context', 'start_on_create', 'initial_access_ciphertext', 'initial_access_fingerprint', 'access_verification'}
+TECHNICAL_INSTANCE_FIELDS = {'technical_access_reference', 'technical_access_public_keys'}
+
+
+def _technical_fields_default(row):
+    """Comprueba los valores neutros añadidos por el acceso técnico."""
+    return (
+        row.get('technical_access_reference') is None
+        and row.get('technical_access_public_keys') == []
+    )
 
 
 def snapshot():
@@ -44,38 +53,63 @@ def snapshot():
                     for row in rows
                 }
             if name=='instances' and 'commercial_revision' in table.c:
-                projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k!='commercial_revision'},
+                projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items()
+                    if k not in {'commercial_revision'} | TECHNICAL_INSTANCE_FIELDS},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility']['instances_before_0012']={'count':len(rows),
                     'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
-                    'new_fields_default':all(row['commercial_revision'] is None for row in rows)}
+                    'new_fields_default':all(row['commercial_revision'] is None and _technical_fields_default(row)
+                                             for row in rows)}
+            if name == 'instances' and TECHNICAL_INSTANCE_FIELDS <= set(table.c.keys()):
+                projected = sorted(hashlib.sha256(json.dumps({k: v for k, v in dict(row).items()
+                    if k not in TECHNICAL_INSTANCE_FIELDS},
+                    default=str, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                    for row in rows)
+                report['compatibility']['instances_before_0015'] = {
+                    'count': len(rows),
+                    'sha256': hashlib.sha256(''.join(projected).encode()).hexdigest(),
+                    'new_fields_default': all(_technical_fields_default(row) for row in rows),
+                }
             added_crm = CRM_INSTANCE_FIELDS if name == 'instances' else {'correlation_id'} if name == 'operations' else set()
             if name=='instances' and 'commercial_revision' in table.c:added_crm=added_crm|{'commercial_revision'}
+            if name == 'instances':
+                added_crm = added_crm | (TECHNICAL_INSTANCE_FIELDS & set(table.c.keys()))
             if added_crm and added_crm <= set(table.c.keys()):
                 projected = sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added_crm},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility'][name+'_before_0011']={'count':len(rows),
                     'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
-                    'new_fields_default':all(all(row[k] is (False if k == 'start_on_create' else None) for k in added_crm) for row in rows)}
+                    'new_fields_default':all(
+                        all(
+                            (_technical_fields_default(row) if k in TECHNICAL_INSTANCE_FIELDS
+                             else row[k] is (False if k == 'start_on_create' else None))
+                            for k in added_crm
+                        ) for row in rows
+                    )}
             if name=='instances' and 'network_profile' in table.c:
                 added={'network_profile','network_mode','ip_addresses','network_observation'}
                 added.update({'node_preference','self_service_policy_id','policy_binding_sha256'})
                 added.update(CRM_INSTANCE_FIELDS)
+                added.update(TECHNICAL_INSTANCE_FIELDS)
                 if 'commercial_revision' in table.c:added.add('commercial_revision')
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility']['instances_before_0008']={
                     'count':len(rows),'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
                     'new_fields_default':all(row['network_profile'] is None and row['network_mode']=='static'
-                        and row['ip_addresses']==[] and row['network_observation'] is None for row in rows)}
+                        and row['ip_addresses']==[] and row['network_observation'] is None
+                        and _technical_fields_default(row) for row in rows)}
             if name in {'instances','deletion_executions'} and ('self_service_policy_id' in table.c or 'autonomous' in table.c):
-                added=({'node_preference','self_service_policy_id','policy_binding_sha256'} | CRM_INSTANCE_FIELDS if name=='instances' else {'autonomous'})
+                added=({'node_preference','self_service_policy_id','policy_binding_sha256'} | CRM_INSTANCE_FIELDS | TECHNICAL_INSTANCE_FIELDS if name=='instances' else {'autonomous'})
                 if name=='instances' and 'commercial_revision' in table.c:added=added|{'commercial_revision'}
                 projected=sorted(hashlib.sha256(json.dumps({k:v for k,v in dict(row).items() if k not in added},
                     default=str,sort_keys=True,separators=(',',':')).encode()).hexdigest() for row in rows)
                 report['compatibility'][name+'_before_0009']={'count':len(rows),
                     'sha256':hashlib.sha256(''.join(projected).encode()).hexdigest(),
-                    'new_fields_default':all(all(row[k] is (False if k == 'start_on_create' else None) for k in added if k in row) if name=='instances'
+                    'new_fields_default':all(all(
+                        (_technical_fields_default(row) if k in TECHNICAL_INSTANCE_FIELDS
+                         else row[k] is (False if k == 'start_on_create' else None))
+                        for k in added if k in row) if name=='instances'
                         else row['autonomous'] is False for row in rows)}
             if name in {"operations", "terraform_applies", "power_executions", "deletion_executions", "guest_initializations", "jobs"}:
                 terminal = {"completed", "failed", "cancelled"}

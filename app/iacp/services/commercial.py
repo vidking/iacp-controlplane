@@ -150,7 +150,6 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             if omitted and (profile.settings.environment != 'lab'
                     or profile.settings.network_mode != 'dhcp'):
                 raise Conflict('PROVISIONING_DEFAULTS_NOT_AUTHORIZED')
-            if profile.root_password_bootstrap:raise Conflict('PROVISIONING_LEGACY_PASSWORD_PROFILE_FORBIDDEN')
             if profile.guest_initialization!=spec.image_id+'-lab-identity-v1':
                 raise Conflict('PROVISIONING_GUEST_INITIALIZATION_REQUIRED')
             if session.scalar(select(Instance.id).where(Instance.tenant_id==principal.tenant_id,Instance.name==spec.name)):
@@ -167,6 +166,8 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             revision=CORE_CONTRACT
             instance=Instance(id=instance_id,tenant_id=principal.tenant_id,name=spec.name,
                 **resources,network_profile='lab-dhcp',network_mode='dhcp',start_on_create=spec.start_on_create,
+                technical_access_reference=sealed[0],
+                technical_access_public_keys=list(spec.access.ssh_public_keys),
                 commercial_context=spec.commercial_context.model_dump(exclude_none=True) if spec.commercial_context is not None else None,commercial_revision=revision,status='pending',executor='terraform')
             try:
                 allocation=reserve_profile(session,instance)
@@ -185,6 +186,10 @@ def create(session,principal,spec,key,publish,store=None,capacity=None):
             row=CommercialIntent(instance_id=instance.id,revision=revision,plan_id=spec.plan_id,
                 image_id=spec.image_id,catalog_sha256=catalog_digest(),request_fingerprint=digest,
                 specification={**values,**({'pilot_defaults':{'revision':'lab-dhcp-v1','omitted_fields':omitted}} if omitted else {}),'ssh_public_keys':spec.access.ssh_public_keys,'profile_snapshot':profile.model_dump()},
+                # Compatibilidad histórica: el registro puede conservar la
+                # referencia opaca durante la transición. La ejecución nueva
+                # usa exclusivamente los campos técnicos de Instance y nunca
+                # crea instance.access.bootstrap.
                 secret_reference=reference,bootstrap_status='pending')
             # ``execution_binding`` pertenece al registro CRM histórico. La
             # autorización operativa se materializa después del apply en

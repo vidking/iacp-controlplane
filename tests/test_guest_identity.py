@@ -33,7 +33,10 @@ from iacp.services.guest_identity import (
     NETWORK_FILE,
     PROGRAM,
     PROGRAM_SHA256,
+    TECHNICAL_ACCESS_PROGRAM,
+    configured_mode,
     execute_initialization,
+    technical_program_for_mode,
 )
 from iacp.services.network import after_power
 from tests.power_helpers import managed_instance, refresh_technical_ownership
@@ -330,3 +333,105 @@ def test_guest_client_accepts_only_durable_marker_and_matching_dhcp_lease():
     files[lease_path] = "ADDRESS=192.0.2.10\nCLIENTID=ff-duplicate-duid\n"
     assert client.observe(target, row) is None
     ast.parse(PROGRAM)
+
+
+def test_technical_initializer_uses_qga_stdin_for_access_without_commercial_marker():
+    calls = []
+
+    def request(method, path, parameters=None):
+        calls.append((method, path, parameters))
+        return {'pid': 42}
+
+    client = GuestClient(SimpleNamespace(_request=request))
+    program, digest = technical_program_for_mode(MODE)
+    assert digest != PROGRAM_SHA256
+    assert 'commercial-bootstrap.json' not in program
+    ast.parse(TECHNICAL_ACCESS_PROGRAM)
+
+    client.submit_technical_access(
+        Target(30000, 'mng01', 'core-guest'),
+        '00000000-0000-4000-8000-000000000001',
+        MAC,
+        MODE,
+        'SENUELO-TECNICO-NO-PERSISTIR-2026',
+        [],
+    )
+    parameters = calls[0][2]
+    command_values = [value for key, value in parameters if key == 'command']
+    input_values = [value for key, value in parameters if key == 'input-data']
+    assert len(input_values) == 1
+    assert 'SENUELO-TECNICO-NO-PERSISTIR-2026' in input_values[0]
+    assert 'SENUELO-TECNICO-NO-PERSISTIR-2026' not in command_values
+
+
+def test_technical_initializer_verifies_root_and_cleans_ephemeral_reference(
+        client, auth, guest, sessions, monkeypatch):
+    from iacp.services.bootstrap_secrets import EphemeralSecrets
+    from iacp.services.guest_identity import technical_program_for_mode
+
+    class MemoryRedis:
+        def __init__(self):
+            self.values = {}
+
+        def set(self, key, value, nx=False, ex=None):
+            if nx and key in self.values:
+                return False
+            self.values[key] = value
+            return True
+
+        def get(self, key):
+            return self.values.get(key)
+
+        def delete(self, key):
+            self.values.pop(key, None)
+
+    store = EphemeralSecrets(MemoryRedis(), b'k' * 32, 900)
+    password = 'SENUELO-TECNICO-NO-PERSISTIR-2026'
+    with sessions() as session:
+        instance = session.get(Instance, guest.id)
+        instance.technical_access_reference = store.put(
+            instance.tenant_id, instance.id, password)
+        instance.technical_access_public_keys = []
+        instance.commercial_revision = 'provisioning-api-core'
+        session.commit()
+
+    operation_id = accept(client, auth, guest, key='technical-access').json()['operation_id']
+    technical_digest = technical_program_for_mode(MODE)[1]
+
+    class TechnicalGuest(FakeGuest):
+        def submit_technical_access(self, target, identifier, mac, mode, value, keys):
+            self.calls.append((target, identifier, mac, mode, value, keys))
+            assert mode == MODE and value == password and keys == []
+            return 42
+
+        def observe(self, target, row):
+            return {
+                'mode': MODE,
+                'instance_id': row.instance_id,
+                'mac_address': row.mac_address,
+                'program_sha256': technical_digest,
+                'network': {'ip_addresses': ['192.0.2.10'], 'status': 'observed'},
+            }
+
+    class Verified:
+        def verify(self, target, instance, *, password, ip_addresses):
+            assert password == 'SENUELO-TECNICO-NO-PERSISTIR-2026'
+            assert ip_addresses == ['192.0.2.10']
+            return {'status': 'completed', 'cloud_init_complete': True,
+                    'ssh_authenticated': True}
+
+    monkeypatch.setattr(EphemeralSecrets, 'configured', classmethod(lambda cls: store))
+    monkeypatch.setattr('iacp.services.access.AccessVerifier', Verified)
+    fake = TechnicalGuest()
+    execute_initialization(operation_id, sessions, lambda: fake)
+
+    assert len(fake.calls) == 1
+    with sessions() as session:
+        instance = session.get(Instance, guest.id)
+        assert instance.access_verification['ssh_authenticated'] is True
+        assert instance.technical_access_reference is None
+        assert configured_mode(session, instance) == MODE
+        assert session.get(GuestInitialization, operation_id).status == 'completed'
+        assert not session.scalar(select(Operation).where(
+            Operation.instance_id == guest.id,
+            Operation.kind == 'instance.access.bootstrap'))

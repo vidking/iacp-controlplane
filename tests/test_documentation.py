@@ -115,7 +115,7 @@ def test_local_guides_render_documentation_not_only_hashes(client, auth):
     assert 'Crear máquina virtual' in page
     assert 'id="load-pilot-catalog"' in page
     assert 'Try it out' in page and 'Execute' in page
-    assert 'Idempotency-Key' in page and '0014_allow_historical_kvm_106' in page
+    assert 'Idempotency-Key' in page and '0015_technical_access' in page
     assert 'ac558dfa-4c2b-4e2f-8886-67648e880dc8' not in page
     assert '"self_service_policy_id"' not in page and '&quot;self_service_policy_id&quot;' not in page
     assert 'Ver fuente versionada en Forgejo' in page

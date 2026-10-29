@@ -113,6 +113,59 @@ ROOT_PROGRAM = PROGRAM.replace("write(marker,json.dumps(result,sort_keys=True)+'
     ROOT_POLICY_PROGRAM + "\nwrite(marker,json.dumps(result,sort_keys=True)+'\\n')")
 ROOT_PROGRAM_SHA256 = hashlib.sha256(ROOT_PROGRAM.encode()).hexdigest()
 
+# La inicialización técnica de una instancia nueva también configura el acceso
+# solicitado por el consumidor. La contraseña entra únicamente por stdin de
+# QGA; nunca forma parte de los argumentos del proceso ni del marcador.
+TECHNICAL_ACCESS_PROGRAM = r'''
+payload=json.loads(sys.stdin.read())
+assert isinstance(payload,dict) and set(payload)=={'password','ssh_public_keys'}
+password=payload['password']
+keys=payload['ssh_public_keys']
+assert isinstance(password,str) and 16<=len(password)<=128 and all(32<=ord(c)<=126 for c in password)
+assert isinstance(keys,list) and len(keys)<=16
+assert all(isinstance(key,str) and key.startswith(('ssh-ed25519 ','ssh-rsa ','ecdsa-sha2-'))
+           and '\n' not in key and '\r' not in key for key in keys)
+ssh_directory=Path('/root/.ssh')
+ssh_directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+os.chmod(ssh_directory,0o700);os.chown(ssh_directory,0,0)
+if keys:
+    write(ssh_directory/'authorized_keys','\n'.join(keys)+'\n')
+    os.chmod(ssh_directory/'authorized_keys',0o600)
+    os.chown(ssh_directory/'authorized_keys',0,0)
+ssh_config=Path('/etc/ssh/sshd_config.d/00-iacp-technical-root.conf')
+write(ssh_config,'PermitRootLogin yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n')
+subprocess.run(['/usr/sbin/sshd','-t'],check=True,capture_output=True,timeout=10)
+effective=subprocess.run(['/usr/sbin/sshd','-T','-C','user=root,host=localhost,addr=127.0.0.1'],
+    check=True,capture_output=True,text=True,timeout=10).stdout
+assert 'permitrootlogin yes\n' in effective and 'passwordauthentication yes\n' in effective
+subprocess.run(['/usr/bin/chpasswd'],input=('root:'+password+'\n').encode(),
+    check=True,capture_output=True,timeout=15)
+service='ssh' if 'ID=ubuntu\n' in release else 'sshd'
+subprocess.run(['/usr/bin/systemctl','reload-or-restart',service],check=True,capture_output=True,timeout=20)
+if 'ID=almalinux\n' in release:
+    for path in ['/root/.ssh','/etc/ssh/sshd_config.d/00-iacp-technical-root.conf']:
+        if Path(path).exists():
+            subprocess.run(['/usr/sbin/restorecon','-RF',path],check=True,capture_output=True,timeout=15)
+authorized_keys_sha256=hashlib.sha256(('\n'.join(keys)+'\n').encode()).hexdigest()
+result['technical_access']={'password_configured':True,
+    'ssh_public_keys_sha256':authorized_keys_sha256}
+password=None
+'''
+
+
+def _technical_program(base):
+    marker_write = "write(marker,json.dumps(result,sort_keys=True)+'\\n')"
+    if base.count(marker_write) != 1:
+        raise Conflict('GUEST_INITIALIZATION_PROGRAM_INVALID')
+    return base.replace(marker_write, TECHNICAL_ACCESS_PROGRAM + "\n" + marker_write, 1)
+
+
+def technical_program_for_mode(mode):
+    """Devuelve el único programa técnico de acceso para una imagen autorizada."""
+    base, _ = program_for_mode(mode)
+    program = _technical_program(base)
+    return program, hashlib.sha256(program.encode()).hexdigest()
+
 
 def program_for_mode(mode, *, root=False):
     if mode == MODE:
@@ -192,9 +245,12 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
 
 def configured_mode(session, instance, *, current_profiles=True):
     from .authorization import member
+    from .contracts import instance_uses_technical_access
     row=member(session,instance,'start',current_profiles=current_profiles)
     mode=row.profile_snapshots[instance.network_profile].get('guest_initialization')
-    expected = program_for_mode(mode, root=bool(row.profile_snapshots[instance.network_profile].get('root_password_bootstrap')))[1]
+    technical = instance_uses_technical_access(instance)
+    expected = (technical_program_for_mode(mode)[1] if technical else
+                program_for_mode(mode, root=bool(row.profile_snapshots[instance.network_profile].get('root_password_bootstrap')))[1])
     if row.profile_snapshots[instance.network_profile].get('guest_initialization_program_sha256')!=expected:
         raise Conflict('GUEST_INITIALIZATION_NOT_AUTHORIZED')
     return mode
@@ -264,8 +320,11 @@ def request_initialization(session, instance, principal, key, publish, *, curren
                 session.add(operation);session.flush()
                 from .authorization import member
                 profile=member(session,instance,'start').profile_snapshots[instance.network_profile]
+                from .contracts import instance_uses_technical_access
+                technical = instance_uses_technical_access(instance)
                 row=GuestInitialization(operation_id=operation.id,instance_id=instance.id,mode=mode,mac_address=mac,
-                    program_sha256=program_for_mode(mode, root=bool(profile.get('root_password_bootstrap')))[1],
+                    program_sha256=(technical_program_for_mode(mode)[1] if technical else
+                        program_for_mode(mode, root=bool(profile.get('root_password_bootstrap')))[1]),
                     provisioning_binding=ownership.binding_sha256,status='queued')
                 session.add(row)
                 session.add(Job(id=str(uuid4()),tenant_id=instance.tenant_id,operation_id=operation.id,operation=operation.kind,status='queued'))
@@ -338,12 +397,21 @@ class GuestClient:
     def submit_root(self,target,instance_id,mac):
         return self._submit(target,instance_id,mac,ROOT_PROGRAM,ROOT_PROGRAM_SHA256)
 
-    def _submit(self,target,instance_id,mac,program,digest):
+    def submit_technical_access(self,target,instance_id,mac,mode,password,public_keys):
+        program,digest=technical_program_for_mode(mode)
+        payload=json.dumps({'password':password,'ssh_public_keys':public_keys},
+                           sort_keys=True,separators=(',',':'))
+        return self._submit(target,instance_id,mac,program,digest,input_data=payload)
+
+    def _submit(self,target,instance_id,mac,program,digest,input_data=None):
         assert str(UUID(instance_id))==instance_id and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac)
         # PVE array form encoding: repeated command parameters, never shell quoting.
-        result=self.client._request('POST',target.path+'/agent/exec',[
+        parameters=[
             ('command','/usr/bin/python3'),('command','-c'),('command',program),
-            ('command',instance_id),('command',mac),('command',digest)])
+            ('command',instance_id),('command',mac),('command',digest)]
+        if input_data is not None:
+            parameters.append(('input-data',input_data))
+        result=self.client._request('POST',target.path+'/agent/exec',parameters)
         pid=result.get('pid')
         if type(pid) is not int or pid<=0:raise Conflict('GUEST_INITIALIZATION_PID_INVALID')
         return pid
@@ -385,10 +453,19 @@ class GuestClient:
 
 
 def execute_initialization(identifier,sessions,client_factory=GuestClient.configured,timeout=210):
+    cleanup_reference = None
     with sessions() as s:
         row=s.get(GuestInitialization,identifier)
-        if row is None or row.status in {'completed','failed'}:return
+        if row is None or row.status == 'failed':return
         instance_id=row.instance_id
+        if row.status == 'completed':
+            instance=s.get(Instance, instance_id)
+            cleanup_reference=getattr(instance, 'technical_access_reference', None)
+            if not cleanup_reference:
+                return
+    if cleanup_reference:
+        _cleanup_technical_access_reference(instance_id, cleanup_reference, sessions)
+        return
     try:
         with instance_lock(sessions.kw['bind'],instance_id) as heartbeat:
             with sessions() as s:
@@ -400,6 +477,9 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                     if not job or job.operation!=operation.kind or job.tenant_id!=operation.tenant_id:
                         raise Conflict('GUEST_INITIALIZATION_BINDING_CHANGED')
                     instance,target=validate_binding(s,row,operation)
+                    from .contracts import instance_uses_technical_access
+                    technical = instance_uses_technical_access(instance)
+                    technical_password = None
                     client=client_factory()
                     # A freshly started clone can report its QEMU process as
                     # running before Proxmox exposes a stable config/status
@@ -435,7 +515,10 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         configured_mode(s,instance)
                         from ..lifecycle.ownership import mutation_revision
                         mutation_revision()
-                        if row.program_sha256 not in {program_for_mode(row.mode)[1], ROOT_PROGRAM_SHA256 if row.mode==MODE else program_for_mode(row.mode)[1]}:raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
+                        expected_program = (technical_program_for_mode(row.mode)[1] if technical else
+                                            program_for_mode(row.mode)[1])
+                        if row.program_sha256 not in {expected_program, ROOT_PROGRAM_SHA256 if row.mode==MODE and not technical else expected_program}:
+                            raise Conflict('GUEST_INITIALIZATION_PROGRAM_CHANGED')
                         while True:
                             try:client.ready(target);break
                             except PowerError:
@@ -443,15 +526,43 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                                 heartbeat();time.sleep(2)
                         # Revalidate immediately before consuming the only POST fence.
                         s.refresh(instance);configured_mode(s,instance);mutation_revision();client.check(target,row.mac_address)
+                        if technical:
+                            from .bootstrap_secrets import EphemeralSecrets
+                            technical_password = EphemeralSecrets.configured().read(
+                                instance.technical_access_reference,
+                                instance.tenant_id, instance.id)
                         row.started_at=utcnow();row.status=operation.status=job.status='running'
                         event(s,operation,'guest_initialization_dispatch_consumed','worker:iac');s.commit()
-                        submit = client.submit_root if row.program_sha256 == ROOT_PROGRAM_SHA256 else client.submit
-                        row.pid=(submit(target,instance.id,row.mac_address) if row.mode==MODE else
-                            client.submit_image(target,instance.id,row.mac_address,row.mode));s.commit()
+                        if technical:
+                            from .bootstrap_secrets import EphemeralSecrets
+                            row.pid=client.submit_technical_access(
+                                target, instance.id, row.mac_address, row.mode, technical_password,
+                                list(instance.technical_access_public_keys or []))
+                        else:
+                            submit = client.submit_root if row.program_sha256 == ROOT_PROGRAM_SHA256 else client.submit
+                            row.pid=(submit(target,instance.id,row.mac_address) if row.mode==MODE else
+                                client.submit_image(target,instance.id,row.mac_address,row.mode))
+                        s.commit()
                     while True:
                         validate_binding(s,row,operation)
                         result=client.observe(target,row)
                         if result:
+                            if technical:
+                                from .access import AccessVerifier
+                                if technical_password is None:
+                                    from .bootstrap_secrets import EphemeralSecrets
+                                    technical_password = EphemeralSecrets.configured().read(
+                                        instance.technical_access_reference,
+                                        instance.tenant_id, instance.id)
+                                access_result = AccessVerifier().verify(
+                                    target, instance, password=technical_password,
+                                    ip_addresses=result['network']['ip_addresses'])
+                                if access_result.get('ssh_authenticated') is not True:
+                                    raise Conflict('ROOT_ACCESS_EVIDENCE_INVALID')
+                                result = {**result, 'technical_access': {
+                                    'password_configured': True,
+                                    'ssh_authenticated': True,
+                                }}
                             others=s.scalars(select(Instance).where(Instance.id!=instance.id,Instance.status!='deleted',
                                 Instance.network_mode=='dhcp')).all()
                             if any(set(result['network']['ip_addresses']) & set(other.ip_addresses or []) for other in others):
@@ -463,7 +574,14 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                                 **result['network'],'observed_at':utcnow().isoformat(),
                                 'identity_initialization':'completed','initialization_operation_id':identifier})
                             instance.ip_addresses=instance.network_observation['ip_addresses']
-                            event(s,operation,'guest_initialization_verified','worker:iac');s.commit();return
+                            if technical:
+                                instance.access_verification={
+                                    'status':'completed','cloud_init_complete':True,
+                                    'ssh_authenticated':True,
+                                    'observed_at':utcnow().isoformat(),
+                                }
+                                cleanup_reference=instance.technical_access_reference
+                            event(s,operation,'guest_initialization_verified','worker:iac');s.commit();break
                         if time.monotonic()>=deadline:raise Conflict('GUEST_INITIALIZATION_OBSERVATION_TIMEOUT')
                         heartbeat();time.sleep(2)
                 except Exception as failure:
@@ -475,3 +593,26 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                         if isinstance(failure,PowerError) else 'GUEST_INITIALIZATION_OBSERVATION_FAILED')
                     event(s,operation,'guest_initialization_'+row.status,'worker:iac');s.commit()
     except ExecutionBusy:return
+    if cleanup_reference:
+        _cleanup_technical_access_reference(instance_id, cleanup_reference, sessions)
+
+
+def _cleanup_technical_access_reference(instance_id, reference, sessions):
+    """Limpia la referencia solo después del commit durable y permite reintento."""
+    # Redis es un efecto externo: primero se confirma la evidencia durable en
+    # PostgreSQL y luego se elimina la referencia. Si Redis no responde, la
+    # referencia permanece con TTL y una entrega posterior puede reintentarlo
+    # sin volver a enviar credenciales.
+    from .bootstrap_secrets import EphemeralSecrets
+    store = EphemeralSecrets.configured()
+    store.delete(reference)
+    with sessions() as cleanup:
+        current = cleanup.get(Instance, instance_id, with_for_update=True)
+        if current and current.technical_access_reference == reference:
+            current.technical_access_reference = None
+            from ..models import CommercialIntent
+            intent = cleanup.get(CommercialIntent, instance_id, with_for_update=True)
+            if intent and intent.secret_reference == reference:
+                intent.secret_reference = None
+                intent.bootstrap_status = 'not_applicable'
+            cleanup.commit()

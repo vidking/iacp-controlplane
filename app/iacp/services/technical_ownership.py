@@ -184,12 +184,17 @@ def _snapshot(session, instance, execution):
     snapshot.update(allocation)
     if snapshot.get("guest_initialization") and not snapshot.get("guest_initialization_program_sha256"):
         try:
-            from .guest_identity import program_for_mode
+            from .contracts import instance_uses_technical_access
+            from .guest_identity import program_for_mode, technical_program_for_mode
 
-            snapshot["guest_initialization_program_sha256"] = program_for_mode(
-                snapshot["guest_initialization"],
-                root=bool(snapshot.get("root_password_bootstrap")),
-            )[1]
+            if instance_uses_technical_access(instance):
+                snapshot["guest_initialization_program_sha256"] = technical_program_for_mode(
+                    snapshot["guest_initialization"])[1]
+            else:
+                snapshot["guest_initialization_program_sha256"] = program_for_mode(
+                    snapshot["guest_initialization"],
+                    root=bool(snapshot.get("root_password_bootstrap")),
+                )[1]
         except (Conflict, ValueError):
             # configured_mode() will reject an incomplete or incompatible
             # historical profile; never invent a program digest.

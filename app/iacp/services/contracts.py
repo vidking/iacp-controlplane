@@ -21,3 +21,10 @@ def instance_uses_managed_contract(instance) -> bool:
     # La revisión histórica no selecciona un motor. La pertenencia técnica
     # se valida en ``technical_ownership`` para cualquier instancia viva.
     return getattr(instance, "status", None) != "deleted"
+
+
+def instance_uses_technical_access(instance) -> bool:
+    """Identifica el flujo técnico incluso después de limpiar el secreto efímero."""
+    return bool(getattr(instance, "technical_access_reference", None)) or (
+        getattr(instance, "commercial_revision", None) == CORE_CONTRACT
+    )

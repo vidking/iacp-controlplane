@@ -6,10 +6,11 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from iacp.commercial_contract import CommercialInstanceCreate, MINIMAL_EXAMPLE
-from iacp.models import BOOTSTRAP_TENANT_ID, CommercialIntent, Instance, OperationEvent
+from iacp.models import BOOTSTRAP_TENANT_ID, CommercialIntent, Instance, Operation, OperationEvent, TerraformExecution
 from iacp.security import Principal
 from iacp.services import commercial
 from iacp.services.catalog import authorized_profile
+from iacp.terraform.config import Allocation
 from tests.test_commercial_admission import commercial_config, store
 from tests.test_commercial_catalog import catalog_profile
 
@@ -101,3 +102,26 @@ def test_core_public_errors_are_technical_codes(monkeypatch):
     from iacp.api.presentation import public_code
     assert public_code('COMMERCIAL_OWNERSHIP_BINDING_CHANGED') == 'PROVISIONING_OWNERSHIP_BINDING_CHANGED'
     assert public_code('POWER_INSTANCE_NOT_AUTHORIZED') == 'POWER_INSTANCE_NOT_AUTHORIZED'
+
+
+def test_new_core_instance_uses_technical_access_without_bootstrap_operation(
+        sessions, commercial_config, store):
+    published = []
+    with sessions() as session:
+        accepted = commercial.create(
+            session,
+            Principal(BOOTSTRAP_TENANT_ID, 'lab-swagger-postman', 'operator'),
+            core_spec(), 'technical-access-create', published.append, store,
+            capacity=lambda *_: None,
+        )
+        instance = session.get(Instance, accepted.instance_id)
+        intent = session.get(CommercialIntent, accepted.instance_id)
+        operations = session.scalars(select(Operation).where(
+            Operation.instance_id == accepted.instance_id)).all()
+        assert instance.technical_access_reference
+        assert instance.technical_access_public_keys == []
+        assert intent.secret_reference == instance.technical_access_reference
+        execution = session.get(TerraformExecution, accepted.instance_id)
+        variables = Allocation.model_validate(execution.allocation).variables(instance)
+        assert 'iacp_root_password' not in variables
+        assert {operation.kind for operation in operations} == {'instance.create'}

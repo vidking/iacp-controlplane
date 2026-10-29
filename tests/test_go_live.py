@@ -174,6 +174,47 @@ def test_compare_history_0013_to_0014_allows_only_reported_ownership_rows():
         }, migration)
 
 
+def test_compare_history_0014_to_0015_allows_only_neutral_technical_access_columns():
+    before = {
+        'schema': ['0014_allow_historical_kvm_106'],
+        'tables': {
+            'instances': {'count': 1, 'sha256': 'instances'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
+    }
+    after = {
+        'schema': [driver.HEAD],
+        'tables': {
+            'instances': {'count': 1, 'sha256': 'with-technical-fields'},
+            'deletion_executions': {'count': 2, 'sha256': 'deletions'},
+        },
+        'compatibility': {
+            'instances_before_0015': {
+                'count': 1, 'sha256': 'instances', 'new_fields_default': True,
+            },
+        },
+    }
+    driver.compare_history(before, after)
+    with pytest.raises(RuntimeError, match='technical access migration'):
+        driver.compare_history(before, {
+            **after,
+            'compatibility': {
+                'instances_before_0015': {
+                    'count': 1, 'sha256': 'rewritten', 'new_fields_default': True,
+                },
+            },
+        })
+    with pytest.raises(RuntimeError, match='technical access migration'):
+        driver.compare_history(before, {
+            **after,
+            'compatibility': {
+                'instances_before_0015': {
+                    'count': 1, 'sha256': 'instances', 'new_fields_default': False,
+                },
+            },
+        })
+
+
 @pytest.mark.parametrize('changed', [
     {'count': 3, 'sha256': 'deletions'},
     {'count': 2, 'sha256': 'rewritten'},

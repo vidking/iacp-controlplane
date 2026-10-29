@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from smoke_public import exposure_mode, internal_target, resolved_addresses
 
-HEAD = "0014_allow_historical_kvm_106"
+HEAD = "0015_technical_access"
 SOURCE = "b517c9bb67a9e3c800f0c3657c56224c2b8f80aa"
 ARCHIVE = "68ddafc66df5a96cd3e22165658a273446d9d0f9fb46115f2e065034c2ddf2a3"
 ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
@@ -46,7 +46,8 @@ def require(condition, message):
 def require_supported_schema(schema):
     supported = {'0004_authorized_apply', '0005_kvm_lifecycle', '0006_power_ownership',
         '0007_safe_deletion', '0008_dhcp_profiles', '0009_lab_self_service', '0010_guest_identity',
-        '0011_crm_contract', '0012_commercial_intents', '0013_technical_ownership', HEAD}
+        '0011_crm_contract', '0012_commercial_intents', '0013_technical_ownership',
+        '0014_allow_historical_kvm_106', HEAD}
     require(len(schema) == 1 and schema[0] in supported, 'Unsupported schema')
 
 
@@ -57,7 +58,8 @@ def check_restore_evidence(backup, restored):
         '0006_power_ownership': 11, '0007_safe_deletion': 12, '0008_dhcp_profiles': 13,
         '0009_lab_self_service': 14, '0010_guest_identity': 15,
         '0011_crm_contract': 15, '0012_commercial_intents': 16,
-        '0013_technical_ownership': 17, HEAD: 17}
+        '0013_technical_ownership': 17,
+        '0014_allow_historical_kvm_106': 17, HEAD: 17}
     require(restored.get('passed') is True and restored.get('isolated') is True
         and restored.get('backup_sha256') == backup['sha256']
         and restored.get('schema') == schema and schema in minimum_tables
@@ -202,6 +204,7 @@ def check_consumed_bootstrap_recovery_scope(report, request):
 
 def compare_history(before, after, ownership_migration=None):
     from_0013 = before.get('schema') == ['0013_technical_ownership']
+    from_0014 = before.get('schema') == ['0014_allow_historical_kvm_106']
     if from_0013:
         require(isinstance(ownership_migration, dict),
                 'Technical ownership migration evidence is required for 0013→0014')
@@ -228,6 +231,17 @@ def compare_history(before, after, ownership_migration=None):
                 'Unexpected historical table materialized during 0013→0014')
     for name, evidence in before["tables"].items():
         if name == 'technical_ownership' and from_0013:
+            continue
+        if name == 'instances' and (from_0013 or from_0014) \
+                and 'instances_before_0015' in after.get('compatibility', {}):
+            projected = after['compatibility']['instances_before_0015']
+            require(projected.get('new_fields_default') is True
+                    and {k: projected.get(k) for k in ('count', 'sha256')} == evidence,
+                    'Historical instance data changed during technical access migration')
+            continue
+        if from_0014:
+            require(after["tables"].get(name) == evidence,
+                    "Historical rows changed: " + name)
             continue
         if from_0013:
             require(after["tables"].get(name) == evidence,

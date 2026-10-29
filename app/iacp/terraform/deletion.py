@@ -34,8 +34,14 @@ def gate(instance, session=None, *, allow_queued_initialization=False):
                                if allow_queued_initialization else 'GUEST_INITIALIZATION_ACTIVE')
             if not allow_queued_initialization:
                 raise Conflict('GUEST_INITIALIZATION_ACTIVE')
+        # No hay bootstrap comercial en instancias nuevas. La inicialización
+        # técnica activa ya está cubierta por el fence GuestInitialization;
+        # esta barrera solo se conserva para filas históricas sin vínculo
+        # técnico.
         from ..models import CommercialIntent
-        if session.get(CommercialIntent, instance.id) is not None:
+        from ..services.contracts import instance_uses_technical_access
+        if (not instance_uses_technical_access(instance)
+                and session.get(CommercialIntent, instance.id) is not None):
             from ..services.commercial_bootstrap import active as bootstrap_active
             if bootstrap_active(session,instance.id):raise Conflict('COMMERCIAL_BOOTSTRAP_ACTIVE')
     if not is_managed_vmid(instance.vmid):

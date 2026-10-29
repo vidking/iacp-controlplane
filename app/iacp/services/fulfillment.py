@@ -83,7 +83,15 @@ def progress(session, instance, provisioning_status):
         if start and start.status == 'completed' and requires_identity:
             phase, status = 'guest_initialization', initialization.status if initialization else 'queued'
         from ..models import CommercialIntent
-        if status=='completed' and session.get(CommercialIntent, instance.id) is not None:
+        from .guest_identity import technical_program_for_mode
+        technical_initialization = bool(
+            initialization and initialization.program_sha256 == technical_program_for_mode(initialization.mode)[1]
+        )
+        if status == 'completed' and technical_initialization:
+            access = instance.access_verification or {}
+            phase, status = 'technical_access', (
+                'completed' if access.get('status') == 'completed' else 'queued')
+        elif status=='completed' and session.get(CommercialIntent, instance.id) is not None:
             intent=session.get(CommercialIntent,instance.id)
             phase,status='root_bootstrap',intent.bootstrap_status if intent else 'failed'
             if status=='pending':status='queued'

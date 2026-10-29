@@ -67,6 +67,13 @@ class Instance(Base):
     policy_binding_sha256: Mapped[str | None] = mapped_column(String(64))
     commercial_context: Mapped[dict | None] = mapped_column(JSON)
     start_on_create: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Referencia opaca efímera para la inicialización técnica. No contiene la
+    # contraseña y se elimina después de verificar el acceso; no es una
+    # autorización comercial ni una dependencia de CommercialIntent.
+    technical_access_reference: Mapped[str | None] = mapped_column(String(43))
+    technical_access_public_keys: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), default=list,
+        server_default=text("'[]'"), nullable=False)
     initial_access_ciphertext: Mapped[str | None] = mapped_column(Text)
     initial_access_fingerprint: Mapped[str | None] = mapped_column(String(64))
     commercial_revision: Mapped[str | None] = mapped_column(String(32))
