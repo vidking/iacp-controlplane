@@ -92,6 +92,25 @@ def test_lab_authorizes_activate_core_but_production_requires_approval():
     assert production.authorize("activate-core") == ("approval", "activate-core")
 
 
+def test_lab_authorizes_only_the_exact_consumed_bootstrap_recovery_action():
+    promotion = object.__new__(driver.Promotion)
+    promotion.m = {"project": "iacp-controlplane", "release": "a" * 40}
+    promotion.execution_profile = {"environment": "lab"}
+    evidence = []
+    promotion.evidence = lambda name, value: evidence.append((name, value))
+    result = promotion.authorize("recover-consumed-commercial-bootstrap")
+    assert result["authorized"] is True and result["approved"] is False
+    assert evidence[0][1]["action"] == "recover-consumed-commercial-bootstrap"
+
+    production = object.__new__(driver.Promotion)
+    production.m = promotion.m
+    production.execution_profile = {"environment": "production"}
+    production.approve = lambda action: ("approval", action)
+    assert production.authorize("recover-consumed-commercial-bootstrap") == (
+        "approval", "recover-consumed-commercial-bootstrap"
+    )
+
+
 def test_lab_profile_rejects_an_unauthorized_os_identity():
     profile = {
         "version": 1, "environment": "lab", "cluster": "MNG",

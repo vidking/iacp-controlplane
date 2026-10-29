@@ -54,6 +54,15 @@ def main():
     recover_guest.add_argument('--job-id', required=True, help='UUID exacto del Job')
     recover_guest.add_argument('--operator', help='Identidad del operador; LAB deriva la identidad del proceso')
     recover_guest.add_argument('--change-reference', help='Referencia de cambio; LAB genera evidencia local')
+    recover_bootstrap = sub.add_parser('recover-consumed-commercial-bootstrap')
+    recover_bootstrap.add_argument('--instance-id', required=True, help='UUID exacto de la instancia')
+    recover_bootstrap.add_argument('--vmid', required=True, type=int, help='VMID exacto de la KVM administrable')
+    recover_bootstrap.add_argument('--operation-id', required=True, help='UUID exacto del bootstrap comercial')
+    recover_bootstrap.add_argument('--job-id', required=True, help='UUID exacto del Job del bootstrap comercial')
+    recover_bootstrap.add_argument('--evidence-file', required=True, type=Path,
+                                   help='Atestación read-only privada sin secretos')
+    recover_bootstrap.add_argument('--operator', help='Identidad del operador; LAB deriva la identidad del proceso')
+    recover_bootstrap.add_argument('--change-reference', help='Referencia de cambio; LAB genera evidencia local')
     logs = sub.add_parser('logs'); logs.add_argument('service'); logs.add_argument('--tail', type=int, default=100)
     rotate = sub.add_parser('docs-rotate')
     rotate.add_argument('--registry', type=Path, required=True)
@@ -270,11 +279,11 @@ with get_session_factory()() as session:
         m = json.loads(args.manifest.read_text())
         if m.get('configuration_mode') != 'canonical' or m['environment_file'] != str(args.env_file.resolve()) or m['compose_files'] != [str(args.compose_file.resolve().relative_to(ROOT))]:
             raise ValueError('Manifest must use the one canonical Compose and active environment')
-        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport', 'recover-queued-guest-init':'recover-queued-guest-init',
+        action = {'deploy': 'promote', 'rollback': 'rollback', 'admit': 'admit', 'enable-delete': 'enable-delete', 'activate-pilot': 'activate-pilot', 'activate-core':'activate-core', 'attest-root-transport':'attest-root-transport', 'recover-queued-guest-init':'recover-queued-guest-init', 'recover-consumed-commercial-bootstrap':'recover-consumed-commercial-bootstrap',
                   'certify': 'record-certificate' if getattr(args, 'record', False) else 'validate-certificate'}[args.action]
         command = [sys.executable, str(ROOT / 'scripts/go_live.py'), action,
                    '--manifest', str(args.manifest), '--evidence-dir', str(args.evidence_dir)]
-        if args.action == 'recover-queued-guest-init':
+        if args.action in {'recover-queued-guest-init', 'recover-consumed-commercial-bootstrap'}:
             command.extend([
                 '--instance-id', args.instance_id,
                 '--vmid', str(args.vmid),
@@ -285,6 +294,8 @@ with get_session_factory()() as session:
                 command.extend(['--operator', args.operator])
             if args.change_reference:
                 command.extend(['--change-reference', args.change_reference])
+            if args.action == 'recover-consumed-commercial-bootstrap':
+                command.extend(['--evidence-file', str(args.evidence_file)])
         subprocess.run(command, check=True)
 
 

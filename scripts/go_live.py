@@ -33,6 +33,7 @@ ROLES = ["api", "worker", "terraform-worker", "lifecycle-worker"]
 HOST_EXECUTION_PROFILE = Path("/etc/iacp/execution-profile.json")
 LAB_AUTOMATED_ACTIONS = frozenset({
     "deploy", "promote-env", "recover-queued-guest-init",
+    "recover-consumed-commercial-bootstrap",
     "migrate-technical-ownership", "activate-core",
 })
 
@@ -180,6 +181,23 @@ def check_queued_guest_recovery_scope(report, request):
     # a comprobar sus estados terminales y su evento de auditoría exactos.
     require(not any(report.get("queues", {}).values()) and report.get("unacked") == 0,
             "Broker activity prevents queued guest recovery")
+
+
+def check_consumed_bootstrap_recovery_scope(report, request):
+    """Permite únicamente el bootstrap incierto exacto antes de SSH."""
+    nonterminal = report.get("nonterminal", {})
+    for name, rows in nonterminal.items():
+        if not rows:
+            continue
+        if name == "operations":
+            require(len(rows) == 1 and rows[0]["id"] == request["operation_id"]
+                    and rows[0]["status"] == "uncertain",
+                    "Unexpected nonterminal operation during bootstrap recovery")
+        else:
+            require(not rows,
+                    "Unexpected nonterminal work during bootstrap recovery: " + name)
+    require(not any(report.get("queues", {}).values()) and report.get("unacked") == 0,
+            "Broker has pending work during bootstrap recovery")
 
 
 def compare_history(before, after, ownership_migration=None):
@@ -383,6 +401,82 @@ print(json.dumps({key: {node: ([q['name'] for q in tasks] if key == 'active_queu
             "changed": result.get("changed"),
             "already_completed": result.get("already_completed"),
             "check_idle": True,
+        })
+        return result
+
+    def recover_consumed_commercial_bootstrap(self, request):
+        """Cierra un único bootstrap histórico que falló antes de SSH.
+
+        La evidencia se lee en el host, se valida como archivo privado y solo
+        se inyecta su atestación sin secretos al contenedor API activo. El
+        servicio remoto vuelve a validar todos los campos bajo los locks de
+        IACP; nunca se reenvía una credencial ni se ejecuta guest-exec.
+        """
+        change = self.authorize("recover-consumed-commercial-bootstrap")
+        evidence_argument = Path(request.pop("evidence_file"))
+        require(not evidence_argument.is_symlink(),
+                "Recovery evidence may not be a symlink")
+        evidence_file = evidence_argument.resolve()
+        require(not evidence_file.is_relative_to(ROOT),
+                "Recovery evidence must remain outside the checkout")
+        require(evidence_file.is_file(),
+                "Recovery evidence must be a regular file")
+        info = evidence_file.stat()
+        require(info.st_mode & 0o077 == 0, "Recovery evidence must be private")
+        require(evidence_file.parent.stat().st_mode & 0o077 == 0,
+                "Recovery evidence directory must be private")
+        raw = evidence_file.read_bytes()
+        evidence_sha256 = hashlib.sha256(raw).hexdigest()
+        try:
+            evidence = json.loads(raw.decode("utf8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("Recovery evidence is not valid JSON") from error
+        require(isinstance(evidence, dict), "Recovery evidence must be an object")
+        require("evidence_sha256" not in evidence,
+                "Recovery evidence digest is generated from the immutable file")
+        if self.execution_profile.get("environment") == "lab":
+            request.update(actor=change["actor"], change_reference=change["reference"])
+        else:
+            require(request.get("actor") == change["actor"],
+                    "Operator identity differs from change record")
+            require(request.get("change_reference") == change["reference"],
+                    "Change reference differs from change record")
+        evidence["evidence_sha256"] = evidence_sha256
+        for field in ("instance_id", "operation_id", "job_id", "vmid"):
+            require(evidence.get(field) == request[field],
+                    "Recovery evidence identity mismatch: " + field)
+        require(evidence.get("inspection_mode") == "read-only",
+                "Recovery evidence is not read-only")
+        before = self.snapshot()
+        require(before["schema"] == [HEAD], "Bootstrap recovery requires the current schema head")
+        check_consumed_bootstrap_recovery_scope(before, request)
+        self.workers_idle(lifecycle=True)
+        source = (ROOT / "app/iacp/services/commercial_bootstrap_recovery.py").read_text(encoding="utf8")
+        payload = json.dumps({**request, "evidence": evidence}, sort_keys=True)
+        code = source + "\nrun_from_json(" + repr(payload) + ")\n"
+        result = json.loads(self.exec_python("api", code))
+        self.evidence("recover-consumed-commercial-bootstrap", {
+            "instance_id": request["instance_id"],
+            "operation_id": request["operation_id"],
+            "job_id": request["job_id"],
+            "vmid": request["vmid"],
+            "evidence_reference": evidence.get("evidence_reference"),
+            "evidence_sha256": evidence_sha256,
+            "result": result,
+        })
+        require(result.get("passed") is True,
+                "Consumed bootstrap recovery rejected: " + str(result.get("reason", "unknown")))
+        after = self.snapshot()
+        check_idle(after)
+        self.workers_idle(lifecycle=True)
+        self.evidence("recover-consumed-commercial-bootstrap-completed", {
+            "instance_id": request["instance_id"],
+            "operation_id": request["operation_id"],
+            "job_id": request["job_id"],
+            "changed": result.get("changed"),
+            "already_completed": result.get("already_completed"),
+            "check_idle": True,
+            "evidence_sha256": evidence_sha256,
         })
         return result
 
@@ -1280,7 +1374,7 @@ print('DISPOSABLE_PROVISIONING_VERIFIED')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-core", "attest-root-transport", "recover-queued-guest-init"])
+    parser.add_argument("action", choices=["inventory", "preflight", "promote", "publish", "verify", "expectations", "validate-certificate", "record-certificate", "activate", "first-start", "rollback", "admit", "enable-delete", "activate-pilot", "activate-core", "attest-root-transport", "recover-queued-guest-init", "recover-consumed-commercial-bootstrap"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True, help="New private directory, outside the checkout")
     parser.add_argument("--instance-id", help="UUID exacto de la instancia para la recuperación")
@@ -1289,12 +1383,13 @@ def main():
     parser.add_argument("--job-id", help="UUID exacto del Job de Guest Initialization")
     parser.add_argument("--operator", help="Identidad del operador del registro de cambio")
     parser.add_argument("--change-reference", help="Referencia del registro de cambio")
+    parser.add_argument("--evidence-file", type=Path, help="Atestación read-only privada de recuperación")
     args = parser.parse_args()
     os.umask(0o077)
     output = args.evidence_dir.resolve()
     require(not output.is_relative_to(ROOT), "Keep operational evidence outside the checkout")
     recovery_request = None
-    if args.action == "recover-queued-guest-init":
+    if args.action in {"recover-queued-guest-init", "recover-consumed-commercial-bootstrap"}:
         from uuid import UUID
         values = {"instance_id": args.instance_id, "operation_id": args.operation_id, "job_id": args.job_id}
         for field, value in values.items():
@@ -1315,6 +1410,10 @@ def main():
             "actor": args.operator,
             "change_reference": args.change_reference,
         }
+        if args.action == "recover-consumed-commercial-bootstrap":
+            require(args.evidence_file is not None,
+                    "A private evidence file is required for consumed bootstrap recovery")
+            recovery_request["evidence_file"] = str(args.evidence_file.resolve())
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     manifest = json.loads(args.manifest.read_text())
     private_json(output / "manifest-digest.json", {"sha256": digest(args.manifest), "action": args.action, "at": stamp()})
@@ -1328,6 +1427,8 @@ def main():
                 promotion.workers_idle(lifecycle=any(c["Config"]["Labels"].get("com.docker.compose.service") == "lifecycle-worker" for c in promotion.containers()))
             elif args.action == "recover-queued-guest-init":
                 promotion.recover_queued_guest_init(recovery_request)
+            elif args.action == "recover-consumed-commercial-bootstrap":
+                promotion.recover_consumed_commercial_bootstrap(recovery_request)
             elif args.action in {"validate-certificate", "record-certificate"}:
                 promotion.certify(record=args.action == "record-certificate")
             else:
