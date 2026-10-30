@@ -101,6 +101,23 @@ def test_runner_blocks_almalinux_and_preserves_global_uncertainty():
     assert 'allow_reconcile' in module.wait_operation.__code__.co_varnames
 
 
+def test_fulfillment_accepts_certified_ready_contract_and_rejects_unverified_ready():
+    module=runner()
+
+    assert module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'verified'},
+    })
+    assert module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'ready', 'certified_ready': True},
+    })
+    assert not module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'ready', 'certified_ready': False},
+    })
+    assert not module.fulfillment_is_certified({
+        'fulfillment': {'status': 'running', 'phase': 'ready', 'certified_ready': True},
+    })
+
+
 def test_global_uncertainty_blocks_before_any_create(monkeypatch):
     module=runner()
     monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
@@ -110,6 +127,25 @@ def test_global_uncertainty_blocks_before_any_create(monkeypatch):
         'recovery_required':True,
     }])
 
+    with pytest.raises(RuntimeError,match='GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E'):
+        module.assert_no_global_mutations()
+
+
+def test_global_guard_allows_only_readonly_discovery_for_created_pilot(monkeypatch):
+    module=runner()
+    module.CREATED_INSTANCE_IDS={'pilot-instance'}
+    monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
+        'operation_id':'discover-pilot','instance_id':'pilot-instance',
+        'kind':'instance.network.discover','status':'running',
+        'normalized_status':'running','error_code':None,
+    }])
+    assert module.assert_no_global_mutations()==[]
+
+    monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
+        'operation_id':'discover-other','instance_id':'other-instance',
+        'kind':'instance.network.discover','status':'running',
+        'normalized_status':'running','error_code':None,
+    }])
     with pytest.raises(RuntimeError,match='GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E'):
         module.assert_no_global_mutations()
 
