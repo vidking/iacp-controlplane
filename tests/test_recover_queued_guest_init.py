@@ -438,6 +438,53 @@ def test_observation_timeout_with_deterministic_access_failure_is_terminal(
         assert row.finished_at is not None
 
 
+def test_legacy_observation_failure_is_reclassified_read_only(
+        consumed_technical_guest, sessions, monkeypatch):
+    import paramiko
+
+    with sessions() as session:
+        session.get(Operation, consumed_technical_guest["operation_id"]).error_code = (
+            "GUEST_INITIALIZATION_OBSERVATION_FAILED"
+        )
+        session.commit()
+
+    class SecretStore:
+        def read(self, *_args):
+            return "A" * 16
+
+    class Guest:
+        def observe(self, _target, row):
+            return {
+                "instance_id": row.instance_id,
+                "mac_address": row.mac_address,
+                "mode": row.mode,
+                "program_sha256": row.program_sha256,
+                "network": {"ip_addresses": ["192.0.2.43"], "status": "observed"},
+                "source": "qemu-guest-agent",
+            }
+
+    class Verifier:
+        def verify(self, *_args, **_kwargs):
+            raise paramiko.BadHostKeyException("192.0.2.43", None, None)
+
+    monkeypatch.setattr("iacp.services.bootstrap_secrets.EphemeralSecrets.configured",
+                        classmethod(lambda cls: SecretStore()))
+
+    with sessions() as session:
+        result = reconcile_consumed_in_session(
+            session, consumed_technical_guest, runtime_idle=lambda: {"redis": True},
+            guest_factory=Guest, verifier=Verifier(),
+        )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "ROOT_SSH_HOST_KEY_MISMATCH"
+    with sessions() as session:
+        row = session.get(GuestInitialization, consumed_technical_guest["operation_id"])
+        operation = session.get(Operation, consumed_technical_guest["operation_id"])
+        assert row.status == operation.status == "failed"
+        assert row.finished_at is not None
+
+
 def test_observation_timeout_with_active_pid_remains_uncertain(
         consumed_technical_guest, sessions):
     with sessions() as session:

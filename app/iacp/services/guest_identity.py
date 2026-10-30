@@ -685,8 +685,21 @@ def execute_initialization(identifier,sessions,client_factory=GuestClient.config
                     row.status=operation.status=('uncertain' if row.started_at and not isinstance(failure,GuestProgramFailed) else 'failed')
                     if isinstance(failure,GuestProgramFailed):row.finished_at=utcnow()
                     if job:job.status='failed'
-                    operation.error_code=(str(failure)[:64] if isinstance(failure,Conflict) else failure.code
-                        if isinstance(failure,PowerError) else 'GUEST_INITIALIZATION_OBSERVATION_FAILED')
+                    if isinstance(failure, (Conflict, PowerError)):
+                        error_code = (str(failure)[:64] if isinstance(failure, Conflict)
+                                      else failure.code)
+                    else:
+                        # AccessVerifier deliberately raises Paramiko's typed
+                        # host-key/authentication errors. Preserve those
+                        # deterministic, sanitised codes so verify-consumed can
+                        # classify the consumed fence without replaying QGA.
+                        from .access import access_error_code
+                        mapped = access_error_code(failure)
+                        error_code = (mapped if mapped in {
+                            'ROOT_SSH_AUTHENTICATION_FAILED',
+                            'ROOT_SSH_HOST_KEY_MISMATCH',
+                        } else 'GUEST_INITIALIZATION_OBSERVATION_FAILED')
+                    operation.error_code=error_code
                     event_code = 'guest_initialization_' + row.status
                     if isinstance(failure, GuestProgramFailed):
                         stage = failure.stage or 'unknown'
