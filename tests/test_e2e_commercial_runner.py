@@ -131,6 +131,25 @@ def test_global_uncertainty_blocks_before_any_create(monkeypatch):
         module.assert_no_global_mutations()
 
 
+def test_global_guard_allows_only_readonly_discovery_for_created_pilot(monkeypatch):
+    module=runner()
+    module.CREATED_INSTANCE_IDS={'pilot-instance'}
+    monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
+        'operation_id':'discover-pilot','instance_id':'pilot-instance',
+        'kind':'instance.network.discover','status':'running',
+        'normalized_status':'running','error_code':None,
+    }])
+    assert module.assert_no_global_mutations()==[]
+
+    monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{
+        'operation_id':'discover-other','instance_id':'other-instance',
+        'kind':'instance.network.discover','status':'running',
+        'normalized_status':'running','error_code':None,
+    }])
+    with pytest.raises(RuntimeError,match='GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E'):
+        module.assert_no_global_mutations()
+
+
 @pytest.mark.parametrize('message',[
     'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E:bootstrap-uncertain',
     'OPERATION_UNCERTAIN',

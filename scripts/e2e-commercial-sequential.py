@@ -146,7 +146,9 @@ def inventory_scope_diff(before,after,created_ids):
 
 
 def assert_no_global_mutations():
-    blocking=list_non_terminal_operations()
+    blocking=[row for row in list_non_terminal_operations()
+        if not (row.get('kind')=='instance.network.discover'
+                and row.get('instance_id') in CREATED_INSTANCE_IDS)]
     if blocking:
         raise RuntimeError(
             'GLOBAL_NON_TERMINAL_OPERATION_BLOCKS_E2E:'+
