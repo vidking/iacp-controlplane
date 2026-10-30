@@ -133,6 +133,66 @@ def run_recovery(sessions, request, store, runtime_idle=lambda: {"redis": True})
         )
 
 
+def deleted_absence_request(sessions, request):
+    """Sella la evidencia pública mínima de una ausencia ya observada."""
+    with sessions() as session:
+        from iacp.models import Instance
+        instance = session.get(Instance, request["instance_id"])
+        ownership = session.get(recovery.TechnicalOwnership, request["instance_id"])
+        execution = session.get(recovery.TerraformExecution, request["instance_id"])
+        instance.status = "deleted"
+        evidence = {
+            "evidence_version": recovery.DELETED_ABSENCE_EVIDENCE_VERSION,
+            "instance_id": request["instance_id"],
+            "operation_id": request["operation_id"],
+            "job_id": request["job_id"],
+            "vmid": request["vmid"],
+            "historical_runtime_sha": recovery.HISTORICAL_RUNTIME_SHA,
+            "secure_bootstrap_source_sha256": recovery.SECURE_BOOTSTRAP_SHA256,
+            "commercial_bootstrap_source_sha256": recovery.COMMERCIAL_BOOTSTRAP_SHA256,
+            "inspection_mode": "read-only",
+            "source": "runtime-absence-observation",
+            "physical_identity_verified": True,
+            "instance_status": "deleted",
+            "operation_kind": recovery.OPERATION_KIND,
+            "operation_status": "uncertain",
+            "operation_error_code": recovery.PRIOR_ERROR_CODE,
+            "job_status": "failed",
+            "source_revision": "c" * 40,
+            "bootstrap_executor_sha256": "d" * 64,
+            "tenant_id": instance.tenant_id,
+            "node": instance.node,
+            "name": instance.name,
+            "state_key_sha256": hashlib.sha256(execution.state_key.encode()).hexdigest(),
+            "ownership_binding_sha256": ownership.binding_sha256,
+            "proxmox_present": False,
+            "state_resource_present": False,
+            "state_resource_id": None,
+            "state_lock_absent": True,
+            "redelivery_mode": "observe-only-fenced",
+            "state_snapshot": {
+                "version_id": "version-1",
+                "lineage": "lineage-1",
+                "serial": 7,
+                "sha256": "a" * 64,
+                "content_sha256": "b" * 64,
+            },
+            "evidence_reference": "evidence/30093-deleted-absence.json",
+        }
+        evidence["evidence_sha256"] = hashlib.sha256(
+            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        request["evidence"] = evidence
+        session.commit()
+    return request
+
+
+@pytest.fixture
+def deleted_absence_bootstrap(sessions, uncertain_bootstrap):
+    request, store = uncertain_bootstrap
+    return deleted_absence_request(sessions, request), store
+
+
 def test_consumed_preconnect_recovery_closes_exact_case_without_delivery(
     sessions, uncertain_bootstrap
 ):
@@ -157,6 +217,62 @@ def test_consumed_preconnect_recovery_closes_exact_case_without_delivery(
         assert "commercial_bootstrap_dispatch_consumed" in codes
         assert recovery.EVENT_CODE in codes
         assert "commercial_bootstrap_completed" not in codes
+
+
+def test_deleted_absence_recovery_closes_exact_historical_fence(
+    sessions, deleted_absence_bootstrap
+):
+    request, store = deleted_absence_bootstrap
+    result = run_recovery(sessions, request, store)
+    assert result["changed"] is True
+    assert result["error_code"] == recovery.ERROR_CODE
+    with sessions() as session:
+        from iacp.models import Instance
+        instance = session.get(Instance, request["instance_id"])
+        operation = session.get(Operation, request["operation_id"])
+        assert instance.status == "deleted"
+        assert operation.status == "failed"
+        assert operation.error_code == recovery.ERROR_CODE
+
+
+def test_deleted_absence_recovery_is_idempotent(
+    sessions, deleted_absence_bootstrap
+):
+    request, store = deleted_absence_bootstrap
+    first = run_recovery(sessions, request, store)
+
+    def must_not_run():
+        raise AssertionError("No debe repetirse una comprobación de runtime")
+
+    second = run_recovery(sessions, request, store, runtime_idle=must_not_run)
+    assert first["changed"] is True
+    assert second["changed"] is False
+    assert second["already_completed"] is True
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"instance_status": "ready"},
+        {"proxmox_present": True},
+        {"state_resource_present": True},
+        {"state_lock_absent": False},
+        {"operation_status": "running"},
+        {"job_status": "running"},
+        {"redelivery_mode": "replay-allowed"},
+    ],
+)
+def test_deleted_absence_proof_mismatch_fails_closed(
+    sessions, deleted_absence_bootstrap, change
+):
+    request, store = deleted_absence_bootstrap
+    request["evidence"].update(change)
+    with pytest.raises(recovery.RecoveryError):
+        run_recovery(sessions, request, store)
+    with sessions() as session:
+        assert session.get(Operation, request["operation_id"]).status == "uncertain"
+        from iacp.models import Instance
+        assert session.get(Instance, request["instance_id"]).status == "deleted"
 
 
 def test_recovery_is_idempotent_and_does_not_reinspect_runtime(
