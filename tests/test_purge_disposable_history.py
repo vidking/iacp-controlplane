@@ -127,6 +127,33 @@ def test_purga_acepta_vinculo_legacy_sellado_sin_technical_ownership(sessions):
     assert targets[0].vmid == 30000
 
 
+def test_purga_acepta_fallo_terminal_sin_recurso_materializado(sessions):
+    from iacp.maintenance.purge import collect_targets, validate_database_activity
+
+    identifier = str(uuid4())
+    state_key = f"iacp/lab/tenants/{BOOTSTRAP_TENANT_ID}/instances/{identifier}/terraform.tfstate"
+    allocation = allocation_data(30000, image="ubuntu-2404")
+    allocation.update(environment="lab", allowed_nodes=["mng01"], node_name="mng01")
+    with sessions() as session:
+        session.add(Instance(
+            id=identifier, tenant_id=BOOTSTRAP_TENANT_ID, name="failed-before-resource",
+            image="ubuntu-2404", vcpus=2, memory_mb=2048, disk_gb=20,
+            status="failed", executor="terraform", vmid=None, node=None,
+        ))
+        session.add(TerraformExecution(
+            instance_id=identifier, job_id=str(uuid4()), operation_id=str(uuid4()),
+            status="failed", attempt=1, state_key=state_key, vmid=30000,
+            allocation=allocation,
+        ))
+        session.commit()
+        targets = collect_targets(session, 30000, 30000)
+        activity = validate_database_activity(session, targets)
+
+    assert targets[0].vmid == 30000
+    assert targets[0].node == "mng01"
+    assert activity["active_operations"] == []
+
+
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [

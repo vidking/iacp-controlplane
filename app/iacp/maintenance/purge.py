@@ -175,16 +175,18 @@ def _validated_allocation_binding(instance, execution) -> dict:
         raise PurgeError("PURGE_LEGACY_ALLOCATION_INVALID") from None
 
     if (
-        instance.vmid is None
-        or execution.vmid is None
-        or instance.vmid != execution.vmid
+        execution.vmid is None
+        or (instance.vmid is not None and instance.vmid != execution.vmid)
         or allocation.vm_id != execution.vmid
-        or not instance.node
-        or allocation.node_name != instance.node
+        or (instance.node is not None and allocation.node_name != instance.node)
         or allocation.image != instance.image
         or allocation.environment != "lab"
-        or instance.node not in allocation.allowed_nodes
+        or allocation.node_name not in allocation.allowed_nodes
         or f"/tenants/{instance.tenant_id}/instances/{instance.id}/" not in execution.state_key
+        or (
+            (instance.vmid is None or instance.node is None)
+            and instance.status not in {"failed", "deleted"}
+        )
     ):
         raise PurgeError("PURGE_LEGACY_BINDING_MISMATCH")
     return execution.allocation
@@ -209,9 +211,9 @@ def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
             if (
                 ownership.tenant_id != instance.tenant_id
                 or ownership.vmid != execution.vmid
-                or ownership.node != instance.node
                 or ownership.name != instance.name
                 or ownership.state_key != execution.state_key
+                or ownership.node != (instance.node or allocation["node_name"])
             ):
                 raise PurgeError("PURGE_TECHNICAL_BINDING_MISMATCH")
             ownership_vmid = ownership.vmid
@@ -233,7 +235,7 @@ def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
                 instance_id=instance.id,
                 tenant_id=instance.tenant_id,
                 vmid=vmid,
-                node=instance.node,
+                node=instance.node or (ownership.node if ownership is not None else allocation["node_name"]),
                 name=instance.name,
                 state_key=execution.state_key,
                 allocation=allocation,
@@ -330,8 +332,8 @@ def validate_database_activity(
     instances = session.scalars(
         select(Instance).where(Instance.id.in_(identifiers))
     ).all()
-    if any(instance.status != "deleted" for instance in instances):
-        raise PurgeError("PURGE_INSTANCE_NOT_DELETED")
+    if any(instance.status not in {"deleted", "failed"} for instance in instances):
+        raise PurgeError("PURGE_INSTANCE_NOT_TERMINAL")
 
     operations = session.scalars(
         select(Operation).where(
