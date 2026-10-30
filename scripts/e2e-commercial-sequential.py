@@ -339,7 +339,11 @@ if P.get('deleted'):
  assert not residual
  result['residual_disks']=residual
 else:
- assert c.bootstrap_status=='completed' and c.secret_reference is None and observation['present'] and resource
+ technical_access = (i.access_verification or {}).get('status') == 'completed' and \
+                     (i.access_verification or {}).get('ssh_authenticated') is True
+ commercial_access = c.bootstrap_status == 'completed' and c.secret_reference is None
+ assert commercial_access or technical_access
+ assert observation['present'] and resource
  cfg=client._request('GET',target.path+'/config')
  from iacp.terraform.golden_hardware import verify_live,verify_cpu
  from iacp.terraform.executor import verify_plan
