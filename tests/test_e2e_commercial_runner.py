@@ -87,6 +87,13 @@ def test_next_pilot_name_skips_tombstones_with_neutral_names():
     assert 'agent' not in module.next_pilot_name('ubuntu-2604', set())
 
 
+def test_probe_accepts_completed_technical_access_without_commercial_bootstrap():
+    module=runner()
+    assert "technical_access = (i.access_verification or {}).get('status') == 'completed'" in module.PROBE
+    assert "commercial_access = c.bootstrap_status == 'completed'" in module.PROBE
+    assert "assert observation['present'] and resource" in module.PROBE
+
+
 def test_runner_blocks_almalinux_and_preserves_global_uncertainty():
     module=runner()
     assert module.SUPPORTED_E2E_IMAGES=={'ubuntu-2404','ubuntu-2604'}
