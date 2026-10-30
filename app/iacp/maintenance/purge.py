@@ -38,7 +38,7 @@ from ..models import (
     TerraformExecution,
 )
 from ..services.commercial_bootstrap_recovery import assert_broker_and_workers_idle
-from ..terraform.config import Backend, PlanError
+from ..terraform.config import Allocation, Backend, PlanError
 from ..terraform.lifecycle import build_executor
 from ..terraform.locks import admission_lock
 from ..terraform.profiles import cluster_vmids
@@ -99,6 +99,7 @@ class PurgeTarget:
     name: str
     state_key: str
     allocation: dict
+    binding_source: str = "technical-ownership"
 
     def public(self) -> dict:
         return {
@@ -108,6 +109,7 @@ class PurgeTarget:
             "node": self.node,
             "name": self.name,
             "state_key_sha256": hashlib.sha256(self.state_key.encode("utf8")).hexdigest(),
+            "binding_source": self.binding_source,
         }
 
 
@@ -157,6 +159,37 @@ def _ids_in_range(session, start: int, end: int) -> set[str]:
     return result
 
 
+def _validated_allocation_binding(instance, execution) -> dict:
+    """Valida la asignación histórica que liga instancia, VMID, nodo y State.
+
+    Algunas instancias eliminadas son anteriores a la migración que materializa
+    ``TechnicalOwnership``. En ese caso la evidencia no se infiere: se acepta
+    únicamente si el snapshot de ``TerraformExecution`` sigue describiendo
+    exactamente la instancia y su State key autorizado.
+    """
+    if execution is None or not execution.state_key or not isinstance(execution.allocation, dict):
+        raise PurgeError("PURGE_TECHNICAL_BINDING_MISSING")
+    try:
+        allocation = Allocation.model_validate(execution.allocation)
+    except (TypeError, ValueError):
+        raise PurgeError("PURGE_LEGACY_ALLOCATION_INVALID") from None
+
+    if (
+        instance.vmid is None
+        or execution.vmid is None
+        or instance.vmid != execution.vmid
+        or allocation.vm_id != execution.vmid
+        or not instance.node
+        or allocation.node_name != instance.node
+        or allocation.image != instance.image
+        or allocation.environment != "lab"
+        or instance.node not in allocation.allowed_nodes
+        or f"/tenants/{instance.tenant_id}/instances/{instance.id}/" not in execution.state_key
+    ):
+        raise PurgeError("PURGE_LEGACY_BINDING_MISMATCH")
+    return execution.allocation
+
+
 def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
     """Resolve un rango a bindings exactos, sin aceptar State ambiguo."""
     identifiers = _ids_in_range(session, start, end)
@@ -169,17 +202,23 @@ def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
     ).all():
         execution = session.get(TerraformExecution, instance.id)
         ownership = session.get(TechnicalOwnership, instance.id)
-        if execution is None or ownership is None or not execution.state_key:
-            raise PurgeError("PURGE_TECHNICAL_BINDING_MISSING")
+        allocation = _validated_allocation_binding(instance, execution)
+        binding_source = "legacy-execution-allocation"
+        ownership_vmid = None
+        if ownership is not None:
+            if (
+                ownership.tenant_id != instance.tenant_id
+                or ownership.vmid != execution.vmid
+                or ownership.node != instance.node
+                or ownership.name != instance.name
+                or ownership.state_key != execution.state_key
+            ):
+                raise PurgeError("PURGE_TECHNICAL_BINDING_MISMATCH")
+            ownership_vmid = ownership.vmid
+            binding_source = "technical-ownership"
 
         vmids = {
-            value
-            for value in (
-                instance.vmid,
-                execution.vmid,
-                ownership.vmid,
-            )
-            if value is not None
+            value for value in (instance.vmid, execution.vmid, ownership_vmid) if value is not None
         }
         if len(vmids) != 1:
             raise PurgeError("PURGE_VMID_BINDING_MISMATCH")
@@ -188,8 +227,6 @@ def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
             raise PurgeError("PURGE_RANGE_BINDING_MISMATCH")
         if vmid in PROTECTED_VMIDS:
             raise PurgeError("PURGE_PROTECTED_VMID")
-        if execution.allocation is None:
-            raise PurgeError("PURGE_ALLOCATION_MISSING")
 
         targets.append(
             PurgeTarget(
@@ -199,7 +236,8 @@ def collect_targets(session, start: int, end: int) -> list[PurgeTarget]:
                 node=instance.node,
                 name=instance.name,
                 state_key=execution.state_key,
-                allocation=execution.allocation,
+                allocation=allocation,
+                binding_source=binding_source,
             )
         )
     if {target.instance_id for target in targets} != identifiers:
