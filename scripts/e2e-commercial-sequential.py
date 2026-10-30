@@ -105,6 +105,17 @@ def list_non_terminal_operations():
             if _operation_status(row) in NON_TERMINAL_OPERATION_STATUSES]
 
 
+def next_pilot_name(image, reserved_names):
+    """Elige el siguiente nombre técnico neutral no usado por el tenant LAB."""
+    prefix = PILOT_NAME_PREFIX[image]
+    occupied = set(reserved_names)
+    for suffix in range(1, 1000):
+        candidate = f'{prefix}-{suffix:03d}'
+        if candidate not in occupied:
+            return candidate
+    raise RuntimeError('PILOT_NAME_POOL_EXHAUSTED')
+
+
 def inventory_scope_diff(before,after,created_ids):
     before_by_id={row['instance_id']:row for row in before}
     after_by_id={row['instance_id']:row for row in after}
@@ -473,6 +484,7 @@ def main():
     key=worker("import os,paramiko\nk=paramiko.PKey.from_path(os.environ['IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE']);print(json.dumps({'public':k.get_name()+' '+k.get_base64()}))")['public']
     BASELINE_INVENTORY=list_instance_inventory()
     CREATED_INSTANCE_IDS=set()
+    reserved_names={row.get('name') for row in BASELINE_INVENTORY if row.get('name')}
     save('inventario-inicial',BASELINE_INVENTORY)
     initial_non_terminal=assert_no_global_mutations()
     save('operaciones-no-terminales-iniciales',initial_non_terminal)
@@ -486,7 +498,9 @@ def main():
         if args.plan and args.plan!='kvm-'+str(n):continue
         assert_no_global_mutations()
         plan='kvm-'+str(n);PASSWORD=secrets.token_urlsafe(28)+'A9!'
-        body={'name':PILOT_NAME_PREFIX[args.image]+'-'+f'{n:03d}','plan_id':plan,'image_id':args.image,
+        pilot_name=next_pilot_name(args.image, reserved_names)
+        reserved_names.add(pilot_name)
+        body={'name':pilot_name,'plan_id':plan,'image_id':args.image,
               'network':{'profile_id':'lab-dhcp'},'access':{'root_password':PASSWORD,'ssh_public_keys':[key]},
               'start_on_create':True,'commercial_context':{'order_id':'E2E-G-'+run+'-'+str(n),'product_id':'CRM-KVM-'+str(n)}}
         if args.minimal:

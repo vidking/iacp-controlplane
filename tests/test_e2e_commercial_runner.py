@@ -77,6 +77,16 @@ def test_inventory_scope_rejects_untracked_resource_and_identity_change():
     assert diff['baseline_identity_changes'][0]['instance_id']=='historical-30093'
 
 
+def test_next_pilot_name_skips_tombstones_with_neutral_names():
+    module=runner()
+    reserved={'prueba-kvm-2404-001','prueba-kvm-2404-003'}
+
+    assert module.next_pilot_name('ubuntu-2404', reserved)=='prueba-kvm-2404-002'
+    reserved.add('prueba-kvm-2404-002')
+    assert module.next_pilot_name('ubuntu-2404', reserved)=='prueba-kvm-2404-004'
+    assert 'agent' not in module.next_pilot_name('ubuntu-2604', set())
+
+
 def test_runner_blocks_almalinux_and_preserves_global_uncertainty():
     module=runner()
     assert module.SUPPORTED_E2E_IMAGES=={'ubuntu-2404','ubuntu-2604'}

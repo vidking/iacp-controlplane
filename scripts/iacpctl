@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from operations import CORE_CONTRACT, compare, runtime_command, live_compatibility
 
+# La purga necesita inventario Proxmox read-only. El servicio one-shot de
+# certificación ya recibe kvm_credentials y terraform_credentials; no se
+# amplían los secretos del terraform-worker permanente.
+PURGE_RUNTIME_SERVICE = 'ownership-certifier'
+
 
 def run(args, **kwargs):
     result = subprocess.run(args, capture_output=True, text=True, env={k: os.environ[k] for k in ('PATH', 'HOME') if k in os.environ}, **kwargs)
@@ -149,7 +154,7 @@ def main():
         }
         command = dc + [
             'run', '--rm', '--no-deps', '--pull', 'never', '-T',
-            '--entrypoint', 'python', 'terraform-worker',
+            '--entrypoint', 'python', PURGE_RUNTIME_SERVICE,
             '-m', 'iacp.maintenance.purge',
         ]
         completed = subprocess.run(
