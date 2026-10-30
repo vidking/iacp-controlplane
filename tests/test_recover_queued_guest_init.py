@@ -23,6 +23,7 @@ from iacp.services.guest_recovery import (
     VERIFY_CONSUMED_EVENT,
     reconcile_consumed_in_session,
 )
+from iacp.services.instances import Conflict
 from tests.power_helpers import managed_instance
 
 
@@ -331,6 +332,135 @@ def test_consumed_uncertain_is_reconciled_by_read_only_root_verification(
             guest_factory=lambda: MustNotObserve(), verifier=verifier,
         )
     assert replay["changed"] is False and replay["already_completed"] is True
+
+
+def test_observation_timeout_is_reconciled_without_replaying_guest_exec(
+        consumed_technical_guest, sessions, monkeypatch):
+    with sessions() as session:
+        session.get(Operation, consumed_technical_guest["operation_id"]).error_code = (
+            "GUEST_INITIALIZATION_OBSERVATION_TIMEOUT"
+        )
+        session.commit()
+
+    class SecretStore:
+        def read(self, *_args):
+            return "A" * 16
+
+    class Guest:
+        def __init__(self):
+            self.observe_calls = 0
+
+        def observe(self, _target, row):
+            self.observe_calls += 1
+            assert row.pid == 1088
+            return {
+                "instance_id": row.instance_id,
+                "mac_address": row.mac_address,
+                "mode": row.mode,
+                "program_sha256": row.program_sha256,
+                "network": {"ip_addresses": ["192.0.2.41"], "status": "observed"},
+                "source": "qemu-guest-agent",
+            }
+
+    class Verifier:
+        def __init__(self):
+            self.calls = 0
+
+        def verify(self, _target, _instance, *, password, ip_addresses):
+            self.calls += 1
+            assert password == "A" * 16
+            assert ip_addresses == ["192.0.2.41"]
+            return {"cloud_init_complete": True, "ssh_authenticated": True}
+
+    guest, verifier = Guest(), Verifier()
+    monkeypatch.setattr("iacp.services.bootstrap_secrets.EphemeralSecrets.configured",
+                        classmethod(lambda cls: SecretStore()))
+    monkeypatch.setattr("iacp.services.guest_identity._cleanup_technical_access_reference",
+                        lambda *_args: None)
+
+    with sessions() as session:
+        result = reconcile_consumed_in_session(
+            session, consumed_technical_guest, runtime_idle=lambda: {"redis": True},
+            guest_factory=lambda: guest, verifier=verifier,
+        )
+
+    assert result["status"] == "completed"
+    assert guest.observe_calls == verifier.calls == 1
+    with sessions() as session:
+        row = session.get(GuestInitialization, consumed_technical_guest["operation_id"])
+        operation = session.get(Operation, consumed_technical_guest["operation_id"])
+        assert row.status == operation.status == "completed"
+        assert operation.error_code is None
+
+
+def test_observation_timeout_with_deterministic_access_failure_is_terminal(
+        consumed_technical_guest, sessions, monkeypatch):
+    with sessions() as session:
+        session.get(Operation, consumed_technical_guest["operation_id"]).error_code = (
+            "GUEST_INITIALIZATION_OBSERVATION_TIMEOUT"
+        )
+        session.commit()
+
+    class SecretStore:
+        def read(self, *_args):
+            return "A" * 16
+
+    class Guest:
+        def observe(self, _target, row):
+            return {
+                "instance_id": row.instance_id,
+                "mac_address": row.mac_address,
+                "mode": row.mode,
+                "program_sha256": row.program_sha256,
+                "network": {"ip_addresses": ["192.0.2.42"], "status": "observed"},
+                "source": "qemu-guest-agent",
+            }
+
+    class Verifier:
+        def verify(self, *_args, **_kwargs):
+            raise Conflict("ROOT_SSH_AUTHENTICATION_FAILED")
+
+    monkeypatch.setattr("iacp.services.bootstrap_secrets.EphemeralSecrets.configured",
+                        classmethod(lambda cls: SecretStore()))
+
+    with sessions() as session:
+        result = reconcile_consumed_in_session(
+            session, consumed_technical_guest, runtime_idle=lambda: {"redis": True},
+            guest_factory=Guest, verifier=Verifier(),
+        )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "ROOT_SSH_AUTHENTICATION_FAILED"
+    with sessions() as session:
+        row = session.get(GuestInitialization, consumed_technical_guest["operation_id"])
+        operation = session.get(Operation, consumed_technical_guest["operation_id"])
+        assert row.status == operation.status == "failed"
+        assert row.finished_at is not None
+
+
+def test_observation_timeout_with_active_pid_remains_uncertain(
+        consumed_technical_guest, sessions):
+    with sessions() as session:
+        session.get(Operation, consumed_technical_guest["operation_id"]).error_code = (
+            "GUEST_INITIALIZATION_OBSERVATION_TIMEOUT"
+        )
+        session.commit()
+
+    class Guest:
+        def observe(self, _target, _row):
+            return None
+
+    with pytest.raises(RecoveryError, match="GUEST_INITIALIZATION_EXEC_ACTIVE"):
+        with sessions() as session:
+            reconcile_consumed_in_session(
+                session, consumed_technical_guest,
+                runtime_idle=lambda: {"redis": True}, guest_factory=Guest,
+            )
+
+    with sessions() as session:
+        row = session.get(GuestInitialization, consumed_technical_guest["operation_id"])
+        operation = session.get(Operation, consumed_technical_guest["operation_id"])
+        assert row.status == operation.status == "uncertain"
 
 
 def test_consumed_uncertain_never_replays_when_qga_reports_active(

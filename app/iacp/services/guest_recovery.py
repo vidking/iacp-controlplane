@@ -42,6 +42,10 @@ ACTIVE_OPERATION_STATUSES = ("queued", "running", "uncertain")
 ACTIVE_APPLY_STATUSES = ("approved", "queued", "running", "uncertain")
 PROTECTED_VMIDS = frozenset({104, 29000, 29001, 29010, 29011})
 CONSUMED_UNCERTAIN_ERRORS = frozenset({
+    # El worker puede agotar su ventana de observación después de consumir el
+    # fence. verify-consumed puede cerrar únicamente con evidencia read-only;
+    # nunca convierte este código en permiso para publicar otro guest-exec.
+    "GUEST_INITIALIZATION_OBSERVATION_TIMEOUT",
     "ROOT_ACCESS_CONFIGURATION_MISMATCH",
     "ROOT_ACCESS_EVIDENCE_INVALID",
     "ROOT_ACCESS_VERIFICATION_UNCONFIRMED",
