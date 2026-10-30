@@ -304,6 +304,19 @@ def test_after_start_schedules_guest_initialization_and_network_independently(
     network_publisher.assert_called_once_with(discovery_id)
 
 
+def test_initialize_worker_retries_same_queued_operation_after_lock_contention(
+        client, auth, guest, sessions, monkeypatch):
+    operation_id = accept(client, auth, guest, key='queued-lock-retry').json()['operation_id']
+    monkeypatch.setattr(
+        'iacp.services.guest_identity.execute_initialization', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr('iacp.terraform.worker.get_session_factory', lambda: sessions)
+    from celery.exceptions import Retry
+    from iacp.terraform.worker import initialize_guest
+
+    with pytest.raises(Retry):
+        initialize_guest.run(operation_id)
+
+
 def test_guest_client_accepts_only_durable_marker_and_matching_dhcp_lease():
     machine = "synthetic-machine-id\n"
     network = "synthetic-netplan\n"

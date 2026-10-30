@@ -49,10 +49,20 @@ def discover_network(identifier: str) -> None:
 
 
 @celery_app.task(name='iacp.guest.initialize',autoretry_for=(),acks_late=True,reject_on_worker_lost=True,
-                 soft_time_limit=250,time_limit=270)
-def initialize_guest(identifier: str) -> None:
+                 soft_time_limit=250,time_limit=270,bind=True,max_retries=8)
+def initialize_guest(task, identifier: str) -> None:
     from ..services.guest_identity import execute_initialization
     execute_initialization(identifier,get_session_factory())
+    # after_power puede conservar brevemente el lock de la instancia mientras
+    # publica esta tarea. Si la primera entrega observa ese lock, la operación
+    # sigue queued y nunca consumió guest-exec; reencolar la misma operación
+    # evita dejarla huérfana sin reabrir un fence consumido.
+    from ..models import GuestInitialization
+    with get_session_factory()() as session:
+        initialization=session.get(GuestInitialization,identifier)
+        queued=initialization is not None and initialization.status=='queued'
+    if queued:
+        raise task.retry(countdown=2)
     from ..services.access import after_initialization
     after_initialization(identifier, get_session_factory())
 
