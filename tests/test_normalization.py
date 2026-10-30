@@ -243,6 +243,8 @@ def test_iacpctl_runs_independent_of_cwd_and_does_not_mutate_on_help(tmp_path):
     assert '--remove-orphans' not in source
     assert source.count("'--force-recreate', 'api'") == 1  # Only explicit, approved credential remount.
     assert "'down'" not in source
+    assert "PURGE_RUNTIME_SERVICE = 'ownership-certifier'" in source
+    assert "'--entrypoint', 'python', PURGE_RUNTIME_SERVICE" in source
 
 
 def test_environment_cannot_reinterpret_live_flags_and_ports():
