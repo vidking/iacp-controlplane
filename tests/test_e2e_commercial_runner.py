@@ -101,6 +101,23 @@ def test_runner_blocks_almalinux_and_preserves_global_uncertainty():
     assert 'allow_reconcile' in module.wait_operation.__code__.co_varnames
 
 
+def test_fulfillment_accepts_certified_ready_contract_and_rejects_unverified_ready():
+    module=runner()
+
+    assert module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'verified'},
+    })
+    assert module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'ready', 'certified_ready': True},
+    })
+    assert not module.fulfillment_is_certified({
+        'fulfillment': {'status': 'completed', 'phase': 'ready', 'certified_ready': False},
+    })
+    assert not module.fulfillment_is_certified({
+        'fulfillment': {'status': 'running', 'phase': 'ready', 'certified_ready': True},
+    })
+
+
 def test_global_uncertainty_blocks_before_any_create(monkeypatch):
     module=runner()
     monkeypatch.setattr(module,'list_non_terminal_operations',lambda:[{

@@ -252,11 +252,21 @@ def wait_operation(identifier,fulfillment=False,allow_reconcile=False):
         if progress.get('status') in {'failed','uncertain'}:
             save('operacion-fallida-'+identifier,row)
             raise RuntimeError('FULFILLMENT_'+progress['status'].upper())
-        if status=='completed' and (not fulfillment or progress.get('phase')=='verified'):
+        if status=='completed' and (not fulfillment or fulfillment_is_certified(row)):
             return row
         time.sleep(5)
     save('operacion-tiempo-agotado-'+identifier,row)
     raise RuntimeError('OPERATION_TIMEOUT_NO_RETRY')
+
+
+def fulfillment_is_certified(row):
+    """Acepta las dos formas del contrato vigente de fulfillment certificado."""
+    fulfillment = row.get('fulfillment') or {}
+    if fulfillment.get('status') != 'completed':
+        return False
+    if fulfillment.get('phase') == 'verified':
+        return True
+    return fulfillment.get('phase') == 'ready' and fulfillment.get('certified_ready') is True
 
 
 def wait_instance_idle(identifier):
@@ -290,7 +300,7 @@ def wait_guest(data):
 
 
 PROBE=r'''
-import base64,hashlib,os,paramiko,tempfile,time
+import base64,hashlib,json,os,paramiko,tempfile,time
 from pathlib import Path
 from urllib.parse import urlencode
 from iacp.db import get_session_factory
