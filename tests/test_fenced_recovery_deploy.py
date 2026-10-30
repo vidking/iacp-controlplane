@@ -151,6 +151,63 @@ def test_reviewed_bootstrap_fence_requires_observe_only_redelivery():
         p.review_recovery_deployment({"reference": "change-1"}, {"schema": [driver.HEAD]})
 
 
+def test_deleted_absence_fence_requires_complete_readonly_absence_proof():
+    review = {
+        "approved": True,
+        "release": "a" * 40,
+        "change_reference": "change-1",
+        "mode": "readonly-deleted-absence",
+        "source_revision": driver.SOURCE,
+        "operation_id": OPERATION,
+        "instance_id": "11111111-1111-1111-1111-111111111111",
+        "job_id": "22222222-2222-2222-2222-222222222222",
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "vmid": 30096,
+        "node": "mng01",
+        "name": "e2e-g-kvm1-20261028-202710",
+        "instance_status": "deleted",
+        "operation_kind": "instance.access.bootstrap",
+        "operation_status": "uncertain",
+        "job_status": "failed",
+        "redelivery_mode": "observe-only-fenced",
+        "state_key_sha256": "s" * 64,
+        "ownership_binding_sha256": "b" * 64,
+        "state_resource_id": None,
+        "state_resource_present": False,
+        "proxmox_present": False,
+        "state_lock_absent": True,
+        "state_snapshot": {"version_id": "v", "lineage": "l", "serial": 1,
+                           "sha256": "s" * 64, "content_sha256": "c" * 64},
+        "bootstrap_executor_sha256": "e" * 64,
+    }
+    p = object.__new__(driver.Promotion)
+    p.m = {"recovery_deployment_review": {}}
+    p.canonical = Mock(return_value=True)
+    p.operator_review = Mock(return_value=review)
+    p.compose = Mock(return_value=json.dumps({
+        "services": {
+            "api": {"environment": {
+                "IACP_ADMISSION_ENABLED": "0",
+                "IACP_KVM_LIFECYCLE_ENABLED": "0",
+                "IACP_TERRAFORM_DELETE_ENABLED": "0",
+            }},
+            "terraform-worker": {"volumes": [{"target": "/iac-source", "source": "/immutable/source"}]},
+        }
+    }))
+    p.container = Mock(return_value={"Mounts": [{"Destination": "/iac-source", "Source": "/immutable/source"}]})
+    p._run_operation_fence_probe = Mock(return_value={
+        "passed": True, "operation_id": OPERATION, "instance_id": review["instance_id"],
+        "redelivery": "observe-only-fenced", "broker": "empty", "state_snapshot": review["state_snapshot"],
+    })
+    p.evidence = Mock()
+    assert p.review_recovery_deployment({"reference": "change-1"}, {"schema": [driver.HEAD]}) == ()
+    assert p.reviewed_operation_fences == (review,)
+
+    review["proxmox_present"] = True
+    with pytest.raises(RuntimeError, match="Deleted absence fence attestation"):
+        p.review_recovery_deployment({"reference": "change-1"}, {"schema": [driver.HEAD]})
+
+
 def test_revalidation_failure_keeps_the_fence_closed():
     p = object.__new__(driver.Promotion)
     p.reviewed_operation_fences = ({"operation_id": OPERATION},)

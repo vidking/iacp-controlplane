@@ -36,6 +36,7 @@ LAB_AUTOMATED_ACTIONS = frozenset({
     "recover-consumed-commercial-bootstrap",
     "migrate-technical-ownership", "activate-core",
 })
+DELETED_ABSENCE_EVIDENCE_VERSION = "iacp.bootstrap-deleted-absence.v1"
 
 
 def require(condition, message):
@@ -424,9 +425,11 @@ with get_session_factory()() as session:
             "FENCE_OPERATION_CHANGED")
     require(job.operation_id == operation.id and job.tenant_id == instance.tenant_id
             and job.status == "failed", "FENCE_JOB_CHANGED")
+    deleted_absence = review.get("mode") == "readonly-deleted-absence"
     require(instance.tenant_id == review["tenant_id"] and instance.vmid == review["vmid"]
             and instance.node == review["node"] and instance.name == review["name"]
-            and instance.status == "ready", "FENCE_INSTANCE_CHANGED")
+            and instance.status == ("deleted" if deleted_absence else "ready"),
+            "FENCE_INSTANCE_CHANGED")
     require(ownership.tenant_id == instance.tenant_id and ownership.vmid == instance.vmid
             and ownership.node == instance.node and ownership.name == instance.name
             and ownership.state_key == execution.state_key
@@ -477,7 +480,13 @@ with get_session_factory()() as session:
         try:
             snapshot=reader.read(lambda:False)
             resource=state_resource(snapshot.state, variables)
-            require(str(resource["id"]) == str(review["state_resource_id"]), "FENCE_STATE_RESOURCE_CHANGED")
+            if deleted_absence:
+                require(resource is None, "FENCE_STATE_RESOURCE_PRESENT")
+                require(review.get("state_resource_id") in (None, "")
+                        and review.get("state_resource_present") is False,
+                        "FENCE_STATE_RESOURCE_CHANGED")
+            else:
+                require(str(resource["id"]) == str(review["state_resource_id"]), "FENCE_STATE_RESOURCE_CHANGED")
             require(snapshot.metadata() == review["state_snapshot"], "FENCE_STATE_CHANGED")
             try:
                 reader.client.head_object(Bucket=reader.bucket, Key=reader.key + ".tflock")
@@ -490,7 +499,11 @@ with get_session_factory()() as session:
             reader.close()
         observed=proxmox_resource(env, variables["instance"], lambda:False,
                                   golden_hardware=variables.get("iacp_golden_hardware"))
-        require(observed.get("present") is True, "FENCE_PROXMOX_RESOURCE_MISSING")
+        if deleted_absence:
+            require(review.get("proxmox_present") is False and observed.get("present") is False,
+                    "FENCE_PROXMOX_RESOURCE_PRESENT")
+        else:
+            require(observed.get("present") is True, "FENCE_PROXMOX_RESOURCE_MISSING")
 
 with Redis.from_url(broker_url(), socket_connect_timeout=3, socket_timeout=3) as redis:
     for key in redis.scan_iter(count=100):
@@ -500,7 +513,8 @@ with Redis.from_url(broker_url(), socket_connect_timeout=3, socket_timeout=3) as
     require(redis.hlen("unacked") == 0, "FENCE_BROKER_UNACKED")
 print(json.dumps({"passed":True,"operation_id":review["operation_id"],"instance_id":review["instance_id"],
                   "state_snapshot":review["state_snapshot"],"redelivery":"observe-only-fenced",
-                  "physical_resource":"present-read-only","broker":"empty"},sort_keys=True))
+                  "physical_resource":"absent-read-only" if deleted_absence else "present-read-only",
+                  "broker":"empty"},sort_keys=True))
 '''.replace("REVIEW_JSON", repr(json.dumps(review, sort_keys=True)))
         roles = ("terraform-worker", "worker", "api", "lifecycle-worker")
         for role in roles:
@@ -627,6 +641,30 @@ print(json.dumps({"passed":True,"operation_id":review["operation_id"],"instance_
         require(before["schema"] == [HEAD], "Bootstrap recovery requires the current schema head")
         check_consumed_bootstrap_recovery_scope(before, request)
         self.workers_idle(lifecycle=True)
+        if evidence.get("evidence_version") == DELETED_ABSENCE_EVIDENCE_VERSION:
+            # La evidencia de ausencia se vuelve a comprobar inmediatamente
+            # antes de la mutación terminal. El JSON no sustituye al probe
+            # canónico de DB, State, lock, Proxmox, broker y workers.
+            fence_review = {**evidence, "mode": "readonly-deleted-absence"}
+            required = (
+                "operation_id", "instance_id", "job_id", "tenant_id", "vmid", "node", "name",
+                "source_revision", "state_key_sha256", "ownership_binding_sha256",
+                "state_snapshot", "bootstrap_executor_sha256", "operation_kind",
+                "operation_status", "job_status", "redelivery_mode", "instance_status",
+                "proxmox_present", "state_resource_present", "state_lock_absent",
+            )
+            require(all(fence_review.get(field) not in (None, "") for field in required),
+                    "Deleted absence evidence is incomplete")
+            require(fence_review.get("state_resource_id") in (None, ""),
+                    "Deleted absence evidence contains a State resource")
+            result = self._run_operation_fence_probe(fence_review)
+            self.evidence("deleted-absence-fence-revalidated", {
+                "operation_id": result["operation_id"],
+                "instance_id": result["instance_id"],
+                "physical_resource": result["physical_resource"],
+                "redelivery": result["redelivery"],
+                "broker": result["broker"],
+            })
         source = (ROOT / "app/iacp/services/commercial_bootstrap_recovery.py").read_text(encoding="utf8")
         payload = json.dumps({**request, "evidence": evidence}, sort_keys=True)
         code = source + "\nrun_from_json(" + repr(payload) + ")\n"
@@ -1211,11 +1249,16 @@ with get_session_factory()() as session:
         current=next(v['Source'] for v in self.container('terraform-worker')['Mounts'] if v['Destination']=='/iac-source')
         require(current==next(v['source'] for v in cfg['services']['terraform-worker']['volumes'] if v['target']=='/iac-source'),
                 'Recovery deployment cannot change IaC source mount')
-        if review.get('mode') == 'readonly-operation-fence':
+        if review.get('mode') in {'readonly-operation-fence', 'readonly-deleted-absence'}:
             required = ('operation_id', 'instance_id', 'job_id', 'tenant_id', 'vmid',
                         'node', 'name', 'source_revision', 'state_key_sha256',
-                        'ownership_binding_sha256', 'state_resource_id', 'state_snapshot',
+                        'ownership_binding_sha256', 'state_snapshot',
                         'bootstrap_executor_sha256')
+            if review.get('mode') == 'readonly-deleted-absence':
+                required += ('instance_status', 'proxmox_present', 'state_resource_present',
+                             'state_lock_absent')
+            else:
+                required += ('state_resource_id',)
             require(all(review.get(field) not in (None, '') for field in required),
                     'Operation fence attestation is incomplete')
             require(review.get('operation_kind') == 'instance.access.bootstrap'
@@ -1223,6 +1266,13 @@ with get_session_factory()() as session:
                     and review.get('job_status') == 'failed'
                     and review.get('redelivery_mode') == 'observe-only-fenced',
                     'Operation fence attestation is not a consumed read-only fence')
+            if review.get('mode') == 'readonly-deleted-absence':
+                require(review.get('instance_status') == 'deleted'
+                        and review.get('proxmox_present') is False
+                        and review.get('state_resource_present') is False
+                        and review.get('state_lock_absent') is True
+                        and review.get('state_resource_id') in (None, ''),
+                        'Deleted absence fence attestation is incomplete')
             result = self._run_operation_fence_probe(review)
             self.reviewed_operation_fences = (review,)
             self.evidence('operation-fence-attested', {

@@ -2,8 +2,9 @@
 
 Este flujo no reintenta la entrega y no ejecuta QGA, SSH, Terraform ni
 Proxmox. Solo puede cerrar una operación histórica cuando la evidencia
-persistida identifica exactamente el runtime, el orden de preflight y el
-fallo previo a ``ssh.connect()``.
+read-only identifica exactamente el runtime, la vinculación y el estado
+físico/State. El caso de ausencia admite únicamente una instancia ya marcada
+``deleted`` cuya VM, recurso de State y lock fueron observados ausentes.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ from iacp.terraform.locks import admission_lock, instance_lock
 ERROR_CODE = "BOOTSTRAP_FAILED_BEFORE_SSH_CONNECT"
 EVENT_CODE = "commercial_bootstrap_failed_before_ssh_connect"
 PRIOR_ERROR_CODE = "BOOTSTRAP_RECONCILIATION_REQUIRED"
+PRECONNECT_EVIDENCE_VERSION = "iacp.bootstrap-preconnect.v1"
+DELETED_ABSENCE_EVIDENCE_VERSION = "iacp.bootstrap-deleted-absence.v1"
 HISTORICAL_RUNTIME_SHA = "8b7ec3bc80d6de57a64f40a3670812aef08a621c"
 SECURE_BOOTSTRAP_SHA256 = "23c19284d4c1673328f7917f97be3d9ead78c5d11b59bd117ec88fc7ddb94b58"
 COMMERCIAL_BOOTSTRAP_SHA256 = "689d8d5350fceded7cc8e6dbc02fb05bafcffe60c41bdd3235ee90c260691918"
@@ -117,7 +120,8 @@ def validate_evidence(evidence: dict, expected: dict) -> dict:
     """Valida una atestación de inspección read-only, sin guardar su cuerpo."""
     _require(isinstance(evidence, dict), "RECOVERY_EVIDENCE_INVALID")
     _require(not _has_sensitive_key(evidence), "RECOVERY_EVIDENCE_CONTAINS_SECRET")
-    _require(evidence.get("evidence_version") == "iacp.bootstrap-preconnect.v1",
+    version = evidence.get("evidence_version")
+    _require(version in {PRECONNECT_EVIDENCE_VERSION, DELETED_ABSENCE_EVIDENCE_VERSION},
              "RECOVERY_EVIDENCE_VERSION_UNSUPPORTED")
     for field in ("instance_id", "operation_id", "job_id"):
         _require(evidence.get(field) == expected[field], f"RECOVERY_EVIDENCE_{field.upper()}_MISMATCH")
@@ -130,28 +134,68 @@ def validate_evidence(evidence: dict, expected: dict) -> dict:
              "RECOVERY_COMMERCIAL_BOOTSTRAP_CODE_MISMATCH")
     _require(evidence.get("inspection_mode") == "read-only",
              "RECOVERY_EVIDENCE_NOT_READ_ONLY")
-    _require(evidence.get("source") == "persisted-runtime-evidence",
-             "RECOVERY_EVIDENCE_SOURCE_UNTRUSTED")
     _require(evidence.get("physical_identity_verified") is True,
              "RECOVERY_PHYSICAL_IDENTITY_UNVERIFIED")
-    _require(evidence.get("ssh_connect_attempted") is False,
-             "RECOVERY_SSH_CONNECT_ALREADY_ATTEMPTED")
-    _require(evidence.get("credential_delivery_started") is False,
-             "RECOVERY_CREDENTIAL_DELIVERY_STARTED")
-    _require(evidence.get("preconnect_sequence") == list(PRECONNECT_SEQUENCE),
-             "RECOVERY_PRECONNECT_SEQUENCE_MISMATCH")
+    if version == PRECONNECT_EVIDENCE_VERSION:
+        _require(evidence.get("source") == "persisted-runtime-evidence",
+                 "RECOVERY_EVIDENCE_SOURCE_UNTRUSTED")
+        _require(evidence.get("ssh_connect_attempted") is False,
+                 "RECOVERY_SSH_CONNECT_ALREADY_ATTEMPTED")
+        _require(evidence.get("credential_delivery_started") is False,
+                 "RECOVERY_CREDENTIAL_DELIVERY_STARTED")
+        _require(evidence.get("preconnect_sequence") == list(PRECONNECT_SEQUENCE),
+                 "RECOVERY_PRECONNECT_SEQUENCE_MISMATCH")
 
-    qga = evidence.get("qga")
-    _require(isinstance(qga, dict)
-             and qga.get("path") == HOST_KEY_PATH
-             and qga.get("error_class") == "permission_denied"
-             and qga.get("error_code") == "BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE",
-             "RECOVERY_QGA_EVIDENCE_MISMATCH")
-    marker = evidence.get("marker")
-    _require(isinstance(marker, dict)
-             and marker.get("path") == MARKER_PATH
-             and marker.get("status") == "absent",
-             "RECOVERY_MARKER_EVIDENCE_MISMATCH")
+        qga = evidence.get("qga")
+        _require(isinstance(qga, dict)
+                 and qga.get("path") == HOST_KEY_PATH
+                 and qga.get("error_class") == "permission_denied"
+                 and qga.get("error_code") == "BOOTSTRAP_HOST_KEY_CHANNEL_UNAVAILABLE",
+                 "RECOVERY_QGA_EVIDENCE_MISMATCH")
+        marker = evidence.get("marker")
+        _require(isinstance(marker, dict)
+                 and marker.get("path") == MARKER_PATH
+                 and marker.get("status") == "absent",
+                 "RECOVERY_MARKER_EVIDENCE_MISMATCH")
+    else:
+        _require(evidence.get("source") == "runtime-absence-observation",
+                 "RECOVERY_EVIDENCE_SOURCE_UNTRUSTED")
+        _require(evidence.get("instance_status") == "deleted",
+                 "RECOVERY_DELETED_INSTANCE_STATUS_MISMATCH")
+        _require(evidence.get("operation_status") == "uncertain"
+                 and evidence.get("operation_error_code") == PRIOR_ERROR_CODE,
+                 "RECOVERY_DELETED_OPERATION_MISMATCH")
+        _require(evidence.get("operation_kind") == OPERATION_KIND,
+                 "RECOVERY_DELETED_OPERATION_KIND_MISMATCH")
+        _require(evidence.get("job_status") == "failed",
+                 "RECOVERY_DELETED_JOB_MISMATCH")
+        _require(isinstance(evidence.get("source_revision"), str)
+                 and re.fullmatch(r"[a-f0-9]{40}", evidence["source_revision"]),
+                 "RECOVERY_DELETED_SOURCE_REVISION_INVALID")
+        _require(isinstance(evidence.get("bootstrap_executor_sha256"), str)
+                 and re.fullmatch(r"[a-f0-9]{64}", evidence["bootstrap_executor_sha256"]),
+                 "RECOVERY_DELETED_EXECUTOR_DIGEST_INVALID")
+        _require(evidence.get("proxmox_present") is False,
+                 "RECOVERY_PROXMOX_RESOURCE_PRESENT")
+        _require(evidence.get("state_resource_present") is False,
+                 "RECOVERY_STATE_RESOURCE_PRESENT")
+        _require(evidence.get("state_lock_absent") is True,
+                 "RECOVERY_STATE_LOCK_PRESENT")
+        _require(evidence.get("redelivery_mode") == "observe-only-fenced",
+                 "RECOVERY_REDELIVERY_MODE_UNSAFE")
+        _require(evidence.get("state_resource_id") in (None, ""),
+                 "RECOVERY_STATE_RESOURCE_PRESENT")
+        snapshot = evidence.get("state_snapshot")
+        _require(
+            isinstance(snapshot, dict)
+            and set(snapshot) == {"version_id", "lineage", "serial", "sha256", "content_sha256"}
+            and (snapshot["version_id"] is None or isinstance(snapshot["version_id"], str))
+            and isinstance(snapshot["lineage"], str) and bool(snapshot["lineage"])
+            and type(snapshot["serial"]) is int and snapshot["serial"] >= 0
+            and all(isinstance(snapshot[key], str) and re.fullmatch(r"[a-f0-9]{64}", snapshot[key])
+                    for key in ("sha256", "content_sha256")),
+            "RECOVERY_STATE_SNAPSHOT_INVALID",
+        )
     reference = evidence.get("evidence_reference")
     _require(isinstance(reference, str) and 1 <= len(reference) <= 512,
              "RECOVERY_EVIDENCE_REFERENCE_INVALID")
@@ -159,13 +203,25 @@ def validate_evidence(evidence: dict, expected: dict) -> dict:
     _require(isinstance(evidence_sha256, str)
              and re.fullmatch(r"[a-f0-9]{64}", evidence_sha256),
              "RECOVERY_EVIDENCE_DIGEST_INVALID")
-    return {
+    validated = {
         "evidence_reference": reference,
         "evidence_sha256": evidence_sha256,
+        "evidence_version": version,
         "historical_runtime_sha": HISTORICAL_RUNTIME_SHA,
         "ssh_connect_attempted": False,
         "credential_delivery_started": False,
     }
+    if version == DELETED_ABSENCE_EVIDENCE_VERSION:
+        # Solo se conserva el mínimo no sensible necesario para volver a ligar
+        # la atestación al tenant, ownership y State bajo el lock de instancia.
+        validated.update({
+            "tenant_id": evidence["tenant_id"],
+            "node": evidence["node"],
+            "name": evidence["name"],
+            "state_key_sha256": evidence["state_key_sha256"],
+            "ownership_binding_sha256": evidence["ownership_binding_sha256"],
+        })
+    return validated
 
 
 def validate_request(request: dict) -> dict:
@@ -224,7 +280,11 @@ def _load_locked_state(session, request: dict) -> dict:
     instance = session.get(Instance, request["instance_id"], with_for_update=True,
                            populate_existing=True)
     _require(instance is not None, "INSTANCE_NOT_FOUND")
-    _require(instance.status == "ready", "INSTANCE_NOT_READY")
+    deleted_absence = request["evidence"]["evidence_version"] == DELETED_ABSENCE_EVIDENCE_VERSION
+    if deleted_absence:
+        _require(instance.status == "deleted", "INSTANCE_NOT_DELETED")
+    else:
+        _require(instance.status == "ready", "INSTANCE_NOT_READY")
     _require(instance.vmid == request["vmid"], "INSTANCE_VMID_MISMATCH")
 
     intent = session.get(CommercialIntent, instance.id, with_for_update=True,
@@ -259,6 +319,18 @@ def _load_locked_state(session, request: dict) -> dict:
         and execution.state_key,
         "TECHNICAL_OWNERSHIP_BINDING_CHANGED",
     )
+    if deleted_absence:
+        _require(request["evidence"].get("tenant_id") == instance.tenant_id,
+                 "RECOVERY_DELETED_TENANT_MISMATCH")
+        _require(request["evidence"].get("node") == instance.node
+                 and request["evidence"].get("name") == instance.name,
+                 "RECOVERY_DELETED_IDENTITY_MISMATCH")
+        _require(request["evidence"].get("state_key_sha256")
+                 == hashlib.sha256(execution.state_key.encode("utf8")).hexdigest(),
+                 "RECOVERY_DELETED_STATE_KEY_MISMATCH")
+        _require(request["evidence"].get("ownership_binding_sha256")
+                 == ownership.binding_sha256,
+                 "RECOVERY_DELETED_OWNERSHIP_MISMATCH")
     apply = session.scalar(select(TerraformApply).where(
         TerraformApply.instance_id == instance.id,
         TerraformApply.attempt == execution.attempt,
@@ -299,6 +371,7 @@ def _load_locked_state(session, request: dict) -> dict:
         "active_power": active_power,
         "active_delete": active_delete,
         "active_apply": active_apply,
+        "deleted_absence": deleted_absence,
     }
 
 
