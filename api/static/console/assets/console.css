@@ -57,6 +57,7 @@ textarea { resize: vertical; }
 .check-row { display: flex; align-items: center; gap: 9px; padding-top: 25px; }
 .check-row input { width: auto; accent-color: var(--cyan); }
 .form-actions { display: flex; gap: 10px; margin-top: 4px; }
+.form-subheading { color: var(--cyan); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-top: 6px; }
 button.primary, button.secondary, button.danger, .icon-button { border-radius: 9px; padding: 10px 14px; font-weight: 800; }
 button.primary { color: #0e1719; background: var(--cyan); }
 button.secondary { color: var(--text); border: 1px solid #52636d; background: #26343c; }

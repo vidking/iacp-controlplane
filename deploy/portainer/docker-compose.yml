@@ -1,5 +1,67 @@
 name: iacp-controlplanev2
 
+x-worker-common: &worker-common
+  image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=32m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment:
+    IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
+    IACP_TERRAFORM_PATH: /app/terraform
+    IACP_TERRAFORM_DIR: environments/mng01
+    IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+    IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+    IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
+    IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
+    IACP_PROXMOX_POOL_ID: "${IACP_PROXMOX_POOL_ID:-iacp-lab}"
+    IACP_DEFAULT_SSH_PUBLIC_KEY: "${IACP_DEFAULT_SSH_PUBLIC_KEY:-}"
+    IACP_VMID_MIN: "${IACP_VMID_MIN:-40001}"
+    IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
+    IACP_VMID_REUSE: "${IACP_VMID_REUSE:-1}"
+    IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-6}"
+    IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
+    IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
+    IACP_PROXMOX_RETRY_ATTEMPTS: "${IACP_PROXMOX_RETRY_ATTEMPTS:-6}"
+    IACP_PROXMOX_RETRY_BACKOFF: "${IACP_PROXMOX_RETRY_BACKOFF:-0.5}"
+    IACP_PROD_STATIC_ENABLED: "${IACP_PROD_STATIC_ENABLED:-0}"
+    IACP_NETBOX_URL: "${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}"
+    IACP_NETBOX_PREFIX_ID: "${IACP_NETBOX_PREFIX_ID:-}"
+    IACP_NETBOX_PREFIX_LENGTH: "${IACP_NETBOX_PREFIX_LENGTH:-24}"
+    IACP_NETBOX_GATEWAY_HOST: "${IACP_NETBOX_GATEWAY_HOST:-1}"
+    IACP_NETBOX_ALLOCATION_TAG: "${IACP_NETBOX_ALLOCATION_TAG:-ocupada}"
+    IACP_NETBOX_GATEWAY_TAG: "${IACP_NETBOX_GATEWAY_TAG:-reservada}"
+    IACP_NETBOX_TOKEN: "${IACP_NETBOX_TOKEN:-}"
+    IACP_NETBOX_VERIFY_TLS: "${IACP_NETBOX_VERIFY_TLS:-1}"
+    IACP_NETBOX_CA_FILE: "${IACP_NETBOX_CA_FILE:-}"
+    IACP_NETBOX_TIMEOUT: "${IACP_NETBOX_TIMEOUT:-15}"
+    IACP_NETBOX_RETRY_ATTEMPTS: "${IACP_NETBOX_RETRY_ATTEMPTS:-3}"
+    IACP_POWER_RECOVERY_TIMEOUT: "${IACP_POWER_RECOVERY_TIMEOUT:-300}"
+    IACP_POWER_RECOVERY_BACKOFF: "${IACP_POWER_RECOVERY_BACKOFF:-2}"
+    IACP_RECONCILE_ATTEMPTS: "${IACP_RECONCILE_ATTEMPTS:-6}"
+    IACP_RECONCILE_TIMEOUT: "${IACP_RECONCILE_TIMEOUT:-180}"
+    IACP_TERRAFORM_RETRY_ATTEMPTS: "${IACP_TERRAFORM_RETRY_ATTEMPTS:-4}"
+    IACP_OPERATION_STALE_SECONDS: "${IACP_OPERATION_STALE_SECONDS:-900}"
+    IACP_RECOVERY_SCAN_SECONDS: "${IACP_RECOVERY_SCAN_SECONDS:-15}"
+    IACP_WORKER_POLL_SECONDS: "${IACP_WORKER_POLL_SECONDS:-0.5}"
+    IACP_WORKER_IDLE_HEARTBEAT_SECONDS: "${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}"
+    IACP_OPERATION_OUTPUT_MAX_CHARS: "${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}"
+  extra_hosts:
+    - "${IACP_PROXMOX_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_HOST_IP:?Definir IACP_PROXMOX_HOST_IP en Portainer}"
+  volumes:
+    - iacp_data:/var/lib/iacp-v2
+  networks:
+    - internal
+    - egress
+  depends_on:
+    api:
+      condition: service_healthy
+
 services:
   api:
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
@@ -20,9 +82,27 @@ services:
       IACP_LOCAL_TERRAFORM_DIR: fixtures/local
       IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
       IACP_API_TOKEN: "${IACP_API_TOKEN:?Definir IACP_API_TOKEN en Portainer}"
+      IACP_REQUIRE_API_TOKEN: "${IACP_REQUIRE_API_TOKEN:-1}"
+      IACP_ROOT_PASSWORD_MIN_LENGTH: "${IACP_ROOT_PASSWORD_MIN_LENGTH:-12}"
+      IACP_RETENTION_DAYS: "${IACP_RETENTION_DAYS:-0}"
+      IACP_MAX_QUEUE_DEPTH: "${IACP_MAX_QUEUE_DEPTH:-100}"
+      IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-6}"
+      IACP_PROD_STATIC_ENABLED: "${IACP_PROD_STATIC_ENABLED:-0}"
+      IACP_NETBOX_URL: "${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}"
+      IACP_NETBOX_PREFIX_ID: "${IACP_NETBOX_PREFIX_ID:-}"
+      IACP_NETBOX_PREFIX_LENGTH: "${IACP_NETBOX_PREFIX_LENGTH:-24}"
+      IACP_NETBOX_GATEWAY_HOST: "${IACP_NETBOX_GATEWAY_HOST:-1}"
       IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
       IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
+      IACP_PROXMOX_POOL_ID: "${IACP_PROXMOX_POOL_ID:-iacp-lab}"
       IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
+      IACP_PROXMOX_RETRY_ATTEMPTS: "${IACP_PROXMOX_RETRY_ATTEMPTS:-6}"
+      IACP_PROXMOX_RETRY_BACKOFF: "${IACP_PROXMOX_RETRY_BACKOFF:-0.5}"
+      IACP_POWER_RECOVERY_TIMEOUT: "${IACP_POWER_RECOVERY_TIMEOUT:-300}"
+      IACP_WORKER_STALE_SECONDS: "${IACP_WORKER_STALE_SECONDS:-900}"
+      IACP_OPERATION_OUTPUT_MAX_CHARS: "${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}"
+    extra_hosts:
+      - "${IACP_PROXMOX_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_HOST_IP:?Definir IACP_PROXMOX_HOST_IP en Portainer}"
     expose:
       - "8080"
     volumes:
@@ -46,74 +126,28 @@ services:
       retries: 5
 
   worker-1:
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
-    restart: unless-stopped
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-1"]
-    environment:
-      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
-      IACP_TERRAFORM_PATH: /app/terraform
-      IACP_TERRAFORM_DIR: environments/mng01
-      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
-      IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
-      IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
-      IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
-      IACP_DEFAULT_SSH_PUBLIC_KEY: "${IACP_DEFAULT_SSH_PUBLIC_KEY:?Definir IACP_DEFAULT_SSH_PUBLIC_KEY en Portainer}"
-      IACP_VMID_MIN: "${IACP_VMID_MIN:-40000}"
-      IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
-      IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
-      IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
-      IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
-    volumes:
-      - iacp_data:/var/lib/iacp-v2
-    networks:
-      - internal
-      - egress
-    depends_on:
-      api:
-        condition: service_healthy
 
   worker-2:
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
-    restart: unless-stopped
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
-    environment:
-      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
-      IACP_TERRAFORM_PATH: /app/terraform
-      IACP_TERRAFORM_DIR: environments/mng01
-      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
-      IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
-      IACP_PROXMOX_ENDPOINT: "${IACP_PROXMOX_ENDPOINT:?Definir IACP_PROXMOX_ENDPOINT en Portainer}"
-      IACP_PROXMOX_API_TOKEN: "${IACP_PROXMOX_API_TOKEN:?Definir IACP_PROXMOX_API_TOKEN en Portainer}"
-      IACP_DEFAULT_SSH_PUBLIC_KEY: "${IACP_DEFAULT_SSH_PUBLIC_KEY:?Definir IACP_DEFAULT_SSH_PUBLIC_KEY en Portainer}"
-      IACP_VMID_MIN: "${IACP_VMID_MIN:-40000}"
-      IACP_VMID_MAX: "${IACP_VMID_MAX:-49999}"
-      IACP_MAX_CONCURRENT: "${IACP_MAX_CONCURRENT:-2}"
-      IACP_TERRAFORM_TIMEOUT: "${IACP_TERRAFORM_TIMEOUT:-1800}"
-      IACP_POWER_TIMEOUT: "${IACP_POWER_TIMEOUT:-180}"
-    volumes:
-      - iacp_data:/var/lib/iacp-v2
-    networks:
-      - internal
-      - egress
-    depends_on:
-      api:
-        condition: service_healthy
+
+  worker-3:
+    <<: *worker-common
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-3"]
+
+  worker-4:
+    <<: *worker-common
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-4"]
+
+  worker-5:
+    <<: *worker-common
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-5"]
+
+  worker-6:
+    <<: *worker-common
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-6"]
 
 networks:
   internal:

@@ -3,7 +3,7 @@
 Este es el único entorno Terraform incluido en IACP Control Plane V2.
 
 - Clúster: MNG.
-- Nodo objetivo inicial: `mng01`.
+- Nodo de ejecución: `mng01`.
 - Template protegido: VM 29000.
 - VM 104 y VM 106 quedan fuera de las operaciones del proyecto.
 

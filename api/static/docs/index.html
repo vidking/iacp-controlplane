@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Referencia y consola operativa del IACP Orchestrator.">
+    <link rel="icon" href="/docs/assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/docs/assets/docs.css?v=20261029-3">
+    <title>IACP Orchestrator · Referencia de API</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#create" data-route="create" aria-label="IACP Orchestrator">
+        <span class="brand-icon">◆</span>
+        <span><strong>IACP Orchestrator</strong><small>CyberFuel · Plataforma de infraestructura</small></span>
+      </a>
+      <div class="top-status">
+        <span class="version-chip">API v1</span>
+        <span class="version-chip accent" id="app-version">1.0.0</span>
+        <span class="transport-chip" id="transport-chip">API privada · HTTPS/TLS</span>
+      </div>
+    </header>
+
+    <div class="portal-shell">
+      <aside class="sidebar" aria-label="Navegación de referencia">
+        <div class="sidebar-intro">
+          <p class="eyebrow">CENTRO DE DESARROLLO</p>
+          <h2>Referencia de API</h2>
+        </div>
+
+        <button class="sidebar-cta" data-route="create">Crear máquina virtual <span>↗</span></button>
+
+        <nav class="side-nav">
+          <p class="nav-heading">Consola operativa</p>
+          <button data-route="console" class="nav-link">Consola operativa</button>
+          <p class="nav-hint">Selecciona una VM autorizada y usa los botones de lifecycle. La consola gestiona instancia, id, seguimiento e idempotencia.</p>
+          <button data-route="create" class="nav-link link-accent">Abrir Crear y administrar máquinas</button>
+
+          <p class="nav-heading">Explorar API</p>
+          <button data-route="instances" class="nav-link">Instancias</button>
+          <button data-route="operations" class="nav-link">Operaciones</button>
+          <button data-route="lifecycle" class="nav-link">Ciclo de vida KVM <span class="nav-note">referencia técnica</span></button>
+          <button data-route="delete" class="nav-link">Eliminación autorizada</button>
+          <button data-route="observability" class="nav-link">Observabilidad</button>
+          <button data-route="workers" class="nav-link">Trabajos</button>
+
+          <p class="nav-heading">Guías de uso</p>
+          <button data-route="guides" class="nav-link">Referencia técnica completa</button>
+          <button data-route="guides" data-guide="diagnostics" class="nav-link">Operaciones y diagnóstico</button>
+
+          <p class="nav-heading">Recursos</p>
+          <a class="nav-link external" href="/swagger">Swagger técnico ↗</a>
+          <a class="nav-link external" href="/openapi.json" target="_blank" rel="noreferrer">Descargar OpenAPI ↗</a>
+          <a class="nav-link external" href="/redoc">ReDoc ↗</a>
+        </nav>
+
+        <div class="contract-card">
+          <p class="eyebrow">CONTRATO ESTABLE</p>
+          <strong>Identidad técnica, planes certificados y operaciones auditables.</strong>
+          <p>El consumidor selecciona un plan y una imagen; el orquestador resuelve la infraestructura interna.</p>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <section class="route-view" data-view="create">
+          <div class="page-heading">
+            <p class="eyebrow">APROVISIONAMIENTO · CATÁLOGO AUTORIZADO</p>
+            <h1>Crear y administrar máquinas virtuales</h1>
+            <p>Selecciona un plan y un sistema operativo del catálogo real, introduce nombre y acceso y crea la VM con identidad autorizada. El cluster y los parámetros certificados se mantienen en el orquestador.</p>
+          </div>
+
+          <div class="step-strip" aria-label="Pasos de aprovisionamiento">
+            <button data-step-link="access">1. Acceso</button>
+            <button data-step-link="configure">2. Configurar máquina virtual</button>
+            <button data-step-link="json">3. JSON</button>
+            <button data-step-link="curl">4. cURL</button>
+            <button data-step-link="response">5. Respuesta</button>
+            <button data-step-link="progress">6. Progreso e IP</button>
+            <button data-step-link="ssh">7. SSH</button>
+            <button data-step-link="lifecycle">8. Lifecycle</button>
+            <button data-step-link="delete">9. Eliminar</button>
+          </div>
+
+          <div class="portal-note">
+            <strong>Tenant técnico autorizado.</strong>
+            <span>La API no evalúa políticas comerciales para aprovisionar. Los datos de trazabilidad son opcionales y no alteran el plan, la Golden Image ni el nodo seleccionado.</span>
+            <span><code>Idempotency-Key</code> es opcional; la consola la genera para reintentos seguros y nunca muestra la contraseña enviada.</span>
+          </div>
+
+          <details class="step-card" id="step-access" data-step="access">
+            <summary><span class="step-number">1.</span> Acceso autorizado <span class="summary-status" id="auth-summary">Pendiente</span></summary>
+            <div class="step-body access-grid">
+              <div>
+                <p class="step-lead">Autoriza esta pestaña con el Bearer token del API privado. El token se conserva solo en memoria de esta pestaña.</p>
+                <form id="auth-form" class="inline-form">
+                  <label for="api-token">Bearer token</label>
+                  <div class="input-action"><input id="api-token" type="password" autocomplete="off" placeholder="Pega solo el token"><button class="button primary" type="submit">Autorizar</button></div>
+                </form>
+                <p id="auth-message" class="form-hint">Aún no se ha consultado el catálogo.</p>
+              </div>
+              <div class="access-status" id="auth-status-card"><span class="status-dot"></span><strong>Sin autorización</strong><small>Las acciones técnicas requieren Bearer.</small></div>
+            </div>
+          </details>
+
+          <article class="panel create-inventory-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">INVENTARIO</p><h2>Instancias administradas</h2></div>
+              <div class="action-row"><button class="button secondary" id="refresh-create-instances" type="button">Actualizar</button><button class="icon-button" data-route="instances">Ver inventario ↗</button></div>
+            </div>
+            <div id="create-instances-table" class="table-wrap"><div class="empty-state">Autoriza la API para cargar las instancias.</div></div>
+          </article>
+
+          <details class="step-card" id="step-configure" data-step="configure" open>
+            <summary><span class="step-number">2.</span> Configurar máquina virtual <span class="summary-status" id="catalog-summary">Consulta el catálogo</span></summary>
+            <div class="step-body">
+              <div class="catalog-toolbar">
+                <p><a href="#access" data-step-link="access">Authorize</a>: introduce tu Bearer una vez y pulsa consultar catálogo.</p>
+                <button class="button secondary" id="load-catalog" type="button">Consultar catálogo técnico</button>
+              </div>
+              <form id="create-form" class="create-form">
+                <div class="form-grid three-columns">
+                  <label>Plan obligatorio<select id="plan" required><option value="">Consulta el catálogo</option></select><small id="plan-help">Los vCPU, memoria y disco provienen del plan certificado.</small></label>
+                  <label>Sistema operativo obligatorio<select id="image" required><option value="">Consulta el catálogo</option></select><small id="image-help">La Golden Image se conserva sin mutaciones.</small></label>
+                  <label>Nombre obligatorio<input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="mi-servidor-001"><small>1–63 caracteres: minúsculas, números y guiones; comienza y termina con letra o número.</small></label>
+                </div>
+                <div class="form-grid two-columns network-form-grid">
+                  <label>Perfil de red<select id="network-profile" required><option value="lab_dhcp">Lab_DHCP · red de laboratorio</option></select><small id="network-profile-help">La VM recibe su configuración por DHCP en el entorno de laboratorio.</small></label>
+                  <div class="network-profile-note"><strong>Asignación controlada</strong><p>El consumidor elige el perfil, no envía IP, gateway ni prefijo. <code>Prod_Static</code> solo aparece habilitado cuando el prefijo NetBox autorizado está configurado.</p></div>
+                </div>
+                <div class="form-grid two-columns access-form-grid">
+                  <label>Contraseña root obligatoria<input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small>Se entrega por bootstrap seguro, nunca se devuelve y debe tener al menos 12 caracteres en producción.</small></label>
+                  <label>Llave pública SSH opcional<textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small>El worker puede usar la clave pública por defecto de Portainer.</small></label>
+                </div>
+                <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
+                <details class="advanced-card">
+                  <summary>Trazabilidad avanzada de la API (opcional)</summary>
+                  <p>Se conserva para auditoría, pero no concede permisos ni cambia el plan técnico.</p>
+                  <div class="form-grid four-columns">
+                    <label>Customer ID<input id="customer-id" placeholder="CL-0000"></label>
+                    <label>Customer tag<input id="customer-tag" pattern="[a-z0-9][a-z0-9_-]{0,62}" placeholder="cl-0000"></label>
+                    <label>Order ID<input id="order-id" placeholder="ORD-1001"></label>
+                    <label>Product ID<input id="product-id" placeholder="KVM-2"></label>
+                  </div>
+                </details>
+                <div class="form-actions"><button class="button primary large" id="create-button" type="submit">Crear máquina virtual</button><span id="create-message" class="form-hint"></span></div>
+              </form>
+            </div>
+          </details>
+
+          <details class="step-card" id="step-json" data-step="json">
+            <summary><span class="step-number">3.</span> JSON de ejemplo <span class="summary-status">Cuerpo del contrato v1</span></summary>
+            <div class="step-body code-panel"><p>Este es el cuerpo JSON que se enviará a <code>POST /v1/instances</code>. La contraseña se redacta en la vista y solo se entrega dentro de la solicitud real.</p><div class="code-toolbar"><button class="button secondary" id="copy-json" type="button">Copiar JSON</button></div><pre id="json-preview">Completa el formulario para generar el JSON de ejemplo.</pre></div>
+          </details>
+
+          <details class="step-card" id="step-curl" data-step="curl">
+            <summary><span class="step-number">4.</span> cURL generado <span class="summary-status">Secretos redactados</span></summary>
+            <div class="step-body code-panel"><p>La solicitud real usa el contrato estable <code>POST /v1/instances</code>. El token y la contraseña se ocultan en esta vista.</p><div class="code-toolbar"><button class="button secondary" id="copy-curl" type="button">Copiar cURL</button></div><pre id="curl-preview">Completa el formulario para generar el ejemplo.</pre></div>
+          </details>
+
+          <details class="step-card" id="step-response" data-step="response">
+            <summary><span class="step-number">5.</span> Respuesta <span class="summary-status" id="response-summary">Sin operación</span></summary>
+            <div class="step-body code-panel"><p>La creación devuelve `202 Accepted`; <code>job_id</code> es el alias estable de <code>operation_id</code>.</p><pre id="create-response">Aún no se ha creado una máquina.</pre></div>
+          </details>
+
+          <details class="step-card" id="step-progress" data-step="progress">
+            <summary><span class="step-number">6.</span> Progreso e IP <span class="summary-status" id="progress-summary">Pendiente</span></summary>
+            <div class="step-body">
+              <div class="progress-row"><div class="progress-track"><span id="progress-bar"></span></div><strong id="progress-status">Sin operación</strong></div>
+              <div class="network-card" id="create-network"><span class="network-icon">⌁</span><div><strong>IP observada por Guest Agent</strong><p id="create-network-text">La IP aparecerá cuando la VM esté lista y el agente responda. DHCP no se presenta como conectividad confirmada.</p></div></div>
+              <pre id="progress-operation">Sin eventos de operación.</pre>
+            </div>
+          </details>
+
+          <details class="step-card" id="step-ssh" data-step="ssh">
+            <summary><span class="step-number">7.</span> SSH <span class="summary-status">Acceso inicial</span></summary>
+            <div class="step-body two-panel"><div><h3>Acceso inicial</h3><p>Ubuntu y AlmaLinux utilizan el usuario inicial <code>root</code>. La contraseña no se expone después del aprovisionamiento.</p></div><div><h3>Configuración</h3><p id="ssh-summary">La instancia todavía no tiene una operación completada.</p></div></div>
+          </details>
+
+          <details class="step-card" id="step-lifecycle" data-step="lifecycle">
+            <summary><span class="step-number">8.</span> Lifecycle <span class="summary-status">Estado y energía</span></summary>
+            <div class="step-body lifecycle-preview"><p>Selecciona una instancia desde la <a href="#console" data-route="console">consola operativa</a> para consultar energía y ejecutar start, shutdown o reboot.</p><button class="button secondary" data-route="lifecycle">Abrir lifecycle KVM</button></div>
+          </details>
+
+          <details class="step-card" id="step-delete" data-step="delete">
+            <summary><span class="step-number">9.</span> Eliminar <span class="summary-status">Destroy autorizado</span></summary>
+            <div class="step-body lifecycle-preview"><p>La eliminación reutiliza el workspace y state de la instancia y requiere que figure detenida.</p><button class="button danger" data-route="delete">Abrir eliminación autorizada</button></div>
+          </details>
+        </section>
+
+        <section class="route-view hidden" data-view="console">
+          <div class="page-heading compact"><p class="eyebrow">CONSOLA OPERATIVA</p><h1>Estado del tenant técnico</h1><p>Inventario, operaciones, workers y estado de Proxmox en una vista de seguimiento.</p></div>
+          <div class="metric-grid"><div class="metric-card"><span>Instancias</span><strong id="metric-instances">—</strong><small>administradas</small></div><div class="metric-card"><span>Operaciones activas</span><strong id="metric-active">—</strong><small>en cola o ejecución</small></div><div class="metric-card"><span>Inciertas</span><strong id="metric-uncertain">—</strong><small>requieren reconciliación</small></div><div class="metric-card"><span>Workers</span><strong id="metric-workers">—</strong><small>liveness registrado</small></div><div class="metric-card"><span>Capacidad</span><strong id="metric-capacity">—</strong><small>operaciones simultáneas</small></div></div>
+          <div class="toolbar"><button class="button primary" id="refresh-console" type="button">Actualizar consola</button><span id="console-message" class="form-hint"></span></div>
+          <div class="panel-grid"><article class="panel"><div class="panel-heading"><div><p class="eyebrow">INVENTARIO LISTO</p><h2>Instancias administradas</h2><small class="panel-note">Solo VMs listas; los fallos se consultan desde Instancias.</small></div><button class="icon-button" data-route="instances">Ver detalle ↗</button></div><div id="console-instances" class="table-wrap compact-table"></div></article><article class="panel"><div class="panel-heading"><div><p class="eyebrow">ACTIVIDAD RECIENTE</p><h2>Últimas ejecuciones</h2><small class="panel-note">Las últimas operaciones del tenant.</small></div><button class="icon-button" data-route="operations">Ver todas ↗</button></div><div id="console-operations" class="table-wrap compact-table"></div></article></div>
+          <article class="panel detail-panel"><div class="panel-heading"><div><p class="eyebrow">SELECCIÓN</p><h2 id="console-detail-title">Selecciona una instancia</h2></div><span id="console-detail-status" class="status-badge neutral">Sin selección</span></div><div id="console-detail-empty" class="empty-state">La ficha mostrará VMID, nodo, plan, red, lifecycle y última operación.</div><div id="console-detail" class="hidden"><div id="console-facts" class="facts-grid"></div><div class="detail-columns"><div class="network-card" id="console-network"><span class="network-icon">⌁</span><div><strong>Red e IP</strong><p id="console-network-text">Pendiente</p></div></div><div class="power-card"><div><span class="eyebrow">ENERGÍA</span><strong id="console-power-state">unknown</strong><small id="console-power-note">Consulta para observar Proxmox.</small></div><div class="action-row"><button class="button secondary power-action" data-action="start">Iniciar</button><button class="button secondary power-action" data-action="shutdown">Apagar</button><button class="button secondary power-action" data-action="reboot">Reiniciar</button><button class="button danger" id="console-delete">Destruir</button></div></div></div><div class="code-panel operation-detail"><div class="panel-heading"><h3>Última operación</h3><button class="icon-button" id="refresh-detail">↻</button></div><pre id="console-operation-detail">Sin operación.</pre></div></div></article>
+        </section>
+
+        <section class="route-view hidden" data-view="instances">
+          <div class="page-heading compact"><p class="eyebrow">EXPLORAR API</p><h1>Instancias</h1><p>Inventario técnico con estado público normalizado y selección para lifecycle.</p></div>
+          <div class="toolbar list-toolbar"><input class="search-input" id="instance-filter" placeholder="Filtrar por nombre"><label class="status-filter">Estado<select id="instance-status-filter"><option value="ready" selected>Solo listas (ready)</option><option value="stopped">Apagadas (stopped)</option><option value="provisioning">En aprovisionamiento</option><option value="failed">Fallidas</option><option value="uncertain">Inciertas</option><option value="deleted">Eliminadas</option><option value="all">Todos los no eliminados</option></select></label><label class="page-size-control">Mostrar<select id="instance-page-size"><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select></label><label class="check-control compact-check"><input id="include-deleted" type="checkbox"> Incluir eliminadas</label><button class="button secondary" id="refresh-instances" type="button">Actualizar</button></div>
+          <article class="panel"><div id="instances-table" class="table-wrap"></div></article>
+        </section>
+
+        <section class="route-view hidden" data-view="operations">
+          <div class="page-heading compact"><p class="eyebrow">EXPLORAR API</p><h1>Operaciones y ejecuciones</h1><p>Seguimiento de plan, apply, provision, power y destroy; los secretos no forman parte de los payloads visibles.</p></div>
+          <div class="toolbar list-toolbar"><label class="status-filter">Estado<select id="operation-filter"><option value="">Todos los estados</option><option value="queued">queued</option><option value="running">running</option><option value="completed">completed</option><option value="failed">failed</option><option value="uncertain">uncertain</option></select></label><label class="page-size-control">Mostrar<select id="operation-page-size"><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select></label><button class="button secondary" id="refresh-operations" type="button">Actualizar</button></div>
+          <div class="panel-grid operations-layout"><article class="panel"><div id="operations-table" class="table-wrap list-table"></div></article><article class="panel operation-detail-panel"><div class="panel-heading"><div><p class="eyebrow">DETALLE</p><h2>Detalle de ejecución</h2></div><small id="operations-live-status" class="panel-note">Esperando actualización</small></div><div id="operation-context" class="operation-context"></div><pre id="operation-detail" class="large-code">Selecciona una operación.</pre><div id="operation-timeline" class="event-timeline"></div></article></div>
+        </section>
+
+        <section class="route-view hidden" data-view="lifecycle">
+          <div class="page-heading compact"><p class="eyebrow">CICLO DE VIDA KVM</p><h1>Estado, energía y acciones</h1><p>Consulta el estado observado y ejecuta start, shutdown o reboot sobre una instancia aprovisionada. Cada acción devuelve una operación asíncrona para seguimiento.</p></div>
+          <article class="panel lifecycle-panel"><div class="panel-heading"><div><h2 id="lifecycle-title">Selecciona una instancia</h2><p id="lifecycle-subtitle">Usa Instancias o Consola operativa.</p></div><span id="lifecycle-status" class="status-badge neutral">Sin selección</span></div><div class="lifecycle-state"><div class="power-orb"><span>ENERGÍA</span><strong id="lifecycle-power">unknown</strong><small id="lifecycle-note">—</small></div><div class="action-row"><button class="button secondary lifecycle-action" data-action="start">Iniciar</button><button class="button secondary lifecycle-action" data-action="shutdown">Apagar</button><button class="button secondary lifecycle-action" data-action="reboot">Reiniciar</button></div></div><div class="code-panel"><pre id="lifecycle-operation" class="large-code">Sin operación.</pre></div></article>
+        </section>
+
+        <section class="route-view hidden" data-view="delete">
+          <div class="page-heading compact"><p class="eyebrow">ELIMINACIÓN AUTORIZADA</p><h1>Destruir una instancia</h1><p>Destroy reutiliza el workspace y state originales. La instancia debe figurar detenida; el resultado se observa como una operación asíncrona.</p></div>
+          <article class="panel narrow-panel"><div class="warning-box"><strong>Acción destructiva</strong><p>Verifica nombre, VMID y nodo antes de confirmar. Esta acción no modifica planes ni Golden Images, pero elimina la VM administrada.</p></div><label>Instancia<select id="delete-instance"><option value="">Selecciona una instancia</option></select></label><div id="delete-preview" class="selection-preview">Sin selección.</div><button class="button danger large" id="delete-submit" type="button" disabled>Confirmar destroy</button><p id="delete-message" class="form-hint"></p></article>
+        </section>
+
+        <section class="route-view hidden" data-view="observability">
+          <div class="page-heading compact"><p class="eyebrow">OBSERVABILIDAD</p><h1>Diagnóstico del orquestador</h1><p>Heartbeat, operaciones activas, operaciones inciertas y eventos técnicos.</p></div>
+          <div class="metric-grid"><div class="metric-card"><span>Worker liveness</span><strong id="obs-liveness">—</strong><small>estado del heartbeat</small></div><div class="metric-card"><span>Managed instances</span><strong id="obs-instances">—</strong><small>sin fallos ni eliminadas</small></div><div class="metric-card"><span>Active operations</span><strong id="obs-active">—</strong><small>cola o ejecución</small></div><div class="metric-card"><span>Queue depth</span><strong id="obs-queue">—</strong><small>operaciones pendientes</small></div><div class="metric-card"><span>Uncertain</span><strong id="obs-uncertain">—</strong><small>requieren revisión</small></div><div class="metric-card"><span>Worker capacity</span><strong id="obs-capacity">—</strong><small>operaciones simultáneas</small></div><div class="metric-card"><span>p95 ciclo</span><strong id="obs-total-p95">—</strong><small>operación completa</small></div><div class="metric-card"><span>p95 cola</span><strong id="obs-queue-p95">—</strong><small>espera antes del worker</small></div><div class="metric-card"><span>Throughput</span><strong id="obs-throughput">—</strong><small>operaciones por minuto</small></div></div>
+          <div class="summary-grid"><div class="summary-card"><span>Ready</span><strong id="obs-ready-count">—</strong></div><div class="summary-card"><span>Stopped</span><strong id="obs-stopped-count">—</strong></div><div class="summary-card"><span>Provisionando</span><strong id="obs-provisioning-count">—</strong></div><div class="summary-card"><span>Fallidas</span><strong id="obs-failed-count">—</strong></div><div class="summary-card"><span>Completadas</span><strong id="obs-completed-count">—</strong></div><div class="summary-card"><span>Eventos registrados</span><strong id="obs-events-count">—</strong></div></div>
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">TRAZABILIDAD</p><h2>Eventos recientes</h2><small id="obs-live-status" class="panel-note">Esperando actualización</small></div><div class="action-row"><label class="page-size-control">Mostrar<select id="event-page-size"><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select></label><button class="button secondary" id="refresh-events" type="button">Actualizar eventos</button></div></div><div id="events-table" class="event-list scroll-list"></div></article>
+        </section>
+
+        <section class="route-view hidden" data-view="workers">
+          <div class="page-heading compact"><p class="eyebrow">TRABAJOS</p><h1>Workers y heartbeats</h1><p>Estado de los procesos que reclaman y ejecutan operaciones.</p></div>
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">EJECUCIÓN</p><h2>Workers registrados</h2><small id="workers-live-status" class="panel-note">Cada worker muestra su heartbeat, operación actual y última ejecución.</small></div><button class="button secondary" id="refresh-workers" type="button">Actualizar</button></div><div id="workers-table" class="worker-grid"></div></article>
+          <article class="panel worker-detail-panel"><div class="panel-heading"><div><p class="eyebrow">INSPECCIÓN</p><h2>Operación del worker</h2></div></div><div id="worker-operation-context" class="operation-context"></div><pre id="worker-operation-detail" class="large-code">Selecciona «Ver ejecución» en un worker.</pre><div id="worker-operation-timeline" class="event-timeline"></div></article>
+        </section>
+
+        <section class="route-view hidden" data-view="guides">
+          <div class="page-heading compact"><p class="eyebrow">GUÍAS DE USO</p><h1>Referencia técnica completa</h1><p>La experiencia visual explica el contrato real sin convertir la trazabilidad comercial en un requisito operativo.</p></div>
+          <div class="guide-stack">
+            <details class="guide-card" open><summary>Contrato estable v1</summary><div><p>Consulta <code>GET /v1/plans</code> y <code>GET /v1/images</code>. Crea con <code>POST /v1/instances</code>, usando <code>plan_id</code> e <code>image_id</code>. El consumidor no envía nodo, vCPU, memoria ni disco: esos valores vienen del catálogo certificado.</p><pre>Base URL actual: <span id="guide-base-url">https://dev-iac.cyberfuel.com</span>
+POST /v1/instances
+Idempotency-Key: alta-ORD-1001
+Authorization: Bearer &lt;token&gt;</pre></div></details>
+            <details class="guide-card"><summary>Cómo consumir la API</summary><div><p>En desarrollo la base es <code id="guide-base-url-inline">https://dev-iac.cyberfuel.com</code>; al promover el mismo contrato la base será <code>https://iac.cyberfuel.com</code>. La versión, rutas y cuerpos permanecen en <code>/v1</code>.</p><pre># 1) catálogo
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/network-profiles
+
+# 2) crear y seguir
+curl -X POST BASE/v1/instances -H "Authorization: Bearer &lt;TOKEN&gt;" \
+  -H "Idempotency-Key: alta-ORD-1001" -H "Content-Type: application/json" \
+  --data @create-instance.json
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/operations/&lt;operation_id&gt;</pre></div></details>
+            <details class="guide-card"><summary>Comandos de lifecycle y eliminación</summary><div><p><code>ready</code> significa aprovisionada y encendida; <code>stopped</code> significa aprovisionada pero apagada. Ambas conservan la misma identidad y pueden gestionarse con lifecycle. El destroy es asíncrono y siempre debe seguirse por su <code>operation_id</code>; los fallos sin VM física también pueden limpiarse de forma lógica y auditable.</p><pre>curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/start
+curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
+curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
+curl -X DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
+            <details class="guide-card"><summary>Catálogo de planes, imágenes y red</summary><div><p>Consulta <code>GET /v1/plans</code>, <code>GET /v1/images</code> y <code>GET /v1/network-profiles</code> para conocer las opciones certificadas. Elige un <code>plan_id</code>, un <code>image_id</code> y un <code>network_profile</code>; la API conserva los valores técnicos y no requiere que el consumidor conozca la infraestructura interna.</p><p><code>lab_dhcp</code> es el perfil de laboratorio. <code>prod_static</code> asigna una IP libre del prefijo `/24` autorizado en NetBox, reserva <code>x.x.x.1</code> como gateway y no acepta que el consumidor envíe una IP arbitraria. Permanece deshabilitado hasta completar la configuración del IPAM.</p><p>Las imágenes base son inmutables. <code>customer_tag</code>, cuando existe, se conserva como metadata de trazabilidad.</p><pre class="api-example">curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images
+curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/network-profiles</pre></div></details>
+            <details class="guide-card"><summary>Acceso, contraseña y SSH</summary><div><p>La consola pide contraseña para el usuario inicial <code>root</code> y replica el flujo operativo de referencia. La API también acepta SSH-only para automatizaciones. La contraseña se transporta mediante un secreto temporal y se elimina al terminar el aprovisionamiento.</p><p>Ubuntu y AlmaLinux usan <code>root</code>; el portal nunca muestra la contraseña después del envío.</p></div></details>
+            <details class="guide-card" data-guide-target="diagnostics"><summary>Operaciones y diagnóstico</summary><div><p>Estados públicos: <code>queued</code>, <code>running</code>, <code>completed</code>, <code>failed</code> y <code>uncertain</code>. Cada mutación devuelve un <code>operation_id</code> para consultar el progreso y los eventos.</p><p>Los eventos salen más recientes primero; para reconstruir una ejecución completa usa <code>/v1/events?operation_id=&lt;id&gt;&amp;sort=asc</code>. <code>uncertain</code> requiere reconciliación física y no se interpreta como éxito ni como fallo seguro.</p><p><code>GET /v1/observability</code> también devuelve <code>max_concurrent</code>, <code>active_operations</code>, <code>queue_depth</code> y el estado actual de cada worker. La consola puede refrescar esta vista mientras haya operaciones en curso.</p><pre class="api-example">GET BASE/v1/operations/&lt;operation_id&gt;
+GET BASE/v1/events?operation_id=&lt;operation_id&gt;&amp;sort=asc
+GET BASE/v1/observability
+GET BASE/v1/instances/&lt;instance_id&gt;
+GET BASE/v1/instances/&lt;instance_id&gt;/network
+GET BASE/v1/instances/&lt;instance_id&gt;/power</pre></div></details>
+            <details class="guide-card"><summary>Lifecycle y eliminación</summary><div><p>Una instancia aprovisionada puede iniciarse, apagarse o reiniciarse mediante operaciones asíncronas. Antes de eliminarla, confirma que su energía sea <code>stopped</code>; luego espera la operación de destroy y verifica que su estado sea <code>deleted</code>.</p><pre class="api-example">POST BASE/v1/instances/&lt;instance_id&gt;/power/start
+POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
+POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
+DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
+            <details class="guide-card"><summary>Trazabilidad avanzada de API</summary><div><p><code>customer_id</code>, <code>customer_tag</code>, <code>order_id</code> y <code>product_id</code> son metadata opcional y completa. No conceden permisos, no cambian el plan y no seleccionan nodo.</p></div></details>
+          </div>
+        </section>
+
+        <footer class="portal-footer"><span>IACP Orchestrator · API v1</span><a href="/openapi.json" target="_blank" rel="noreferrer">OpenAPI ↗</a><a href="/swagger">Swagger técnico ↗</a><span id="footer-auth">Sin autorizar</span></footer>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/docs/assets/docs.js?v=20261029-3"></script>
+  </body>
+</html>

@@ -1,11 +1,13 @@
 import json
 import os
 import re
+import socket
 import ssl
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
+from typing import Callable
 
 
 class ProxmoxError(RuntimeError):
@@ -53,8 +55,26 @@ class ProxmoxClient:
         cafile = os.getenv("SSL_CERT_FILE") or None
         context = ssl.create_default_context(cafile=cafile)
         self.opener = build_opener(HTTPSHandler(context=context))
+        self._heartbeat_callback: Callable[[], None] | None = None
 
-    def _request(self, method: str, path: str, parameters: dict | None = None, *, uncertain: bool = False):
+    def set_heartbeat(self, callback: Callable[[], None] | None) -> None:
+        self._heartbeat_callback = callback
+
+    def _heartbeat(self) -> None:
+        callback = getattr(self, "_heartbeat_callback", None)
+        if callback is not None:
+            callback()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        parameters: dict | None = None,
+        *,
+        uncertain: bool = False,
+        timeout: float | None = None,
+        attempts: int | None = None,
+    ):
         data = urlencode(parameters).encode() if parameters else None
         headers = {
             "Authorization": f"PVEAPIToken={self.token}",
@@ -68,30 +88,129 @@ class ProxmoxClient:
             headers=headers,
             method=method,
         )
-        try:
-            with self.opener.open(request, timeout=20) as response:
-                body = json.loads(response.read())
-        except HTTPError as error:
-            code = "POWER_PERMISSION_DENIED" if error.code in {401, 403} else "POWER_PROXMOX_UNAVAILABLE"
-            raise ProxmoxError(code, error.code) from error
-        except (URLError, TimeoutError, ValueError) as error:
-            raise ProxmoxError(
-                f"Proxmox {method} {path} falló: {error}",
-                uncertain=uncertain,
-            ) from error
-        return body.get("data")
+        # Reads are safe to retry when the Docker/Proxmox DNS path has a
+        # transient failure. A mutating request is retried only when name
+        # resolution failed before a connection could be opened; retrying a
+        # timeout after a request was sent could duplicate a power/task call.
+        attempts = max(
+            1,
+            int(
+                attempts
+                if attempts is not None
+                else os.getenv("IACP_PROXMOX_RETRY_ATTEMPTS", "6")
+            ),
+        )
+        backoff = max(0.1, float(os.getenv("IACP_PROXMOX_RETRY_BACKOFF", "0.5")))
+        request_timeout = max(
+            1.0,
+            float(
+                timeout
+                if timeout is not None
+                else os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20")
+            ),
+        )
+        for attempt in range(attempts):
+            try:
+                with self.opener.open(request, timeout=request_timeout) as response:
+                    body = json.loads(response.read())
+                return body.get("data")
+            except HTTPError as error:
+                # A GET can be retried safely. A POST may already have
+                # reached Proxmox even when it returns 5xx; retrying it here
+                # could submit a second power/task mutation. The worker will
+                # reconcile the physical state instead.
+                if method == "GET" and 500 <= error.code < 600 and attempt + 1 < attempts:
+                    time.sleep(min(8.0, backoff * (2**attempt)))
+                    continue
+                code = "POWER_PERMISSION_DENIED" if error.code in {401, 403} else "POWER_PROXMOX_UNAVAILABLE"
+                raise ProxmoxError(code, error.code, uncertain=uncertain and method != "GET") from error
+            except (URLError, TimeoutError, ValueError) as error:
+                reason = getattr(error, "reason", None)
+                message = str(error).lower()
+                dns_failure = (
+                    isinstance(error, URLError) and isinstance(reason, socket.gaierror)
+                ) or any(
+                    marker in message
+                    for marker in (
+                        "no address associated with hostname",
+                        "temporary failure in name resolution",
+                        "name or service not known",
+                        "could not resolve host",
+                    )
+                )
+                retryable = method == "GET" or dns_failure
+                if not retryable or attempt + 1 >= attempts:
+                    raise ProxmoxError(
+                        f"Proxmox {method} {path} falló: {error}",
+                        uncertain=uncertain,
+                    ) from error
+                time.sleep(min(8.0, backoff * (2**attempt)))
 
-    def get(self, path: str, *, uncertain: bool = False):
-        return self._request("GET", path, uncertain=uncertain)
+    def get(
+        self,
+        path: str,
+        *,
+        uncertain: bool = False,
+        timeout: float | None = None,
+        attempts: int | None = None,
+    ):
+        return self._request(
+            "GET",
+            path,
+            uncertain=uncertain,
+            timeout=timeout,
+            attempts=attempts,
+        )
 
     def post(self, path: str, parameters: dict | None = None):
         return self._request("POST", path, parameters, uncertain=True)
 
-    def inventory(self) -> list[dict]:
-        return self.get("/cluster/resources?type=vm") or []
+    def put(self, path: str, parameters: dict | None = None):
+        return self._request("PUT", path, parameters, uncertain=True)
+
+    def inventory(self, *, uncertain: bool = False) -> list[dict]:
+        return self.get("/cluster/resources?type=vm", uncertain=uncertain) or []
+
+    def pools(self) -> list[dict]:
+        return self.get("/pools") or []
+
+    def nodes(self) -> list[dict]:
+        return self.get("/nodes") or []
 
     def vm_config(self, node: str, vmid: int) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config?current=1") or {}
+
+    def ensure_network_model(self, node: str, vmid: int, name: str, model: str) -> dict:
+        """Rewrite the primary NIC after clone so Proxmox regenerates cloud-init.
+
+        The AlmaLinux 9 Golden Image can retain the cloned virtio/cloud-init
+        ordering when a larger kvm plan is created. Reapplying the final NIC
+        model while the VM is still stopped makes the generated network seed
+        and the QEMU device converge before the first boot.
+        """
+
+        if model not in {"virtio", "e1000"}:
+            raise ProxmoxError("NETWORK_MODEL_INVALID")
+        config = self.vm_config(node, vmid)
+        if (
+            config.get("name") != name
+            or config.get("template", 0)
+            or not isinstance(config.get("net0"), str)
+        ):
+            raise ProxmoxError("POWER_IDENTITY_MISMATCH")
+        net0 = config["net0"]
+        first, *rest = net0.split(",", 1)
+        if "=" not in first:
+            raise ProxmoxError("NETWORK_CONFIG_INVALID")
+        _, address = first.split("=", 1)
+        desired = f"{model}={address}"
+        if rest:
+            desired += f",{rest[0]}"
+        self.put(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config",
+            {"net0": desired},
+        )
+        return {"network_model": model, "net0": desired}
 
     def storage_status(self, node: str, storage: str) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/storage/{quote(storage, safe='')}/status") or {}
@@ -123,6 +242,134 @@ class ProxmoxClient:
             "uptime": status.get("uptime"),
         }
 
+    def guest_agent_interfaces(self, node: str, vmid: int) -> list[dict]:
+        """Read the guest network interfaces without claiming connectivity."""
+
+        # Guest Agent calls can block while cloud-init or qga is converging.
+        # Keep the public network observation responsive; callers can poll
+        # again instead of waiting through the generic GET retry budget.
+        data = self.get(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/network-get-interfaces",
+            timeout=float(os.getenv("IACP_GUEST_AGENT_TIMEOUT", "8")),
+            attempts=int(os.getenv("IACP_GUEST_AGENT_ATTEMPTS", "2")),
+        ) or {}
+        if isinstance(data, dict):
+            result = data.get("result", [])
+            return result if isinstance(result, list) else []
+        return data if isinstance(data, list) else []
+
+    @staticmethod
+    def _recoverable_power_error(error: ProxmoxError) -> bool:
+        message = str(error).lower()
+        return error.uncertain or any(
+            marker in message
+            for marker in (
+                "power_task_failed",
+                "power_proxmox_unavailable",
+                "can't lock file",
+                "got timeout",
+                "lock-",
+            )
+        )
+
+    @staticmethod
+    def _power_recovery_delay(attempt: int) -> float:
+        base = max(0.5, float(os.getenv("IACP_POWER_RECOVERY_BACKOFF", "2")))
+        return min(15.0, base * (2**attempt))
+
+    def _submit_power_action(self, node: str, vmid: int, action: str) -> dict:
+        parameters = {}
+        if action in {"shutdown", "reboot", "stop"}:
+            parameters["timeout"] = 60
+        if action == "shutdown":
+            parameters["forceStop"] = 0
+        task = self.post(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/status/{action}",
+            parameters,
+        )
+        self._validate_task(node, vmid, action, task)
+        return {"action": action, "task": task, **self.wait_task(node, vmid, action, task)}
+
+    def _reconcile_power_action(
+        self,
+        node: str,
+        vmid: int,
+        name: str,
+        action: str,
+        initial_error: ProxmoxError,
+    ) -> dict:
+        """Recover a power operation from a lost task poll or a Proxmox lock."""
+
+        deadline = time.monotonic() + max(
+            5.0, float(os.getenv("IACP_POWER_RECOVERY_TIMEOUT", "300"))
+        )
+        last_error = initial_error
+        attempt = 0
+        while time.monotonic() < deadline:
+            self._heartbeat()
+            try:
+                observed = self.power_state(node, vmid, name)
+            except ProxmoxError as error:
+                if not self._recoverable_power_error(error):
+                    raise
+                last_error = error
+                observed = None
+
+            current = observed.get("power_state") if observed else None
+            desired = "running" if action == "start" else "stopped"
+            if action != "reboot" and current == desired:
+                return {
+                    "action": action,
+                    "recovered": True,
+                    "recovery_error": str(initial_error)[:256],
+                    **observed,
+                }
+
+            try:
+                if action == "start" and current == "stopped":
+                    return {
+                        **self._submit_power_action(node, vmid, "start"),
+                        "recovered": True,
+                        "recovery_error": str(initial_error)[:256],
+                    }
+                if action in {"shutdown", "stop"} and current == "running":
+                    result = self._submit_power_action(node, vmid, "stop")
+                    return {
+                        "action": action,
+                        "fallback_action": "stop",
+                        "recovered": True,
+                        "recovery_error": str(initial_error)[:256],
+                        **result,
+                    }
+                if action == "reboot" and current in {"running", "stopped"}:
+                    stopped = (
+                        {"power_state": "stopped", "already": True}
+                        if current == "stopped"
+                        else self._submit_power_action(node, vmid, "stop")
+                    )
+                    started = self._submit_power_action(node, vmid, "start")
+                    return {
+                        "action": action,
+                        "fallback_action": "stop_start",
+                        "recovered": True,
+                        "recovery_error": str(initial_error)[:256],
+                        "stop": stopped,
+                        "start": started,
+                        "power_state": started.get("power_state", "running"),
+                    }
+            except ProxmoxError as error:
+                if not self._recoverable_power_error(error):
+                    raise
+                last_error = error
+
+            time.sleep(self._power_recovery_delay(attempt))
+            attempt += 1
+
+        raise ProxmoxError(
+            f"POWER_OPERATION_UNCERTAIN: {str(last_error)[:256]}",
+            uncertain=True,
+        ) from initial_error
+
     def power(self, node: str, vmid: int, name: str, action: str) -> dict:
         if action not in {"start", "shutdown", "reboot"}:
             raise ProxmoxError("POWER_ACTION_INVALID")
@@ -136,22 +383,47 @@ class ProxmoxClient:
         if action == "reboot" and current != "running":
             raise ProxmoxError("POWER_STATE_INVALID")
 
-        parameters = {}
-        if action in {"shutdown", "reboot"}:
-            parameters = {"timeout": 60}
-        if action == "shutdown":
-            parameters["forceStop"] = 0
-        task = self.post(
-            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/status/{action}",
-            parameters,
-        )
-        self._validate_task(node, vmid, action, task)
-        result = self.wait_task(node, vmid, action, task)
-        return {"action": action, "task": task, **result}
+        try:
+            return {"action": action, **self._submit_power_action(node, vmid, action)}
+        except ProxmoxError as error:
+            # Some certified Golden Images have the QEMU agent enabled in
+            # configuration before the guest agent is actually running. PVE
+            # can then report an ACPI/qga timeout for qmshutdown. A failed
+            # graceful shutdown is safe to complete with qmstop; this keeps
+            # the public shutdown endpoint deterministic for destroy flows.
+            if action == "shutdown" and str(error).startswith("POWER_TASK_FAILED"):
+                return self._reconcile_power_action(node, vmid, name, action, error)
+            # A guest can be running while its ACPI/QEMU reboot task times
+            # out (for example while cloud-init or the guest agent is
+            # wedged).  A stop/start is the deterministic equivalent for
+            # the public reboot contract and avoids exposing a misleading
+            # uncertain operation to API consumers.
+            if self._recoverable_power_error(error):
+                return self._reconcile_power_action(node, vmid, name, action, error)
+            raise
+
+    def stop(self, node: str, vmid: int, name: str) -> dict:
+        """Force-stop only after a graceful shutdown task has failed."""
+
+        self.permissions(node, vmid, mutate=True)
+        observed = self.power_state(node, vmid, name)
+        if observed["power_state"] == "stopped":
+            return {"action": "stop", "already": True, **observed}
+        try:
+            return self._submit_power_action(node, vmid, "stop")
+        except ProxmoxError as error:
+            if self._recoverable_power_error(error):
+                return self._reconcile_power_action(node, vmid, name, "stop", error)
+            raise
 
     @staticmethod
     def _validate_task(node: str, vmid: int, action: str, task: str) -> None:
-        task_type = {"start": "qmstart", "shutdown": "qmshutdown", "reboot": "qmreboot"}[action]
+        task_type = {
+            "start": "qmstart",
+            "shutdown": "qmshutdown",
+            "reboot": "qmreboot",
+            "stop": "qmstop",
+        }[action]
         pattern = (
             rf"UPID:{re.escape(node)}:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:"
             rf"{task_type}:{vmid}:[^:\r\n]+:"
@@ -162,11 +434,22 @@ class ProxmoxClient:
     def wait_task(self, node: str, vmid: int, action: str, task: str) -> dict:
         timeout = int(os.getenv("IACP_POWER_TIMEOUT", "180"))
         deadline = time.monotonic() + timeout
+        poll_attempt = 0
         while True:
-            data = self.get(
-                f"/nodes/{quote(node, safe='')}/tasks/{quote(task, safe='')}/status",
-                uncertain=True,
-            ) or {}
+            self._heartbeat()
+            try:
+                data = self.get(
+                    f"/nodes/{quote(node, safe='')}/tasks/{quote(task, safe='')}/status",
+                    uncertain=True,
+                ) or {}
+            except ProxmoxError as error:
+                if not error.uncertain:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise ProxmoxError("POWER_TASK_UNCERTAIN", uncertain=True) from error
+                time.sleep(min(8.0, 0.5 * (2**poll_attempt)))
+                poll_attempt += 1
+                continue
             state = data.get("status")
             if state == "running":
                 if time.monotonic() >= deadline:
@@ -179,7 +462,7 @@ class ProxmoxClient:
             if exitstatus == "OK":
                 final = "running" if action in {"start", "reboot"} else "stopped"
                 return {"power_state": final, "exitstatus": exitstatus}
-            raise ProxmoxError("POWER_TASK_FAILED")
+            raise ProxmoxError(f"POWER_TASK_FAILED: {exitstatus or 'unknown'}")
 
 
 def now_iso() -> str:

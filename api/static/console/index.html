@@ -25,7 +25,7 @@
         <div>
           <p class="eyebrow">OPERADOR TÉCNICO</p>
           <h2>Crear y administrar máquinas virtuales</h2>
-          <p>Terraform ejecuta las órdenes; esta consola solamente las envía y muestra su resultado.</p>
+          <p>El orquestador ejecuta las órdenes; esta consola solamente las envía y muestra su resultado.</p>
         </div>
         <div id="runtime-badge" class="badge muted">Sin autorizar</div>
       </section>
@@ -64,40 +64,44 @@
           <article class="card">
             <div class="section-heading">
               <div><p class="eyebrow">APROVISIONAMIENTO</p><h3>Nueva instancia</h3></div>
-              <span class="pill">MNG · VMID 40000+</span>
+              <span class="pill">MNG · mng01 · VMID 40001+</span>
             </div>
             <form id="instance-form" class="form-grid">
-              <label>Entorno
-                <select id="stack"><option value="mng01">mng01 · Proxmox</option><option value="local">local · fixture</option></select>
-              </label>
               <label>Nombre
                 <input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="iacp-demo-001">
+              </label>
+              <label>Plan
+                <select id="plan" required><option value="">Autoriza para cargar planes</option></select>
               </label>
               <label>Imagen
                 <select id="image"><option value="ubuntu-2404">ubuntu-2404</option></select>
               </label>
-              <label>vCPU
-                <input id="vcpus" type="number" min="1" max="8" value="2">
+              <label>Perfil de red
+                <select id="network-profile" required><option value="lab_dhcp">Lab_DHCP · red de laboratorio</option></select>
+                <small class="hint" id="network-profile-help">DHCP de laboratorio; no se envía una IP desde el consumidor.</small>
               </label>
-              <label>Memoria (MB)
-                <input id="memory" type="number" min="512" max="16384" step="512" value="2048">
+              <label>Contraseña inicial (opcional)
+                <input id="root-password" type="password" autocomplete="new-password" placeholder="La API no la devuelve">
               </label>
-              <label>Disco (GB)
-                <input id="disk" type="number" min="20" max="400" value="20">
-              </label>
-              <label>Red
-                <select id="network"><option value="dhcp">DHCP</option><option value="static">Static</option></select>
-              </label>
-              <label class="check-row"><input id="started" type="checkbox"> Iniciar después de aplicar</label>
+              <label class="check-row"><input id="started" type="checkbox"> Iniciar al completar</label>
               <label class="full-width">Clave pública SSH (opcional; una línea)
                 <textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea>
               </label>
-              <label class="full-width">Tags adicionales, separados por coma
-                <input id="tags" placeholder="laboratorio, prueba">
+              <div class="full-width form-subheading">Trazabilidad comercial (opcional; completar los cuatro)</div>
+              <label>Customer ID
+                <input id="customer-id" placeholder="CL-0000">
+              </label>
+              <label>Customer tag
+                <input id="customer-tag" pattern="[a-z0-9][a-z0-9_-]{0,62}" placeholder="cl-0000">
+              </label>
+              <label>Order ID
+                <input id="order-id" placeholder="ORD-1001">
+              </label>
+              <label>Product ID
+                <input id="product-id" placeholder="KVM-2">
               </label>
               <div class="form-actions full-width">
-                <button class="primary" type="submit">Crear plan</button>
-                <button class="secondary" id="apply-button" type="button" disabled>Aplicar plan</button>
+                <button class="primary" type="submit">Crear instancia</button>
               </div>
             </form>
             <div id="create-message" class="message hidden"></div>
@@ -116,7 +120,7 @@
               <div><p class="eyebrow">CICLO DE VIDA</p><h3 id="detail-title">Selecciona una instancia</h3></div>
               <span id="detail-status" class="badge muted">Sin selección</span>
             </div>
-            <div id="detail-empty" class="empty-state">La ficha de la instancia mostrará Terraform, energía, VMID, eventos y acciones.</div>
+            <div id="detail-empty" class="empty-state">La ficha de la instancia mostrará energía, VMID, eventos y acciones.</div>
             <div id="detail-content" class="hidden">
               <div id="detail-facts" class="facts"></div>
               <div class="power-panel">

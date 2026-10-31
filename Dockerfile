@@ -21,7 +21,12 @@ RUN pip install --no-cache-dir \
 COPY api ./api
 COPY worker ./worker
 COPY terraform ./terraform
-RUN mkdir -p /var/lib/iacp-v2 /workspace/terraform && chown -R iacp:iacp /app /var/lib/iacp-v2 /workspace
+RUN mkdir -p /tmp/terraform-plugin-cache /var/lib/iacp-v2 /workspace/terraform && \
+    cd /app/terraform/environments/mng01 && \
+    TF_PLUGIN_CACHE_DIR=/tmp/terraform-plugin-cache \
+      terraform init -input=false -no-color -backend=false -lockfile=readonly && \
+    rm -rf /tmp/terraform-plugin-cache && \
+    chown -R iacp:iacp /app /var/lib/iacp-v2 /workspace
 USER iacp
 
 EXPOSE 8080

@@ -123,6 +123,17 @@ variable "network_bridge" {
   }
 }
 
+variable "network_model" {
+  description = "Modelo de NIC compatible con la Golden Image."
+  type        = string
+  default     = "virtio"
+
+  validation {
+    condition     = contains(["virtio", "e1000"], var.network_model)
+    error_message = "network_model debe ser virtio o e1000."
+  }
+}
+
 variable "vlan_id" {
   description = "VLAN de la interfaz principal."
   type        = number
@@ -226,11 +237,19 @@ variable "ssh_public_keys" {
 
   validation {
     condition = (
-      length(var.ssh_public_keys) > 0 &&
-      alltrue([for key in var.ssh_public_keys : trimspace(key) != ""])
+      (length(var.ssh_public_keys) > 0 &&
+      alltrue([for key in var.ssh_public_keys : trimspace(key) != ""])) ||
+      (var.root_password != null ? trimspace(var.root_password) != "" : false)
     )
-    error_message = "Debe proporcionarse al menos una clave SSH pública."
+    error_message = "Debe proporcionarse una clave SSH pública o una contraseña inicial."
   }
+}
+
+variable "root_password" {
+  description = "Contraseña sensible de la cuenta cloud-init definida por la Golden Image."
+  type        = string
+  default     = null
+  sensitive   = true
 }
 
 variable "guest_agent_enabled" {

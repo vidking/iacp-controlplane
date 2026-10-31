@@ -1,14 +1,29 @@
-import json
 import os
 import re
 
+from api.catalog import cluster_nodes, load_catalog
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
+DEFAULT_POOL_ID = "iacp-lab"
+
+
 def catalog() -> dict[str, dict]:
-    path = os.getenv("IACP_MNG_CATALOG", "/workspace/terraform/environments/mng01/catalog.json")
-    with open(path, encoding="utf-8") as handle:
-        return {item["image_id"]: item for item in json.load(handle)["images"]}
+    return {item["image_id"]: item for item in load_catalog()["images"]}
+
+
+def configured_pool_id() -> str:
+    pool_id = os.getenv("IACP_PROXMOX_POOL_ID", DEFAULT_POOL_ID).strip()
+    if not pool_id or not re.fullmatch(r"[A-Za-z0-9_-]+", pool_id):
+        raise ValueError("PROXMOX_POOL_REQUIRED")
+    return pool_id
+
+
+def validate_pool(client: ProxmoxClient) -> str:
+    pool_id = configured_pool_id()
+    if not any(str(pool.get("poolid")) == pool_id for pool in client.pools() if isinstance(pool, dict)):
+        raise ProxmoxError("PROXMOX_POOL_NOT_FOUND", 404)
+    return pool_id
 
 
 def _disk(raw: str, interface: str) -> dict:
@@ -66,6 +81,8 @@ def observe(image_id: str, client: ProxmoxClient) -> dict:
     disk = _disk(raw[disk_interface], disk_interface)
     if disk["datastore_id"] != entry["storage"]:
         raise ValueError("GOLDEN_STORAGE_MISMATCH")
+    configured_model = str(raw.get("net0", "")).split("=", 1)[0].strip()
+    network_model = entry.get("network_model") or configured_model or "virtio"
     return {
         "image_id": image_id,
         "template_vm_id": vmid,
@@ -83,14 +100,27 @@ def observe(image_id: str, client: ProxmoxClient) -> dict:
         "boot_order": _boot_order(raw.get("boot")),
         "agent_enabled": str(raw.get("agent", "")).startswith("enabled=1"),
         "network_bridge": str(raw.get("net0", "")).split("bridge=", 1)[-1].split(",", 1)[0],
+        "network_model": network_model,
         "disk": disk,
         "tags": sorted(tags),
     }
 
 
-def variables(spec: dict, vmid: int, golden: dict, stack: str = "mng01") -> dict:
+def variables(
+    spec: dict,
+    vmid: int,
+    golden: dict,
+    stack: str = "mng01",
+    *,
+    target_node: str | None = None,
+    allowed_nodes: list[str] | None = None,
+    has_root_password: bool = False,
+    pool_id: str | None = None,
+) -> dict:
     image_id = spec["image"]
-    username = "ubuntu" if image_id.startswith("ubuntu-") else "root"
+    username = catalog().get(image_id, {}).get("cloudinit_username", "root")
+    target_node = target_node or "mng01"
+    allowed_nodes = allowed_nodes or cluster_nodes()
     keys = spec.get("ssh_public_keys") or []
     if not keys:
         key_file = os.getenv("IACP_DEFAULT_SSH_PUBLIC_KEY_FILE", "")
@@ -99,21 +129,22 @@ def variables(spec: dict, vmid: int, golden: dict, stack: str = "mng01") -> dict
                 keys = [handle.read().strip()]
     if not keys and os.getenv("IACP_DEFAULT_SSH_PUBLIC_KEY", "").strip():
         keys = [os.environ["IACP_DEFAULT_SSH_PUBLIC_KEY"].strip()]
-    if not keys:
+    if not keys and not has_root_password:
         raise ValueError("SSH_PUBLIC_KEY_REQUIRED")
+    pool_id = pool_id or configured_pool_id()
     disk = dict(golden["disk"])
     disk["size_gb"] = spec["disk_gb"]
     disk.pop("volume", None)
     return {
         "environment": stack,
-        "allowed_nodes": ["mng01"],
+        "allowed_nodes": allowed_nodes,
         "instance": {
             "vm_name": spec["name"],
             "vm_id": vmid,
-            "node_name": "mng01",
+            "node_name": target_node,
             "template_vm_id": golden["template_vm_id"],
             "template_node_name": golden["template_node"],
-            "pool_id": None,
+            "pool_id": pool_id,
             "clone_datastore_id": golden["disk"]["datastore_id"],
             "cpu_cores": spec["vcpus"],
             "cpu_type": golden["cpu_type"],
@@ -123,6 +154,7 @@ def variables(spec: dict, vmid: int, golden: dict, stack: str = "mng01") -> dict
             "cpu_hotplugged": spec["vcpus"],
             "memory_mb": spec["memory_mb"],
             "network_bridge": golden["network_bridge"] or "vmbr0",
+            "network_model": golden.get("network_model", "virtio"),
             "network_mode": spec.get("network_mode", "dhcp"),
             "vlan_id": spec.get("vlan_id"),
             "ipv4_cidr": spec.get("ipv4_cidr"),

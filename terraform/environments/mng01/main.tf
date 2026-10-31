@@ -21,6 +21,7 @@ module "kvm" {
   cpu_hotplugged         = var.instance.cpu_hotplugged
   memory_mb              = var.instance.memory_mb
   network_bridge         = var.instance.network_bridge
+  network_model          = var.instance.network_model
   network_mode           = var.instance.network_mode
   vlan_id                = var.instance.vlan_id
   ipv4_cidr              = var.instance.ipv4_cidr
@@ -28,6 +29,7 @@ module "kvm" {
   cloudinit_datastore_id = var.instance.cloudinit_datastore_id
   cloudinit_username     = var.instance.cloudinit_username
   ssh_public_keys        = var.instance.ssh_public_keys
+  root_password          = var.root_password
   guest_agent_enabled    = var.instance.guest_agent_enabled
   started                = var.instance.started
   bios                   = var.instance.bios
