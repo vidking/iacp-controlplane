@@ -131,7 +131,52 @@ def differences(a, b, path=''):
     return [] if a == b else [path]
 
 
-def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None, root_bootstrap=None, commercial_bootstrap=None, creation_contract=None):
+def normalize_terraform_worker_kvm_credentials(current, candidate, review):
+    """Autoriza únicamente el montaje revisado de credenciales KVM en el worker."""
+    if review is None:
+        return []
+    expected = {
+        'environment_key': 'IACP_KVM_CREDENTIALS_FILE',
+        'environment_value': '/run/secrets/kvm_credentials',
+        'secret_source': 'kvm_credentials',
+        'secret_target': '/run/secrets/kvm_credentials',
+    }
+    if review != expected:
+        raise ValueError('Revisión de credenciales KVM incompleta o no autorizada')
+    old = current['services']['terraform-worker']
+    new = candidate['services']['terraform-worker']
+    old_env = old.get('environment', {})
+    new_env = new.get('environment', {})
+    old_mounts = [item for item in old.get('secrets', [])
+                  if item.get('source') == expected['secret_source']]
+    new_mounts = [item for item in new.get('secrets', [])
+                  if item.get('source') == expected['secret_source']]
+    old_value = old_env.get(expected['environment_key'])
+    new_value = new_env.get(expected['environment_key'])
+    if old_value is None and not old_mounts:
+        if new_value != expected['environment_value'] or len(new_mounts) != 1:
+            raise ValueError('Montaje de credenciales KVM no coincide con la revisión')
+        if new_mounts[0] != {'source': expected['secret_source'],
+                             'target': expected['secret_target']}:
+            raise ValueError('Montaje de credenciales KVM no coincide con la revisión')
+        new_env.pop(expected['environment_key'])
+        new['secrets'].remove(new_mounts[0])
+        return [
+            '/services/terraform-worker/environment/' + expected['environment_key'],
+            '/services/terraform-worker/secrets/' + expected['secret_source'],
+        ]
+    if (old_value == expected['environment_value']
+            and old_mounts == [{'source': expected['secret_source'],
+                                'target': expected['secret_target']}]
+            and new_value == expected['environment_value']
+            and new_mounts == old_mounts):
+        return []
+    raise ValueError('Credenciales KVM del terraform-worker cambiaron fuera de la revisión')
+
+
+def compare(current, candidate, image_changes=(), *, profile_file=None, source_directory=None,
+            root_bootstrap=None, commercial_bootstrap=None, creation_contract=None,
+            terraform_worker_credentials=None):
     if not set(image_changes) <= IMAGE_CHANGES:
         raise ValueError('Only separately reviewed application image changes may be allowed')
     if set(candidate.get('services', {})) != SERVICES:
@@ -141,6 +186,8 @@ def compare(current, candidate, image_changes=(), *, profile_file=None, source_d
     promoted_paths=[]
     from technical_runtime import normalize_technical_runtime
     promoted_paths.extend(normalize_technical_runtime(a, b, commercial_bootstrap))
+    promoted_paths.extend(normalize_terraform_worker_kvm_credentials(
+        a, b, terraform_worker_credentials))
     promoted_paths.extend(normalize_core_contract_transition(a, b, creation_contract))
     # Narrow opt-in for the lab's reviewed input key and exact TLS proxy IPs.
     # This never changes DB/Redis, tenant tokens, RBAC, worker isolation or ports.

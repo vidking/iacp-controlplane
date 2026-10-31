@@ -192,6 +192,58 @@ def test_iac_worker_lifecycle_gate_can_be_introduced_only_closed():
     assert not compare(old,new)['passed']
 
 
+KVM_CREDENTIALS_REVIEW = {
+    'environment_key': 'IACP_KVM_CREDENTIALS_FILE',
+    'environment_value': '/run/secrets/kvm_credentials',
+    'secret_source': 'kvm_credentials',
+    'secret_target': '/run/secrets/kvm_credentials',
+}
+
+
+def test_terraform_worker_kvm_credentials_mount_requires_exact_review():
+    old = fixture_config()
+    old['services']['terraform-worker']['environment'] = {
+        'IACP_TERRAFORM_APPLY_ENABLED': '1',
+    }
+    old['services']['terraform-worker']['secrets'] = [{
+        'source': 'db_password', 'target': '/run/secrets/db_password',
+    }]
+    new = deepcopy(old)
+    new['services']['terraform-worker']['environment'] = {
+        'IACP_TERRAFORM_APPLY_ENABLED': '1',
+        'IACP_KVM_CREDENTIALS_FILE': '/run/secrets/kvm_credentials',
+    }
+    new['services']['terraform-worker']['secrets'] = [{
+        'source': 'db_password', 'target': '/run/secrets/db_password',
+    }, {
+        'source': 'kvm_credentials', 'target': '/run/secrets/kvm_credentials',
+    }]
+    assert not compare(old, new)['passed']
+    result = compare(old, new, terraform_worker_credentials=KVM_CREDENTIALS_REVIEW)
+    assert result['passed']
+    assert '/services/terraform-worker/environment/IACP_KVM_CREDENTIALS_FILE' in result['changed_paths']
+    assert '/services/terraform-worker/secrets/kvm_credentials' in result['changed_paths']
+
+
+def test_terraform_worker_kvm_credentials_review_is_idempotent_and_fail_closed():
+    old = fixture_config()
+    old['services']['terraform-worker']['environment'] = {
+        'IACP_KVM_CREDENTIALS_FILE': '/run/secrets/kvm_credentials',
+    }
+    old['services']['terraform-worker']['secrets'] = [{
+        'source': 'kvm_credentials', 'target': '/run/secrets/kvm_credentials',
+    }]
+    assert compare(old, deepcopy(old), terraform_worker_credentials=KVM_CREDENTIALS_REVIEW)['passed']
+    wrong = deepcopy(old)
+    wrong['services']['terraform-worker']['environment']['IACP_KVM_CREDENTIALS_FILE'] = '/tmp/credentials'
+    with pytest.raises(ValueError, match='fuera de la revisión'):
+        compare(old, wrong, terraform_worker_credentials=KVM_CREDENTIALS_REVIEW)
+    with pytest.raises(ValueError, match='incompleta'):
+        compare(fixture_config(), deepcopy(old), terraform_worker_credentials={
+            **KVM_CREDENTIALS_REVIEW, 'secret_target': '/run/secrets/other',
+        })
+
+
 def test_comparison_allows_only_certifier_fix_and_declared_image_changes():
     old = fixture_config()
     old['services']['ownership-certifier'] = {'environment': {}, 'tmpfs': ['/tmp']}
