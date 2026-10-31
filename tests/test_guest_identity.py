@@ -266,6 +266,31 @@ def test_definitive_guest_failure_is_terminal_and_never_resubmitted(client, auth
             OperationEvent.code == 'guest_init_program_failed_technical_password_exit_23'))
 
 
+@pytest.mark.parametrize("failure,expected", [
+    ("authentication", "ROOT_SSH_AUTHENTICATION_FAILED"),
+    ("host_key", "ROOT_SSH_HOST_KEY_MISMATCH"),
+])
+def test_consumed_access_failures_keep_sanitized_recovery_code(
+        client, auth, guest, sessions, failure, expected):
+    import paramiko
+
+    operation_id = accept(client, auth, guest, key="access-failure-" + failure).json()["operation_id"]
+    if failure == "authentication":
+        error = paramiko.AuthenticationException()
+    else:
+        error = paramiko.BadHostKeyException("192.0.2.10", None, None)
+
+    execute_initialization(operation_id, sessions,
+                           lambda: FakeGuest(observe_error=error))
+
+    with sessions() as session:
+        initialization = session.get(GuestInitialization, operation_id)
+        operation = session.get(Operation, operation_id)
+        assert initialization.status == operation.status == "uncertain"
+        assert operation.error_code == expected
+        assert initialization.finished_at is None
+
+
 def test_disabled_guest_commands_are_terminal_without_consuming_exec(client, auth, guest, sessions):
     operation_id = accept(client, auth, guest).json()["operation_id"]
     fake = FakeGuest()

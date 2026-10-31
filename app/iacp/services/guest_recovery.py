@@ -51,6 +51,10 @@ CONSUMED_UNCERTAIN_ERRORS = frozenset({
     "ROOT_ACCESS_VERIFICATION_UNCONFIRMED",
     "ROOT_SSH_AUTHENTICATION_FAILED",
     "ROOT_SSH_HOST_KEY_MISMATCH",
+    # Versiones anteriores perdían el tipo Paramiko y persistían este código
+    # genérico. verify-consumed lo acepta solo para reclasificarlo mediante
+    # observación read-only; nunca autoriza un replay de guest-exec.
+    "GUEST_INITIALIZATION_OBSERVATION_FAILED",
 })
 
 
