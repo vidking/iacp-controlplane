@@ -825,7 +825,7 @@ with get_session_factory()() as session:
             compatibility = live_compatibility(current, active)
             self.evidence("live-compatibility", compatibility)
             require(compatibility["passed"], "Active environment differs from the running containers")
-            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'), commercial_bootstrap=self.m.get('commercial_bootstrap_configuration'), creation_contract=self.creation_contract())
+            comparison = compare(current, cfg, self.m.get("configuration_changes", []), profile_file=self.m.get('profile_configuration',{}).get('path'), source_directory=self.m.get('source_promotion',{}).get('path'), root_bootstrap=self.m.get('root_bootstrap_configuration'), commercial_bootstrap=self.m.get('commercial_bootstrap_configuration'), creation_contract=self.creation_contract(), terraform_worker_credentials=self.m.get('terraform_worker_credentials_review'))
             self.evidence("canonical-comparison", comparison)
             require(comparison["passed"], "Canonical configuration differs outside the reviewed changes")
         planned_files = {str((ROOT / file).resolve()) for file in self.m["compose_files"]}
