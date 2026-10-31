@@ -1,0 +1,189 @@
+name: iacp-controlplane-technical
+
+x-worker-environment: &worker-environment
+  DATABASE_HOST: db
+  POSTGRES_DB: ${POSTGRES_DB:-iacp_technical}
+  POSTGRES_USER: ${POSTGRES_USER:-iacp}
+  DATABASE_PASSWORD_FILE: /run/secrets/db_password
+  IACP_ACCESS_ENCRYPTION_KEY_FILE: /run/secrets/access_encryption_key
+  IACP_DEFAULT_SSH_PUBLIC_KEY_FILE: /run/secrets/default_ssh_public_key
+  IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
+  IACP_DATA_ROOT: /var/lib/iacp
+  IACP_TERRAFORM_PATH: /app/terraform
+  IACP_TERRAFORM_DIR: environments/mng01
+  IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+  IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+  IACP_ACCESS_SECRET_TTL_SECONDS: ${IACP_ACCESS_SECRET_TTL_SECONDS:-3600}
+  IACP_WASABI_BUCKET: ${IACP_WASABI_BUCKET:?Definir IACP_WASABI_BUCKET}
+  IACP_WASABI_REGION: ${IACP_WASABI_REGION:?Definir IACP_WASABI_REGION}
+  IACP_WASABI_ENDPOINT: ${IACP_WASABI_ENDPOINT:?Definir IACP_WASABI_ENDPOINT}
+  IACP_WASABI_ACCESS_KEY_FILE: /run/secrets/wasabi_access_key
+  IACP_WASABI_SECRET_KEY_FILE: /run/secrets/wasabi_secret_key
+  IACP_VMID_MIN: ${IACP_VMID_MIN:-30000}
+  IACP_VMID_MAX: ${IACP_VMID_MAX:-39999}
+  IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
+  IACP_TERRAFORM_TIMEOUT: ${IACP_TERRAFORM_TIMEOUT:-1800}
+  IACP_POWER_TIMEOUT: ${IACP_POWER_TIMEOUT:-180}
+  IACP_GUEST_INIT_TIMEOUT: ${IACP_GUEST_INIT_TIMEOUT:-180}
+
+x-api-environment: &api-environment
+  DATABASE_HOST: db
+  POSTGRES_DB: ${POSTGRES_DB:-iacp_technical}
+  POSTGRES_USER: ${POSTGRES_USER:-iacp}
+  DATABASE_PASSWORD_FILE: /run/secrets/db_password
+  IACP_ACCESS_ENCRYPTION_KEY_FILE: /run/secrets/access_encryption_key
+  IACP_API_TOKEN_FILE: /run/secrets/api_token
+  IACP_PROXMOX_READONLY_CREDENTIALS_FILE: /run/secrets/proxmox_readonly_credentials
+  IACP_DATA_ROOT: /var/lib/iacp
+  IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+  IACP_ACCESS_SECRET_TTL_SECONDS: ${IACP_ACCESS_SECRET_TTL_SECONDS:-3600}
+
+x-db-environment: &db-environment
+  DATABASE_HOST: db
+  POSTGRES_DB: ${POSTGRES_DB:-iacp_technical}
+  POSTGRES_USER: ${POSTGRES_USER:-iacp}
+  DATABASE_PASSWORD_FILE: /run/secrets/db_password
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp_technical}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    networks: [backend]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.technical
+    image: iacp/controlplane-technical:local
+    init: true
+    environment:
+      <<: *api-environment
+    secrets:
+      - db_password
+      - api_token
+      - access_encryption_key
+      - proxmox_readonly_credentials
+    volumes:
+      - technical_data:/var/lib/iacp
+    ports:
+      - "${IACP_API_PORT:-8080}:8080"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [backend, frontend]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.technical
+    image: iacp/controlplane-technical:local
+    init: true
+    command: ["alembic", "upgrade", "head"]
+    environment: *db-environment
+    secrets:
+      - db_password
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [backend]
+
+  worker-1: &worker
+    build:
+      context: .
+      dockerfile: Dockerfile.technical
+    image: iacp/controlplane-technical:local
+    init: true
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-1"]
+    environment: *worker-environment
+    secrets:
+      - db_password
+      - access_encryption_key
+      - default_ssh_public_key
+      - proxmox_credentials
+      - wasabi_access_key
+      - wasabi_secret_key
+    volumes:
+      - technical_data:/var/lib/iacp
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [backend, egress]
+
+  worker-2:
+    <<: *worker
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
+  worker-3:
+    <<: *worker
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-3"]
+  worker-4:
+    <<: *worker
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-4"]
+  worker-5:
+    <<: *worker
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-5"]
+  worker-6:
+    <<: *worker
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-6"]
+
+networks:
+  backend:
+    internal: true
+  frontend:
+  egress:
+
+volumes:
+  postgres_data:
+    name: iacp-controlplane_technical_postgres_data
+  technical_data:
+    name: iacp-controlplane_technical_data
+
+secrets:
+  db_password:
+    file: ${IACP_DB_PASSWORD_FILE:?Definir IACP_DB_PASSWORD_FILE}
+  api_token:
+    file: ${IACP_API_TOKEN_FILE:?Definir IACP_API_TOKEN_FILE}
+  access_encryption_key:
+    file: ${IACP_ACCESS_ENCRYPTION_KEY_FILE:?Definir IACP_ACCESS_ENCRYPTION_KEY_FILE}
+  default_ssh_public_key:
+    file: ${IACP_DEFAULT_SSH_PUBLIC_KEY_FILE:?Definir IACP_DEFAULT_SSH_PUBLIC_KEY_FILE}
+  proxmox_credentials:
+    file: ${IACP_PROXMOX_CREDENTIALS_FILE:?Definir IACP_PROXMOX_CREDENTIALS_FILE}
+  proxmox_readonly_credentials:
+    file: ${IACP_PROXMOX_READONLY_CREDENTIALS_FILE:?Definir IACP_PROXMOX_READONLY_CREDENTIALS_FILE}
+  wasabi_access_key:
+    file: ${IACP_WASABI_ACCESS_KEY_FILE:?Definir IACP_WASABI_ACCESS_KEY_FILE}
+  wasabi_secret_key:
+    file: ${IACP_WASABI_SECRET_KEY_FILE:?Definir IACP_WASABI_SECRET_KEY_FILE}

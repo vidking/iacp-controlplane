@@ -12,6 +12,11 @@ import subprocess
 import sys
 from uuid import UUID
 
+if '--technical' in sys.argv:
+    sys.argv.remove('--technical')
+    from technicalctl import main as technical_main
+    raise SystemExit(technical_main())
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from operations import CORE_CONTRACT, compare, runtime_command, live_compatibility

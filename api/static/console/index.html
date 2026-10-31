@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>IACP Control Plane Técnico · Consola</title>
+    <link rel="stylesheet" href="/console/assets/console.css">
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="brand-mark">IACP</div>
+      <div>
+        <p class="eyebrow">CYBERFUEL · CONTROL PLANE TÉCNICO</p>
+        <h1>Consola de infraestructura</h1>
+      </div>
+      <div class="header-links">
+        <a href="/docs">Swagger</a>
+        <a href="/openapi.json">OpenAPI</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="hero card">
+        <div>
+          <p class="eyebrow">OPERADOR TÉCNICO</p>
+          <h2>Crear y administrar máquinas virtuales</h2>
+          <p>Terraform ejecuta las órdenes; esta consola solamente las envía y muestra su resultado.</p>
+        </div>
+        <div id="runtime-badge" class="badge muted">Sin autorizar</div>
+      </section>
+
+      <section class="grid layout-grid">
+        <aside class="sidebar">
+          <article class="card">
+            <div class="section-heading">
+              <div><p class="eyebrow">ACCESO</p><h3>Autorizar API</h3></div>
+              <span class="status-dot" id="auth-dot"></span>
+            </div>
+            <form id="auth-form">
+              <label for="api-token">Bearer token</label>
+              <input id="api-token" type="password" autocomplete="off" placeholder="Pega solo el token">
+              <button class="primary" type="submit">Autorizar</button>
+            </form>
+            <p id="auth-message" class="hint">El token vive solamente en esta pestaña.</p>
+          </article>
+
+          <article class="card">
+            <div class="section-heading">
+              <div><p class="eyebrow">OBSERVABILIDAD</p><h3>Workers</h3></div>
+              <button class="icon-button" id="refresh-observability" title="Actualizar">↻</button>
+            </div>
+            <div id="workers" class="worker-list"><p class="muted-text">Autoriza para consultar.</p></div>
+          </article>
+
+          <article class="card compact-card">
+            <div class="section-heading"><h3>Enlaces</h3></div>
+            <a class="quick-link" href="/health/ready" target="_blank" rel="noreferrer">Health readiness ↗</a>
+            <a class="quick-link" href="/v1/observability" target="_blank" rel="noreferrer">Diagnóstico JSON ↗</a>
+          </article>
+        </aside>
+
+        <section class="content-column">
+          <article class="card">
+            <div class="section-heading">
+              <div><p class="eyebrow">APROVISIONAMIENTO</p><h3>Nueva instancia</h3></div>
+              <span class="pill">MNG · VMID 30000–39999</span>
+            </div>
+            <form id="instance-form" class="form-grid">
+              <label>Entorno
+                <select id="stack"><option value="mng01">mng01 · Proxmox</option><option value="local">local · fixture</option></select>
+              </label>
+              <label>Nombre
+                <input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="iacp-demo-001">
+              </label>
+              <label>Imagen
+                <select id="image"><option value="ubuntu-2404">ubuntu-2404</option></select>
+              </label>
+              <label>vCPU
+                <input id="vcpus" type="number" min="1" max="8" value="2">
+              </label>
+              <label>Memoria (MB)
+                <input id="memory" type="number" min="512" max="16384" step="512" value="2048">
+              </label>
+              <label>Disco (GB)
+                <input id="disk" type="number" min="20" max="400" value="20">
+              </label>
+              <label>Red
+                <select id="network"><option value="dhcp">DHCP</option><option value="static">Static</option></select>
+              </label>
+              <label class="check-row"><input id="started" type="checkbox"> Iniciar después de aplicar</label>
+              <label class="full-width">Clave pública SSH (opcional; una línea)
+                <textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea>
+              </label>
+              <label class="full-width">Contraseña root temporal (requerida en MNG; no se conserva en la consola)
+                <input id="root-password" type="password" autocomplete="new-password">
+              </label>
+              <label class="full-width">Tags adicionales, separados por coma
+                <input id="tags" placeholder="laboratorio, prueba">
+              </label>
+              <div class="form-actions full-width">
+                <button class="primary" type="submit">Crear plan</button>
+                <button class="secondary" id="apply-button" type="button" disabled>Aplicar plan</button>
+              </div>
+            </form>
+            <div id="create-message" class="message hidden"></div>
+          </article>
+
+          <article class="card">
+            <div class="section-heading">
+              <div><p class="eyebrow">INVENTARIO</p><h3>Instancias administradas</h3></div>
+              <button class="icon-button" id="refresh-instances" title="Actualizar">↻</button>
+            </div>
+            <div id="instances" class="instance-list"><p class="muted-text">Autoriza para consultar.</p></div>
+          </article>
+
+          <article class="card detail-card">
+            <div class="section-heading">
+              <div><p class="eyebrow">CICLO DE VIDA</p><h3 id="detail-title">Selecciona una instancia</h3></div>
+              <span id="detail-status" class="badge muted">Sin selección</span>
+            </div>
+            <div id="detail-empty" class="empty-state">La ficha de la instancia mostrará Terraform, energía, VMID, eventos y acciones.</div>
+            <div id="detail-content" class="hidden">
+              <div id="detail-facts" class="facts"></div>
+              <div class="power-panel">
+                <div><p class="eyebrow">ENERGÍA</p><strong id="power-state">Desconocido</strong><p id="power-note" class="hint"></p></div>
+                <div class="power-actions">
+                  <button class="secondary power-action" data-action="start">Iniciar</button>
+                  <button class="secondary power-action" data-action="shutdown">Apagar</button>
+                  <button class="secondary power-action" data-action="reboot">Reiniciar</button>
+                  <button class="danger" id="delete-button">Destruir</button>
+                </div>
+              </div>
+              <div class="operation-box">
+                <div class="section-heading"><h4>Última operación</h4><button class="icon-button" id="refresh-detail">↻</button></div>
+                <pre id="operation-output">Sin operación.</pre>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/console/assets/console.js"></script>
+  </body>
+</html>

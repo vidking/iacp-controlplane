@@ -1,0 +1,51 @@
+{
+  "environment": "mng01",
+  "node": "mng01",
+  "storage": "DS_CYBERFUEL",
+  "images": [
+    {
+      "image_id": "ubuntu-2404",
+      "template_vm_id": 29000,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "ubuntu-2404",
+      "cloudinit_username": "ubuntu",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 512,
+      "minimum_disk_gb": 20
+    },
+    {
+      "image_id": "ubuntu-2604",
+      "template_vm_id": 29001,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "ubuntu-2604",
+      "cloudinit_username": "ubuntu",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 2048,
+      "minimum_disk_gb": 20
+    },
+    {
+      "image_id": "almalinux-9",
+      "template_vm_id": 29010,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "almalinux-9",
+      "cloudinit_username": "root",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 2048,
+      "minimum_disk_gb": 20
+    },
+    {
+      "image_id": "almalinux-10",
+      "template_vm_id": 29011,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "almalinux-10",
+      "cloudinit_username": "root",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 2048,
+      "minimum_disk_gb": 20
+    }
+  ]
+}
