@@ -42,12 +42,14 @@ def allow_historical_delete_hardware(context):
 
 
 def allow_historical_delete_plan_defaults(context):
-    """Permitir sólo equivalencias históricas de lectura no identitarias.
+    """Permitir una equivalencia acotada del pool materializado por el provider.
 
-    Algunas revisiones antiguas no sellaron atributos que el provider actual
-    devuelve al refrescar (por ejemplo, ``pool_id``). Esta compatibilidad sólo
-    aplica al DELETE de una KVM con ownership técnico y revisión IaC histórica;
-    la identidad, el state, la topología y el alcance del destroy continúan
+    El plan de algunas revisiones puede dejar ``pool_id`` vacío mientras el
+    refresh del provider materializa el pool LAB canónico en State. La
+    compatibilidad sólo se habilita para una revisión válida y una KVM
+    administrada; ``verify_topology`` sigue exigiendo que el pool observado sea
+    exactamente ``iacp-lab`` y que el State previo tampoco fijara otro pool.
+    La identidad, la topología y el alcance del destroy continúan
     verificándose por separado.
     """
     variables = context.get('variables') or {}
@@ -55,7 +57,6 @@ def allow_historical_delete_plan_defaults(context):
     source_revision = context.get('source_revision')
     return (
         valid_source_revision(source_revision)
-        and source_revision != SOURCE_REVISION
         and is_managed_vmid(instance.get('vm_id'))
     )
 
