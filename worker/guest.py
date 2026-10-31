@@ -6,6 +6,8 @@ import time
 
 import paramiko
 
+from worker.proxmox import ProxmoxError
+
 
 def _decode(value: str | None) -> str:
     if not value:
@@ -29,15 +31,33 @@ def _wait_guest(client, node: str, vmid: int, command: str, args: list[str] | No
         time.sleep(1)
 
 
+def _wait_for_qga(client, node: str, vmid: int, *, deadline: float | None = None):
+    """Espera QGA sin reenviar ningún guest-exec."""
+    deadline = deadline or time.monotonic() + int(os.getenv("IACP_GUEST_INIT_TIMEOUT", "180"))
+    while True:
+        try:
+            return client.guest_network_interfaces(node, vmid)
+        except ProxmoxError as error:
+            if str(error) != "POWER_PROXMOX_UNAVAILABLE":
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError("GUEST_AGENT_NOT_READY") from error
+            time.sleep(1)
+
+
 def _ip_address(client, node: str, vmid: int) -> str:
-    result = client.guest_network_interfaces(node, vmid)
-    interfaces = result.get("result", result) if isinstance(result, dict) else result
-    for interface in interfaces or []:
-        for address in interface.get("ip-addresses", []):
-            value = address.get("ip-address", "")
-            if address.get("ip-address-type") == "ipv4" and not value.startswith("127."):
-                return value
-    raise RuntimeError("GUEST_NETWORK_ADDRESS_UNAVAILABLE")
+    deadline = time.monotonic() + int(os.getenv("IACP_GUEST_INIT_TIMEOUT", "180"))
+    while True:
+        result = _wait_for_qga(client, node, vmid, deadline=deadline)
+        interfaces = result.get("result", result) if isinstance(result, dict) else result
+        for interface in interfaces or []:
+            for address in interface.get("ip-addresses", []):
+                value = address.get("ip-address", "")
+                if address.get("ip-address-type") == "ipv4" and not value.startswith("127."):
+                    return value
+        if time.monotonic() >= deadline:
+            raise RuntimeError("GUEST_NETWORK_ADDRESS_UNAVAILABLE")
+        time.sleep(1)
 
 
 def _host_key(client, node: str, vmid: int) -> paramiko.PKey:
@@ -87,6 +107,7 @@ def _verify_root_ssh(client, node: str, vmid: int, password: str) -> None:
 def initialize_access(client, *, node: str, vmid: int, name: str, password: str) -> None:
     if not password or "\n" in password or "\r" in password:
         raise RuntimeError("ROOT_PASSWORD_INVALID")
+    _wait_for_qga(client, node, vmid)
     code, _, _ = _wait_guest(
         client,
         node,
