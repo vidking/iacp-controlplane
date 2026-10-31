@@ -8,9 +8,7 @@ else
   payload="$(IACP_STACK="${IACP_STACK:-mng01}" \
     IACP_NAME="${IACP_NAME:-iacp-v2-demo}" \
     IACP_IMAGE="${IACP_IMAGE:-ubuntu-2404}" \
-    IACP_VCPUS="${IACP_VCPUS:-2}" \
-    IACP_MEMORY_MB="${IACP_MEMORY_MB:-2048}" \
-    IACP_DISK_GB="${IACP_DISK_GB:-20}" \
+    IACP_PLAN_ID="${IACP_PLAN_ID:-kvm-1}" \
     IACP_NETWORK_MODE="${IACP_NETWORK_MODE:-dhcp}" \
     IACP_SSH_PUBLIC_KEY="${IACP_SSH_PUBLIC_KEY:-}" \
     IACP_SSH_PUBLIC_KEY_FILE="${IACP_SSH_PUBLIC_KEY_FILE:-}" \
@@ -26,9 +24,7 @@ if os.environ["IACP_ROOT_PASSWORD_FILE"]:
 spec = {
     "name": os.environ["IACP_NAME"],
     "image": os.environ["IACP_IMAGE"],
-    "vcpus": int(os.environ["IACP_VCPUS"]),
-    "memory_mb": int(os.environ["IACP_MEMORY_MB"]),
-    "disk_gb": int(os.environ["IACP_DISK_GB"]),
+    "plan_id": os.environ["IACP_PLAN_ID"],
     "network_mode": os.environ["IACP_NETWORK_MODE"],
     "ssh_public_keys": [key] if key else [],
 }

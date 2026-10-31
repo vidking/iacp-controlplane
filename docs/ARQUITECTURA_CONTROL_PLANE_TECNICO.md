@@ -16,6 +16,10 @@ nuevo.
 
 - FastAPI técnico y contrato directo de imágenes, planes, instancias y
   operaciones.
+- Catálogo único MNG con cuatro planes: `kvm-1` (1/2048/50), `kvm-2`
+  (2/4096/100), `kvm-3` (4/8192/200) y `kvm-4` (8/16384/400), expresados como
+  vCPU/MB/GB. La API recibe `plan_id` y resuelve esos recursos sin aceptar
+  tamaños arbitrarios.
 - PostgreSQL dedicado para operaciones, eventos, workers, instancias y leases
   de VMID. El volumen técnico es independiente del volumen histórico del
   runtime anterior.

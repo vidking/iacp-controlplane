@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from pathlib import Path
@@ -56,9 +57,14 @@ def test_wasabi_backend_contains_instance_key_but_no_credentials(tmp_path, monke
 def test_worker_policy_and_guest_contract_are_technical():
     compose = Path("compose.technical.yaml").read_text(encoding="utf-8")
     guest = Path("worker/guest.py").read_text(encoding="utf-8")
+    catalog = json.loads(Path("terraform/environments/mng01/catalog.json").read_text(encoding="utf-8"))
     assert all(f"worker-{number}:" in compose for number in range(1, 7))
     assert "IACP_MAX_CONCURRENT" in compose
     assert "redis" not in compose.lower()
+    assert [plan["plan_id"] for plan in catalog["plans"]] == ["kvm-1", "kvm-2", "kvm-3", "kvm-4"]
+    assert [image["image_id"] for image in catalog["images"]] == [
+        "ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"
+    ]
     assert "install -d -m 0755 /run/sshd" in guest
     assert "export PATH=/usr/sbin:/usr/bin:/sbin:/bin" in guest
     assert "/usr/sbin/chpasswd" in guest

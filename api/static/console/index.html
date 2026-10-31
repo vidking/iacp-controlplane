@@ -74,16 +74,10 @@
                 <input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="iacp-demo-001">
               </label>
               <label>Imagen
-                <select id="image"><option value="ubuntu-2404">ubuntu-2404</option></select>
+                <select id="image"></select>
               </label>
-              <label>vCPU
-                <input id="vcpus" type="number" min="1" max="8" value="2">
-              </label>
-              <label>Memoria (MB)
-                <input id="memory" type="number" min="512" max="16384" step="512" value="2048">
-              </label>
-              <label>Disco (GB)
-                <input id="disk" type="number" min="20" max="400" value="20">
+              <label>Plan técnico
+                <select id="plan"></select>
               </label>
               <label>Red
                 <select id="network"><option value="dhcp">DHCP</option><option value="static">Static</option></select>

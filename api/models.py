@@ -26,9 +26,10 @@ class PowerAction(str, Enum):
 class InstanceSpec(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
     image: str = Field(default="ubuntu-2404", pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10)$")
-    vcpus: int = Field(default=2, ge=1, le=8)
-    memory_mb: int = Field(default=2048, ge=512, le=16384)
-    disk_gb: int = Field(default=20, ge=20, le=400)
+    plan_id: str | None = Field(default=None, pattern=r"^kvm-[1-4]$")
+    vcpus: int | None = Field(default=None, ge=1, le=8)
+    memory_mb: int | None = Field(default=None, ge=512, le=16384)
+    disk_gb: int | None = Field(default=None, ge=20, le=400)
     network_mode: Literal["dhcp", "static"] = "dhcp"
     vlan_id: int | None = Field(default=None, ge=1, le=4094)
     ipv4_cidr: str | None = None
@@ -77,9 +78,7 @@ class InstanceCreateRequest(BaseModel):
                     "spec": {
                         "name": "iacp-v2-demo",
                         "image": "ubuntu-2404",
-                        "vcpus": 2,
-                        "memory_mb": 2048,
-                        "disk_gb": 20,
+                        "plan_id": "kvm-1",
                         "network_mode": "dhcp",
                         "started": False,
                         "ssh_public_keys": [],
@@ -95,8 +94,11 @@ class InstanceCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_mng_access(self):
-        if self.stack == "mng01" and self.spec.root_password is None:
-            raise ValueError("mng01 requiere root_password temporal para verificar acceso SSH root")
+        if self.stack == "mng01":
+            if self.spec.plan_id is None:
+                raise ValueError("mng01 requiere plan_id del catalogo tecnico")
+            if self.spec.root_password is None:
+                raise ValueError("mng01 requiere root_password temporal para verificar acceso SSH root")
         return self
 
 
@@ -123,9 +125,7 @@ class OperationRequest(BaseModel):
                     "spec": {
                         "name": "iacp-v2-demo",
                         "image": "ubuntu-2404",
-                        "vcpus": 2,
-                        "memory_mb": 2048,
-                        "disk_gb": 20,
+                        "plan_id": "kvm-1",
                         "network_mode": "dhcp",
                         "started": True,
                         "ssh_public_keys": [],
@@ -175,8 +175,11 @@ class OperationRequest(BaseModel):
             raise ValueError("power_action solo aplica a command=power")
         if self.command == Command.plan and self.action == Action.provision and self.spec is None:
             raise ValueError("spec es obligatorio para plan de provision")
-        if self.command == Command.plan and self.stack == "mng01" and self.spec is not None and self.spec.root_password is None:
-            raise ValueError("mng01 requiere root_password temporal para verificar acceso SSH root")
+        if self.command == Command.plan and self.stack == "mng01" and self.spec is not None:
+            if self.spec.plan_id is None:
+                raise ValueError("mng01 requiere plan_id del catalogo tecnico")
+            if self.spec.root_password is None:
+                raise ValueError("mng01 requiere root_password temporal para verificar acceso SSH root")
         if self.command == Command.apply and not self.plan_operation_id:
             raise ValueError("apply requiere plan_operation_id")
         if self.command == Command.destroy and not (self.plan_operation_id or self.instance_id):

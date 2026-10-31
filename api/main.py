@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
+from api.catalog import plans as plan_catalog
 from api.db import database, schema_revision
 from api.models import InstanceCreateRequest, OperationRequest, PowerAction, ProvisionRequest
 from api.service import (
@@ -115,13 +116,7 @@ def images():
 
 @app.get("/v1/plans", dependencies=[Depends(authorize)], tags=["provisioning"])
 def plans():
-    return {
-        "plans": [
-            {"plan_id": "kvm-1", "vcpus": 1, "memory_mb": 2048, "disk_gb": 20},
-            {"plan_id": "kvm-2", "vcpus": 2, "memory_mb": 4096, "disk_gb": 40},
-            {"plan_id": "kvm-3", "vcpus": 4, "memory_mb": 8192, "disk_gb": 80},
-        ]
-    }
+    return {"plans": plan_catalog()}
 
 
 @app.post(
