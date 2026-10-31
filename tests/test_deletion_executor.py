@@ -141,12 +141,13 @@ def test_historical_delete_hardware_compatibility_is_narrow(source_revision, vmi
     assert allow_historical_delete_hardware(context) is expected
 
 
-def test_historical_delete_accepts_stable_provider_pool_default_only():
+@pytest.mark.parametrize('source_revision', ['a' * 40, SOURCE_REVISION])
+def test_delete_accepts_stable_provider_pool_default_only(source_revision):
     allocation = Allocation.model_validate(allocation_data(106))
     instance = SimpleNamespace(name='historical', image='test-image', disk_gb=20, vcpus=2, memory_mb=2048)
     variables = allocation.variables(instance)
     context = {
-        'source_revision': 'a' * 40,
+        'source_revision': source_revision,
         'variables': {'instance': {'vm_id': 106}, **variables},
     }
     approved = plan_json(variables)
