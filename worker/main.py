@@ -266,8 +266,23 @@ def terraform_commands(command: str, plan_path: str, backend_path: str | None = 
 
 
 def physical_presence(client: ProxmoxClient, vmid: int, expected: bool) -> bool:
-    present = any(int(item.get("vmid", -1)) == vmid for item in client.inventory())
-    return present is expected
+    checks = max(1, int(os.getenv("IACP_PROXMOX_PRESENCE_CHECKS", "5")))
+    delay = max(0.0, float(os.getenv("IACP_PROXMOX_PRESENCE_CHECK_DELAY_SECONDS", "2")))
+    last_error: ProxmoxError | None = None
+    for attempt in range(checks):
+        try:
+            present = any(int(item.get("vmid", -1)) == vmid for item in client.inventory())
+        except ProxmoxError as error:
+            last_error = error
+        else:
+            last_error = None
+            if present is expected:
+                return True
+        if attempt + 1 < checks:
+            time.sleep(delay)
+    if last_error is not None:
+        raise last_error
+    return False
 
 
 def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> None:

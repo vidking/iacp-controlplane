@@ -3,14 +3,29 @@ import os
 import uuid
 from pathlib import Path
 
+import pytest
+
 from api.db import database
 from worker.allocation import allocate, release
 from worker.main import write_backend
+from worker.main import physical_presence
+from worker.proxmox import ProxmoxError
 
 
 class EmptyInventory:
     def inventory(self):
         return []
+
+
+class FlakyInventory:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+
+    def inventory(self):
+        response = next(self.responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def seed_operation(operation_id: str, name: str) -> None:
@@ -52,6 +67,29 @@ def test_wasabi_backend_contains_instance_key_but_no_credentials(tmp_path, monke
     assert "AWS_ACCESS_KEY" not in contents
     assert "AWS_SECRET" not in contents
     assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_physical_presence_retries_transient_read_only_proxmox_error(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_PRESENCE_CHECKS", "3")
+    monkeypatch.setenv("IACP_PROXMOX_PRESENCE_CHECK_DELAY_SECONDS", "0")
+    client = FlakyInventory([
+        ProxmoxError("POWER_PROXMOX_UNAVAILABLE"),
+        [{"vmid": 30004}],
+    ])
+
+    assert physical_presence(client, 30004, True) is True
+
+
+def test_physical_presence_fails_closed_after_bounded_observation(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_PRESENCE_CHECKS", "2")
+    monkeypatch.setenv("IACP_PROXMOX_PRESENCE_CHECK_DELAY_SECONDS", "0")
+    client = FlakyInventory([
+        ProxmoxError("POWER_PROXMOX_UNAVAILABLE"),
+        ProxmoxError("POWER_PROXMOX_UNAVAILABLE"),
+    ])
+
+    with pytest.raises(ProxmoxError, match="POWER_PROXMOX_UNAVAILABLE"):
+        physical_presence(client, 30004, True)
 
 
 def test_worker_policy_and_guest_contract_are_technical():
