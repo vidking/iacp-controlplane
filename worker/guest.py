@@ -32,32 +32,47 @@ def _wait_guest(client, node: str, vmid: int, command: str, args: list[str] | No
 
 
 def _wait_for_qga(client, node: str, vmid: int, *, deadline: float | None = None):
-    """Espera QGA sin reenviar ningún guest-exec."""
+    """Espera QGA estable sin reenviar ningún guest-exec."""
     deadline = deadline or time.monotonic() + int(os.getenv("IACP_GUEST_INIT_TIMEOUT", "180"))
+    required_checks = max(1, int(os.getenv("IACP_GUEST_QGA_STABLE_CHECKS", "3")))
+    stabilization = max(0.0, float(os.getenv("IACP_GUEST_QGA_STABILIZATION_SECONDS", "2")))
+    stable_checks = 0
     while True:
         try:
-            return client.guest_network_interfaces(node, vmid)
+            result = client.guest_network_interfaces(node, vmid)
         except ProxmoxError as error:
             if str(error) != "POWER_PROXMOX_UNAVAILABLE":
                 raise
-            if time.monotonic() >= deadline:
-                raise RuntimeError("GUEST_AGENT_NOT_READY") from error
-            time.sleep(1)
+            stable_checks = 0
+        else:
+            interfaces = result.get("result", result) if isinstance(result, dict) else result
+            has_ipv4 = any(
+                address.get("ip-address-type") == "ipv4"
+                and not address.get("ip-address", "").startswith("127.")
+                for interface in interfaces or []
+                for address in interface.get("ip-addresses", [])
+            )
+            stable_checks = stable_checks + 1 if has_ipv4 else 0
+            if stable_checks >= required_checks:
+                if time.monotonic() + stabilization > deadline:
+                    raise RuntimeError("GUEST_AGENT_NOT_READY")
+                time.sleep(stabilization)
+                return result
+        if time.monotonic() >= deadline:
+            raise RuntimeError("GUEST_AGENT_NOT_READY")
+        time.sleep(1)
 
 
 def _ip_address(client, node: str, vmid: int) -> str:
     deadline = time.monotonic() + int(os.getenv("IACP_GUEST_INIT_TIMEOUT", "180"))
-    while True:
-        result = _wait_for_qga(client, node, vmid, deadline=deadline)
-        interfaces = result.get("result", result) if isinstance(result, dict) else result
-        for interface in interfaces or []:
-            for address in interface.get("ip-addresses", []):
-                value = address.get("ip-address", "")
-                if address.get("ip-address-type") == "ipv4" and not value.startswith("127."):
-                    return value
-        if time.monotonic() >= deadline:
-            raise RuntimeError("GUEST_NETWORK_ADDRESS_UNAVAILABLE")
-        time.sleep(1)
+    result = _wait_for_qga(client, node, vmid, deadline=deadline)
+    interfaces = result.get("result", result) if isinstance(result, dict) else result
+    for interface in interfaces or []:
+        for address in interface.get("ip-addresses", []):
+            value = address.get("ip-address", "")
+            if address.get("ip-address-type") == "ipv4" and not value.startswith("127."):
+                return value
+    raise RuntimeError("GUEST_NETWORK_ADDRESS_UNAVAILABLE")
 
 
 def _host_key(client, node: str, vmid: int) -> paramiko.PKey:

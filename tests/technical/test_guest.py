@@ -35,22 +35,30 @@ def test_qga_readiness_retries_without_guest_exec(monkeypatch):
         ProxmoxError("POWER_PROXMOX_UNAVAILABLE", 500),
         ProxmoxError("POWER_PROXMOX_UNAVAILABLE", 500),
         interfaces("192.0.2.10"),
+        interfaces("192.0.2.10"),
+        interfaces("192.0.2.10"),
     ])
     monkeypatch.setattr(guest.time, "sleep", lambda _seconds: None)
 
     assert guest._ip_address(client, "mng01", 30000) == "192.0.2.10"
-    assert client.network_calls == 3
+    assert client.network_calls == 5
     assert client.exec_calls == []
 
 
 def test_initialize_access_waits_for_qga_before_single_pass_guest_exec(monkeypatch):
-    client = QgaClient([interfaces("192.0.2.10")])
+    client = QgaClient([
+        interfaces("192.0.2.10"),
+        interfaces("192.0.2.10"),
+        interfaces("192.0.2.10"),
+    ])
     verified = []
     monkeypatch.setattr(guest, "_verify_root_ssh", lambda *args: verified.append(args))
+    monkeypatch.setattr(guest.time, "sleep", lambda _seconds: None)
 
     guest.initialize_access(client, node="mng01", vmid=30000, name="pilot", password="temporary-password")
 
     assert [call[0] for call in client.exec_calls] == ["/usr/bin/cloud-init", "/bin/sh"]
+    assert client.network_calls == 3
     assert verified and verified[0][3] == "temporary-password"
 
 
