@@ -2,6 +2,7 @@
 
 import base64
 import os
+import socket
 import time
 
 import paramiko
@@ -16,6 +17,14 @@ def _decode(value: str | None) -> str:
         return base64.b64decode(value, validate=True).decode("utf-8", errors="replace")
     except (ValueError, UnicodeError):
         return value
+
+
+def _ssh_port_ready(address: str) -> bool:
+    try:
+        with socket.create_connection((address, 22), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 def _wait_guest(client, node: str, vmid: int, command: str, args: list[str] | None = None,
@@ -52,6 +61,14 @@ def _wait_for_qga(client, node: str, vmid: int, *, deadline: float | None = None
                 for interface in interfaces or []
                 for address in interface.get("ip-addresses", [])
             )
+            addresses = [
+                address.get("ip-address", "")
+                for interface in interfaces or []
+                for address in interface.get("ip-addresses", [])
+                if address.get("ip-address-type") == "ipv4"
+                and not address.get("ip-address", "").startswith("127.")
+            ]
+            ssh_ready = bool(addresses) and _ssh_port_ready(addresses[0])
             agent_info = client.guest_agent_info(node, vmid)
             commands = {
                 item.get("name")
@@ -60,7 +77,7 @@ def _wait_for_qga(client, node: str, vmid: int, *, deadline: float | None = None
             }
             client.guest_agent_ping(node, vmid)
             exec_ready = {"guest-exec", "guest-exec-status"}.issubset(commands)
-            stable_checks = stable_checks + 1 if has_ipv4 and exec_ready else 0
+            stable_checks = stable_checks + 1 if has_ipv4 and ssh_ready and exec_ready else 0
             if stable_checks >= required_checks:
                 if time.monotonic() + stabilization > deadline:
                     raise RuntimeError("GUEST_AGENT_NOT_READY")
