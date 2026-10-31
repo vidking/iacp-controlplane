@@ -117,6 +117,13 @@ class ProxmoxClient:
     def guest_network_interfaces(self, node: str, vmid: int) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/network-get-interfaces") or {}
 
+    def guest_agent_info(self, node: str, vmid: int) -> dict:
+        return self.get(f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/info") or {}
+
+    def guest_agent_ping(self, node: str, vmid: int) -> dict:
+        """Comprueba el RPC QGA sin ejecutar comandos dentro del invitado."""
+        return self.post(f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/ping") or {}
+
     def vm_config(self, node: str, vmid: int) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config?current=1") or {}
 

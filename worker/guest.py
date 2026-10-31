@@ -52,7 +52,15 @@ def _wait_for_qga(client, node: str, vmid: int, *, deadline: float | None = None
                 for interface in interfaces or []
                 for address in interface.get("ip-addresses", [])
             )
-            stable_checks = stable_checks + 1 if has_ipv4 else 0
+            agent_info = client.guest_agent_info(node, vmid)
+            commands = {
+                item.get("name")
+                for item in (agent_info.get("result", {}) or {}).get("supported_commands", [])
+                if item.get("enabled", True)
+            }
+            client.guest_agent_ping(node, vmid)
+            exec_ready = {"guest-exec", "guest-exec-status"}.issubset(commands)
+            stable_checks = stable_checks + 1 if has_ipv4 and exec_ready else 0
             if stable_checks >= required_checks:
                 if time.monotonic() + stabilization > deadline:
                     raise RuntimeError("GUEST_AGENT_NOT_READY")

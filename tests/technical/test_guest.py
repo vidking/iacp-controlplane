@@ -8,6 +8,8 @@ class QgaClient:
     def __init__(self, responses):
         self.responses = iter(responses)
         self.network_calls = 0
+        self.info_calls = 0
+        self.ping_calls = 0
         self.exec_calls = []
 
     def guest_network_interfaces(self, node, vmid):
@@ -16,6 +18,17 @@ class QgaClient:
         if isinstance(response, Exception):
             raise response
         return response
+
+    def guest_agent_info(self, node, vmid):
+        self.info_calls += 1
+        return {"result": {"supported_commands": [
+            {"name": "guest-exec", "enabled": True},
+            {"name": "guest-exec-status", "enabled": True},
+        ]}}
+
+    def guest_agent_ping(self, node, vmid):
+        self.ping_calls += 1
+        return {"result": {}}
 
     def guest_exec(self, node, vmid, command, args, *, input_data=None):
         self.exec_calls.append((command, args, input_data))
@@ -42,6 +55,8 @@ def test_qga_readiness_retries_without_guest_exec(monkeypatch):
 
     assert guest._ip_address(client, "mng01", 30000) == "192.0.2.10"
     assert client.network_calls == 5
+    assert client.info_calls == 3
+    assert client.ping_calls == 3
     assert client.exec_calls == []
 
 
@@ -59,6 +74,8 @@ def test_initialize_access_waits_for_qga_before_single_pass_guest_exec(monkeypat
 
     assert [call[0] for call in client.exec_calls] == ["/usr/bin/cloud-init", "/bin/sh"]
     assert client.network_calls == 3
+    assert client.info_calls == 3
+    assert client.ping_calls == 3
     assert verified and verified[0][3] == "temporary-password"
 
 
