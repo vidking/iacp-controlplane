@@ -5,7 +5,8 @@ import pytest
 from sqlalchemy import select
 from iacp.models import (BOOTSTRAP_TENANT_ID,GuestInitialization,Instance,Job,
     TerraformExecution,Operation,NetworkDiscovery,utcnow)
-from iacp.services.network import agent_addresses,after_power,execute_discovery
+from iacp.services.network import (after_guest_initialization,after_power,
+    agent_addresses,execute_discovery)
 from tests.power_helpers import managed_instance, refresh_technical_ownership
 from tests.test_instances import identities
 
@@ -81,7 +82,7 @@ def test_network_observation_is_independent_from_guest_initialization(client,aut
         assert s.get(GuestInitialization,init_operation.id).status==initialization_status
 
 
-def test_after_power_dispatches_network_while_guest_initialization_is_pending(sessions,network,monkeypatch):
+def test_after_power_defers_network_until_guest_initialization_completes(sessions,network,monkeypatch):
     identifier,publish=network
     init_publish=Mock()
     with sessions() as s:
@@ -107,6 +108,17 @@ def test_after_power_dispatches_network_while_guest_initialization_is_pending(se
     monkeypatch.setattr('iacp.api.dependencies.get_guest_initialization_publisher',lambda:init_publish)
     after_power('power-with-pending-init',sessions)
     init_publish.assert_called_once_with('init-with-pending-power')
+    with sessions() as s:
+        network_operations=s.scalars(select(Operation).where(
+            Operation.instance_id==identifier,Operation.kind=='instance.network.discover')).all()
+        assert network_operations==[]
+        initialization=s.get(GuestInitialization,'init-with-pending-power')
+        initialization.status='completed'
+        s.get(Operation,'init-with-pending-power').status='completed'
+        s.get(Job,'init-job-with-pending-power').status='completed'
+        s.commit()
+
+    after_guest_initialization('init-with-pending-power',sessions)
     publish.assert_called_once()
     with sessions() as s:
         network_operations=s.scalars(select(Operation).where(

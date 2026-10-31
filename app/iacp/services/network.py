@@ -269,11 +269,13 @@ def execute_discovery(identifier, sessions, observer=observe_guest,
 
 
 def after_power(identifier,sessions):
-    """Encola por separado inicialización guest y observación de red.
+    """Encola la inicialización y difiere la observación automática de red.
 
-    Una operación Lifecycle nunca debe hacer que la visibilidad de red dependa
-    del resultado de guest-exec. Ambos seguimientos son independientes,
-    auditables y no modifican energía, Terraform ni la configuración del guest.
+    La observación explícita de red continúa siendo independiente y read-only.
+    Para el flujo automático, esperar a que Guest Initialization complete evita
+    consumir una ventana de QGA/DHCP mientras el guest aún está arrancando.
+    Ninguna de las rutas modifica energía, Terraform ni la configuración del
+    guest.
     """
     from ..security import Principal
     with sessions() as s:
@@ -282,6 +284,7 @@ def after_power(identifier,sessions):
         instance=s.get(Instance,operation.instance_id)
         if instance.network_mode!='dhcp':return
         initialization_failure=None
+        initialization_pending=False
         try:
             from ..models import GuestInitialization
             initialization=s.scalar(select(GuestInitialization).where(GuestInitialization.instance_id==instance.id))
@@ -290,9 +293,9 @@ def after_power(identifier,sessions):
             from ..api.dependencies import get_guest_initialization_publisher
             guest_publisher=get_guest_initialization_publisher()
             if initialization is not None:
+                initialization_pending=initialization.status!='completed'
                 # Una entrega ya consumida se observa/reentrega con su misma
-                # identidad. No se vuelve a validar el catálogo para ocultar
-                # ni retrasar el seguimiento de red.
+                # identidad. Nunca se reabre un fence consumido.
                 if initialization.status=='failed' and not initialization.started_at:
                     previous=s.get(Operation,initialization.operation_id)
                     request_initialization(s,instance,Principal(instance.tenant_id,previous.requested_by,'operator'),
@@ -302,29 +305,38 @@ def after_power(identifier,sessions):
             else:
                 technical = member(s, instance, 'start')
                 if technical.profile_snapshots.get(instance.network_profile,{}).get('guest_initialization'):
+                    initialization_pending=True
                     request_initialization(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
                         'identity-'+instance.id,guest_publisher,current_profiles=False)
         except Exception as failure:
-            # Un fallo de autorización técnica o del despacho guest-exec no debe
-            # suprimir la observación de red independiente y de solo lectura.
+            # Sin una inicialización confirmada, no se publica la observación
+            # automática. La ruta explícita de red sigue disponible para
+            # diagnóstico read-only.
             s.rollback()
             initialization_failure=failure
+            initialization_pending=True
 
         network_failure=None
-        try:
-            s.expire_all()
+        if initialization_pending or initialization_failure:
             operation=s.get(Operation,identifier)
-            instance=s.get(Instance,operation.instance_id)
-            from ..api.dependencies import get_network_publisher
-            # La operación de energía forma parte del alcance de idempotencia.
-            # Una clave estable por instancia reutilizaría incorrectamente un
-            # descubrimiento completado tras otro REBOOT y dejaría obsoleta una
-            # dirección DHCP que cambió.
-            request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
-                              'network-after-'+identifier+'-'+operation.id,get_network_publisher())
-        except Exception as failure:
-            s.rollback()
-            network_failure=failure
+            if operation:
+                event(s,operation,'network_followup_deferred_until_guest_initialization','worker:lifecycle')
+                s.commit()
+        else:
+            try:
+                s.expire_all()
+                operation=s.get(Operation,identifier)
+                instance=s.get(Instance,operation.instance_id)
+                from ..api.dependencies import get_network_publisher
+                # La operación de energía forma parte del alcance de idempotencia.
+                # Una clave estable por instancia reutilizaría incorrectamente un
+                # descubrimiento completado tras otro REBOOT y dejaría obsoleta una
+                # dirección DHCP que cambió.
+                request_discovery(s,instance,Principal(instance.tenant_id,operation.requested_by,'operator'),
+                                  'network-after-'+identifier+'-'+operation.id,get_network_publisher())
+            except Exception as failure:
+                s.rollback()
+                network_failure=failure
 
         if initialization_failure or network_failure:
             operation=s.get(Operation,identifier)
@@ -342,3 +354,51 @@ def after_power(identifier,sessions):
                             'reason':reason}, attempt=0,
                             deadline=utcnow().isoformat())
                 s.commit()
+
+
+def after_guest_initialization(identifier,sessions):
+    """Publica la observación automática una vez completada la inicialización.
+
+    Reutiliza la clave derivada de la transición de energía que arrancó el
+    guest. Si el despacho falla, conserva evidencia pendiente y no reintenta
+    ninguna mutación ni guest-exec.
+    """
+    from ..security import Principal
+    from ..models import GuestInitialization
+    from ..api.dependencies import get_network_publisher
+
+    power_id=None
+    try:
+        with sessions() as s:
+            initialization=s.get(GuestInitialization,identifier)
+            if not initialization or initialization.status!='completed':return
+            instance=s.get(Instance,initialization.instance_id)
+            if not instance or instance.network_mode!='dhcp':return
+            power=s.scalar(select(Operation).where(
+                Operation.instance_id==instance.id,
+                Operation.kind.in_({'instance.power.start','instance.power.reboot'}),
+                Operation.status=='completed').order_by(Operation.created_at.desc()))
+            if not power:return
+            power_id=power.id
+            request_discovery(
+                s, instance,
+                Principal(instance.tenant_id,power.requested_by,'operator'),
+                'network-after-'+power.id+'-'+power.id,
+                get_network_publisher(),
+            )
+            return
+    except Exception as failure:
+        if power_id is None:
+            return
+        with sessions() as s:
+            power=s.get(Operation,power_id)
+            if not power:return
+            event(s,power,'network_followup_dispatch_unconfirmed','worker:iac')
+            instance=s.get(Instance,power.instance_id)
+            if instance:
+                reason=(str(failure)[:64] if isinstance(failure,Conflict)
+                        else 'NETWORK_FOLLOWUP_DISPATCH_UNCONFIRMED')
+                _store_pending(instance,None,{
+                    'source':'qemu-guest-agent','ip_addresses':[],'reason':reason,
+                },attempt=0,deadline=utcnow().isoformat())
+            s.commit()

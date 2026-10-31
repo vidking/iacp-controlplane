@@ -39,7 +39,7 @@ from iacp.services.guest_identity import (
     execute_initialization,
     technical_program_for_mode,
 )
-from iacp.services.network import after_power
+from iacp.services.network import after_guest_initialization, after_power
 from tests.power_helpers import managed_instance, refresh_technical_ownership
 
 
@@ -104,6 +104,33 @@ class FakeGuest:
 
 def accept(client, auth, guest, key="identity-one"):
     return client.post(guest.path, headers={**auth, "Idempotency-Key": key}, json={})
+
+
+def test_guest_client_configured_uses_kvm_credentials_without_terraform(tmp_path, monkeypatch):
+    credentials = tmp_path / "kvm-credentials.json"
+    credentials.write_text(json.dumps({
+        "endpoint": "https://proxmox.example",
+        "api_token": "synthetic-token",
+    }))
+    monkeypatch.setenv("IACP_KVM_CREDENTIALS_FILE", str(credentials))
+    monkeypatch.delenv("IACP_TERRAFORM_SOURCE_DIR", raising=False)
+    monkeypatch.delenv("IACP_TERRAFORM_ARTIFACTS_DIR", raising=False)
+
+    def terraform_executor_must_not_be_used(*_args, **_kwargs):
+        pytest.fail("GuestClient no debe depender del ejecutor Terraform")
+
+    monkeypatch.setattr(
+        "iacp.terraform.lifecycle.build_executor",
+        terraform_executor_must_not_be_used,
+    )
+    client = GuestClient.configured()
+    assert client.client.endpoint == "https://proxmox.example"
+
+
+def test_guest_client_configuration_fails_closed_without_kvm_credentials(monkeypatch):
+    monkeypatch.delenv("IACP_KVM_CREDENTIALS_FILE", raising=False)
+    with pytest.raises(PowerError, match="POWER_CREDENTIALS_UNAVAILABLE"):
+        GuestClient.configured()
 
 
 def test_core_initializer_is_single_use_and_idempotent(client, auth, guest, sessions):
@@ -302,7 +329,7 @@ def test_disabled_guest_commands_are_terminal_without_consuming_exec(client, aut
     assert result["status"] == "failed" and result["error_code"] == "GUEST_AGENT_COMMANDS_DISABLED"
 
 
-def test_after_start_schedules_guest_initialization_and_network_independently(
+def test_after_start_schedules_guest_initialization_then_network(
         guest, sessions, monkeypatch):
     guest_publisher, network_publisher = Mock(), Mock()
     monkeypatch.setattr("iacp.api.dependencies.get_guest_initialization_publisher", lambda: guest_publisher)
@@ -323,9 +350,24 @@ def test_after_start_schedules_guest_initialization_and_network_independently(
         discoveries = session.scalars(select(Operation).where(
             Operation.instance_id == guest.id, Operation.kind == "instance.network.discover")).all()
         assert initialization is not None and initialization.status == "queued"
-        assert len(discoveries) == 1
-        initialization_id, discovery_id = initialization.operation_id, discoveries[0].id
+        assert discoveries == []
+        initialization_id = initialization.operation_id
     guest_publisher.assert_called_once_with(initialization_id)
+    network_publisher.assert_not_called()
+
+    with sessions() as session:
+        initialization = session.get(GuestInitialization, initialization_id)
+        initialization.status = "completed"
+        session.get(Operation, initialization_id).status = "completed"
+        session.scalar(select(Job).where(Job.operation_id == initialization_id)).status = "completed"
+        session.commit()
+
+    after_guest_initialization(initialization_id, sessions)
+    with sessions() as session:
+        discovery = session.scalar(select(Operation).where(
+            Operation.instance_id == guest.id, Operation.kind == "instance.network.discover"))
+        assert discovery is not None
+        discovery_id = discovery.id
     network_publisher.assert_called_once_with(discovery_id)
 
 
