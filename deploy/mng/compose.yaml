@@ -330,6 +330,7 @@ services:
       IACP_GUEST_BOOTSTRAP_SSH_KEY_FILE: /run/secrets/guest_bootstrap_ssh_key
       IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED: ${IACP_ROOT_PASSWORD_BOOTSTRAP_ENABLED:-0}
       IACP_ROOT_INPUT_KEY_FILE: /run/secrets/root_input_key
+      IACP_KVM_CREDENTIALS_FILE: /run/secrets/kvm_credentials
       IACP_KVM_LIFECYCLE_ENABLED: ${IACP_KVM_LIFECYCLE_ENABLED:?Explicit operating flag required}
       IACP_TERRAFORM_PROFILES_FILE: /run/config/profiles.json
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -360,6 +361,8 @@ services:
       target: /run/secrets/root_input_key
     - source: db_password
       target: /run/secrets/db_password
+    - source: kvm_credentials
+      target: /run/secrets/kvm_credentials
     - source: terraform_credentials
       target: /run/secrets/terraform_credentials
     security_opt:

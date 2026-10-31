@@ -256,9 +256,22 @@ def supersede_queued_for_delete(session, instance, delete_operation_id, actor):
     if row.status == 'failed':
         # The earlier supersession or admin recovery is already terminal.
         # finished_at may be populated; it does not constitute a guest-exec.
-        if (operation.status != 'failed' or (job is not None and job.status != 'failed')
-                or row.finished_at is None):
+        if operation.status != 'failed' or (job is not None and job.status != 'failed'):
             raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+        # A deterministic failure before the worker could consume guest-exec
+        # is terminal even when an older worker did not persist finished_at.
+        # Close only this unconsumed shape for the canonical DELETE workflow;
+        # preserve the original error and never turn it into success.
+        if row.finished_at is None:
+            if (row.started_at is not None or row.pid is not None
+                    or row.result is not None or consumed is not None
+                    or not operation.error_code):
+                raise Conflict('GUEST_INITIALIZATION_RECONCILIATION_REQUIRED')
+            row.finished_at = utcnow()
+            code = 'guest_initialization_failed_before_dispatch_retained_for_delete'
+            event(session, operation, code, 'delete:' + delete_operation.id)
+            event(session, delete_operation, code, actor)
+            return False
         # A consumed guest-exec that exited with the definitive program-failure
         # code is terminal, but it did not prove guest readiness.  The normal
         # DELETE workflow may therefore reconcile an externally removed VM and

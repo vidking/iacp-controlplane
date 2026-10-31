@@ -213,6 +213,34 @@ def test_delete_accepts_failed_never_dispatched_initialization_without_rewriting
     assert observed['deletion']['phase'] == 'awaiting_approval'
 
 
+def test_delete_closes_legacy_failed_before_dispatch_without_replaying_guest_exec(
+        client, auth, sessions, disposable, application):
+    initialization_id = queue_guest_initialization(sessions, disposable.id)
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        job = session.scalar(select(Job).where(Job.operation_id == initialization_id))
+        row.status = operation.status = job.status = 'failed'
+        row.finished_at = None
+        row.started_at = row.pid = row.result = None
+        operation.error_code = 'POWER_CREDENTIALS_UNAVAILABLE'
+        session.commit()
+    application.dependency_overrides[get_deletion_publisher] = lambda: Mock()
+    response = client.delete(disposable.path, headers={**auth,
+        'Idempotency-Key': 'delete-legacy-pre-dispatch-failure'})
+    assert response.status_code == 202, response.text
+    delete_id = response.json()['operation_id']
+    with sessions() as session:
+        row = session.get(GuestInitialization, initialization_id)
+        operation = session.get(Operation, initialization_id)
+        codes = {item.code for item in session.scalars(select(OperationEvent).where(
+            OperationEvent.operation_id.in_([initialization_id, delete_id]))) }
+        assert row.status == operation.status == 'failed'
+        assert row.finished_at is not None
+        assert operation.error_code == 'POWER_CREDENTIALS_UNAVAILABLE'
+        assert 'guest_initialization_failed_before_dispatch_retained_for_delete' in codes
+
+
 def test_delete_accepts_verified_completed_guest_initialization(client, auth, sessions, disposable):
     initialization_id = queue_guest_initialization(sessions, disposable.id)
     with sessions() as session:
