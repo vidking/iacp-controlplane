@@ -1,0 +1,42 @@
+FROM hashicorp/terraform:1.16.6 AS terraform
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    IACP_TERRAFORM_PATH=/app/terraform \
+    IACP_TERRAFORM_DIR=environments/mng01 \
+    IACP_LOCAL_TERRAFORM_DIR=fixtures/local \
+    IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog.json
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system iacp \
+    && useradd --system --gid iacp --home-dir /app iacp
+
+COPY --from=terraform /bin/terraform /usr/local/bin/terraform
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir \
+    "fastapi==0.115.12" \
+    "uvicorn[standard]==0.34.2" \
+    "pydantic==2.11.3" \
+    "psycopg[binary]==3.2.6" \
+    "SQLAlchemy==2.0.41" \
+    "alembic==1.15.2" \
+    "cryptography==46.0.3" \
+    "paramiko==4.0.0"
+COPY api ./api
+COPY worker ./worker
+COPY terraform ./terraform
+COPY alembic.ini .
+COPY migrations ./migrations
+RUN mkdir -p /var/lib/iacp/plans \
+    && chown -R iacp:iacp /app /var/lib/iacp \
+    && chmod 0700 /var/lib/iacp /var/lib/iacp/plans
+USER iacp
+
+EXPOSE 8080
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

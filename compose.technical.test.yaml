@@ -1,0 +1,31 @@
+name: iacp-controlplane-technical-test
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: iacp_technical_test
+      POSTGRES_USER: iacp
+      POSTGRES_PASSWORD: technical-test-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iacp -d iacp_technical_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.technical.test
+    environment:
+      IACP_DATABASE_URL: postgresql://iacp:technical-test-only@db:5432/iacp_technical_test
+      IACP_API_TOKEN: technical-test-token
+      IACP_ACCESS_ENCRYPTION_KEY_FILE: /tmp/access.key
+      IACP_WASABI_BUCKET: iacp-lab
+      IACP_WASABI_REGION: us-east-1
+      IACP_WASABI_ENDPOINT: https://s3.us-east-1.wasabisys.com
+    command: ["sh", "-c", "python -c 'from cryptography.fernet import Fernet; open(\"/tmp/access.key\", \"wb\").write(Fernet.generate_key())' && alembic upgrade head && alembic upgrade head && pytest -c /dev/null -q -rs tests/technical"]
+    depends_on:
+      db: {condition: service_healthy}

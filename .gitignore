@@ -8,6 +8,7 @@ __pycache__/
 
 # Variables y secretos
 .env.*
+!.env.technical.example
 !.env.example
 !.env.dev.example
 !.env.server.example

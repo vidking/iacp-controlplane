@@ -2,6 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# La ruta técnica nueva se valida antes del stack legado de desarrollo.
+bash scripts/test.sh
+
 # Solo Docker local; no utiliza contextos SSH/TCP ni el stack del servidor.
 docker_endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
 case "$docker_endpoint" in

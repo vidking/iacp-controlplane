@@ -1,0 +1,32 @@
+[project]
+name = "iacp-controlplane-technical"
+version = "1.0.0"
+description = "Orquestador tecnico KVM para el cluster MNG"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn[standard]==0.34.2",
+  "pydantic==2.11.3",
+  "psycopg[binary]==3.2.6",
+  "SQLAlchemy==2.0.41",
+  "alembic==1.15.2",
+  "cryptography==46.0.3",
+  "paramiko==4.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["api", "worker"]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==8.3.5",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests/technical"]

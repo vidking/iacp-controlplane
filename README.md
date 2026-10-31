@@ -1,4 +1,42 @@
-# IACP — Control Plane
+# IACP — Control Plane técnico
+
+La ruta operativa de esta rama es el runtime técnico simplificado de KVM:
+`Dockerfile.technical`, `compose.technical.yaml` y la migración
+`migrations/versions/0001_technical_schema.py`. Se ejecuta directamente en el
+**IACP Control Plane (VM 104)** y conserva PostgreSQL dedicado, State remoto en
+Wasabi y seis workers con un máximo de dos aprovisionamientos físicos
+simultáneos.
+
+`iacp-controlplanev2` continúa como repositorio y orquestador independiente. No
+se migran sus datos, volúmenes, operaciones ni estados `uncertain`. Portainer no
+forma parte del runtime técnico de esta rama.
+
+Para validar esta ruta sin infraestructura física:
+
+```bash
+bash scripts/test.sh
+```
+
+La entrada operativa técnica se invoca como `scripts/iacpctl --technical` y
+exige un archivo privado `/etc/iacp/technical.env`:
+
+```bash
+scripts/iacpctl --technical config-check
+scripts/iacpctl --technical deploy
+scripts/iacpctl --technical status
+```
+
+El despliegue directo usa un archivo privado basado en
+[`.env.technical.example`](.env.technical.example):
+
+```bash
+docker compose --env-file /etc/iacp/technical.env -f compose.technical.yaml up -d --build --wait
+```
+
+No ejecutar `docker compose down -v`; PostgreSQL, planes, secretos y State
+remoto son persistentes. Los archivos `compose.yaml`, `app/` y la documentación
+comercial que siguen en el repositorio son material histórico de la plataforma
+anterior y no forman parte de este runtime técnico.
 
 Forgejo es la fuente oficial: [CyberFuel/iacp-controlplane](https://scm.cyberfuel.com/CyberFuel/iacp-controlplane).
 El código y los contenedores son portables entre equipos autorizados. El destino
