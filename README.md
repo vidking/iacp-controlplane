@@ -11,6 +11,11 @@ simultáneos.
 se migran sus datos, volúmenes, operaciones ni estados `uncertain`. Portainer no
 forma parte del runtime técnico de esta rama.
 
+El catálogo MNG técnico conserva cuatro Golden Images (`ubuntu-2404`,
+`ubuntu-2604`, `almalinux-9` y `almalinux-10`) y cuatro planes (`kvm-1` a
+`kvm-4`). Las solicitudes MNG seleccionan `plan_id`; el API resuelve los
+recursos publicados por el catálogo y rechaza tamaños que no coincidan.
+
 Para validar esta ruta sin infraestructura física:
 
 ```bash

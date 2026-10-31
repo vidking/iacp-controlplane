@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
+from api.catalog import resolve_plan
 from api.db import database
-from api.models import Action, Command, InstanceCreateRequest, OperationRequest, PowerAction
+from api.models import Action, Command, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.secrets import encrypt_secret
 
 
@@ -58,7 +59,43 @@ def _latest_plan(db, instance_id: str):
     ).fetchone()
 
 
+def normalize_spec(spec: InstanceSpec, stack: str) -> InstanceSpec:
+    """Resuelve el tamaño del plan sin permitir tamaños arbitrarios en MNG."""
+    if stack != "mng01":
+        return spec.model_copy(
+            update={
+                "vcpus": spec.vcpus if spec.vcpus is not None else 2,
+                "memory_mb": spec.memory_mb if spec.memory_mb is not None else 2048,
+                "disk_gb": spec.disk_gb if spec.disk_gb is not None else 20,
+            }
+        )
+    if spec.plan_id is None:
+        raise HTTPException(status_code=422, detail="mng01 requiere plan_id del catalogo tecnico")
+    try:
+        plan = resolve_plan(spec.plan_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="plan_id no existe en el catalogo tecnico") from error
+    for field in ("vcpus", "memory_mb", "disk_gb"):
+        requested = getattr(spec, field)
+        expected = plan[field]
+        if requested is not None and requested != expected:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field} no coincide con {spec.plan_id}; el catalogo exige {expected}",
+            )
+    return spec.model_copy(
+        update={
+            "vcpus": plan["vcpus"],
+            "memory_mb": plan["memory_mb"],
+            "disk_gb": plan["disk_gb"],
+        }
+    )
+
+
 def create_operation(request: OperationRequest) -> dict:
+    if request.command == Command.plan and request.spec is not None:
+        stack = request.stack.value if hasattr(request.stack, "value") else request.stack
+        request = request.model_copy(update={"spec": normalize_spec(request.spec, stack)})
     operation_id = str(uuid.uuid4())
     instance_id = str(uuid.uuid4()) if request.command == Command.plan else request.instance_id
     effective_stack = request.stack.value if hasattr(request.stack, "value") else request.stack
@@ -322,6 +359,6 @@ def list_instances(
 
 
 def image_catalog() -> list[dict]:
-    path = os.getenv("IACP_MNG_CATALOG", "/workspace/terraform/environments/mng01/catalog.json")
-    with open(path, encoding="utf-8") as handle:
-        return json.load(handle)["images"]
+    from api.catalog import images
+
+    return images()

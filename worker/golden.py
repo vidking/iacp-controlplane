@@ -1,14 +1,12 @@
-import json
 import os
 import re
 
+from api.catalog import load_catalog
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
 def catalog() -> dict[str, dict]:
-    path = os.getenv("IACP_MNG_CATALOG", "/workspace/terraform/environments/mng01/catalog.json")
-    with open(path, encoding="utf-8") as handle:
-        return {item["image_id"]: item for item in json.load(handle)["images"]}
+    return {item["image_id"]: item for item in load_catalog()["images"]}
 
 
 def _disk(raw: str, interface: str) -> dict:

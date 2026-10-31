@@ -42,7 +42,7 @@
   }
 
   async function loadCatalog() {
-    const body = await api("/v1/images");
+    const [body, plans] = await Promise.all([api("/v1/images"), api("/v1/plans")]);
     const select = $("image");
     select.innerHTML = "";
     (body.images || []).forEach((image) => {
@@ -50,6 +50,14 @@
       option.value = image.image_id;
       option.textContent = `${image.image_id} · Golden ${image.template_vm_id}`;
       select.append(option);
+    });
+    const planSelect = $("plan");
+    planSelect.innerHTML = "";
+    (plans.plans || []).forEach((plan) => {
+      const option = document.createElement("option");
+      option.value = plan.plan_id;
+      option.textContent = `${plan.plan_id} · ${plan.vcpus} vCPU · ${plan.memory_mb} MB · ${plan.disk_gb} GB`;
+      planSelect.append(option);
     });
   }
 
@@ -113,7 +121,7 @@
       $("detail-facts").innerHTML = [
         ["Instance ID", instance.instance_id], ["VMID", instance.vmid ?? "pendiente"],
         ["Nodo", instance.node || "mng01"], ["Imagen", instance.image],
-        ["Stack", instance.stack], ["vCPU", instance.spec.vcpus],
+        ["Stack", instance.stack], ["Plan", instance.spec.plan_id || "local"], ["vCPU", instance.spec.vcpus],
         ["Memoria", `${instance.spec.memory_mb} MB`], ["Disco", `${instance.spec.disk_gb} GB`],
       ].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
       $("operation-output").textContent = operationPayload(instance.latest_operation || { status: "sin operación" });
@@ -164,7 +172,7 @@
     const tags = $("tags").value.split(",").map((value) => value.trim()).filter(Boolean);
     const body = {
       stack: $("stack").value,
-      spec: { name: $("name").value.trim(), image: $("image").value, vcpus: Number($("vcpus").value), memory_mb: Number($("memory").value), disk_gb: Number($("disk").value), network_mode: $("network").value, started: $("started").checked, ssh_public_keys: ssh ? [ssh] : [], root_password: rootPassword || undefined, tags },
+      spec: { name: $("name").value.trim(), image: $("image").value, plan_id: $("plan").value || undefined, network_mode: $("network").value, started: $("started").checked, ssh_public_keys: ssh ? [ssh] : [], root_password: rootPassword || undefined, tags },
     };
     try {
       const result = await api("/v1/instances", { method: "POST", body: JSON.stringify(body) });
