@@ -90,3 +90,8 @@ def test_canonical_guest_identity_worker_has_shared_gate_without_expanding_lifec
     assert lifecycle['volumes'][0]['target']=='/run/config/profiles.json'
     assert lifecycle['volumes'][0]['read_only'] is True
     assert {v['source'] for v in lifecycle['secrets']}=={'db_password','kvm_credentials'}
+    terraform_worker=services['terraform-worker']
+    assert terraform_worker['environment']['IACP_KVM_CREDENTIALS_FILE']=='/run/secrets/kvm_credentials'
+    assert {v['source'] for v in terraform_worker['secrets']} >= {
+        'db_password','kvm_credentials','terraform_credentials',
+    }

@@ -39,7 +39,7 @@
   "compose.tls.test.yaml": "50d5bc30f1eb7eb1911ffcbcfc11a4af57fd36250f6488806555d134e904a36a",
   "compose.tls.yaml": "006859c35b1d500b64cc93076e981fa93cd71f3cd40b0e17cd915622a0941fe4",
   "compose.yaml": "b5e9e8350c6f519c7e128935715cd315722d638735459d828a0a6d91b64a5bab",
-  "deploy/mng/compose.yaml": "68aa81e45f713a92eb164dee0b5d8bf42d18dfff5d1e59a6ecbeb4e2b129126a",
+  "deploy/mng/compose.yaml": "a18cb01b60c94a387ca61a4274fffa723ae1850c4a54231eb14cfb9566223d63",
   "deploy/mng/server.env.example": "b88c8d5c73c3661e62ee2af0a412960e48a418752dce739cb04344ba57a95e06",
   "deploy/profiles.json": "bc22ca0b83e57b6723440dedbb89525389b2cf8179887ef6df9c21ba47626e56"
 }
