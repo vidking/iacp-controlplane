@@ -12,6 +12,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import subprocess
@@ -45,6 +46,44 @@ INVENTORY_IDENTITY_FIELDS=(
     'memory_mb','disk_gb','network_mode','network_profile','executor',
     'infrastructure_kind',
 )
+
+_CLOUD_INIT_INTERFACE_RENAME_WARNINGS=(
+    re.compile(
+        r"^Unable to rename interfaces: \[\['[0-9a-f]{2}(?::[0-9a-f]{2}){5}', 'eth0', None, None\]\] "
+        r"due to errors: \['\[busy\] Error renaming mac=[0-9a-f]{2}(?::[0-9a-f]{2}){5} from ens18 to eth0'\]$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Failed to rename devices: Failed to apply network config names: \[busy\] Error renaming mac="
+        r"[0-9a-f]{2}(?::[0-9a-f]{2}){5} from ens18 to eth0$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def cloud_init_recoverable_errors_are_safe(recoverable_errors):
+    """Accept only known harmless warnings after independent guest checks.
+
+    Cloud-Init 26.04 can report the kernel's already-applied ``ens18`` to
+    ``eth0`` rename as ``[busy]`` while the resulting interface is up.  The
+    caller still requires ``errors == []`` and subsequently verifies QGA,
+    DHCP, SSH root, and the effective sshd policy; this helper only prevents
+    that exact observation warning from being misclassified as a readiness
+    failure.  Unknown warnings remain fail-closed.
+    """
+    if not isinstance(recoverable_errors, dict):
+        return False
+    if set(recoverable_errors) - {'DEPRECATED', 'WARNING'}:
+        return False
+    for category, messages in recoverable_errors.items():
+        if not isinstance(messages, list) or not all(isinstance(message, str) for message in messages):
+            return False
+        if category == 'WARNING' and not all(
+            any(pattern.fullmatch(message) for pattern in _CLOUD_INIT_INTERFACE_RENAME_WARNINGS)
+            for message in messages
+        ):
+            return False
+    return True
 
 
 def _operation_status(row):
@@ -377,10 +416,20 @@ else:
   ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
   ssh.connect(address,username='root',pkey=key,allow_agent=False,look_for_keys=False,timeout=15)
   import shlex
-  program="""
+  program=r"""
 import json,os,subprocess,re
 from pathlib import Path
 def output(args):return subprocess.check_output(args,text=True).strip()
+def cloud_init_recoverable_errors_are_safe(recoverable_errors):
+    patterns=(
+        re.compile(r"^Unable to rename interfaces: \[\['[0-9a-f]{2}(?::[0-9a-f]{2}){5}', 'eth0', None, None\]\] due to errors: \['\[busy\] Error renaming mac=[0-9a-f]{2}(?::[0-9a-f]{2}){5} from ens18 to eth0'\]$", re.I),
+        re.compile(r"^Failed to rename devices: Failed to apply network config names: \[busy\] Error renaming mac=[0-9a-f]{2}(?::[0-9a-f]{2}){5} from ens18 to eth0$", re.I),
+    )
+    if not isinstance(recoverable_errors,dict) or set(recoverable_errors)-{'DEPRECATED','WARNING'}:return False
+    for category,messages in recoverable_errors.items():
+        if not isinstance(messages,list) or not all(isinstance(message,str) for message in messages):return False
+        if category=='WARNING' and not all(any(pattern.fullmatch(message) for pattern in patterns) for message in messages):return False
+    return True
 root=str(Path(output(['findmnt','-n','-o','SOURCE','/'])).resolve())
 disk='/dev/'+output(['lsblk','-n','-o','PKNAME',root])
 table=json.loads(output(['sfdisk','--json',disk]))['partitiontable']
@@ -396,7 +445,7 @@ else:raise RuntimeError('Filesystem no compatible con la sonda: '+filesystem)
 sector=table['sectorsize']
 v=os.statvfs('/');r=subprocess.run(['cloud-init','status','--format','json'],capture_output=True)
 c=json.loads(r.stdout)
-assert r.returncode in (0,2) and not c.get('errors') and set(c.get('recoverable_errors',{}))<={'DEPRECATED'}
+assert r.returncode in (0,2) and not c.get('errors') and cloud_init_recoverable_errors_are_safe(c.get('recoverable_errors',{}))
 release=dict(line.split('=',1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
 print(json.dumps({'os_id':release['ID'].strip('\"'),'os_version':release['VERSION_ID'].strip('\"'),'filesystem':filesystem,'root_fs_bytes':v.f_frsize*v.f_blocks,'cloud_init':c.get('status'),
  'cloud_init_rc':r.returncode,'cloud_init_warnings':c.get('recoverable_errors',{}),'cpus':os.cpu_count(),
