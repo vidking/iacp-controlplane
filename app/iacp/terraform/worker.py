@@ -65,6 +65,8 @@ def initialize_guest(task, identifier: str) -> None:
         raise task.retry(countdown=2)
     from ..services.access import after_initialization
     after_initialization(identifier, get_session_factory())
+    from ..services.network import after_guest_initialization
+    after_guest_initialization(identifier, get_session_factory())
 
 
 @celery_app.task(name='iacp.access.verify', autoretry_for=(), acks_late=True,

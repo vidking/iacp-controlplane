@@ -7,12 +7,8 @@ import base64
 import hashlib
 import json
 import re
-import ssl
-import tempfile
 import time
-from pathlib import Path
 from urllib.parse import urlencode
-from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -22,7 +18,6 @@ from ..lifecycle.service import managed_target
 from ..models import GuestInitialization, Instance, Job, Operation, OperationEvent, Tenant, TerraformExecution, utcnow
 from ..terraform.apply import fingerprint
 from ..terraform.locks import ExecutionBusy, admission_lock, instance_lock
-from ..terraform.observation import NoRedirect
 from .instances import Conflict, event
 from .jobs import QueueUnavailable
 
@@ -415,11 +410,10 @@ def request_initialization(session, instance, principal, key, publish, *, curren
 class GuestClient:
     @classmethod
     def configured(cls):
-        from ..terraform.lifecycle import build_executor
-        with tempfile.TemporaryDirectory() as temporary:
-            env=build_executor(observation=True).environment(Path(temporary))
-        return cls(ProxmoxPower(env['PROXMOX_VE_ENDPOINT'].rstrip('/'),env['PROXMOX_VE_API_TOKEN'],
-            build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context(cafile=env.get('SSL_CERT_FILE'))),NoRedirect())))
+        # Guest observation is a KVM/Proxmox concern.  Do not require the API
+        # container to mount Terraform source, artifacts or Terraform
+        # credentials merely to construct this read-only client.
+        return cls(ProxmoxPower.configured())
 
     def __init__(self,client):self.client=client
 
