@@ -594,3 +594,19 @@ reglas de runtime restringidas a `iacp/prod-runtime-v1`. El endpoint IAM no
 permite editar la política con esta llave, así que la retirada debe hacerse en
 la consola Wasabi. Después se volverá a verificar el acceso limitado al
 prefijo de producción.
+
+### Verificación tras retirar permisos temporales — 2 de noviembre de 2026
+
+El usuario confirmó que retiró las reglas temporales y dejó la política
+asociada al bucket de producción. Con la llave actual:
+
+- `ListObjectsV2` y `ListObjectVersions` para
+  `iacp/prod-runtime-v1/` responden HTTP 200 y cero elementos.
+- Las mismas operaciones sin prefijo para el bucket completo responden HTTP
+  403 `AccessDenied`, como se espera tras retirar el inventario amplio.
+- No se envió una operación de borrado para probar `s3:DeleteObjectVersion`.
+
+La revalidación de MNG sigue mostrando HTTP 200 y 55 VMs; VM 106 y VM 29000
+son visibles, pero VM 104 no. El inventario Wasabi quedó limitado según lo
+esperado; la ACL de VM 104 y la reconciliación de las cinco incertidumbres
+previas siguen pendientes para la promoción. No se desplegó el runtime.
