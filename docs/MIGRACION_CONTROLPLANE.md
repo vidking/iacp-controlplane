@@ -555,3 +555,16 @@ para todo `iacp-cyberfuel` responden HTTP 403 `AccessDenied`. No se inició la
 purga. La política completa debe quedar asociada al principal dueño de esa
 misma llave y conservar, además de las reglas runtime, las reglas temporales
 `IACPBroadInventoryTemporary` e `IACPDeleteVersionsTemporary` indicadas arriba.
+
+### Reintento solicitado por el usuario — 2 de noviembre de 2026
+
+Con la llave actual se obtuvieron estos resultados de solo lectura:
+
+- **PASS — prefijo runtime:** `ListObjectsV2` y `ListObjectVersions` para
+  `iacp/prod-runtime-v1/` responden HTTP 200 y devuelven cero objetos y cero
+  versiones.
+- **BLOCKED — alcance completo:** `ListObjectsV2` sin prefijo y
+  `ListObjectVersions` sin prefijo responden HTTP 403 `AccessDenied`.
+- **Sin purga:** no se envió ninguna solicitud de borrado. Las reglas runtime
+  ya son efectivas; las reglas temporales de inventario amplio y borrado de
+  versiones todavía no lo son para la llave cargada en `prod.env`.
