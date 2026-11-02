@@ -16,6 +16,23 @@ rollback y evidencia para este manifiesto, además de comprobar el estado real
 del runtime. El dictamen actual está en
 [`MIGRACION_RUNTIME_API_V1_20261101.md`](auditorias/MIGRACION_RUNTIME_API_V1_20261101.md).
 
+### Particularidades verificadas en producción
+
+En el IACP Control Plane (VM 104), el stack existente usa el proyecto Docker
+`iacp-controlplane`; el nuevo manifiesto no puede reutilizar ese nombre mientras
+ambos stacks deban coexistir para una reversión. El Traefik actual carga rutas
+desde archivos y tiene desactivado el proveedor Docker, por lo que las etiquetas
+`traefik.*` del manifiesto no publican por sí solas la API. La ruta de
+`iac.cyberfuel.com` debe actualizarse mediante un cambio revisado del proveedor
+de archivos, conservando sus middlewares y apuntando al servicio nuevo en el
+puerto `8080`.
+
+El runtime actual conserva PostgreSQL 17 y su volumen histórico. El manifiesto
+candidato usa PostgreSQL 16 con volúmenes nuevos; no se debe montar el volumen
+antiguo ni importar sus instancias, jobs o estados Terraform. Antes de retirar
+el stack anterior también deben resolverse sus operaciones `uncertain` y
+verificarse los locks que el inventario dejó sin confirmar.
+
 ## Preparación
 
 1. Confirmar que el registry `scm.cyberfuel.com` está configurado en Portainer.
