@@ -503,3 +503,45 @@ sin cambios las protecciones de VM 106, VM 29000 y las ACL de Lifecycle y
 aprovisionamiento. Después de aplicar el cambio, se debe volver a comprobar
 `GET /cluster/resources?type=vm` desde el IACP Control Plane (VM 104) y
 confirmar que el VMID 104 aparece antes de promover el runtime.
+
+## Aclaración de política Wasabi con la llave existente — 2 de noviembre de 2026
+
+El usuario confirma que no puede crear ni usar otra llave de Wasabi y que se
+debe conservar la misma llave cargada en `prod.env` y `wasabi-admin.env`,
+ampliando temporalmente su política para limpiar el bucket completo. Esta
+aclaración reemplaza la recomendación anterior de cargar una llave distinta.
+
+La consulta IAM firmada `GetUser` al endpoint oficial de Wasabi responde HTTP
+403 `AccessDenied` con esa llave. No se pudo editar la política por API. No se
+creó otra llave, no se modificó la política y no se purgó contenido. El
+prefijo nuevo de producción sigue vacío. Se requiere agregar temporalmente a
+la política asociada a la llave existente estas dos reglas, sin condición de
+prefijo, porque el usuario autorizó el alcance del bucket completo:
+
+```json
+{
+  "Sid": "IACPInventarioTemporal",
+  "Effect": "Allow",
+  "Action": ["s3:ListBucket", "s3:ListBucketVersions"],
+  "Resource": "arn:aws:s3:::iacp-cyberfuel"
+}
+```
+
+```json
+{
+  "Sid": "IACPPurgaTemporal",
+  "Effect": "Allow",
+  "Action": "s3:DeleteObjectVersion",
+  "Resource": "arn:aws:s3:::iacp-cyberfuel/*"
+}
+```
+
+Estas reglas deben añadirse a `Statement` de la política existente para la
+llave actual, no sustituyen sus permisos de runtime. Tras verificar el acceso,
+se enumerarán y eliminarán las versiones y delete markers del bucket conforme
+a la autorización del usuario; después se retirará `IACPPurgaTemporal` para
+que la llave compartida no conserve borrado permanente de versiones. Wasabi
+documenta la administración IAM en
+[IAM and STS Support](https://docs.wasabi.com/apidocs/iam-and-sts-support) y el
+borrado permanente por `versionId` en
+[Deleting Object Versions](https://docs.wasabi.com/docs/how-do-i-delete-old-object-versions).
