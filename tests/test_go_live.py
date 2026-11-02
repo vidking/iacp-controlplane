@@ -327,6 +327,23 @@ def test_upstream_swap_is_atomic_and_preserves_the_previous_route(tmp_path):
     assert stat.S_IMODE((evidence / "traefik-before.yml").stat().st_mode) == 0o600
 
 
+def test_upstream_swap_preserves_json_route_format(tmp_path):
+    route = tmp_path / "iacp.yml"
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+    original = json.dumps(
+        {"http": {"services": {"iacp-api": {"loadBalancer": {"servers": [{"url": "http://api:8000"}]}}}}},
+        indent=2,
+    ) + "\n"
+    route.write_text(original, encoding="utf-8")
+
+    result = go_live._swap_upstream(route, evidence, "http://api:8000", "http://iacp-controlplane-api-prod:8080")
+
+    assert result["changed"] is True
+    updated = json.loads(route.read_text(encoding="utf-8"))
+    assert updated["http"]["services"]["iacp-api"]["loadBalancer"]["servers"][0]["url"] == "http://iacp-controlplane-api-prod:8080"
+    assert json.loads((evidence / "traefik-before.yml").read_text(encoding="utf-8")) == json.loads(original)
+
+
 def test_upstream_swap_rejects_unexpected_route_without_changes(tmp_path):
     route = tmp_path / "iacp.yml"
     evidence = go_live._new_evidence_dir(tmp_path / "evidence")

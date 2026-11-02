@@ -424,13 +424,20 @@ def _swap_upstream(route: Path, evidence: Path, expected: str, target: str) -> d
         return {"changed": False, "already_active": True, "target": target}
     if current != expected:
         raise GateError("El upstream activo cambió; se requiere revisión manual de Traefik")
-    old_line = f"url: {expected}"
-    if source.count(old_line) != 1:
+    line_options = {
+        f"url: {expected}": f"url: {target}",
+        f'url: "{expected}"': f'url: "{target}"',
+        f'"url": "{expected}"': f'"url": "{target}"',
+        f"'url': '{expected}'": f"'url': '{target}'",
+    }
+    matches = [old_line for old_line in line_options if source.count(old_line) == 1]
+    if len(matches) != 1:
         raise GateError("No se encontró una única línea del upstream esperado")
+    old_line = matches[0]
     backup = evidence / "traefik-before.yml"
     shutil.copy2(route, backup)
     os.chmod(backup, 0o600)
-    replacement = source.replace(old_line, f"url: {target}", 1)
+    replacement = source.replace(old_line, line_options[old_line], 1)
     try:
         check = yaml.safe_load(replacement) or {}
         actual = check["http"]["services"]["iacp-api"]["loadBalancer"]["servers"][0]["url"]
