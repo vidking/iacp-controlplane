@@ -419,3 +419,48 @@ limpieza `iacp/lab/_preflight`. La llave de runtime no debe tener
 administrativa separada. En buckets versionados, `DeleteObject` crea un delete
 marker; eliminar una versión concreta requiere una solicitud con `versionId`,
 según [Amazon S3: deleting object versions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
+
+## Revalidación operativa posterior — 2 de noviembre de 2026
+
+Dictamen: **preparación parcial; corte y purga siguen bloqueados**. Estas
+comprobaciones son de solo lectura y se realizaron desde el IACP Control Plane
+(VM 104); no se desplegaron imágenes, no se cambió el runtime y no se escribió
+ni eliminó contenido Wasabi.
+
+- **PASS — prefijo de producción:** la credencial configurada para runtime
+  obtiene HTTP 200 de `ListObjectsV2` para el bucket `iacp-cyberfuel` y el
+  prefijo exacto `iacp/prod-runtime-v1/`; devuelve cero objetos. La lectura de
+  versiones para ese mismo prefijo también devuelve HTTP 200 y cero versiones.
+- **BLOCKED — inventario/purga del bucket completo:**
+  `wasabi-admin.env` contiene el mismo ID de llave que `prod.env`, por lo que
+  no es una identidad administrativa separada. Las consultas de inventario de
+  todo `iacp/` y `ListBucketVersions` con ese alcance responden HTTP 403
+  `AccessDenied`. No se puede afirmar que el bucket completo esté vacío ni
+  ejecutar la purga autorizada. Para purgarlo se necesita temporalmente una
+  credencial administrativa con `s3:ListBucket`, `s3:ListBucketVersions` y
+  `s3:DeleteObjectVersion` limitada al bucket `iacp-cyberfuel`; retirar el
+  permiso de borrado de versiones al terminar. La llave de runtime no requiere
+  ese permiso.
+- **BLOCKED — visibilidad protegida MNG:** el token obtiene HTTP 200 y enumera
+  55 VMs; VM 106 y VM 29000 son visibles, pero el IACP Control Plane (VM 104)
+  no aparece. La ACL todavía requiere `VM.Audit` sobre `/vms/104`, sin otorgar
+  Lifecycle ni permisos de modificación a ese VMID.
+- **PASS — no hay operación activa en la base legacy consultada:** la tabla
+  `operations` solo contiene `completed` y `failed`; el conteo de estados no
+  terminales usados por el API es cero. `jobs` solo contiene `completed` y
+  `failed`; el host informa cero procesos `terraform`. Se conservan los
+  registros históricos (`terraform_executions`: 126 `planned`, 7 `failed`; no
+  se borraron filas ni estados).
+- **Runtime observado:** `origin/main` en el remoto es
+  `a4c1107949249fa5ec48e0142b2e260021e4e095`, el mismo commit de las imágenes
+  activas `iacp/controlplane-api` y `iacp/terraform-worker`. El API legacy está
+  healthy y la base y Redis están healthy. El runtime candidato sigue sin
+  desplegarse.
+
+El preflight local anterior registró **75 pruebas aprobadas y 3 avisos de
+deprecación**. Esto valida el conjunto local, pero no certifica todavía un
+aprovisionamiento físico. Para continuar con el corte faltan la ACL de
+auditoría para VM 104, el acceso administrativo efectivo requerido para la
+purga completa del bucket y la reconciliación documentada de las cinco
+incertidumbres previas; el conteo de la base legacy consultada no demuestra
+por sí solo que aquellas incertidumbres estén resueltas.
