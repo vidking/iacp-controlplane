@@ -53,7 +53,7 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   network_device {
     bridge  = var.network_bridge
-    model   = "virtio"
+    model   = var.network_model
     vlan_id = var.vlan_id
   }
 
@@ -70,6 +70,7 @@ resource "proxmox_virtual_environment_vm" "this" {
     user_account {
       username = var.cloudinit_username
       keys     = var.ssh_public_keys
+      password = var.root_password
     }
   }
 

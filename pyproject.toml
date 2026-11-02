@@ -1,17 +1,13 @@
 [project]
-name = "iacp-controlplane-technical"
+name = "iacp-controlplane"
 version = "1.0.0"
-description = "Orquestador tecnico KVM para el cluster MNG"
+description = "IACP Control Plane oficial con API v1 y aprovisionamiento asíncrono sobre MNG"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi==0.115.12",
   "uvicorn[standard]==0.34.2",
   "pydantic==2.11.3",
-  "psycopg[binary]==3.2.6",
-  "SQLAlchemy==2.0.41",
-  "alembic==1.15.2",
-  "cryptography==46.0.3",
-  "paramiko==4.0.0",
+  "psycopg[binary]==3.2.10",
 ]
 
 [build-system]
@@ -29,4 +25,4 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests/technical"]
+testpaths = ["tests"]

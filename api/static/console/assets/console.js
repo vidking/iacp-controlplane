@@ -1,5 +1,5 @@
 (() => {
-  const state = { token: "", selectedId: null, planOperationId: null, timer: null };
+  const state = { token: "", selectedId: null };
   const $ = (id) => document.getElementById(id);
 
   function showToast(message, error = false) {
@@ -17,10 +17,22 @@
     node.classList.toggle("error", error);
   }
 
+  function newIdempotencyKey(prefix) {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return `${prefix}-${window.crypto.randomUUID()}`;
+    }
+    return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
   async function api(path, options = {}) {
-    const headers = { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
+    const { idempotencyKey, ...requestOptions } = options;
+    const headers = {
+      ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      ...(requestOptions.headers || {}),
+    };
     if (state.token) headers.Authorization = `Bearer ${state.token}`;
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...requestOptions, headers });
     const text = await response.text();
     let body = {};
     try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
@@ -42,23 +54,46 @@
   }
 
   async function loadCatalog() {
-    const [body, plans] = await Promise.all([api("/v1/images"), api("/v1/plans")]);
-    const select = $("image");
-    select.innerHTML = "";
-    (body.images || []).forEach((image) => {
+    const [imagesBody, plansBody, profilesBody] = await Promise.all([
+      api("/v1/images"),
+      api("/v1/plans"),
+      api("/v1/network-profiles"),
+    ]);
+    const imageSelect = $("image");
+    imageSelect.innerHTML = "";
+    (imagesBody.images || []).forEach((image) => {
       const option = document.createElement("option");
       option.value = image.image_id;
       option.textContent = `${image.image_id} · Golden ${image.template_vm_id}`;
-      select.append(option);
+      imageSelect.append(option);
     });
     const planSelect = $("plan");
     planSelect.innerHTML = "";
-    (plans.plans || []).forEach((plan) => {
+    (plansBody.plans || []).forEach((plan) => {
       const option = document.createElement("option");
       option.value = plan.plan_id;
       option.textContent = `${plan.plan_id} · ${plan.vcpus} vCPU · ${plan.memory_mb} MB · ${plan.disk_gb} GB`;
       planSelect.append(option);
     });
+    if ([...planSelect.options].some((option) => option.value === "kvm-2")) planSelect.value = "kvm-2";
+    const profileSelect = $("network-profile");
+    profileSelect.innerHTML = "";
+    (profilesBody.network_profiles || []).forEach((profile) => {
+      const option = document.createElement("option");
+      option.value = profile.profile_id;
+      option.disabled = profile.enabled === false;
+      option.textContent = `${profile.label} · ${profile.enabled === false ? "no configurado" : profile.network_mode}`;
+      profileSelect.append(option);
+    });
+    profileSelect.value = "lab_dhcp";
+    updateNetworkProfileHelp();
+  }
+
+  function updateNetworkProfileHelp() {
+    const profile = $("network-profile").value;
+    $("network-profile-help").textContent = profile === "prod_static"
+      ? "NetBox asignará la IP libre del /24 autorizado y x.x.x.1 será el gateway."
+      : "DHCP de laboratorio; no se envía una IP desde el consumidor.";
   }
 
   function renderWorkers(body) {
@@ -90,7 +125,7 @@
     }
     node.innerHTML = body.instances.map((instance) => `
       <div class="instance-row ${instance.instance_id === state.selectedId ? "selected" : ""}" data-instance-id="${escapeHtml(instance.instance_id)}">
-        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(instance.image)} · ${escapeHtml(instance.stack)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
+        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(instance.image_id || instance.image)} · ${escapeHtml(instance.stack)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
         <div class="instance-meta"><span class="badge ${statusClass(instance.status)}">${escapeHtml(instance.status)}</span><span class="pill">${escapeHtml(instance.power_state || "unknown")}</span></div>
       </div>`).join("");
     node.querySelectorAll("[data-instance-id]").forEach((item) => item.addEventListener("click", () => selectInstance(item.dataset.instanceId)));
@@ -120,17 +155,22 @@
       $("detail-status").className = `badge ${statusClass(instance.status)}`;
       $("detail-facts").innerHTML = [
         ["Instance ID", instance.instance_id], ["VMID", instance.vmid ?? "pendiente"],
-        ["Nodo", instance.node || "mng01"], ["Imagen", instance.image],
-        ["Stack", instance.stack], ["Plan", instance.spec.plan_id || "local"], ["vCPU", instance.spec.vcpus],
-        ["Memoria", `${instance.spec.memory_mb} MB`], ["Disco", `${instance.spec.disk_gb} GB`],
+        ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"],
+        ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image],
+        ["vCPU", instance.spec.vcpus], ["Memoria", `${instance.spec.memory_mb} MB`],
+        ["Disco", `${instance.spec.disk_gb} GB`],
       ].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
       $("operation-output").textContent = operationPayload(instance.latest_operation || { status: "sin operación" });
-      renderPower(instance.power_state, "Estado persistido; actualizando Proxmox…", true);
-      try {
-        const power = await api(`/v1/instances/${state.selectedId}/power`);
-        renderPower(power.power_state, power.blocked_reason || "Estado observado en Proxmox.", power.mutations_available);
-      } catch (error) {
-        renderPower(instance.power_state || "unknown", error.message, false);
+      if (instance.vmid && !["pending", "provisioning", "deleting", "deleted"].includes(instance.status)) {
+        renderPower(instance.power_state, "Estado persistido; actualizando Proxmox…", true);
+        try {
+          const power = await api(`/v1/instances/${state.selectedId}/power`);
+          renderPower(power.power_state, power.blocked_reason || "Estado observado en Proxmox.", power.mutations_available);
+        } catch (error) {
+          renderPower(instance.power_state || "unknown", error.message, false);
+        }
+      } else {
+        renderPower(instance.power_state || "unknown", "La instancia todavía está aprovisionándose.", false);
       }
       updateActionButtons(instance);
     } catch (error) { showToast(error.message, true); }
@@ -143,16 +183,16 @@
   }
 
   function updateActionButtons(instance) {
-    const disabled = instance.status === "deleted" || instance.status === "powering" || instance.status === "destroying";
-    document.querySelectorAll(".power-action").forEach((button) => { button.disabled = disabled; });
-    $("delete-button").disabled = disabled || instance.status === "pending" || instance.status === "planning" || instance.status === "applying";
+    const busy = ["pending", "provisioning", "deleting"].includes(instance.status);
+    document.querySelectorAll(".power-action").forEach((button) => { button.disabled = busy || instance.status === "deleted"; });
+    $("delete-button").disabled = busy || instance.status === "deleted";
   }
 
   async function pollOperation(operationId, instanceId = state.selectedId) {
     for (let attempt = 0; attempt < 180; attempt += 1) {
       const operation = await api(`/v1/operations/${operationId}`);
       $("operation-output").textContent = operationPayload(operation);
-      if (["succeeded", "failed", "uncertain"].includes(operation.status)) {
+      if (["completed", "failed", "uncertain"].includes(operation.status)) {
         if (instanceId) state.selectedId = instanceId;
         await loadInstances();
         await refreshDetail();
@@ -163,67 +203,75 @@
     throw new Error("La operación sigue activa; continúa observándola desde Operaciones.");
   }
 
-  async function createPlan(event) {
+  async function createInstance(event) {
     event.preventDefault();
     if (!state.token) return setMessage("create-message", "Autoriza primero la API.", true);
     const ssh = $("ssh-key").value.trim();
-    const rootPassword = $("root-password").value;
-    $("root-password").value = "";
-    const tags = $("tags").value.split(",").map((value) => value.trim()).filter(Boolean);
+    const password = $("root-password").value;
+    const commercialValues = ["customer-id", "customer-tag", "order-id", "product-id"].map((id) => $(id).value.trim());
+    const hasCommercialContext = commercialValues.some(Boolean);
+    if (hasCommercialContext && commercialValues.some((value) => !value)) {
+      return setMessage("create-message", "Completa los cuatro campos de trazabilidad comercial o déjalos vacíos.", true);
+    }
     const body = {
-      stack: $("stack").value,
-      spec: { name: $("name").value.trim(), image: $("image").value, plan_id: $("plan").value || undefined, network_mode: $("network").value, started: $("started").checked, ssh_public_keys: ssh ? [ssh] : [], root_password: rootPassword || undefined, tags },
+      name: $("name").value.trim(),
+      plan_id: $("plan").value,
+      image_id: $("image").value,
+      network_profile: $("network-profile").value,
+      access: { ssh_public_keys: ssh ? [ssh] : [] },
+      start_on_create: $("started").checked,
     };
+    if (password) body.access.root_password = password;
+    if (hasCommercialContext) {
+      body.commercial_context = {
+        customer_id: commercialValues[0], customer_tag: commercialValues[1],
+        order_id: commercialValues[2], product_id: commercialValues[3],
+      };
+    }
     try {
-      const result = await api("/v1/instances", { method: "POST", body: JSON.stringify(body) });
+      const result = await api("/v1/instances", {
+        method: "POST",
+        body: JSON.stringify(body),
+        idempotencyKey: newIdempotencyKey("console-create"),
+      });
       state.selectedId = result.instance_id;
-      state.planOperationId = result.operation_id;
-      $("apply-button").disabled = true;
-      setMessage("create-message", `Plan encolado: ${result.operation_id}`);
+      setMessage("create-message", `Instancia encolada: ${result.job_id || result.operation_id}`);
       const operation = await pollOperation(result.operation_id, result.instance_id);
-      if (operation.status === "succeeded") {
-        $("apply-button").disabled = false;
-        setMessage("create-message", "Plan listo. Revisa la operación y pulsa Aplicar plan.");
-      } else setMessage("create-message", `El plan terminó en ${operation.status}.`, true);
-    } catch (error) { setMessage("create-message", error.message, true); }
-  }
-
-  async function applyPlan() {
-    if (!state.selectedId) return;
-    try {
-      const result = await api(`/v1/instances/${state.selectedId}/provision`, { method: "POST", body: JSON.stringify({ plan_operation_id: state.planOperationId }) });
-      $("apply-button").disabled = true;
-      setMessage("create-message", `Apply encolado: ${result.operation_id}`);
-      const operation = await pollOperation(result.operation_id, result.instance_id);
-      setMessage("create-message", `Apply terminó en ${operation.status}.`, operation.status !== "succeeded");
+      setMessage("create-message", `Aprovisionamiento terminó en ${operation.status}.`, operation.status !== "completed");
     } catch (error) { setMessage("create-message", error.message, true); }
   }
 
   async function powerAction(action) {
     if (!state.selectedId) return;
     try {
-      const result = await api(`/v1/instances/${state.selectedId}/power/${action}`, { method: "POST" });
+      const result = await api(`/v1/instances/${state.selectedId}/power/${action}`, {
+        method: "POST",
+        idempotencyKey: newIdempotencyKey(`console-${action}`),
+      });
       showToast(`${action} encolado.`);
       const operation = await pollOperation(result.operation_id);
-      if (operation.status === "succeeded") showToast(`${action} completado.`);
-      else showToast(`${action}: ${operation.error || operation.status}`, true);
+      if (operation.status === "completed") showToast(`${action} completado.`);
+      else showToast(`${action}: ${operation.error_code || operation.status}`, true);
     } catch (error) { showToast(error.message, true); }
   }
 
   async function destroyInstance() {
-    if (!state.selectedId || !window.confirm("¿Destruir esta instancia mediante Terraform?")) return;
+    if (!state.selectedId || !window.confirm("¿Destruir esta instancia?")) return;
     try {
-      const result = await api(`/v1/instances/${state.selectedId}`, { method: "DELETE" });
+      const result = await api(`/v1/instances/${state.selectedId}`, {
+        method: "DELETE",
+        idempotencyKey: newIdempotencyKey("console-destroy"),
+      });
       showToast("Destroy encolado.");
       const operation = await pollOperation(result.operation_id);
-      showToast(`Destroy terminó en ${operation.status}.`, operation.status !== "succeeded");
+      showToast(`Destroy terminó en ${operation.status}.`, operation.status !== "completed");
     } catch (error) { showToast(error.message, true); }
   }
 
   function statusClass(status) {
-    if (["succeeded", "ready", "idle", "stopped", "running"].includes(status)) return "ok";
-    if (["uncertain", "powering", "running"].includes(status)) return "warn";
-    if (["failed", "deleted"].includes(status)) return "error";
+    if (["completed", "ready", "idle", "running"].includes(status)) return "ok";
+    if (["queued", "provisioning", "uncertain", "stopped"].includes(status)) return "warn";
+    if (["failed", "deleted", "deleting"].includes(status)) return "error";
     return "muted";
   }
 
@@ -248,10 +296,10 @@
   }
 
   $("auth-form").addEventListener("submit", authorize);
-  $("instance-form").addEventListener("submit", createPlan);
-  $("apply-button").addEventListener("click", applyPlan);
+  $("instance-form").addEventListener("submit", createInstance);
   $("refresh-instances").addEventListener("click", loadInstances);
   $("refresh-observability").addEventListener("click", loadObservability);
+  $("network-profile").addEventListener("change", updateNetworkProfileHelp);
   $("refresh-detail").addEventListener("click", refreshDetail);
   $("delete-button").addEventListener("click", destroyInstance);
   document.querySelectorAll(".power-action").forEach((button) => button.addEventListener("click", () => powerAction(button.dataset.action)));

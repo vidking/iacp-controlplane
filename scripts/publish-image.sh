@@ -10,12 +10,15 @@ if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 2
 fi
 
+if [[ "${IACP_SKIP_COMPOSE_CHECK:-0}" != "1" ]]; then
+  docker compose config >/dev/null
+fi
+
 echo "Publicando ${repository}:${tag} para ${platform}"
 docker buildx build \
-  --file Dockerfile.technical \
   --platform "$platform" \
   --tag "${repository}:${tag}" \
-  --label "org.opencontainers.image.title=IACP Control Plane Técnico" \
+  --label "org.opencontainers.image.title=IACP Control Plane" \
   --label "org.opencontainers.image.version=${tag}" \
   --provenance=false \
   --load \

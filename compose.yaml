@@ -1,107 +1,155 @@
-name: iacp-controlplane
-
 services:
-  db:
-    image: postgres:17-alpine
+  postgres:
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-iacp}
+      POSTGRES_DB: ${POSTGRES_DB:-iacp_controlplane}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    secrets: [db_password]
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - iacp_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iacp} -d ${POSTGRES_DB:-iacp}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
-      retries: 6
-    restart: unless-stopped
-    networks: [backend]
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-    restart: unless-stopped
-    networks: [backend]
+      retries: 12
 
   api:
-    build: ./app
-    image: iacp/controlplane-api:bootstrap
-    environment: &app_env
-      POSTGRES_DB: ${POSTGRES_DB:-iacp}
-      POSTGRES_USER: ${POSTGRES_USER:-iacp}
-      DATABASE_HOST: db
-      DATABASE_PASSWORD_FILE: /run/secrets/db_password
-      IACP_API_TOKEN_FILE: /run/secrets/api_token
-      CELERY_BROKER_URL: redis://redis:6379/0
-    secrets: [db_password, api_token]
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    environment:
+      IACP_DATABASE_URL: ${IACP_DATABASE_URL:?IACP_DATABASE_URL es obligatorio}
+      IACP_SECRET_ROOT: /var/lib/iacp-controlplane/operation-secrets
+      IACP_PUBLIC_URL: ${IACP_PUBLIC_URL:-https://iac.cyberfuel.com}
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      IACP_API_TOKEN: ${IACP_API_TOKEN:-}
+      IACP_REQUIRE_API_TOKEN: ${IACP_REQUIRE_API_TOKEN:-1}
+      # The API reads Proxmox only for physical network/power observation.
+      # Local deployments may provide these through the secret file or the
+      # environment; production deployments should use a secret manager.
+      IACP_PROXMOX_ENDPOINT: ${IACP_PROXMOX_ENDPOINT:-}
+      IACP_PROXMOX_API_TOKEN: ${IACP_PROXMOX_API_TOKEN:-}
+      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
+      IACP_ROOT_PASSWORD_MIN_LENGTH: ${IACP_ROOT_PASSWORD_MIN_LENGTH:-12}
+      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
+      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
+      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
+      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
+      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
+      IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-0}
+      IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
+      IACP_WORKER_STALE_SECONDS: ${IACP_WORKER_STALE_SECONDS:-900}
+    ports:
+      - "${IACP_API_PORT:-8080}:8080"
+    volumes:
+      - iacp_controlplane_data:/var/lib/iacp-controlplane
+      - ./terraform:/workspace/terraform:ro
+    secrets:
+      - proxmox_credentials
     depends_on:
-      db: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      migrate: {condition: service_completed_successfully}
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
-      interval: 20s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-    networks: [backend, frontend]
 
-  migrate:
-    build: ./app
-    image: iacp/controlplane-api:bootstrap
-    command: ["alembic", "upgrade", "head"]
-    environment: *app_env
-    secrets: [db_password]
-    depends_on:
-      db: {condition: service_healthy}
-    restart: "no"
-    networks: [backend]
-
-  worker:
-    build: ./app
-    image: iacp/controlplane-api:bootstrap
-    command: ["celery", "-A", "iacp.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
-    environment: *app_env
-    secrets: [db_password, api_token]
-    depends_on:
-      db: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      migrate: {condition: service_completed_successfully}
-    restart: unless-stopped
-    networks: [backend, egress]
-
-  traefik:
-    image: traefik:v3.1
+  worker-1:
+    build: .
+    image: ${IACP_WORKER_IMAGE:-iacp-controlplane:local}
+    command: python -m worker.main --worker-id worker-1
+    # Compose monta el secreto con los permisos del archivo de origen; el worker
+    # necesita leerlo para que Terraform autentique contra Proxmox.
+    user: "0:0"
+    environment:
+      IACP_DATABASE_URL: ${IACP_DATABASE_URL:?IACP_DATABASE_URL es obligatorio}
+      IACP_SECRET_ROOT: /var/lib/iacp-controlplane/operation-secrets
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
+      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
+      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
+      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
+      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
+      IACP_NETBOX_ALLOCATION_TAG: ${IACP_NETBOX_ALLOCATION_TAG:-ocupada}
+      IACP_NETBOX_GATEWAY_TAG: ${IACP_NETBOX_GATEWAY_TAG:-reservada}
+      IACP_NETBOX_TOKEN: ${IACP_NETBOX_TOKEN:-}
+      IACP_NETBOX_VERIFY_TLS: ${IACP_NETBOX_VERIFY_TLS:-1}
+      IACP_NETBOX_CA_FILE: ${IACP_NETBOX_CA_FILE:-}
+      IACP_NETBOX_TIMEOUT: ${IACP_NETBOX_TIMEOUT:-15}
+      IACP_NETBOX_RETRY_ATTEMPTS: ${IACP_NETBOX_RETRY_ATTEMPTS:-3}
+      IACP_VMID_MIN: ${IACP_VMID_MIN:-40001}
+      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
+      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
+      IACP_OPERATION_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
+      IACP_RECOVERY_SCAN_SECONDS: ${IACP_RECOVERY_SCAN_SECONDS:-15}
+      IACP_WORKER_POLL_SECONDS: ${IACP_WORKER_POLL_SECONDS:-0.5}
+      IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
+      IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
+      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
     volumes:
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-    ports:
-      - "127.0.0.1:8080:8080"
+      - iacp_controlplane_data:/var/lib/iacp-controlplane
+      - ./terraform:/workspace/terraform:ro
+    secrets:
+      - proxmox_credentials
     depends_on:
-      api: {condition: service_healthy}
-    restart: unless-stopped
-    networks: [frontend]
+      api:
+        condition: service_healthy
+
+  worker-2:
+    build: .
+    image: ${IACP_WORKER_IMAGE:-iacp-controlplane:local}
+    command: python -m worker.main --worker-id worker-2
+    user: "0:0"
+    environment:
+      IACP_DATABASE_URL: ${IACP_DATABASE_URL:?IACP_DATABASE_URL es obligatorio}
+      IACP_SECRET_ROOT: /var/lib/iacp-controlplane/operation-secrets
+      IACP_TERRAFORM_PATH: /workspace/terraform
+      IACP_TERRAFORM_DIR: environments/mng01
+      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
+      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
+      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
+      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
+      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
+      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
+      IACP_NETBOX_ALLOCATION_TAG: ${IACP_NETBOX_ALLOCATION_TAG:-ocupada}
+      IACP_NETBOX_GATEWAY_TAG: ${IACP_NETBOX_GATEWAY_TAG:-reservada}
+      IACP_NETBOX_TOKEN: ${IACP_NETBOX_TOKEN:-}
+      IACP_NETBOX_VERIFY_TLS: ${IACP_NETBOX_VERIFY_TLS:-1}
+      IACP_NETBOX_CA_FILE: ${IACP_NETBOX_CA_FILE:-}
+      IACP_NETBOX_TIMEOUT: ${IACP_NETBOX_TIMEOUT:-15}
+      IACP_NETBOX_RETRY_ATTEMPTS: ${IACP_NETBOX_RETRY_ATTEMPTS:-3}
+      IACP_VMID_MIN: ${IACP_VMID_MIN:-40001}
+      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
+      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
+      IACP_OPERATION_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
+      IACP_RECOVERY_SCAN_SECONDS: ${IACP_RECOVERY_SCAN_SECONDS:-15}
+      IACP_WORKER_POLL_SECONDS: ${IACP_WORKER_POLL_SECONDS:-0.5}
+      IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
+      IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
+      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
+    volumes:
+      - iacp_controlplane_data:/var/lib/iacp-controlplane
+      - ./terraform:/workspace/terraform:ro
+    secrets:
+      - proxmox_credentials
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  backend:
-    internal: true
-  frontend:
-  egress: # Ruta de salida del worker; aplicar egress filtering hacia Proxmox/Wasabi al activar IaC
+  iacp_postgres_data:
+  iacp_controlplane_data:
 
 secrets:
-  db_password:
-    file: ./secrets/db_password
-  api_token:
-    file: ./secrets/api_token
+  proxmox_credentials:
+    file: ${IACP_PROXMOX_CREDENTIALS_FILE:-./secrets/proxmox_credentials.example.json}

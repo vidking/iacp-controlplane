@@ -25,6 +25,13 @@ variable "allowed_nodes" {
   }
 }
 
+variable "root_password" {
+  description = "Contraseña sensible de la cuenta cloud-init definida por la Golden Image."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 variable "instance" {
   description = "Contrato de aprovisionamiento de una instancia KVM."
   nullable    = false
@@ -59,6 +66,7 @@ variable "instance" {
     cpu_hotplugged         = optional(number, null)
     memory_mb              = optional(number, 2048)
     network_bridge         = string
+    network_model          = optional(string, "virtio")
     network_mode           = optional(string, "dhcp")
     vlan_id                = optional(number, null)
     ipv4_cidr              = optional(string, null)

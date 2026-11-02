@@ -1,28 +1,15 @@
 .env
-secrets/*
-!secrets/.gitkeep
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
-
-# Variables y secretos
 .env.*
-!.env.technical.example
 !.env.example
-!.env.dev.example
-!.env.server.example
-*.pem
-*.key
-
-# Terraform: no guardar estados ni planes
+__pycache__/
+.pytest_cache/
+.venv/
+*.egg-info/
 .terraform/
 *.tfstate
 *.tfstate.*
-*.tfplan
-*.tfvars
-*.tfvars.json
-
-# Artefactos operativos
-*.log
-backups/
+crash.log
+data/
+logs/
+secrets/*
+!secrets/proxmox_credentials.example.json

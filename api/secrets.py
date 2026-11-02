@@ -1,25 +1,49 @@
-"""Cifrado efímero de credenciales técnicas de Guest Initialization."""
-
 import os
 from pathlib import Path
 
-from cryptography.fernet import Fernet, InvalidToken
 
-
-def _key() -> bytes:
-    path = os.getenv("IACP_ACCESS_ENCRYPTION_KEY_FILE", "/run/secrets/access_encryption_key")
-    raw = Path(path).read_bytes().strip()
-    if not raw:
-        raise RuntimeError("ACCESS_ENCRYPTION_KEY_MISSING")
-    return raw
-
-
-def encrypt_secret(value: str) -> str:
-    return Fernet(_key()).encrypt(value.encode("utf-8")).decode("ascii")
-
-
-def decrypt_secret(value: str) -> str:
+def secret_root() -> Path:
+    root = Path(os.getenv("IACP_SECRET_ROOT", "/var/lib/iacp-controlplane/operation-secrets"))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
-        return Fernet(_key()).decrypt(value.encode("ascii")).decode("utf-8")
-    except (InvalidToken, UnicodeError, ValueError) as error:
-        raise RuntimeError("ACCESS_SECRET_INVALID") from error
+        root.chmod(0o700)
+    except OSError:
+        pass
+    return root
+
+
+def secret_path(operation_id: str) -> Path:
+    return secret_root() / f"{operation_id}.root_password"
+
+
+def write_secret(operation_id: str, value: str) -> Path:
+    path = secret_path(operation_id)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(value)
+            handle.write("\n")
+    except Exception:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def read_secret(path: str | None) -> str | None:
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as handle:
+        return handle.read().rstrip("\n")
+
+
+def delete_secret(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass

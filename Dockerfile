@@ -1,0 +1,35 @@
+FROM hashicorp/terraform:1.16.6 AS terraform
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    IACP_TERRAFORM_PATH=/app/terraform \
+    IACP_TERRAFORM_DIR=environments/mng01 \
+    IACP_LOCAL_TERRAFORM_DIR=fixtures/local \
+    IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog.json \
+    IACP_SECRET_ROOT=/var/lib/iacp-controlplane/operation-secrets
+
+RUN groupadd --system iacp && useradd --system --gid iacp --home-dir /app iacp
+COPY --from=terraform /bin/terraform /usr/local/bin/terraform
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir \
+    "fastapi==0.115.12" \
+    "uvicorn[standard]==0.34.2" \
+    "pydantic==2.11.3" \
+    "psycopg[binary]==3.2.10"
+COPY api ./api
+COPY worker ./worker
+COPY terraform ./terraform
+RUN mkdir -p /tmp/terraform-plugin-cache /var/lib/iacp-controlplane/operation-secrets /workspace/terraform && \
+    cd /app/terraform/environments/mng01 && \
+    TF_PLUGIN_CACHE_DIR=/tmp/terraform-plugin-cache \
+      terraform init -input=false -no-color -backend=false -lockfile=readonly && \
+    rm -rf /tmp/terraform-plugin-cache && \
+    chown -R iacp:iacp /app /var/lib/iacp-controlplane /workspace
+USER iacp
+
+EXPOSE 8080
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

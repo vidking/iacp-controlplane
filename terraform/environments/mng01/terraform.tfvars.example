@@ -1,0 +1,28 @@
+environment  = "mng01"
+allowed_nodes = ["mng01"]
+
+instance = {
+  vm_name                = "example-vm"
+  vm_id                  = 0
+  node_name              = "mng01"
+  template_vm_id         = 29000
+  template_node_name     = "mng01"
+  cpu_cores              = 2
+  cpu_type               = "x86-64-v4"
+  cpu_flags              = ["+aes"]
+  cpu_sockets            = 1
+  numa                   = true
+  cpu_hotplugged         = 2
+  memory_mb              = 2048
+  network_bridge         = "vmbr0"
+  network_mode           = "dhcp"
+  vlan_id                = null
+  ipv4_cidr              = null
+  ipv4_gateway           = null
+  cloudinit_datastore_id = "local-lvm"
+  cloudinit_username     = "root"
+  ssh_public_keys        = ["ssh-ed25519 AAAA... reemplazar"]
+  guest_agent_enabled    = false
+  started                = false
+  tags                   = ["iacp", "mng01"]
+}

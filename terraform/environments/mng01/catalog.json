@@ -3,34 +3,10 @@
   "node": "mng01",
   "storage": "DS_CYBERFUEL",
   "plans": [
-    {
-      "plan_id": "kvm-1",
-      "name": "KVM 1",
-      "vcpus": 1,
-      "memory_mb": 2048,
-      "disk_gb": 50
-    },
-    {
-      "plan_id": "kvm-2",
-      "name": "KVM 2",
-      "vcpus": 2,
-      "memory_mb": 4096,
-      "disk_gb": 100
-    },
-    {
-      "plan_id": "kvm-3",
-      "name": "KVM 3",
-      "vcpus": 4,
-      "memory_mb": 8192,
-      "disk_gb": 200
-    },
-    {
-      "plan_id": "kvm-4",
-      "name": "KVM 4",
-      "vcpus": 8,
-      "memory_mb": 16384,
-      "disk_gb": 400
-    }
+    {"plan_id": "kvm-1", "vcpus": 1, "memory_mb": 2048, "disk_gb": 50},
+    {"plan_id": "kvm-2", "vcpus": 2, "memory_mb": 4096, "disk_gb": 100},
+    {"plan_id": "kvm-3", "vcpus": 4, "memory_mb": 8192, "disk_gb": 200},
+    {"plan_id": "kvm-4", "vcpus": 8, "memory_mb": 16384, "disk_gb": 400}
   ],
   "images": [
     {
@@ -39,7 +15,7 @@
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "ubuntu-2404",
-      "cloudinit_username": "ubuntu",
+      "cloudinit_username": "root",
       "minimum_vcpus": 1,
       "minimum_memory_mb": 512,
       "minimum_disk_gb": 20
@@ -50,7 +26,7 @@
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "ubuntu-2604",
-      "cloudinit_username": "ubuntu",
+      "cloudinit_username": "root",
       "minimum_vcpus": 1,
       "minimum_memory_mb": 2048,
       "minimum_disk_gb": 20
@@ -61,6 +37,7 @@
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "almalinux-9",
+      "network_model": "e1000",
       "cloudinit_username": "root",
       "minimum_vcpus": 1,
       "minimum_memory_mb": 2048,
