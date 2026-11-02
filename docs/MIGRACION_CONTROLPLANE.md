@@ -322,6 +322,10 @@ condicionada a certificación integral PASS. La ruta legacy permanece activa.
 Registro del 2 de noviembre de 2026. Dictamen: **BLOCKED; no desplegar ni
 activar rutas**.
 
+- **PASS — suite local automatizada:** 75 pruebas pasaron contra PostgreSQL
+  17.6 temporal en un contenedor con almacenamiento `tmpfs`; se retiró al
+  terminar. Hubo tres advertencias deprecadas de Starlette/FastAPI. No fueron
+  pruebas físicas del clúster MNG ni escribieron en Wasabi.
 - El 404 registrado arriba correspondía al nombre anterior
   `cyberfuel-iacp-tfstate-lab`. El usuario confirmó que Wasabi renombró el
   bucket a `iacp-cyberfuel` y autorizó purgar permanentemente todos sus objetos,
