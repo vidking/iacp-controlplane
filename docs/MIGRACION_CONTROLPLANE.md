@@ -568,3 +568,29 @@ Con la llave actual se obtuvieron estos resultados de solo lectura:
 - **Sin purga:** no se envió ninguna solicitud de borrado. Las reglas runtime
   ya son efectivas; las reglas temporales de inventario amplio y borrado de
   versiones todavía no lo son para la llave cargada en `prod.env`.
+
+### Purga autorizada ejecutada — 2 de noviembre de 2026
+
+Tras la confirmación del usuario de limitar la operación al bucket
+`iacp-cyberfuel`, la llave actual permitió inventariar todo el bucket. Se
+eliminaron sus objetos y todas sus versiones y marcadores de borrado:
+
+| Evidencia | Antes | Después |
+| --- | ---: | ---: |
+| Objetos actuales | 75 | 0 |
+| Versiones | 1,049 | 0 |
+| Marcadores de borrado | 823 | 0 |
+
+La comprobación posterior se hizo con `ListObjectsV2` y `ListObjectVersions`
+sin prefijo; ambas devolvieron cero elementos para `iacp-cyberfuel`. No se
+consultó ni modificó el bucket `veeam` ni otro bucket. No se cambiaron VMs,
+servicios ni la base de datos.
+
+La política de la llave compartida conserva temporalmente los permisos amplios
+de inventario y `s3:DeleteObjectVersion`. Antes de iniciar el runtime de
+producción, retirar de la política asociada a esa llave las reglas
+`IACPBroadInventoryTemporary` e `IACPDeleteVersionsTemporary`; mantener las
+reglas de runtime restringidas a `iacp/prod-runtime-v1`. El endpoint IAM no
+permite editar la política con esta llave, así que la retirada debe hacerse en
+la consola Wasabi. Después se volverá a verificar el acceso limitado al
+prefijo de producción.
