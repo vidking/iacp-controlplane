@@ -4,6 +4,18 @@ El manifiesto para el runtime migrado está en
 `deploy/portainer/docker-compose.yml`. La API se publica bajo
 `https://iac.cyberfuel.com` y mantiene el contrato `/v1`.
 
+## Estado de promoción
+
+Este manifiesto es un candidato de integración. El procedimiento
+`scripts/iacpctl` y `scripts/go_live.py` disponible en la referencia legacy
+`archive/controlplane-legacy-main-20261101` valida el Compose y el esquema
+anteriores; todavía no está adaptado a este runtime de API, dos workers y
+PostgreSQL. Antes de desplegarlo en el IACP Control Plane (VM 104), hay que
+portar y revisar sus controles de inventario, salud, backup, drenado, locks,
+rollback y evidencia para este manifiesto, además de comprobar el estado real
+del runtime. El dictamen actual está en
+[`MIGRACION_RUNTIME_API_V1_20261101.md`](auditorias/MIGRACION_RUNTIME_API_V1_20261101.md).
+
 ## Preparación
 
 1. Confirmar que el registry `scm.cyberfuel.com` está configurado en Portainer.
