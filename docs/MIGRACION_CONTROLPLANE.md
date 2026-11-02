@@ -545,3 +545,13 @@ documenta la administración IAM en
 [IAM and STS Support](https://docs.wasabi.com/apidocs/iam-and-sts-support) y el
 borrado permanente por `versionId` en
 [Deleting Object Versions](https://docs.wasabi.com/docs/how-do-i-delete-old-object-versions).
+
+### Revalidación posterior del alcance de la política — 2 de noviembre de 2026
+
+La política compartida limita sus recursos a `iacp-cyberfuel`; el bucket
+`veeam` no está incluido. Sin embargo, con la llave que actualmente está en
+`prod.env`, `ListObjectsV2` para `iacp/prod-runtime-v1/` y `ListObjectVersions`
+para todo `iacp-cyberfuel` responden HTTP 403 `AccessDenied`. No se inició la
+purga. La política completa debe quedar asociada al principal dueño de esa
+misma llave y conservar, además de las reglas runtime, las reglas temporales
+`IACPBroadInventoryTemporary` e `IACPDeleteVersionsTemporary` indicadas arriba.
