@@ -148,6 +148,14 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     api_service = config["services"]["api"]
     api_networks = api_service.get("networks", {})
     proxy_aliases = api_networks.get("proxy", {}).get("aliases", []) if isinstance(api_networks, dict) else []
+    postgres_networks = config["services"]["postgres"].get("networks", {})
+    if (
+        not isinstance(api_networks, dict)
+        or not isinstance(postgres_networks, dict)
+        or "internal" not in api_networks
+        or "internal" not in postgres_networks
+    ):
+        raise GateError("La API y PostgreSQL deben compartir la red interna del stack")
     proxy_name = config.get("networks", {}).get("proxy", {}).get("name")
     if data["service_alias"] not in proxy_aliases or proxy_name != data["proxy_network"]:
         raise GateError("La API no tiene el alias esperado en la red compartida de Traefik")

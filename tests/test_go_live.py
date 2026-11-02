@@ -61,10 +61,11 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
             "POSTGRES_DB": database_name,
             "POSTGRES_USER": "iacp_test",
             "POSTGRES_PASSWORD": database_password,
-        }
+        },
+        "networks": {"internal": {}},
     }
     alias = "iacp-controlplane-api-prod" if stage == "production" else "iacp-controlplane-api-dev"
-    services["api"]["networks"] = {"proxy": {"aliases": [alias]}}
+    services["api"]["networks"] = {"internal": {}, "proxy": {"aliases": [alias]}}
     services["api"]["extra_hosts"] = ["mng01.cyberfuel.com=192.0.2.10"]
     services["worker-1"]["environment"] = worker_environment
     services["worker-2"]["environment"] = worker_environment
@@ -124,6 +125,14 @@ def test_development_rejects_wasabi_credentials(tmp_path):
             _configuration(stage="develop", include_aws=True),
             _private_env(tmp_path),
         )
+
+
+def test_stack_rejects_api_and_postgres_on_separate_internal_networks(tmp_path):
+    config = _configuration()
+    config["services"]["postgres"].pop("networks")
+
+    with pytest.raises(go_live.GateError, match="API y PostgreSQL deben compartir"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
 
 
 def test_development_configuration_passes_without_wasabi(tmp_path):

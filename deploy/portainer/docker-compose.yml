@@ -56,6 +56,8 @@ services:
   postgres:
     image: postgres:17.6
     restart: unless-stopped
+    networks:
+      - internal
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iacp_controlplane}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
