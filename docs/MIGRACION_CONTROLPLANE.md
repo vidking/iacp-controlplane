@@ -366,3 +366,32 @@ inventario que muestre VM 104/106/29000, reconciliación física de las cinco
 operaciones inciertas, acceso administrativo a Wasabi para la purga autorizada,
 política de runtime limitada al prefijo, pruebas de state-lock y certificación
 integral PASS. Ninguno de esos gates se considera completado por este registro.
+
+## Revalidación de credenciales cargadas
+
+Registro del 2 de noviembre de 2026. Dictamen: **BLOCKED; no desplegar ni
+purgear**.
+
+- **PASS — almacenamiento seguro:** `dev.env`, `prod.env` y
+  `wasabi-admin.env` son `root:root`, modo `600`. Los dos stacks tienen el
+  mismo token MNG candidato; el archivo Wasabi contiene ambas claves y no se
+  monta en los contenedores.
+- **BLOCKED — token MNG:** `GET /cluster/resources?type=vm` autentica con HTTP
+  200 y devuelve 59 VMs. Hace visibles VM 106 y VM 29000, pero no VM 104. No se
+  ejecutó ninguna operación de escritura. La ACL del token debe permitir
+  `VM.Audit` sobre `/vms/104`, manteniendo las capacidades de modificación
+  limitadas al pool `iacp-lab`.
+- **BLOCKED — Wasabi:** una solicitud firmada `HEAD` al bucket nuevo y una
+  lectura `GetBucketVersioning` respondieron `403 AccessDenied` para la
+  credencial cargada como administrativa. La firma se contrastó con la llave
+  de runtime y el nombre anterior del bucket, que respondió `404 NoSuchBucket`.
+  No se listaron objetos ni versiones, no se modificaron políticas y no se
+  borró contenido.
+- **Sin cambios de runtime:** el API legacy del IACP Control Plane (VM 104)
+  continúa `healthy`, el upstream productivo sigue `http://api:8000`, no existe
+  la ruta dinámica de desarrollo y no hay contenedores candidatos activos.
+
+Para continuar, ajustar la ACL de auditoría de VM 104 para el token candidato o
+cargar una credencial Wasabi con permisos administrativos efectivos en
+`wasabi-admin.env`. La llave de runtime sigue separada y necesita permiso sobre
+el prefijo `iacp/prod-runtime-v1`. La purga autorizada permanece pendiente.
