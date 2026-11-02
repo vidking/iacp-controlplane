@@ -200,7 +200,7 @@ el almacén seguro del host. La configuración de runtime nueva se guardará en
 modo `600`; los valores de secretos no se guardan en Git ni en evidencias. El
 token MNG debe permitir leer el inventario completo del clúster MNG, incluidos
 VMID 104, 106 y 29000, y operar únicamente en el pool aislado autorizado. La
-credencial Wasabi debe acceder al bucket `cyberfuel-iacp-tfstate-lab` y al
+credencial Wasabi debe acceder al bucket `iacp-cyberfuel` y al
 prefijo nuevo `iacp/prod-runtime-v1`, sin alterar los objetos históricos.
 
 ## Procedimiento del candidato
@@ -255,3 +255,110 @@ repite inventario read-only, se verifica la visibilidad de los VMID protegidos,
 se prueba primero el stack de desarrollo y se ejecutan pruebas físicas aisladas
 en el clúster MNG, preferiblemente en `mng01`. Solo un resultado integral PASS
 autoriza cambiar el upstream de `iac.cyberfuel.com`.
+
+## Revalidación para promoción
+
+Registro del 2 de noviembre de 2026, 14:11 CST. Dictamen: **BLOCKED; no
+desplegar ni cambiar el upstream**.
+
+### Versión y estado antes del corte
+
+- `origin/main` del repositorio canónico apunta a
+  `a4c1107949249fa5ec48e0142b2e260021e4e095`; es también la revisión de la API
+  que sigue ejecutándose en el IACP Control Plane (VM 104). El contenedor API
+  está `healthy` y el upstream de Traefik continúa en `http://api:8000`.
+- El candidato `8f9ee58352efe5fc5c04bf0168603b1b466ca39f` está construido solo en
+  el entorno local; la imagen no está publicada y ningún contenedor candidato
+  está activo en el IACP Control Plane (VM 104).
+- `origin/develop` canónico apunta a `451b9e7f6ae4105808bfe02f00d69922bf2cbe4a`.
+  El checkout canónico conserva cambios locales y no se modificó durante esta
+  revalidación.
+
+### Configuración de credenciales
+
+**PASS — copia privada preparada.** `/etc/iacp/stacks/dev.env` y
+`/etc/iacp/stacks/prod.env` coinciden con los archivos de origen legacy; ambos
+son `root:root` modo `600` bajo un directorio `root:root` modo `700`. Dev y
+producción tienen token API, contraseña PostgreSQL y token MNG; Wasabi solo se
+incluye en producción. No se imprimieron valores ni se guardaron secretos en
+Git. Esta comprobación confirma la copia, no la autorización de las credenciales.
+
+### Operaciones, colas y locks
+
+- La base principal conserva el esquema `0015_technical_access`, no presenta
+  operaciones activas y no tiene locks PostgreSQL pendientes ni advisory locks
+  activos.
+- La base técnica conserva el esquema `0001_technical_schema`: hay 15
+  operaciones `succeeded`, **5 `uncertain`**, cinco leases `released`, seis
+  workers `idle` y cero workers asociados a una operación actual.
+- Redis tiene cero elementos en listas de cola y cero locks pendientes con
+  nombre de lock. No se enviaron operaciones nuevas.
+- Las cinco operaciones inciertas siguen sin poder reconciliarse porque falta
+  un inventario físico autorizado del clúster MNG. Sus registros y leases se
+  conservan.
+
+### Gates externos
+
+| Gate | Resultado | Evidencia sin secretos |
+| --- | --- | --- |
+| Inventario MNG con credenciales de worker, Terraform y Lifecycle | BLOCKED | Los tres tokens responden HTTP 401 a la consulta de recursos VM. |
+| Inventario MNG con credencial de solo lectura | BLOCKED | HTTP 200, pero `cluster/resources?type=vm` devuelve cero VMs y no muestra los VMID protegidos 104, 106 y 29000. |
+| State nuevo en Wasabi | BLOCKED | `ListObjectsV2` al bucket/prefijo configurado responde HTTP 404 `NoSuchBucket`; no se escribió ningún objeto. |
+| Reconciliación de las cinco operaciones inciertas | BLOCKED | No existe una fuente autorizada que permita contrastar las intenciones con el estado físico. |
+| Prueba física aislada y promoción | BLOCKED / NO EJECUTADA | No se inició el candidato, no se publicó su imagen y no se cambió Traefik. |
+
+### Acción requerida para reanudar
+
+Actualizar los permisos o credenciales MNG y Wasabi en el almacén seguro del
+IACP Control Plane (VM 104), sin enviar secretos por chat. Después, repetir el
+inventario read-only y verificar la visibilidad de los VMID protegidos; usar
+ese inventario para reconciliar las cinco operaciones inciertas; validar el
+bucket y el prefijo nuevo sin tocar objetos históricos; y solo entonces correr
+el piloto aislado en `mng01`. La promoción de `iac.cyberfuel.com` sigue
+condicionada a certificación integral PASS. La ruta legacy permanece activa.
+
+## Actualización: bucket y preparación de rutas
+
+Registro del 2 de noviembre de 2026. Dictamen: **BLOCKED; no desplegar ni
+activar rutas**.
+
+- El 404 registrado arriba correspondía al nombre anterior
+  `cyberfuel-iacp-tfstate-lab`. El usuario confirmó que Wasabi renombró el
+  bucket a `iacp-cyberfuel` y autorizó purgar permanentemente todos sus objetos,
+  versiones y delete markers, sin respaldo. La autorización queda registrada;
+  no equivale a ejecución.
+- La llave Wasabi de runtime no tiene acceso visible al bucket nuevo: la
+  consulta `HeadBucket` responde HTTP 403. No se escribió, borró ni versionó
+  ningún objeto. La purga y el ajuste de política esperan acceso administrativo;
+  luego la llave de runtime deberá quedar limitada a `iacp/prod-runtime-v1`.
+- La purga autorizada sin respaldo elimina también la posibilidad de recuperar
+  versiones antiguas de Terraform state. Si se revierte el upstream al runtime
+  legacy, se podrá restaurar su código y API, pero los aprovisionamientos que
+  dependían del state anterior requerirán reconstrucción o reconciliación; el
+  rollback de runtime no equivale a recuperar datos.
+- El archivo candidato `/etc/iacp/stacks/prod.env` ya apunta a
+  `iacp-cyberfuel`. En `dev.env` y `prod.env`, el token MNG copiado del runtime
+  legacy fue reemplazado por un marcador fail-closed porque las credenciales de
+  worker, Terraform y Lifecycle reciben HTTP 401. La fuente legacy no se tocó.
+  Los archivos siguen `root:root`, modo `600`; la llave SSH pública de bootstrap
+  se copió desde el archivo público legacy. No se inició ningún stack candidato.
+- Desde el IACP Control Plane (VM 104), `mng01.cyberfuel.com` resuelve a
+  `192.168.1.113` y `mng02.cyberfuel.com` a `192.168.1.114`; SSH administrativo
+  al clúster MNG no está disponible. La credencial read-only anterior tampoco
+  muestra VMs ni los VMID protegidos. No se puede emitir el token dedicado de
+  candidato ni reconciliar las cinco operaciones `uncertain` con la evidencia
+  disponible.
+- Se añadió al candidato una plantilla Traefik aislada para
+  `dev.iac.cyberfuel.com`, con activación y retirada guardadas bajo evidencia.
+  Es un cambio local al worktree: no se instaló en el IACP Control Plane
+  (VM 104), no cambió el upstream de `iac.cyberfuel.com` y no afecta PRX.
+- El certificado TLS actual de `/etc/iacp/tls/certs/fullchain.pem` declara
+  `*.cyberfuel.com` y `cyberfuel.com`, pero no cubre `dev.iac.cyberfuel.com`.
+  `activate-develop` ahora valida SAN antes de instalar la ruta; se requiere un
+  certificado que incluya el hostname exacto o `*.iac.cyberfuel.com`.
+
+La ruta legacy de producción sigue activa. El corte requiere token MNG nuevo,
+inventario que muestre VM 104/106/29000, reconciliación física de las cinco
+operaciones inciertas, acceso administrativo a Wasabi para la purga autorizada,
+política de runtime limitada al prefijo, pruebas de state-lock y certificación
+integral PASS. Ninguno de esos gates se considera completado por este registro.

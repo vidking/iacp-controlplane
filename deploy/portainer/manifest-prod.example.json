@@ -7,7 +7,7 @@
   "service_alias": "iacp-controlplane-api-prod",
   "proxy_network": "proxy_network",
   "backend": "s3",
-  "state_bucket": "cyberfuel-iacp-tfstate-lab",
+  "state_bucket": "iacp-cyberfuel",
   "state_prefix": "iacp/prod-runtime-v1",
   "max_concurrent": 1,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",

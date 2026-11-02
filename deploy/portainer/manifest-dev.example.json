@@ -12,5 +12,7 @@
   "max_concurrent": 1,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
   "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
-  "dynamic_config": "/etc/iacp/tls/dynamic/dev-iacp.yml"
+  "dynamic_config": "/etc/iacp/tls/dynamic/dev-iac.yml",
+  "tls_certificate_file": "/etc/iacp/tls/certs/fullchain.pem",
+  "route_template": "deploy/portainer/traefik-dev.yml"
 }

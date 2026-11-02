@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import stat
+from urllib.error import HTTPError
 
 import pytest
 
@@ -11,7 +12,7 @@ IMAGE_TAG = "a" * 40
 IMAGE_REPOSITORY = "scm.cyberfuel.com/cyberfuel/iacp-controlplane"
 
 
-def _configuration(*, stage="production", bucket="cyberfuel-iacp-tfstate-lab", prefix="iacp/prod-runtime-v1", include_aws=True):
+def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/prod-runtime-v1", include_aws=True):
     backend = "s3" if stage == "production" else "local"
     database_name = "iacp_controlplane" if stage == "production" else "iacp_controlplane_dev"
     database_password = "postgres-password-with-entropy"
@@ -31,6 +32,8 @@ def _configuration(*, stage="production", bucket="cyberfuel-iacp-tfstate-lab", p
         "IACP_PROXMOX_MNG_API_TOKEN": "proxmox-token-with-entropy",
         "IACP_TERRAFORM_BACKEND": backend,
         "IACP_TFSTATE_BUCKET": bucket if stage == "production" else "",
+        "IACP_TFSTATE_ENDPOINT": "https://s3.us-east-1.wasabisys.com",
+        "IACP_TFSTATE_REGION": "us-east-1",
         "IACP_TFSTATE_PREFIX": prefix if stage == "production" else "",
         "IACP_PROXY_NETWORK": "proxy_network",
         "IACP_BUILD_REVISION": IMAGE_TAG,
@@ -82,7 +85,7 @@ def _manifest(stage="production", **overrides):
         "service_alias": "iacp-controlplane-api-prod" if stage == "production" else "iacp-controlplane-api-dev",
         "proxy_network": "proxy_network",
         "backend": "s3" if stage == "production" else "local",
-        "state_bucket": "cyberfuel-iacp-tfstate-lab" if stage == "production" else "",
+        "state_bucket": "iacp-cyberfuel" if stage == "production" else "",
         "state_prefix": "iacp/prod-runtime-v1" if stage == "production" else "",
         "max_concurrent": 1,
         "image_repository": IMAGE_REPOSITORY,
@@ -131,6 +134,70 @@ def test_production_rejects_unexpected_state_prefix(tmp_path):
     manifest = _manifest(state_prefix="iac/old")
     with pytest.raises(go_live.GateError, match="prefijo de state"):
         go_live._check_policy(manifest, _configuration(), _private_env(tmp_path))
+
+
+def test_production_rejects_old_wasabi_bucket_name(tmp_path):
+    with pytest.raises(go_live.GateError, match="bucket de producción"):
+        go_live._check_policy(
+            _manifest(state_bucket="cyberfuel-iacp-tfstate-lab"),
+            _configuration(bucket="cyberfuel-iacp-tfstate-lab"),
+            _private_env(tmp_path),
+        )
+
+
+def test_preflight_rejects_candidate_without_a_dedicated_mng_token(tmp_path):
+    config = _configuration()
+    config["services"]["api"]["environment"]["IACP_PROXMOX_MNG_API_TOKEN"] = (
+        "REEMPLAZAR_CON_TOKEN_MNG_EXCLUSIVO_DEL_CANDIDATO"
+    )
+    with pytest.raises(go_live.GateError, match="IACP_PROXMOX_MNG_API_TOKEN"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
+
+
+def test_wasabi_preflight_checks_only_the_approved_prefix(monkeypatch):
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, *_):
+            return b"<ListBucketResult><Name>iacp-cyberfuel</Name><Prefix>iacp/prod-runtime-v1/</Prefix></ListBucketResult>"
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(go_live, "urlopen", fake_urlopen)
+    result = go_live._check_wasabi_prefix(_manifest(), _configuration())
+
+    assert result == {
+        "bucket": "iacp-cyberfuel",
+        "prefix": "iacp/prod-runtime-v1",
+        "list_access": "PASS",
+        "writes_performed": False,
+    }
+    assert "prefix=iacp%2Fprod-runtime-v1%2F" in captured["url"]
+    assert "Credential=access-key-value/" in captured["authorization"]
+    assert "secret-key-value" not in captured["authorization"]
+    assert captured["timeout"] == 15
+
+
+def test_wasabi_preflight_reports_denied_access_without_leaking_credentials(monkeypatch):
+    def denied(*args, **kwargs):
+        raise HTTPError("https://s3.us-east-1.wasabisys.com/iacp-cyberfuel", 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(go_live, "urlopen", denied)
+    with pytest.raises(go_live.GateError, match="HTTP 403") as error:
+        go_live._check_wasabi_prefix(_manifest(), _configuration())
+    assert "secret-key-value" not in str(error.value)
 
 
 def test_env_file_must_be_mode_600(tmp_path):
@@ -236,6 +303,125 @@ def test_upstream_swap_rejects_unexpected_route_without_changes(tmp_path):
         go_live._swap_upstream(route, evidence, "http://iacp-controlplane-api-prod:8080", "http://api:8000")
     assert route.read_text(encoding="utf-8") == original
     assert not (evidence / "traefik-before.yml").exists()
+
+
+def test_development_route_install_is_safe_and_idempotent(tmp_path):
+    dynamic = tmp_path / "dynamic"
+    dynamic.mkdir()
+    production_route = dynamic / "iacp.yml"
+    production_route.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://api:8000\n",
+        encoding="utf-8",
+    )
+    production_route.chmod(0o640)
+    route = dynamic / "dev-iac.yml"
+    template = go_live.ROOT / "deploy/portainer/traefik-dev.yml"
+    evidence = go_live._new_evidence_dir(tmp_path / "install-evidence")
+
+    result = go_live._install_dev_route(route, production_route, template, evidence)
+
+    assert result["changed"] is True
+    assert route.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    assert stat.S_IMODE(route.stat().st_mode) == 0o640
+    assert stat.S_IMODE((evidence / "dev-route-installed.yml").stat().st_mode) == 0o600
+    assert not list(dynamic.glob(".iacp-dev-route-*"))
+
+    second_evidence = go_live._new_evidence_dir(tmp_path / "idempotent-evidence")
+    already_active = go_live._install_dev_route(route, production_route, template, second_evidence)
+    assert already_active["changed"] is False
+    assert already_active["already_active"] is True
+
+
+def test_development_route_refuses_to_replace_operator_configuration(tmp_path):
+    dynamic = tmp_path / "dynamic"
+    dynamic.mkdir()
+    production_route = dynamic / "iacp.yml"
+    production_route.write_text("http: {}\n", encoding="utf-8")
+    route = dynamic / "dev-iac.yml"
+    original = "http:\n  routers:\n    operator-route: {}\n"
+    route.write_text(original, encoding="utf-8")
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+
+    with pytest.raises(go_live.GateError, match="contenido distinto"):
+        go_live._install_dev_route(
+            route,
+            production_route,
+            go_live.ROOT / "deploy/portainer/traefik-dev.yml",
+            evidence,
+        )
+
+    assert route.read_text(encoding="utf-8") == original
+
+
+def test_development_route_removal_only_removes_managed_content(tmp_path):
+    dynamic = tmp_path / "dynamic"
+    dynamic.mkdir()
+    route = dynamic / "dev-iac.yml"
+    template = go_live.ROOT / "deploy/portainer/traefik-dev.yml"
+    route.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+
+    result = go_live._remove_dev_route(route, template, evidence)
+
+    assert result["changed"] is True
+    assert not route.exists()
+    assert (evidence / "dev-route-before-removal.yml").read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    assert stat.S_IMODE((evidence / "dev-route-before-removal.yml").stat().st_mode) == 0o600
+
+
+def test_development_activation_removes_new_route_when_external_readiness_fails(tmp_path, monkeypatch):
+    dynamic = tmp_path / "dynamic"
+    dynamic.mkdir()
+    production_route = dynamic / "iacp.yml"
+    production_route.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://api:8000\n",
+        encoding="utf-8",
+    )
+    route = dynamic / "dev-iac.yml"
+    template = go_live.ROOT / "deploy/portainer/traefik-dev.yml"
+    certificate = tmp_path / "fullchain.pem"
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+    manifest = {
+        "stage": "develop",
+        "domain": "dev.iac.cyberfuel.com",
+        "service_alias": "iacp-controlplane-api-dev",
+        "dynamic_config": "/etc/iacp/tls/dynamic/dev-iac.yml",
+        "tls_certificate_file": "/etc/iacp/tls/certs/fullchain.pem",
+        "route_template": "deploy/portainer/traefik-dev.yml",
+        "image_tag": IMAGE_TAG,
+    }
+    monkeypatch.setattr(go_live, "_develop_route_paths", lambda *_: (route, production_route, template, certificate))
+    monkeypatch.setattr(go_live.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(go_live, "_require_tls_hostname", lambda *_: None)
+
+    def unavailable(*args, **kwargs):
+        raise go_live.GateError("El dominio no devolvió readiness")
+
+    monkeypatch.setattr(go_live, "_check_external", unavailable)
+    with pytest.raises(go_live.GateError, match="se retiró automáticamente"):
+        go_live._activate_develop(manifest, evidence)
+
+    assert not route.exists()
+    assert (evidence / "dev-route-before-removal.yml").is_file()
+
+
+def test_development_route_content_is_bound_to_the_dev_service(tmp_path):
+    template = tmp_path / "route.yml"
+    approved = go_live.ROOT / "deploy/portainer/traefik-dev.yml"
+    template.write_text(
+        approved.read_text(encoding="utf-8").replace(
+            "http://iacp-controlplane-api-dev:8080", "http://api:8000"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(go_live.GateError, match="alias aprobado"):
+        go_live._dev_route_content(template)
+
+
+def test_tls_wildcards_cover_only_one_subdomain_label():
+    assert go_live._dns_pattern_matches("*.iac.cyberfuel.com", "dev.iac.cyberfuel.com")
+    assert go_live._dns_pattern_matches("iac.cyberfuel.com", "iac.cyberfuel.com")
+    assert not go_live._dns_pattern_matches("*.cyberfuel.com", "dev.iac.cyberfuel.com")
 
 
 def test_legacy_restore_gate_reads_docker_health_status(monkeypatch):

@@ -1,0 +1,51 @@
+http:
+  routers:
+    iacp-dev-admin:
+      rule: 'Host(`dev.iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || HeaderRegexp(`Origin`, `^(?:https://dev\.iac\.cyberfuel\.com)$`))'
+      priority: 10
+      entryPoints:
+        - websecure
+      service: iacp-dev-api
+      tls:
+        options: corporate
+      middlewares:
+        - internal-sources@file
+        - strip-identity@file
+        - root-tls-transport@file
+        - request-rate@file
+        - inflight@file
+        - body-limit@file
+        - iacp-dev-headers
+    iacp-dev-http:
+      rule: Host(`dev.iac.cyberfuel.com`)
+      entryPoints:
+        - webhttp
+      service: noop@internal
+      middlewares:
+        - internal-sources@file
+        - https-only@file
+  services:
+    iacp-dev-api:
+      loadBalancer:
+        servers:
+          - url: http://iacp-controlplane-api-dev:8080
+  middlewares:
+    iacp-dev-headers:
+      headers:
+        accessControlAllowOriginList:
+          - https://dev.iac.cyberfuel.com
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+        accessControlExposeHeaders:
+          - X-Request-ID
+        addVaryHeader: true
+        contentTypeNosniff: true
+        stsSeconds: 31536000
+        frameDeny: true
+        referrerPolicy: no-referrer

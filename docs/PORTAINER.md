@@ -40,11 +40,19 @@ cuando se configure y certifique; `dev.iac.cyberfuel.com` queda limitado a
 MNG.
 
 En el runtime productivo configura `IACP_RUNTIME_STAGE=production`,
-`IACP_TERRAFORM_BACKEND=s3`, el bucket `cyberfuel-iacp-tfstate-lab` y el prefijo
+`IACP_TERRAFORM_BACKEND=s3`, el bucket `iacp-cyberfuel` y el prefijo
 exacto `iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
 `IACP_WASABI_SECRET_ACCESS_KEY` se entregan solo a los workers para operar el
 backend. El endpoint se configura con HTTPS y path-style para Wasabi; Terraform
 usa un lock file S3. Revisa permisos y versionado del bucket antes del corte.
+El bucket se renombró a `iacp-cyberfuel`. El acceso actual de runtime recibe
+HTTP 403, por lo que no se debe ejecutar `deploy` ni aprovisionar hasta que la
+política permita operar el prefijo productivo. Se autorizó borrar todos los
+objetos y todas sus versiones del bucket, sin respaldo; esa purga requiere una
+credencial administrativa y no se ha ejecutado. Tras la purga, limita la llave
+de runtime a `iacp/prod-runtime-v1`. El `preflight` firma una consulta
+`ListObjectsV2` limitada a ese prefijo y no escribe objetos; el piloto físico
+debe certificar aparte la escritura, el lock S3 y su reconciliación.
 La guía oficial de Terraform describe la configuración parcial del backend S3
 y el lock file: [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
 Wasabi recomienda path-style para sus solicitudes S3:
@@ -102,3 +110,22 @@ anteriores fuera de este stack.
 No borres volúmenes, estados versionados, locks ni operaciones históricas para
 forzar un resultado. Los gates pendientes y el procedimiento del corte están
 en [`MIGRACION_CONTROLPLANE.md`](MIGRACION_CONTROLPLANE.md).
+
+## Ruta de desarrollo
+
+`deploy/portainer/traefik-dev.yml` define una ruta dinámica separada para
+`dev.iac.cyberfuel.com`. La activación requiere que el certificado TLS tenga
+`dev.iac.cyberfuel.com` o `*.iac.cyberfuel.com` en SAN; el certificado actual
+solo incluye `*.cyberfuel.com` y no cubre el subdominio anidado. La ruta reutiliza
+la lista de IPs internas, sanitización de headers, rate limit y límite de
+solicitudes; publica solo el alias `iacp-controlplane-api-dev`. La plantilla
+permite el origen web de dev y mantiene el endpoint limitado a MNG por la
+configuración del runtime.
+
+Después de desplegar y verificar el stack de desarrollo, `activate-develop`
+instala la plantilla atómicamente y confirma readiness y revisión servida. Si
+la comprobación externa falla después de crear la ruta, el script retira esa
+ruta. `disable-develop` retira únicamente el archivo que coincide exactamente
+con la plantilla aprobada; ante una edición manual, se detiene y conserva el
+archivo. Ambas acciones guardan evidencia privada. La ruta todavía no se ha
+instalado en el IACP Control Plane (VM 104).

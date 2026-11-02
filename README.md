@@ -15,7 +15,7 @@ el nombre IACP Control Plane y las rutas `/v1`.
 - Dos workers como máximo reclaman operaciones desde una cola PostgreSQL; un
   lock transaccional mantiene el límite global de concurrencia en 2.
 - Terraform administra el state de cada instancia. El runtime `production`
-  usa Wasabi S3 en `cyberfuel-iacp-tfstate-lab` con el prefijo
+  usa Wasabi S3 en `iacp-cyberfuel` con el prefijo
   `iacp/prod-runtime-v1`; `develop` usa state local persistido
   en su volumen de trabajo.
 - Los nodos, pools, credenciales, catálogos y directorios Terraform se resuelven

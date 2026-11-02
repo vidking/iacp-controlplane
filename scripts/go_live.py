@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -13,9 +15,12 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
-from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -200,7 +205,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     if stage == "production":
         if data["backend"] != "s3" or api_env.get("IACP_TERRAFORM_BACKEND") != "s3":
             raise GateError("Producción requiere backend S3")
-        if data["state_bucket"] != "cyberfuel-iacp-tfstate-lab" or api_env.get("IACP_TFSTATE_BUCKET") != data["state_bucket"]:
+        if data["state_bucket"] != "iacp-cyberfuel" or api_env.get("IACP_TFSTATE_BUCKET") != data["state_bucket"]:
             raise GateError("El bucket de producción no coincide con el aprobado")
         if data["state_prefix"].strip("/") != "iacp/prod-runtime-v1" or api_env.get("IACP_TFSTATE_PREFIX", "").strip("/") != data["state_prefix"].strip("/"):
             raise GateError("El prefijo de state no coincide con el aprobado")
@@ -209,6 +214,9 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
                 value = worker_env.get(key)
                 if not isinstance(value, str) or len(value.strip()) < 8 or "REEMPLAZAR" in value.upper():
                     raise GateError(f"Falta configurar la credencial de producción {key}")
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            if worker_envs[0].get(key) != worker_envs[1].get(key):
+                raise GateError("Las credenciales Wasabi deben coincidir entre ambos workers")
     else:
         if data["backend"] != "local" or api_env.get("IACP_TERRAFORM_BACKEND") != "local":
             raise GateError("Desarrollo debe conservar state local")
@@ -256,6 +264,109 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "enabled_environments": ["lab"],
         "prx_enabled": False,
     }
+
+
+def _check_wasabi_prefix(data: dict, config: dict) -> dict:
+    if (
+        data.get("stage") != "production"
+        or data.get("state_bucket") != "iacp-cyberfuel"
+        or str(data.get("state_prefix", "")).strip("/") != "iacp/prod-runtime-v1"
+    ):
+        raise GateError("La comprobación Wasabi está limitada al bucket y prefijo productivos aprobados")
+    api_env = _service_env(config, "api")
+    worker_env = _service_env(config, "worker-1")
+    endpoint = str(api_env.get("IACP_TFSTATE_ENDPOINT", ""))
+    region = str(api_env.get("IACP_TFSTATE_REGION", ""))
+    access_key = str(worker_env.get("AWS_ACCESS_KEY_ID", ""))
+    secret_key = str(worker_env.get("AWS_SECRET_ACCESS_KEY", ""))
+    parsed = urlsplit(endpoint)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "s3.us-east-1.wasabisys.com"
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or region != "us-east-1"
+    ):
+        raise GateError("El endpoint o la región Wasabi no coincide con la configuración aprobada")
+    if not access_key or not secret_key or any(ch.isspace() for ch in access_key + secret_key):
+        raise GateError("Las credenciales Wasabi no tienen un formato utilizable")
+
+    bucket = "iacp-cyberfuel"
+    prefix = "iacp/prod-runtime-v1/"
+    host = parsed.netloc
+    canonical_uri = "/" + quote(bucket, safe="-_.~")
+    parameters = {"list-type": "2", "max-keys": "1", "prefix": prefix}
+    canonical_query = "&".join(
+        f"{quote(key, safe='-_.~')}={quote(value, safe='-_.~')}"
+        for key, value in sorted(parameters.items())
+    )
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(b"").hexdigest()
+    canonical_headers = (
+        f"host:{host}\n"
+        f"x-amz-content-sha256:{payload_hash}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join((
+        "GET", canonical_uri, canonical_query, canonical_headers,
+        signed_headers, payload_hash,
+    ))
+    scope = f"{date_stamp}/{region}/s3/aws4_request"
+    string_to_sign = "\n".join((
+        "AWS4-HMAC-SHA256", amz_date, scope,
+        hashlib.sha256(canonical_request.encode()).hexdigest(),
+    ))
+
+    def sign(key: bytes, value: str) -> bytes:
+        return hmac.new(key, value.encode(), hashlib.sha256).digest()
+
+    signing_key = sign(sign(sign(sign(("AWS4" + secret_key).encode(), date_stamp), region), "s3"), "aws4_request")
+    signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    authorization = (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    url = urlunsplit((
+        parsed.scheme, parsed.netloc, canonical_uri, canonical_query, "",
+    ))
+    request = Request(
+        url,
+        headers={
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+            "Authorization": authorization,
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            body = response.read(65536)
+            status = response.status
+    except HTTPError as error:
+        raise GateError(f"Wasabi rechazó la lectura del prefijo (HTTP {error.code})") from error
+    except (OSError, URLError) as error:
+        raise GateError(f"No se pudo consultar el prefijo Wasabi ({type(error).__name__})") from error
+    if status != 200:
+        raise GateError(f"Wasabi rechazó la lectura del prefijo (HTTP {status})")
+    try:
+        root = ET.fromstring(body)
+        response_bucket = root.findtext("{*}Name")
+        response_prefix = root.findtext("{*}Prefix")
+    except ET.ParseError as error:
+        raise GateError("Wasabi no devolvió una respuesta ListObjectsV2 válida") from error
+    if response_bucket != bucket or response_prefix != prefix:
+        raise GateError("Wasabi devolvió un bucket o prefijo distinto del aprobado")
+    return {"bucket": bucket, "prefix": prefix.rstrip("/"), "list_access": "PASS", "writes_performed": False}
+
+
+def _check_runtime_backend(data: dict, config: dict) -> dict | None:
+    if data.get("stage") == "production":
+        return _check_wasabi_prefix(data, config)
+    return None
 
 
 def _new_evidence_dir(path: Path) -> Path:
@@ -314,6 +425,182 @@ def _swap_upstream(route: Path, evidence: Path, expected: str, target: str) -> d
     finally:
         os.close(directory_fd)
     return {"changed": True, "target": target}
+
+
+def _dev_route_content(template: Path) -> str:
+    try:
+        content = template.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(content) or {}
+        if not isinstance(parsed, dict) or set(parsed) != {"http"}:
+            raise TypeError("La plantilla debe contener solo HTTP dinámico")
+        http = parsed["http"]
+        if not isinstance(http, dict) or set(http) != {"routers", "services", "middlewares"}:
+            raise TypeError("La sección HTTP de la plantilla no es cerrada")
+        routers = http["routers"]
+        router = routers["iacp-dev-admin"]
+        http_router = routers["iacp-dev-http"]
+        service = http["services"]["iacp-dev-api"]
+        target = parsed["http"]["services"]["iacp-dev-api"]["loadBalancer"]["servers"][0]["url"]
+        headers = http["middlewares"]["iacp-dev-headers"]["headers"]
+    except (OSError, KeyError, IndexError, TypeError, yaml.YAMLError) as error:
+        raise GateError("La plantilla Traefik de desarrollo no es válida") from error
+    expected_rule = (
+        "Host(`dev.iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || "
+        "HeaderRegexp(`Origin`, `^(?:https://dev\\.iac\\.cyberfuel\\.com)$`))"
+    )
+    expected_middlewares = [
+        "internal-sources@file", "strip-identity@file", "root-tls-transport@file",
+        "request-rate@file", "inflight@file", "body-limit@file", "iacp-dev-headers",
+    ]
+    expected_headers = {
+        "accessControlAllowOriginList": ["https://dev.iac.cyberfuel.com"],
+        "accessControlAllowMethods": ["GET", "POST", "OPTIONS"],
+        "accessControlAllowHeaders": ["Authorization", "Content-Type", "Idempotency-Key"],
+        "accessControlExposeHeaders": ["X-Request-ID"],
+        "addVaryHeader": True,
+        "contentTypeNosniff": True,
+        "stsSeconds": 31536000,
+        "frameDeny": True,
+        "referrerPolicy": "no-referrer",
+    }
+    if not all(isinstance(value, dict) for value in (routers, router, http_router, service, headers)):
+        raise GateError("La estructura de la plantilla Traefik de desarrollo no es válida")
+    if router.get("rule") != expected_rule:
+        raise GateError("La ruta de desarrollo no corresponde al dominio aprobado")
+    if (
+        set(routers) != {"iacp-dev-admin", "iacp-dev-http"}
+        or router.get("entryPoints") != ["websecure"]
+        or router.get("service") != "iacp-dev-api"
+        or router.get("tls") != {"options": "corporate"}
+        or router.get("middlewares") != expected_middlewares
+        or not isinstance(http_router, dict)
+        or http_router.get("rule") != "Host(`dev.iac.cyberfuel.com`)"
+        or http_router.get("entryPoints") != ["webhttp"]
+        or http_router.get("service") != "noop@internal"
+        or http_router.get("middlewares") != ["internal-sources@file", "https-only@file"]
+    ):
+        raise GateError("La ruta de desarrollo no conserva las restricciones de acceso aprobadas")
+    if (
+        set(http["services"]) != {"iacp-dev-api"}
+        or set(http["middlewares"]) != {"iacp-dev-headers"}
+        or not isinstance(service, dict)
+        or service != {"loadBalancer": {"servers": [{"url": "http://iacp-controlplane-api-dev:8080"}]}}
+        or target != "http://iacp-controlplane-api-dev:8080"
+        or headers != expected_headers
+    ):
+        raise GateError("La ruta de desarrollo no apunta al alias aprobado")
+    return content
+
+
+def _fsync_directory(directory: Path) -> None:
+    directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _install_dev_route(route: Path, production_route: Path, template: Path, evidence: Path) -> dict:
+    content = _dev_route_content(template)
+    if route.parent.is_symlink() or route.parent.resolve() != route.parent or not route.parent.is_dir():
+        raise GateError("El directorio dinámico de Traefik no existe o usa un enlace simbólico")
+    if route.is_symlink():
+        raise GateError("La ruta de desarrollo no puede ser un enlace simbólico")
+    if route.exists():
+        if route.stat().st_mode & 0o022:
+            raise GateError("Los permisos del archivo de desarrollo no son seguros")
+        try:
+            current = route.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise GateError("No se pudo leer la ruta existente de desarrollo") from error
+        if current != content:
+            raise GateError("La ruta de desarrollo ya existe con contenido distinto; requiere revisión")
+        return {"changed": False, "already_active": True, "target": "http://iacp-controlplane-api-dev:8080"}
+    if production_route.is_symlink() or not production_route.is_file():
+        raise GateError("No está presente la ruta productiva que confirma el directorio dinámico de Traefik")
+    try:
+        current_production = yaml.safe_load(production_route.read_text(encoding="utf-8")) or {}
+        current_upstream = current_production["http"]["services"]["iacp-api"]["loadBalancer"]["servers"][0]["url"]
+    except (OSError, KeyError, IndexError, TypeError, yaml.YAMLError) as error:
+        raise GateError("La ruta productiva de Traefik tiene una forma inesperada") from error
+    if not isinstance(current_upstream, str) or not current_upstream.startswith("http://"):
+        raise GateError("La ruta productiva de Traefik no tiene un upstream HTTP válido")
+    if not route.parent.is_dir():
+        raise GateError("No existe el directorio dinámico de Traefik")
+    directory_mode = route.parent.stat().st_mode & 0o777
+    if directory_mode & 0o022:
+        raise GateError("Los permisos del directorio dinámico no son seguros")
+    mode = production_route.stat().st_mode & 0o777
+    temp_fd, temp_name = tempfile.mkstemp(prefix=".iacp-dev-route-", dir=route.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_path, mode)
+        evidence_copy = evidence / "dev-route-installed.yml"
+        evidence_copy.write_text(content, encoding="utf-8")
+        os.chmod(evidence_copy, 0o600)
+        try:
+            os.link(temp_path, route)
+        except FileExistsError as error:
+            try:
+                current = route.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                raise GateError("La ruta de desarrollo apareció durante la activación") from error
+            if current != content:
+                raise GateError("La ruta de desarrollo cambió durante la activación") from error
+            return {"changed": False, "already_active": True, "target": "http://iacp-controlplane-api-dev:8080"}
+        _fsync_directory(route.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return {"changed": True, "target": "http://iacp-controlplane-api-dev:8080"}
+
+
+def _remove_dev_route(route: Path, template: Path, evidence: Path) -> dict:
+    content = _dev_route_content(template)
+    if route.is_symlink() or not route.is_file():
+        raise GateError("No existe una ruta administrada de desarrollo que se pueda retirar")
+    try:
+        current = route.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise GateError("No se pudo leer la ruta de desarrollo") from error
+    if current != content:
+        raise GateError("La ruta de desarrollo fue modificada; no se retira automáticamente")
+    backup = evidence / "dev-route-before-removal.yml"
+    shutil.copy2(route, backup)
+    os.chmod(backup, 0o600)
+    route.unlink()
+    _fsync_directory(route.parent)
+    return {"changed": True, "removed": str(route)}
+
+
+def _dns_pattern_matches(pattern: str, hostname: str) -> bool:
+    if pattern == hostname:
+        return True
+    if not pattern.startswith("*."):
+        return False
+    pattern_labels = pattern[2:].split(".")
+    hostname_labels = hostname.split(".")
+    return len(hostname_labels) == len(pattern_labels) + 1 and hostname_labels[1:] == pattern_labels
+
+
+def _require_tls_hostname(certificate_path: Path, hostname: str) -> None:
+    try:
+        result = subprocess.run(
+            ["openssl", "x509", "-in", str(certificate_path), "-noout", "-ext", "subjectAltName"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise GateError("No se pudo leer el certificado TLS configurado") from error
+    if result.returncode:
+        raise GateError("No se pudo leer el certificado TLS configurado")
+    dns_names = re.findall(r"\bDNS:([^,\s]+)", result.stdout)
+    if not any(_dns_pattern_matches(pattern, hostname) for pattern in dns_names):
+        raise GateError(f"El certificado TLS actual no cubre {hostname}")
 
 
 def _inventory(data: dict, compose: Path, env_file: Path) -> dict:
@@ -425,6 +712,55 @@ def _restore_legacy(data: dict, evidence: Path) -> dict:
     }
 
 
+def _develop_route_paths(data: dict) -> tuple[Path, Path, Path, Path]:
+    if (
+        data.get("stage") != "develop"
+        or data.get("domain") != "dev.iac.cyberfuel.com"
+        or data.get("service_alias") != "iacp-controlplane-api-dev"
+    ):
+        raise GateError("El manifiesto no identifica el runtime de desarrollo aprobado")
+    route = Path(data.get("dynamic_config", ""))
+    if route != Path("/etc/iacp/tls/dynamic/dev-iac.yml"):
+        raise GateError("La ruta de desarrollo está limitada al archivo dinámico conocido")
+    template = (ROOT / str(data.get("route_template", ""))).resolve()
+    if ROOT not in template.parents or template != ROOT / "deploy/portainer/traefik-dev.yml":
+        raise GateError("La plantilla Traefik no es la aprobada")
+    certificate = Path(data.get("tls_certificate_file", ""))
+    if certificate != Path("/etc/iacp/tls/certs/fullchain.pem"):
+        raise GateError("La activación está limitada al certificado TLS administrado conocido")
+    return route, Path("/etc/iacp/tls/dynamic/iacp.yml"), template, certificate
+
+
+def _activate_develop(data: dict, evidence: Path) -> dict:
+    route, production_route, template, certificate = _develop_route_paths(data)
+    if os.geteuid() != 0:
+        raise GateError("La activación de desarrollo requiere ejecutar el operador como root")
+    _require_tls_hostname(certificate, data["domain"])
+    update = _install_dev_route(route, production_route, template, evidence)
+    try:
+        external = _check_external(data["domain"], str(data.get("image_tag", "")))
+    except GateError as error:
+        if update["changed"]:
+            _remove_dev_route(route, template, evidence)
+            raise GateError(f"{error}; la ruta recién creada se retiró automáticamente") from error
+        raise
+    return {
+        "activated": update["changed"],
+        "already_active": update.get("already_active", False),
+        "target": update["target"],
+        "external_health": external,
+        "automatic_rollback": bool(update["changed"] and not external.get("ready")),
+    }
+
+
+def _disable_develop(data: dict, evidence: Path) -> dict:
+    route, _, template, _ = _develop_route_paths(data)
+    if os.geteuid() != 0:
+        raise GateError("Retirar la ruta de desarrollo requiere ejecutar el operador como root")
+    result = _remove_dev_route(route, template, evidence)
+    return {"disabled": result["changed"], "route": result["removed"]}
+
+
 def _require_legacy_api_healthy() -> None:
     raw = _run([
         "docker", "ps",
@@ -481,7 +817,10 @@ def _check_external(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("config-check", "preflight", "inventory", "deploy", "verify", "activate", "restore-legacy"))
+    parser.add_argument("action", choices=(
+        "config-check", "preflight", "inventory", "deploy", "verify",
+        "activate", "activate-develop", "disable-develop", "restore-legacy",
+    ))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -489,7 +828,10 @@ def main(argv: list[str] | None = None) -> int:
     result = {"action": args.action, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": socket.gethostname()}
     try:
         evidence = _new_evidence_dir(args.evidence_dir)
-        data, compose, env_file = _manifest(args.manifest, require_runtime=args.action != "restore-legacy")
+        data, compose, env_file = _manifest(
+            args.manifest,
+            require_runtime=args.action not in {"restore-legacy", "disable-develop"},
+        )
         result["manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
         if args.action == "restore-legacy":
             result["activation"] = _restore_legacy(data, evidence)
@@ -497,34 +839,54 @@ def main(argv: list[str] | None = None) -> int:
                 data["domain"], None, forbidden_revision=str(data.get("image_tag", ""))
             )
             result["passed"] = True
+        elif args.action == "disable-develop":
+            result["activation"] = _disable_develop(data, evidence)
+            result["passed"] = True
         else:
             config = _compose_config(data, compose, env_file)
-        if args.action == "config-check":
-            result["passed"] = True
-            result["project"] = data["project"]
-        elif args.action == "preflight":
-            result["configuration"] = _check_policy(data, config, env_file)
-            result["passed"] = True
-        elif args.action == "inventory":
-            result["inventory"] = _inventory(data, compose, env_file)
-            result["passed"] = True
-        elif args.action == "deploy":
-            result["configuration"] = _check_policy(data, config, env_file)
-            prefix = _compose_args(data, compose, env_file)
-            _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
-            _run(prefix + ["up", "-d", "--no-build", "--pull", "never"], label="Inicio del stack", timeout=900)
-            result["passed"] = True
-            result["project"] = data["project"]
-        elif args.action == "verify":
-            result["configuration"] = _check_policy(data, config, env_file)
-            result["verification"] = _verify(data, compose, env_file)
-            result["passed"] = True
-        elif args.action == "activate":
-            result["configuration"] = _check_policy(data, config, env_file)
-            result["verification"] = _verify(data, compose, env_file)
-            result["activation"] = _activate_production(data, evidence)
-            result["external_health"] = _check_external(data["domain"], data["image_tag"])
-            result["passed"] = True
+            if args.action == "config-check":
+                result["passed"] = True
+                result["project"] = data["project"]
+            elif args.action == "preflight":
+                result["configuration"] = _check_policy(data, config, env_file)
+                state_backend = _check_runtime_backend(data, config)
+                if state_backend is not None:
+                    result["state_backend"] = state_backend
+                result["passed"] = True
+            elif args.action == "inventory":
+                result["inventory"] = _inventory(data, compose, env_file)
+                result["passed"] = True
+            elif args.action == "deploy":
+                result["configuration"] = _check_policy(data, config, env_file)
+                state_backend = _check_runtime_backend(data, config)
+                if state_backend is not None:
+                    result["state_backend"] = state_backend
+                prefix = _compose_args(data, compose, env_file)
+                _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
+                _run(prefix + ["up", "-d", "--no-build", "--pull", "never"], label="Inicio del stack", timeout=900)
+                result["passed"] = True
+                result["project"] = data["project"]
+            elif args.action == "verify":
+                result["configuration"] = _check_policy(data, config, env_file)
+                state_backend = _check_runtime_backend(data, config)
+                if state_backend is not None:
+                    result["state_backend"] = state_backend
+                result["verification"] = _verify(data, compose, env_file)
+                result["passed"] = True
+            elif args.action == "activate":
+                result["configuration"] = _check_policy(data, config, env_file)
+                state_backend = _check_runtime_backend(data, config)
+                if state_backend is not None:
+                    result["state_backend"] = state_backend
+                result["verification"] = _verify(data, compose, env_file)
+                result["activation"] = _activate_production(data, evidence)
+                result["external_health"] = _check_external(data["domain"], data["image_tag"])
+                result["passed"] = True
+            elif args.action == "activate-develop":
+                result["configuration"] = _check_policy(data, config, env_file)
+                result["verification"] = _verify(data, compose, env_file)
+                result["activation"] = _activate_develop(data, evidence)
+                result["passed"] = True
         _write_evidence(evidence, result)
         print(json.dumps({"passed": True, "action": args.action, "evidence_dir": str(evidence)}))
         return 0
