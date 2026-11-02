@@ -170,6 +170,29 @@ técnica legacy, con leases liberados y workers idle. Deben reconciliarse contra
 el estado físico antes de cerrar o retirar ese runtime; sus filas se conservan
 en el respaldo y no se importarán a la base nueva.
 
+### Dictamen de gates
+
+Registro al 2 de noviembre de 2026, 13:38 CST. La revisión candidata de runtime
+es `8f9ee58352efe5fc5c04bf0168603b1b466ca39f`; la revisión que sigue ejecutando
+el IACP Control Plane (VM 104) es `a4c1107949249fa5ec48e0142b2e260021e4e095`.
+
+| Gate | Resultado | Alcance y evidencia |
+| --- | --- | --- |
+| Suite con PostgreSQL 17.6 aislado | PASS | 65 pruebas, 3 avisos de deprecación; la base temporal fue retirada al terminar. |
+| Compose local, dev y producción | PASS | Los tres manifiestos renderizan sin error. |
+| Build y smoke de imagen candidata | PASS | API `ready`, revisión coincidente, OpenAPI `1.0.0`, `/v1/instances`, `/docs` y `/swagger` responden. Imagen local; no publicada. |
+| Preflight estructural dev/prod | PASS limitado | Configuración con valores ficticios; no verifica credenciales, red ni servicios externos. |
+| Respaldo del runtime legacy | PASS | Los cuatro archivos de `/opt/iacp/evidence/controlplane-v2-precut-20261102T1400CST/SHA256SUMS` verifican. |
+| Inventario del clúster MNG y VMID protegidos | BLOCKED | Token de servicio HTTP 401; token de lectura no muestra inventario ni VMID 104, 106 y 29000. |
+| Aprovisionamiento, eliminación y reconciliación física en MNG | BLOCKED | No se inyectaron operaciones; falta credencial de prueba válida y aislamiento comprobable. |
+| State y lock nuevos en Wasabi | BLOCKED | El acceso actual devuelve `NoSuchBucket` y `403`; no se escribió ni alteró ningún objeto. |
+| Reconciliación de cinco operaciones inciertas legacy | BLOCKED | Requiere contrastar cada intención con el estado físico; no importar ni descartar filas. |
+| Cambio de upstream productivo | BLOCKED / NO EJECUTADO | La ruta sigue en `http://api:8000`; no se desplegó ni publicó la imagen candidata. |
+
+El resultado es **PASS de integración local**, **BLOCKED de piloto físico** y
+**sin GO de certificación integral**. La versión ejecutada y la ruta legacy
+siguen disponibles para continuidad operativa.
+
 Para reanudar sin compartir secretos por chat, el administrador debe actualizar
 en el IACP Control Plane (VM 104) las credenciales de servicio MNG y Wasabi en
 el almacén seguro del host. La configuración de runtime nueva se guardará en
