@@ -3,7 +3,7 @@
 - **Fecha:** 2026-11-01
 - **Rama:** `develop`
 - **Commit del runtime candidato:** `c8788faf6c1c39b569276d5b10caa9cd2f06d6c1`
-- **Última actualización de evidencia:** 2026-11-01 22:18 CST
+- **Última actualización de evidencia:** 2026-11-01 22:21 CST
 - **Dominio previsto:** `iac.cyberfuel.com`
 - **API pública:** `/v1`
 
@@ -52,15 +52,17 @@ inicial; después se recibió el alias funcional `iacp-controlplane`.
 - El estado histórico usa 133 referencias Terraform. Una comprobación de solo
   lectura confirmó 132 objetos `.tflock` ausentes y ninguno presente. Para una
   referencia, Wasabi devolvió `403 AccessDenied` tanto en `HEAD` como en `LIST`;
-  su lock queda **sin confirmar**. No se leyó ni modificó contenido de state y
-  no se forzó ningún lock.
+  su lock queda **sin confirmar**. Una segunda identidad Wasabi del host, con
+  bucket y endpoint coincidentes, devolvió el mismo `403` en ambos métodos. No
+  se leyó ni modificó contenido de state y no se forzó ningún lock.
 - Hay otro proyecto Docker activo,
   `iacp-controlplane-technical`, con PostgreSQL propio, API y seis workers. Su
   DB registra cinco operaciones de aprovisionamiento `uncertain`; las cinco
   instancias figuran `deleted`, sus leases están `released` y los seis workers
   están `idle`. No se consultaron sus campos de error ni se intentó
-  reconciliarlas. También hay proyectos de prueba aislados; ninguno reportó
-  contenedores `unhealthy`.
+  reconciliarlas. La API técnica ejecuta el commit
+  `28245be4cce11bf17c9779637f9936bdb324dca7`. También hay proyectos de prueba
+  aislados; ninguno reportó contenedores `unhealthy`.
 - `https://iac.cyberfuel.com/health/ready` respondió HTTP 200. Traefik carga
   rutas desde archivos y tiene deshabilitado el proveedor Docker. La ruta
   dinámica activa sigue usando `http://api:8000` y conserva sus middlewares.
