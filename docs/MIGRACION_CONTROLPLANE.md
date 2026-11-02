@@ -395,3 +395,27 @@ Para continuar, ajustar la ACL de auditoría de VM 104 para el token candidato o
 cargar una credencial Wasabi con permisos administrativos efectivos en
 `wasabi-admin.env`. La llave de runtime sigue separada y necesita permiso sobre
 el prefijo `iacp/prod-runtime-v1`. La purga autorizada permanece pendiente.
+
+## Aclaración posterior sobre la política Wasabi
+
+El usuario compartió la política anterior: autorizaba el bucket
+`cyberfuel-iacp-tfstate-lab` y solo el prefijo `iacp/lab/*`. Por ello, los
+403 obtenidos al consultar el bucket renombrado o el prefijo de producción son
+compatibles con esa política; esas respuestas no prueban que la llave sea
+inválida. Las comprobaciones `HEAD` y `GetBucketVersioning` tampoco prueban el
+acceso de Terraform porque esa política no les concede sus respectivas
+acciones. La verificación del runtime debe ser `ListObjectsV2` acotada a
+`iacp/prod-runtime-v1/`, que es la consulta implementada en el preflight.
+
+El backend candidato guarda cada state en
+`iacp/prod-runtime-v1/instances/{instance_id}/terraform.tfstate` y habilita
+`use_lockfile`; la llave necesita lectura/escritura del state y lectura,
+escritura y borrado del objeto `.tflock`. HashiCorp documenta estos permisos
+para el backend S3 en [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
+La política propuesta con `iacp/*` abarca otros prefijos; se recomienda limitar
+las condiciones y recursos a `iacp/prod-runtime-v1/*` y retirar la regla de
+limpieza `iacp/lab/_preflight`. La llave de runtime no debe tener
+`s3:DeleteObjectVersion`: la purga de versiones históricas es una tarea
+administrativa separada. En buckets versionados, `DeleteObject` crea un delete
+marker; eliminar una versión concreta requiere una solicitud con `versionId`,
+según [Amazon S3: deleting object versions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html).
