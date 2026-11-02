@@ -465,3 +465,37 @@ def test_legacy_restore_gate_stops_when_api_is_unhealthy(monkeypatch):
     )
     with pytest.raises(go_live.GateError, match="API legacy no está única"):
         go_live._require_legacy_api_healthy()
+
+
+def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
+    config = {
+        "services": {
+            "api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "worker-1": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "worker-2": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "postgres": {"image": "postgres:17.6"},
+        }
+    }
+    calls = []
+
+    def inspect(command, *, label, timeout=120):
+        calls.append((command, label, timeout))
+        return "sha256:" + "b" * 64 + "\n"
+
+    monkeypatch.setattr(go_live, "_run", inspect)
+    verified = go_live._verify_preloaded_images(config)
+
+    assert [item["service"] for item in verified] == ["api", "postgres", "worker-1", "worker-2"]
+    assert len(calls) == 4
+    assert all(call[0][:3] == ["docker", "image", "inspect"] for call in calls)
+
+
+def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
+    config = {"services": {"api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}}}
+
+    def missing(*_args, **_kwargs):
+        raise go_live.GateError("La imagen local no existe")
+
+    monkeypatch.setattr(go_live, "_run", missing)
+    with pytest.raises(go_live.GateError, match="imagen local no existe"):
+        go_live._verify_preloaded_images(config)

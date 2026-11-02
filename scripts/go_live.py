@@ -678,6 +678,25 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     return {"services": statuses, "api": payload}
 
 
+def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
+    services = config.get("services", {})
+    verified = []
+    for service_name in sorted(services):
+        image = services[service_name].get("image")
+        if not isinstance(image, str) or not image.strip():
+            raise GateError(f"El servicio {service_name} no declara una imagen para despliegue precargado")
+        image_id = _run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            label=f"Verificación de imagen precargada {service_name}",
+        ).strip()
+        if not image_id.startswith("sha256:"):
+            raise GateError(f"La imagen precargada de {service_name} no devolvió un digest local válido")
+        verified.append({"service": service_name, "image": image, "image_id": image_id})
+    if not verified:
+        raise GateError("La configuración no contiene imágenes para el despliegue precargado")
+    return verified
+
+
 def _activate_production(data: dict, evidence: Path) -> dict:
     if data["stage"] != "production":
         raise GateError("La activación productiva requiere el manifiesto production")
@@ -842,7 +861,14 @@ def main(argv: list[str] | None = None) -> int:
     ))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
+    parser.add_argument(
+        "--preloaded-images",
+        action="store_true",
+        help="Verifica las imágenes locales fijadas en el manifiesto y despliega sin descargarlas",
+    )
     args = parser.parse_args(argv)
+    if args.preloaded_images and args.action != "deploy":
+        parser.error("--preloaded-images solo se permite con la acción deploy")
     evidence = None
     result = {"action": args.action, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": socket.gethostname()}
     try:
@@ -881,7 +907,10 @@ def main(argv: list[str] | None = None) -> int:
                 if state_backend is not None:
                     result["state_backend"] = state_backend
                 prefix = _compose_args(data, compose, env_file)
-                _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
+                if args.preloaded_images:
+                    result["preloaded_images"] = _verify_preloaded_images(config)
+                else:
+                    _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
                 _run(prefix + ["up", "-d", "--no-build", "--pull", "never"], label="Inicio del stack", timeout=900)
                 result["passed"] = True
                 result["project"] = data["project"]

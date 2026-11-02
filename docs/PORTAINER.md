@@ -73,6 +73,16 @@ En desarrollo configura `IACP_RUNTIME_STAGE=develop` y
 `IACP_TERRAFORM_BACKEND=local`. No añadas llaves Wasabi ni un prefijo S3 al
 stack de desarrollo.
 
+## Despliegue con imágenes precargadas
+
+Si el registry no está disponible, conserva el archivo de imagen dentro del
+release privado, verifica su SHA-256 y cárgalo con `docker load`. Antes de
+iniciar servicios, `iacpctl deploy --preloaded-images` comprueba que cada
+servicio del manifiesto (API, workers y PostgreSQL) tenga su imagen local y un
+digest Docker válido. Después utiliza el mismo Compose canónico con
+`--pull never`; si falta una imagen, el despliegue se detiene sin iniciar el
+stack. La evidencia registra el servicio, referencia y digest de cada imagen.
+
 ## PRX permanece deshabilitado
 
 La carpeta `terraform/environments/prx` contiene solo la estructura técnica;
