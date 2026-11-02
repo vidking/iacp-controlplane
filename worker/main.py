@@ -10,10 +10,11 @@ from datetime import datetime, timedelta, timezone
 from api.catalog import cluster_nodes, load_catalog
 from api.db import database, initialize
 from api.secrets import delete_secret, read_secret
+from api.protection import is_protected_vmid
+from api.targets import resolve_environment, terraform_directory
 from worker.allocation import allocate, release
 from worker.golden import observe, validate_pool, variables as golden_variables
 from worker.heartbeat import heartbeat
-from worker.netbox import NetBoxAllocation, NetBoxClient, NetBoxError, configured as netbox_configured
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
 
 
@@ -74,13 +75,15 @@ def recover_stale_operations() -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_operation_seconds())).isoformat()
     recovered = 0
     with database() as db:
-        db.execute("BEGIN IMMEDIATE")
+        db.execute("BEGIN")
+        db.execute("SELECT pg_advisory_xact_lock(104, 1)")
         rows = db.execute(
             f"""
             SELECT * FROM operations
             WHERE status IN ({','.join('?' for _ in ACTIVE_WORK_OPERATION_STATUSES)})
               AND (last_heartbeat IS NULL OR last_heartbeat < ?)
             ORDER BY created_at
+            FOR UPDATE SKIP LOCKED
             """,
             (*ACTIVE_WORK_OPERATION_STATUSES, cutoff),
         ).fetchall()
@@ -150,7 +153,7 @@ def recover_stale_operations() -> int:
                     "action": "reconcile",
                     "instance_id": instance_id,
                     "source_operation_id": operation_id,
-                    "stack": operation.get("stack") or "mng01",
+                    "environment": operation.get("environment") or "lab",
                 },
                 sort_keys=True,
             )
@@ -159,7 +162,7 @@ def recover_stale_operations() -> int:
                 """
                 INSERT INTO operations(
                   operation_id, command, action, status, payload_json, instance_id,
-                  plan_id, stack, created_at, phase
+                  plan_id, environment, created_at, phase
                 ) VALUES (?, 'reconcile', 'reconcile', 'pending', ?, ?, ?, ?, ?, 'recovery')
                 """,
                 (
@@ -167,7 +170,7 @@ def recover_stale_operations() -> int:
                     payload,
                     instance_id,
                     operation.get("plan_id"),
-                    operation.get("stack") or "mng01",
+                    operation.get("environment") or "lab",
                     timestamp,
                 ),
             )
@@ -198,16 +201,6 @@ DETERMINISTIC_ERROR_MARKERS = (
     "power_identity_mismatch",
     "power_task_identity_mismatch",
     "vmid_range_exhausted",
-    "ipam_not_configured",
-    "ipam_configuration_invalid",
-    "ipam_prefix_invalid",
-    "ipam_prefix_pool_unsafe",
-    "ipam_gateway_not_reserved",
-    "ipam_pool_exhausted",
-    "ipam_tag_not_found",
-    "ipam_permission_denied",
-    "ipam_identity_mismatch",
-    "ipam_instance_required",
 )
 
 RETRYABLE_COMMAND_MARKERS = (
@@ -239,24 +232,9 @@ def retryable_command_error(value: object) -> bool:
 
 def claim(worker_id: str):
     with database() as db:
-        max_concurrent = int(os.getenv("IACP_MAX_CONCURRENT", "2"))
-        active = db.execute(
-            """
-            SELECT COUNT(*) AS count FROM operations
-            WHERE status IN ('running', 'planning', 'applying', 'destroying', 'powering')
-            """
-        ).fetchone()["count"]
-        if active >= max_concurrent:
-            return None
-        # Avoid taking SQLite's writer lock when the queue is empty. The
-        # second read is repeated after BEGIN IMMEDIATE because another
-        # worker may claim the operation between these two steps.
-        pending = db.execute(
-            "SELECT 1 FROM operations WHERE status='pending' ORDER BY created_at LIMIT 1"
-        ).fetchone()
-        if pending is None:
-            return None
-        db.execute("BEGIN IMMEDIATE")
+        db.execute("BEGIN")
+        db.execute("SELECT pg_advisory_xact_lock(104, 2)")
+        max_concurrent = int(os.getenv("IACP_MAX_CONCURRENT", "1"))
         active = db.execute(
             """
             SELECT COUNT(*) AS count FROM operations
@@ -267,7 +245,7 @@ def claim(worker_id: str):
             db.execute("COMMIT")
             return None
         row = db.execute(
-            "SELECT * FROM operations WHERE status = 'pending' ORDER BY created_at LIMIT 1"
+            "SELECT * FROM operations WHERE status = 'pending' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED"
         ).fetchone()
         if row is None:
             db.execute("COMMIT")
@@ -355,189 +333,6 @@ def _update_operation_payload(operation_id: str, payload: dict) -> None:
     update_operation(operation_id, payload_json=json.dumps(payload, sort_keys=True))
 
 
-def _ip_allocation(instance_id: str | None, *, active_only: bool = True) -> dict | None:
-    if not instance_id:
-        return None
-    statuses = "AND status IN ('allocating', 'allocated', 'release_pending')" if active_only else ""
-    with database() as db:
-        row = db.execute(
-            f"""
-            SELECT * FROM ip_allocations
-            WHERE instance_id=? {statuses}
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (instance_id,),
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def _begin_ip_allocation(
-    *,
-    instance_id: str,
-    operation_id: str,
-    prefix_id: int,
-    marker: str,
-) -> dict:
-    allocation_id = str(uuid.uuid4())
-    with database() as db:
-        db.execute("BEGIN IMMEDIATE")
-        row = db.execute(
-            """
-            SELECT * FROM ip_allocations
-            WHERE instance_id=? AND profile='prod_static'
-              AND status IN ('allocating', 'allocated', 'release_pending')
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (instance_id,),
-        ).fetchone()
-        if row is not None:
-            if row["marker"] != marker:
-                db.execute("ROLLBACK")
-                raise NetBoxError("IPAM_ALLOCATION_CONFLICT")
-            db.execute("COMMIT")
-            return dict(row)
-        created = now()
-        db.execute(
-            """
-            INSERT INTO ip_allocations(
-              allocation_id, instance_id, operation_id, provider, profile,
-              prefix_id, marker, status, created_at
-            ) VALUES (?, ?, ?, 'netbox', 'prod_static', ?, ?, 'allocating', ?)
-            """,
-            (allocation_id, instance_id, operation_id, prefix_id, marker, created),
-        )
-        db.execute("COMMIT")
-    return {
-        "allocation_id": allocation_id,
-        "instance_id": instance_id,
-        "operation_id": operation_id,
-        "prefix_id": prefix_id,
-        "marker": marker,
-        "status": "allocating",
-    }
-
-
-def _complete_ip_allocation(allocation_id: str, allocation: NetBoxAllocation) -> None:
-    with database() as db:
-        db.execute(
-            """
-            UPDATE ip_allocations
-            SET netbox_ip_id=?, address=?, gateway=?, status='allocated', last_error=''
-            WHERE allocation_id=?
-            """,
-            (allocation.ip_id, allocation.address, allocation.gateway, allocation_id),
-        )
-
-
-def _mark_ip_allocation(
-    allocation_id: str,
-    status: str,
-    *,
-    error: str = "",
-) -> None:
-    released_at = now() if status == "released" else None
-    with database() as db:
-        db.execute(
-            """
-            UPDATE ip_allocations
-            SET status=?, released_at=COALESCE(?, released_at), last_error=?
-            WHERE allocation_id=?
-            """,
-            (status, released_at, error[:256], allocation_id),
-        )
-
-
-def _ensure_static_allocation(
-    *,
-    worker_id: str,
-    operation_id: str,
-    instance_id: str | None,
-    vmid: int,
-    payload: dict,
-    source_operation: dict,
-) -> dict:
-    spec = dict(payload.get("spec") or {})
-    profile = spec.get("network_profile") or (
-        "prod_static" if spec.get("network_mode") == "static" else "lab_dhcp"
-    )
-    if profile != "prod_static":
-        return spec
-    if (os.getenv("IACP_PROD_STATIC_ENABLED", "0") or "").strip().lower() in {
-        "", "0", "false", "no", "off"
-    }:
-        raise NetBoxError("IPAM_NOT_CONFIGURED")
-    if not instance_id:
-        raise NetBoxError("IPAM_INSTANCE_REQUIRED")
-    if not netbox_configured():
-        raise NetBoxError("IPAM_NOT_CONFIGURED")
-    context = json.loads(source_operation.get("commercial_context_json") or "{}")
-    marker = f"iacp-instance={instance_id}"
-    client = NetBoxClient()
-    allocation = _ip_allocation(instance_id)
-    if allocation is None:
-        allocation = _begin_ip_allocation(
-            instance_id=instance_id,
-            operation_id=operation_id,
-            prefix_id=client.config.prefix_id,
-            marker=marker,
-        )
-    if allocation.get("status") == "release_pending":
-        raise NetBoxError("IPAM_RELEASE_PENDING")
-    if allocation.get("status") != "allocated" or not allocation.get("netbox_ip_id"):
-        try:
-            reserved = client.allocate(
-                instance_id=instance_id,
-                operation_id=operation_id,
-                vmid=vmid,
-                name=str(spec.get("name") or instance_id),
-                customer_tag=context.get("customer_tag"),
-            )
-            _complete_ip_allocation(allocation["allocation_id"], reserved)
-            allocation.update(
-                netbox_ip_id=reserved.ip_id,
-                address=reserved.address,
-                gateway=reserved.gateway,
-                status="allocated",
-            )
-            emit(operation_id, "ipam.address.reserved", "succeeded", reserved.address)
-        except NetBoxError as error:
-            _mark_ip_allocation(
-                allocation["allocation_id"],
-                "release_pending" if error.uncertain else "released",
-                error=error.code,
-            )
-            raise
-    spec.update(
-        {
-            "network_profile": "prod_static",
-            "network_mode": "static",
-            "ipv4_cidr": allocation["address"],
-            "ipv4_gateway": allocation["gateway"],
-        }
-    )
-    payload["spec"] = spec
-    _update_operation_payload(operation_id, payload)
-    _update_instance_spec(instance_id, spec)
-    return spec
-
-
-def _release_static_allocation(instance_id: str | None, operation_id: str) -> bool:
-    allocation = _ip_allocation(instance_id)
-    if allocation is None:
-        return True
-    try:
-        client = NetBoxClient()
-        client.release(allocation, marker=allocation["marker"])
-    except NetBoxError as error:
-        _mark_ip_allocation(allocation["allocation_id"], "release_pending", error=error.code)
-        emit(operation_id, "ipam.release.pending", "uncertain", "IPAM_RELEASE_PENDING")
-        return False
-    _mark_ip_allocation(allocation["allocation_id"], "released")
-    emit(operation_id, "ipam.address.released", "succeeded")
-    return True
-
-
 def find_operation(operation_id: str) -> dict | None:
     with database() as db:
         row = db.execute(
@@ -555,27 +350,24 @@ def instance_plan_operation(instance_id: str) -> str | None:
 
 
 def data_root() -> str:
-    database_path = os.getenv("IACP_DB_PATH", "/var/lib/iacp-v2/iacp.sqlite")
-    return os.path.dirname(database_path) or "."
+    return os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")
 
 
-def source_stack_directory(stack: str) -> str:
-    if stack == "local":
-        return os.getenv("IACP_LOCAL_TERRAFORM_DIR", "fixtures/local")
-    return os.getenv("IACP_TERRAFORM_DIR", "environments/mng01")
+def source_environment_directory(environment: str) -> str:
+    return terraform_directory(environment)
 
 
-def select_target_node(client: ProxmoxClient) -> str:
-    """Choose an online MNG node with the fewest VMs, preferring mng01."""
+def select_target_node(client: ProxmoxClient, environment: str = "lab") -> str:
+    """Choose an online node from the server-side catalog for this environment."""
 
-    configured = cluster_nodes()
+    configured = cluster_nodes(environment)
     node_rows = client.nodes()
     online = {
         str(row.get("node"))
         for row in node_rows
         if row.get("node") in configured and row.get("status", "online") == "online"
     }
-    storage_id = load_catalog().get("storage")
+    storage_id = load_catalog(environment).get("storage")
     candidates = []
     for node in configured:
         if node not in online:
@@ -588,7 +380,7 @@ def select_target_node(client: ProxmoxClient) -> str:
             continue
         candidates.append(node)
     if not candidates:
-        raise RuntimeError("MNG_NODE_UNAVAILABLE")
+        raise RuntimeError("TARGET_NODE_UNAVAILABLE")
 
     counts = {node: 0 for node in candidates}
     for item in client.inventory():
@@ -598,10 +390,15 @@ def select_target_node(client: ProxmoxClient) -> str:
     return min(candidates, key=lambda node: (counts[node], configured.index(node)))
 
 
-def create_workspace(operation_id: str, source_path: str, stack: str) -> tuple[str, str]:
+def create_workspace(
+    operation_id: str,
+    source_path: str,
+    environment: str,
+) -> tuple[str, str]:
     root = os.path.join(data_root(), "plans", operation_id, "terraform")
     if os.path.exists(root):
         raise RuntimeError(f"el workspace ya existe: {root}")
+    os.makedirs(os.path.dirname(root), exist_ok=True)
     ignore = shutil.ignore_patterns(
         ".terraform",
         "*.tfstate",
@@ -610,15 +407,16 @@ def create_workspace(operation_id: str, source_path: str, stack: str) -> tuple[s
         "plan.tfplan",
     )
     shutil.copytree(source_path, root, ignore=ignore)
-    workspace = os.path.join(root, source_stack_directory(stack))
+    relative_directory = source_environment_directory(environment)
+    workspace = os.path.join(root, relative_directory)
     if not os.path.isdir(workspace):
-        raise RuntimeError(f"no existe el stack Terraform {workspace}")
+        raise RuntimeError("ENVIRONMENT_CONFIGURATION_INCOMPLETE")
     # The image build initializes the certified provider once. Reuse that
     # immutable provider directory instead of downloading it for every
     # operation or copying tens of megabytes into each workspace.
     source_providers = os.path.join(
         source_path,
-        source_stack_directory(stack),
+        relative_directory,
         ".terraform",
         "providers",
     )
@@ -629,28 +427,61 @@ def create_workspace(operation_id: str, source_path: str, stack: str) -> tuple[s
     return root, workspace
 
 
+def _terraform_backend_configuration(environment: str, instance_id: str | None) -> dict | None:
+    backend = (os.getenv("IACP_TERRAFORM_BACKEND", "local") or "local").strip().lower()
+    stage = os.getenv("IACP_RUNTIME_STAGE", "develop").strip().lower()
+    if backend == "local" and stage == "develop":
+        if environment != "lab":
+            raise RuntimeError("REMOTE_STATE_REQUIRED_FOR_PRODUCTION")
+        return None
+    if backend != "s3" or stage != "production" or not instance_id:
+        raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
+    bucket = os.getenv("IACP_TFSTATE_BUCKET", "").strip()
+    prefix = os.getenv("IACP_TFSTATE_PREFIX", "").strip().strip("/")
+    endpoint = os.getenv("IACP_TFSTATE_ENDPOINT", "").strip()
+    region = os.getenv("IACP_TFSTATE_REGION", "").strip()
+    if (
+        not bucket
+        or not endpoint.startswith("https://")
+        or not region
+        or prefix != "iacp/prod-runtime-v1"
+        or not os.getenv("AWS_ACCESS_KEY_ID", "").strip()
+        or not os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+    ):
+        raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
+    return {
+        "bucket": bucket,
+        "key": f"{prefix}/instances/{instance_id}/terraform.tfstate",
+        "region": region,
+        "endpoints": {"s3": endpoint},
+        "use_path_style": True,
+        "skip_credentials_validation": True,
+        "skip_region_validation": True,
+        "skip_requesting_account_id": True,
+        "skip_metadata_api_check": True,
+        "skip_s3_checksum": True,
+        "use_lockfile": True,
+    }
+
+
+def configure_state_backend(workspace: str, environment: str, instance_id: str | None) -> str | None:
+    config = _terraform_backend_configuration(environment, instance_id)
+    if config is None:
+        return None
+    config_path = os.path.join(workspace, ".iacp-backend.json")
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, sort_keys=True)
+        handle.write("\n")
+    os.chmod(config_path, 0o600)
+    return config_path
+
+
 def write_variables(workspace: str, values: dict) -> str:
     path = os.path.join(workspace, "generated.auto.tfvars.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(values, handle, indent=2, sort_keys=True)
         handle.write("\n")
     return path
-
-
-def local_variables(spec: dict) -> dict:
-    return {
-        "environment": "local",
-        "instance": {
-            "name": spec["name"],
-            "image": spec["image"],
-            "vcpus": spec["vcpus"],
-            "memory_mb": spec["memory_mb"],
-            "disk_gb": spec["disk_gb"],
-            "network_mode": spec.get("network_mode", "dhcp"),
-            "started": spec.get("started", True),
-            "tags": spec.get("tags", []),
-        },
-    }
 
 
 def run_commands(
@@ -718,15 +549,22 @@ def run_commands(
     return 0, operation_output("".join(output), password), operation_output("".join(errors), password)
 
 
-def terraform_commands(command: str, plan_path: str) -> list[list[str]]:
+def terraform_commands(
+    command: str,
+    plan_path: str,
+    backend_config_path: str | None = None,
+) -> list[list[str]]:
     init = [
         "terraform",
         "init",
         "-input=false",
         "-no-color",
-        "-backend=false",
         "-lockfile=readonly",
     ]
+    if backend_config_path:
+        init.extend(["-reconfigure", f"-backend-config={backend_config_path}"])
+    else:
+        init.append("-backend=false")
     if command == "plan":
         return [
             init,
@@ -870,23 +708,6 @@ def settle_physical_operation(
     output: str = "",
     recovered: bool = False,
 ) -> bool:
-    if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
-        update_operation(
-            operation_id,
-            status="uncertain",
-            phase="recovery_required",
-            finished_at=now(),
-            last_heartbeat=now(),
-            exit_code=1,
-            output=operation_output(output),
-            error="IPAM_RELEASE_PENDING",
-        )
-        update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=node)
-        if vmid is not None:
-            release(int(vmid))
-        delete_secret(source_operation.get("secret_path"))
-        emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
-        return False
     update_operation(
         operation_id,
         status="succeeded",
@@ -946,11 +767,8 @@ def close_source_after_reconciliation(
             recovered=True,
         )
     else:
-        released = True
-        if source_operation["command"] in {"apply", "provision", "plan"}:
-            released = _release_static_allocation(instance_id, source_id)
-        terminal_status = "failed" if released else "uncertain"
-        terminal_error = detail if released else "IPAM_RELEASE_PENDING"
+        terminal_status = "failed"
+        terminal_error = detail
         update_operation(
             source_id,
             status=terminal_status,
@@ -991,6 +809,8 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
     identity = instance_identity(instance_id or source.get("instance_id"))
     instance_id = identity.get("instance_id") or source.get("instance_id")
     vmid = identity.get("vmid") or source.get("vmid")
+    if is_protected_vmid(vmid):
+        raise RuntimeError("PROTECTED_INSTANCE")
     node = identity.get("node") or source.get("target_node") or "mng01"
     name = identity.get("name")
     source_payload = json.loads(source.get("payload_json") or "{}")
@@ -1116,6 +936,8 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
         ).fetchone()
     if row is None or row["vmid"] is None:
         raise RuntimeError("POWER_INSTANCE_NOT_PROVISIONED")
+    if is_protected_vmid(row["vmid"]):
+        raise RuntimeError("PROTECTED_INSTANCE")
     if row["status"] == "deleted":
         raise RuntimeError("POWER_INSTANCE_DELETED")
     if action not in {"start", "shutdown", "reboot"}:
@@ -1149,7 +971,7 @@ def execute(worker_id: str, operation: dict) -> None:
     operation_id = operation["operation_id"]
     command = "unknown"
     phase = "plan"
-    stack = operation.get("stack") or "mng01"
+    environment = operation.get("environment") or "lab"
     instance_id = operation.get("instance_id")
     vmid: int | None = operation.get("vmid")
     target_node = operation.get("target_node")
@@ -1161,27 +983,27 @@ def execute(worker_id: str, operation: dict) -> None:
     secret_path: str | None = operation.get("secret_path")
     requested_started: bool | None = None
     network_model: str | None = None
+    backend_config_path: str | None = None
     try:
         payload = json.loads(operation["payload_json"])
         command = payload["command"]
         source_payload = payload
-        stack = payload.get("stack") or stack
+        environment = resolve_environment(payload.get("environment") or environment)
         instance_id = payload.get("instance_id") or instance_id
 
+        if command in {"plan", "provision", "apply", "destroy"}:
+            _terraform_backend_configuration(environment, instance_id)
+
         if command == "power":
-            if stack != "mng01":
-                raise RuntimeError("POWER_STACK_UNSUPPORTED")
-            load_environment()
-            client = ProxmoxClient()
+            endpoint, token = load_environment(environment)
+            client = ProxmoxClient(endpoint, token, environment=environment)
             execute_power(worker_id, operation, client)
             return
 
         if command == "reconcile":
             phase = "reconcile"
-            if stack != "mng01":
-                raise RuntimeError("RECONCILIATION_STACK_UNSUPPORTED")
-            load_environment()
-            client = ProxmoxClient()
+            endpoint, token = load_environment(environment)
+            client = ProxmoxClient(endpoint, token, environment=environment)
             execute_reconcile(worker_id, operation, client)
             return
 
@@ -1198,15 +1020,14 @@ def execute(worker_id: str, operation: dict) -> None:
             if source_operation is None:
                 raise RuntimeError(f"no existe el plan {source_operation_id}")
             source_payload = json.loads(source_operation["payload_json"])
-            stack = source_payload.get("stack") or source_operation.get("stack") or stack
+            environment = resolve_environment(source_operation.get("environment") or environment)
             instance_id = source_operation.get("instance_id") or instance_id
             target_node = source_operation.get("target_node") or target_node
         requested_started = bool(source_payload.get("spec", {}).get("started", True))
 
         source_path = os.getenv("IACP_TERRAFORM_PATH", "/workspace/terraform")
-        if stack == "mng01":
-            load_environment()
-            client = ProxmoxClient()
+        endpoint, token = load_environment(environment)
+        client = ProxmoxClient(endpoint, token, environment=environment)
 
         secret_path = secret_path_for_command(command, source_operation, operation)
 
@@ -1214,40 +1035,29 @@ def execute(worker_id: str, operation: dict) -> None:
             spec = payload.get("spec")
             if not spec:
                 raise RuntimeError(f"{command} requiere spec")
-            if stack == "mng01":
-                pool_id = validate_pool(client)
-                emit(operation_id, "proxmox.pool.validated", "ok", pool_id)
-                golden = observe(spec["image"], client)
-                emit(operation_id, "golden.observed", "ok", spec["image"])
-                network_model = golden.get("network_model") or "virtio"
-                requested_started = bool(spec.get("started", True))
-                target_node = target_node or select_target_node(client)
-                vmid = allocate(operation_id, client, node=target_node)
-                allocated_here = True
-                spec = _ensure_static_allocation(
-                    worker_id=worker_id,
-                    operation_id=operation_id,
-                    instance_id=instance_id,
-                    vmid=int(vmid),
-                    payload=payload,
-                    source_operation=operation,
-                )
-                values = golden_variables(
-                    spec,
-                    vmid,
-                    golden,
-                    stack,
-                    target_node=target_node,
-                    allowed_nodes=cluster_nodes(),
-                    has_root_password=read_secret(secret_path) is not None,
-                    pool_id=pool_id,
-                )
-                update_instance(instance_id, "planning", vmid=vmid, node=target_node)
-                emit(operation_id, "vmid.reserved", "held", str(vmid))
-            else:
-                values = local_variables(spec)
-                update_instance(instance_id, "planning")
-            workspace_root, workspace = create_workspace(operation_id, source_path, stack)
+            pool_id = validate_pool(client, environment)
+            emit(operation_id, "proxmox.pool.validated", "ok", pool_id)
+            golden = observe(spec["image"], client, environment)
+            emit(operation_id, "golden.observed", "ok", spec["image"])
+            network_model = golden.get("network_model") or "virtio"
+            requested_started = bool(spec.get("started", True))
+            target_node = target_node or select_target_node(client, environment)
+            vmid = allocate(operation_id, client, node=target_node)
+            allocated_here = True
+            values = golden_variables(
+                spec,
+                vmid,
+                golden,
+                environment,
+                target_node=target_node,
+                allowed_nodes=cluster_nodes(environment),
+                has_root_password=read_secret(secret_path) is not None,
+                pool_id=pool_id,
+            )
+            update_instance(instance_id, "planning", vmid=vmid, node=target_node)
+            emit(operation_id, "vmid.reserved", "held", str(vmid))
+            workspace_root, workspace = create_workspace(operation_id, source_path, environment)
+            backend_config_path = configure_state_backend(workspace, environment, instance_id)
             write_variables(workspace, values)
             plan_path = os.path.join(data_root(), "plans", operation_id, "plan.tfplan")
             update_operation(
@@ -1261,9 +1071,13 @@ def execute(worker_id: str, operation: dict) -> None:
             workspace_root = source_operation.get("workspace_path") or os.path.join(
                 data_root(), "plans", source_operation_id, "terraform"
             )
-            workspace = os.path.join(workspace_root, source_stack_directory(stack))
+            workspace = os.path.join(workspace_root, source_environment_directory(environment))
             if not os.path.isdir(workspace):
                 raise RuntimeError(f"no existe el workspace del plan {source_operation_id}")
+            existing_backend_config = os.path.join(workspace, ".iacp-backend.json")
+            backend_config_path = existing_backend_config if os.path.isfile(existing_backend_config) else None
+            if os.getenv("IACP_TERRAFORM_BACKEND", "local").strip().lower() == "s3" and not backend_config_path:
+                raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
             plan_path = source_operation.get("plan_path") or os.path.join(
                 data_root(), "plans", source_operation_id, "plan.tfplan"
             )
@@ -1276,6 +1090,8 @@ def execute(worker_id: str, operation: dict) -> None:
                     ).fetchone()
                 vmid = row["vmid"] if row else None
                 target_node = target_node or (row["node"] if row else None)
+            if is_protected_vmid(vmid):
+                raise RuntimeError("PROTECTED_INSTANCE")
             update_operation(
                 operation_id,
                 vmid=vmid,
@@ -1298,7 +1114,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 worker_id,
                 operation_id,
                 workspace,
-                terraform_commands("plan", plan_path),
+                terraform_commands("plan", plan_path, backend_config_path),
                 secret_path=secret_path,
                 phase=phase,
             )
@@ -1326,12 +1142,12 @@ def execute(worker_id: str, operation: dict) -> None:
                 worker_id,
                 operation_id,
                 workspace,
-                terraform_commands(command, plan_path),
+                terraform_commands(command, plan_path, backend_config_path),
                 secret_path=secret_path,
                 phase=phase,
             )
         if return_code != 0:
-            physical = stack == "mng01" and phase in {"apply", "destroy"}
+            physical = client is not None and phase in {"apply", "destroy"}
             failure_text = f"{output}\n{error}"
             recovered = False
             if physical and client is not None and vmid is not None and not deterministic_error(failure_text):
@@ -1366,7 +1182,7 @@ def execute(worker_id: str, operation: dict) -> None:
                         worker_id,
                         operation_id,
                         workspace,
-                        terraform_commands(command, plan_path)
+                        terraform_commands(command, plan_path, backend_config_path)
                         if command != "provision"
                         else [["terraform", "apply", "-input=false", "-no-color", plan_path]],
                         secret_path=secret_path,
@@ -1399,12 +1215,7 @@ def execute(worker_id: str, operation: dict) -> None:
                     return
 
             status = "failed" if deterministic_error(failure_text) or not physical else "uncertain"
-            ipam_release_ok = True
-            if command in {"plan", "provision"} and (phase == "plan" or status == "failed"):
-                ipam_release_ok = _release_static_allocation(instance_id, operation_id)
-                if not ipam_release_ok:
-                    status = "uncertain"
-            terminal_error = "IPAM_RELEASE_PENDING" if not ipam_release_ok else error
+            terminal_error = error
             update_operation(
                 operation_id,
                 status=status,
@@ -1424,7 +1235,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 delete_secret(secret_path)
             return
 
-        if stack == "mng01" and vmid is not None and client is not None:
+        if vmid is not None and client is not None:
             expected = command in {"apply", "provision"}
             identity = instance_identity(instance_id)
             if not reconcile_physical(
@@ -1438,24 +1249,6 @@ def execute(worker_id: str, operation: dict) -> None:
                 raise RuntimeError(
                     f"reconciliacion fisica fallida: VMID {vmid} no coincide con {expected}"
                 )
-
-        if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
-            update_operation(
-                operation_id,
-                status="uncertain",
-                phase="recovery_required",
-                finished_at=now(),
-                last_heartbeat=now(),
-                exit_code=1,
-                output=operation_output(output),
-                error="IPAM_RELEASE_PENDING",
-            )
-            update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=target_node)
-            if vmid is not None:
-                release(int(vmid))
-            delete_secret(source_operation.get("secret_path"))
-            emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
-            return
 
         update_operation(
             operation_id,
@@ -1487,7 +1280,7 @@ def execute(worker_id: str, operation: dict) -> None:
             delete_secret(source_operation.get("secret_path"))
         emit(operation_id, f"terraform.{command}.completed", "succeeded")
     except Exception as error:
-        physical = stack == "mng01" and phase in {"apply", "destroy", "reconcile"}
+        physical = client is not None and phase in {"apply", "destroy", "reconcile"}
         power_uncertain = command == "power" and isinstance(error, ProxmoxError) and error.uncertain
         recovered = False
         if (
@@ -1527,10 +1320,6 @@ def execute(worker_id: str, operation: dict) -> None:
         if command in {"plan", "provision"} and phase == "plan" and allocated_here and vmid is not None:
             release(int(vmid))
         terminal_error = str(error)
-        if command in {"plan", "provision"} and (phase == "plan" or status == "failed"):
-            if not _release_static_allocation(instance_id, operation_id):
-                status = "uncertain"
-                terminal_error = "IPAM_RELEASE_PENDING"
         if command == "provision":
             delete_secret(secret_path)
         update_operation(

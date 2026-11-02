@@ -1,81 +1,104 @@
-# Despliegue en Portainer
+# Preparación de stacks Portainer
 
-Este despliegue usa `deploy/portainer/docker-compose.yml`. El
-`compose.yaml` de Docker standalone permanece separado y no se modifica.
+Este documento describe los manifiestos del candidato. No confirma promoción,
+no cambia el IACP Control Plane (VM 104) y no autoriza un corte de dominio.
 
-## Preparación
+## Manifiestos y separación
 
-1. Configurar `scm.cyberfuel.com` como registry privado de lectura en Portainer.
-2. Confirmar que existe la red Docker externa `proxy_network` y que Traefik
-   está conectado a ella.
-3. Crear el Stack desde el repositorio `CyberFuel/iacp-controlplanev2`.
-4. Seleccionar `deploy/portainer/docker-compose.yml`.
-5. Introducir las variables de `deploy/portainer/.env.example` en el panel de
-   variables de Portainer, sustituyendo los placeholders.
+| Stack | Manifiesto | Imagen | Destino inicial | Persistencia |
+| --- | --- | --- | --- | --- |
+| Desarrollo | `deploy/portainer/docker-compose.yml` con variables de desarrollo | tag `develop` | MNG, entorno lógico `lab` | PostgreSQL y workdata propios; state Terraform local |
+| Producción | `deploy/portainer/docker-compose.yml` con variables de producción | tag aprobado | MNG, entorno lógico `lab`; PRX apagado | PostgreSQL y workdata propios; Wasabi `iacp/prod-runtime-v1` |
 
-`IACP_PROXMOX_HOST_IP` debe contener la IP verificada del nodo Proxmox que
-corresponde a `IACP_PROXMOX_HOSTNAME`. El Stack la fija en `/etc/hosts` de la
-API y de los workers para que una caída momentánea del DNS Docker no convierta
-una operación física en `uncertain`; el endpoint HTTPS conserva el nombre para
-validar el certificado.
+Cada entorno necesita nombres de volumen exclusivos. Los valores de ejemplo
+son `iacp_controlplane_dev_postgres`, `iacp_controlplane_dev_workdata`,
+`iacp_controlplane_prod_postgres` e `iacp_controlplane_prod_workdata`. No
+compartas volúmenes entre stacks ni montes el volumen del runtime anterior.
+La base comienza vacía; no se importan operaciones ni instancias antiguas.
 
-El Stack exige `IACP_API_TOKEN` y activa `IACP_REQUIRE_API_TOKEN=1`; si falta el
-token la API no inicia. `IACP_ROOT_PASSWORD_MIN_LENGTH` queda en 12 por defecto.
-`IACP_RETENTION_DAYS=0` conserva todo el historial; si se configura un valor
-mayor, solo se compactan operaciones terminales e idempotencias antiguas.
+El stack declara PostgreSQL 17 y dos workers (`worker-1`, `worker-2`). La cola
+usa locks transaccionales y limita globalmente a dos las operaciones activas.
+No escales workers sin cambiar y revisar ese límite.
 
-No se necesitan carpetas de código ni archivos de Terraform en el host. La
-imagen contiene el código y Terraform; el volumen nombrado
-`iacp_controlplanev2_data` conserva SQLite, workspaces y estados.
-El Stack define seis workers estables (`worker-1` a `worker-6`) sobre el mismo
-volumen y usa `IACP_MAX_CONCURRENT=6`. `IACP_VMID_REUSE=1` hace que, después de
-confirmar un destroy, el allocator vuelva a elegir el menor VMID libre desde
-40001; el VMID 40000 permanece reservado.
-El provider certificado de Proxmox se inicializa durante el build de la imagen
-y los workspaces lo reutilizan localmente, evitando una descarga por cada VM.
+## Variables y secretos
 
-## Actualización rápida
+Usa `deploy/portainer/.env.example` como lista de nombres, no como valores
+operativos. Crea secretos diferentes para PostgreSQL, API, Proxmox MNG y
+Wasabi. No guardes credenciales reales en Git ni en tickets.
 
-Para desarrollo:
+En ambos stacks, comienza con:
 
-```bash
-docker login scm.cyberfuel.com
-IACP_IMAGE_TAG=develop ./scripts/publish-image.sh
+```text
+IACP_DEFAULT_ENVIRONMENT=lab
+IACP_ENABLED_ENVIRONMENTS=lab
 ```
 
-Después, en Portainer, seleccionar `Update the stack`, habilitar la descarga
-de la imagen y redeployar. Para una release, publicar un tag versionado y
-cambiar solamente `IACP_IMAGE_TAG`.
+El entorno lógico `lab` se resuelve a MNG. El catálogo de este candidato solo
+habilita `mng01`; `mng02` no se ofrecerá hasta validar su storage e imágenes.
+El request no contiene nombres de clúster o nodo. `iac.cyberfuel.com` puede admitir PRX
+cuando se configure y certifique; `dev.iac.cyberfuel.com` queda limitado a
+MNG.
 
-No usar `latest`, no borrar el volumen y no ejecutar `down -v`.
+En el runtime productivo configura `IACP_RUNTIME_STAGE=production`,
+`IACP_TERRAFORM_BACKEND=s3`, el bucket `cyberfuel-iacp-tfstate-lab` y el prefijo
+exacto `iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
+`IACP_WASABI_SECRET_ACCESS_KEY` se entregan solo a los workers para operar el
+backend. El endpoint se configura con HTTPS y path-style para Wasabi; Terraform
+usa un lock file S3. Revisa permisos y versionado del bucket antes del corte.
+La guía oficial de Terraform describe la configuración parcial del backend S3
+y el lock file: [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
+Wasabi recomienda path-style para sus solicitudes S3:
+[Wasabi REST API](https://docs.wasabi.com/apidocs/rest-api-introduction).
 
-## Verificación
+En desarrollo configura `IACP_RUNTIME_STAGE=develop` y
+`IACP_TERRAFORM_BACKEND=local`. No añadas llaves Wasabi ni un prefijo S3 al
+stack de desarrollo.
+
+## PRX permanece deshabilitado
+
+La carpeta `terraform/environments/prx` contiene solo la estructura técnica;
+su catálogo se entrega vacío a propósito. No publiques `production` en
+`IACP_ENABLED_ENVIRONMENTS` hasta completar y revisar:
+
+1. Endpoint HTTPS y credencial Proxmox de Platinum/PRX.
+2. Pool, nodos en línea y storage permitido.
+3. Golden Images y VMIDs de template confirmados para PRX.
+4. Catálogo con planes e imágenes verificados.
+5. Bucket, prefijo, permisos de lectura/escritura y locks.
+6. Ensayos aislados con reconciliación comprobada.
+
+La aplicación filtra el entorno si faltan estas configuraciones; el operador
+debe revisar logs y la salida de `GET /v1/environments` antes de habilitarlo.
+
+## Verificación local de configuración
+
+Para inspeccionar el Compose de desarrollo, copia `.env.example` a `.env`,
+rellena los marcadores y ejecuta:
 
 ```bash
-curl --fail https://dev-iac.cyberfuel.com/health/live
-curl --fail https://dev-iac.cyberfuel.com/health/ready
+docker compose config
+docker compose up -d --build
+curl --fail http://localhost:8080/health/ready
 ```
 
-Luego abrir `/docs`, autorizarse con Bearer y probar `GET /v1/plans` seguido de
-`POST /v1/instances` con un `plan_id` e `image_id`. El API no
-publica un puerto del host; el único acceso externo es Traefik por
-`websecure`. La consola operativa simplificada queda disponible en `/console`.
+Para el manifiesto de Portainer usa los archivos de variables correspondientes
+al stack y `docker compose -f deploy/portainer/docker-compose.yml config`.
+Estas comprobaciones no ejecutan un despliegue ni crean máquinas virtuales.
 
-El perfil `lab_dhcp` queda habilitado por defecto. Para preparar IPAM estático,
-consultar primero `GET /v1/network-profiles` y configurar el ID exacto del
-prefijo `/24` en `IACP_NETBOX_PREFIX_ID`, el token en
-`IACP_NETBOX_TOKEN` y luego `IACP_PROD_STATIC_ENABLED=1`. La URL base es
-`https://netbox.cyberfuel.com/api`; `/api/status/` es únicamente el endpoint
-de salud. El orquestador reserva `.1` como gateway, crea la IP libre con la
-metadata de la instancia y la libera tras un destroy confirmado. No activar el
-perfil con un prefijo pendiente ni desactivar la verificación TLS en producción.
+El health check valida PostgreSQL y configuración de destino. Antes de una
+prueba física se requiere identidad de prueba, cola y credenciales aisladas, y
+un máximo de dos operaciones simultáneas. Mantén los servicios y volúmenes
+anteriores fuera de este stack.
 
-La API recibe también las variables de conexión necesarias para consultar y
-operar el estado de energía. Los workers ejecutan `start`, `shutdown` y
-`reboot`, y cada acción se confirma mediante su `operation_id`.
-Si una operación queda excepcionalmente en `uncertain`, se puede encolar
-`POST /v1/instances/{instance_id}/reconcile` con `Idempotency-Key`; el worker
-observa primero Proxmox y recupera el estado sin reiniciar la VM.
-Los heartbeats ahora exponen antigüedad y estado `healthy`, `degraded`, `stale`
-o `unknown`; una operación abandonada por un worker se cierra como `uncertain`
-y genera automáticamente una reconciliación pendiente.
+## Promoción futura
+
+1. Revisa los volúmenes nuevos, secretos, imagen, manifiesto y `origin/main`.
+2. Ejecuta el protocolo de promoción vigente y registra la versión realmente
+   ejecutada, esquema, workers, locks y colas.
+3. Certifica el piloto técnico y, por separado, cada escenario crítico de
+   recuperación.
+4. Cambia el endpoint público solo después de un dictamen integral aprobado.
+
+No borres volúmenes, estados versionados, locks ni operaciones históricas para
+forzar un resultado. Los gates pendientes y el procedimiento del corte están
+en [`MIGRACION_CONTROLPLANE.md`](MIGRACION_CONTROLPLANE.md).

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository="${IACP_IMAGE_REPOSITORY:-scm.cyberfuel.com/cyberfuel/iacp-controlplanev2}"
+repository="${IACP_IMAGE_REPOSITORY:-scm.cyberfuel.com/cyberfuel/iacp-controlplane}"
 tag="${IACP_IMAGE_TAG:-develop}"
 platform="${IACP_IMAGE_PLATFORM:-linux/amd64}"
 
@@ -18,7 +18,7 @@ echo "Publicando ${repository}:${tag} para ${platform}"
 docker buildx build \
   --platform "$platform" \
   --tag "${repository}:${tag}" \
-  --label "org.opencontainers.image.title=IACP Control Plane V2" \
+  --label "org.opencontainers.image.title=IACP Control Plane" \
   --label "org.opencontainers.image.version=${tag}" \
   --provenance=false \
   --load \

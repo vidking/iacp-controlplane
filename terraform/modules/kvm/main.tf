@@ -52,9 +52,8 @@ resource "proxmox_virtual_environment_vm" "this" {
   }
 
   network_device {
-    bridge  = var.network_bridge
-    model   = var.network_model
-    vlan_id = var.vlan_id
+    bridge = var.network_bridge
+    model  = var.network_model
   }
 
   initialization {
@@ -62,8 +61,7 @@ resource "proxmox_virtual_environment_vm" "this" {
 
     ip_config {
       ipv4 {
-        address = var.network_mode == "dhcp" ? "dhcp" : var.ipv4_cidr
-        gateway = var.network_mode == "dhcp" ? null : var.ipv4_gateway
+        address = "dhcp"
       }
     }
 

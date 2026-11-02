@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Punto de entrada del operador para el runtime V1."""
+
+from go_live import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

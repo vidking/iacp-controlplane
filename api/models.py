@@ -32,7 +32,8 @@ class PowerAction(str, Enum):
     reboot = "reboot"
 
 
-NetworkProfile = Literal["lab_dhcp", "prod_static"]
+Environment = Literal["lab", "production"]
+NetworkProfile = Literal["lab_dhcp"]
 
 
 def _validate_ssh_keys(values: list[str]) -> list[str]:
@@ -43,7 +44,7 @@ def _validate_ssh_keys(values: list[str]) -> list[str]:
 
 
 class AccessRequest(BaseModel):
-    """Initial access material accepted by the stable v1 contract."""
+    """Datos de acceso inicial aceptados por el contrato estable v1."""
 
     root_password: SecretStr | None = Field(default=None, min_length=1)
     ssh_public_keys: list[str] = Field(default_factory=list)
@@ -65,27 +66,23 @@ class AccessRequest(BaseModel):
         return _validate_ssh_keys(values)
 
 
-class CommercialContext(BaseModel):
-    customer_id: str = Field(min_length=1, max_length=128)
-    customer_tag: str = Field(pattern=TAG_PATTERN, max_length=63)
-    order_id: str = Field(min_length=1, max_length=128)
-    product_id: str = Field(min_length=1, max_length=128)
-
-
 class InstanceSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(pattern=NAME_PATTERN)
     image: str = Field(default="ubuntu-2404", pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10)$")
     vcpus: int = Field(default=2, ge=1, le=8)
     memory_mb: int = Field(default=2048, ge=512, le=16384)
     disk_gb: int = Field(default=20, ge=20, le=400)
     network_profile: NetworkProfile = "lab_dhcp"
-    network_mode: Literal["dhcp", "static"] = "dhcp"
-    vlan_id: int | None = Field(default=None, ge=1, le=4094)
-    ipv4_cidr: str | None = None
-    ipv4_gateway: str | None = None
+    network_mode: Literal["dhcp"] = "dhcp"
     ssh_public_keys: list[str] = Field(default_factory=list)
     started: bool = True
-    tags: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Tags Proxmox explícitos del consumidor. Si se omite o queda vacío, no se agrega ningún tag.",
+        examples=[["cl-105", "kvm-001", "postal"]],
+    )
 
     @field_validator("ssh_public_keys")
     @classmethod
@@ -100,42 +97,24 @@ class InstanceSpec(BaseModel):
                 raise ValueError("tags debe contener etiquetas en minúsculas y con formato Proxmox válido")
         return list(dict.fromkeys(values))
 
-    @model_validator(mode="after")
-    def valid_network(self):
-        if self.network_profile == "lab_dhcp" and self.network_mode != "dhcp":
-            raise ValueError("network_profile=lab_dhcp requiere network_mode=dhcp")
-        if self.network_profile == "prod_static" and self.network_mode != "static":
-            raise ValueError("network_profile=prod_static requiere network_mode=static")
-        if self.network_mode == "static" and not (self.ipv4_cidr and self.ipv4_gateway) and self.network_profile != "prod_static":
-            raise ValueError("network_mode=static requiere ipv4_cidr e ipv4_gateway")
-        if self.network_mode == "static" and bool(self.ipv4_cidr) != bool(self.ipv4_gateway):
-            raise ValueError("network_mode=static requiere ipv4_cidr e ipv4_gateway juntos")
-        if self.network_mode == "dhcp" and (self.ipv4_cidr or self.ipv4_gateway):
-            raise ValueError("network_mode=dhcp no acepta direccionamiento estatico")
-        return self
-
-
 class InstanceCreateRequest(BaseModel):
-    """Stable consumer request for one transparent provision operation."""
+    """Solicitud estable del consumidor para aprovisionar una instancia."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
                     "name": "cliente-cl-0000",
+                    "environment": "lab",
                     "plan_id": "kvm-2",
                     "image_id": "ubuntu-2404",
+                    "network_profile": "lab_dhcp",
+                    "tags": ["cl-105", "kvm-001", "postal"],
                     "access": {
                         "root_password": "CAMBIAR_POR_SECRETO",
                         "ssh_public_keys": [],
                     },
-                    "commercial_context": {
-                        "customer_id": "CL-0000",
-                        "customer_tag": "cl-0000",
-                        "order_id": "ORD-1001",
-                        "product_id": "KVM-2",
-                    },
-                    "network_profile": "lab_dhcp",
                     "start_on_create": True,
                 }
             ]
@@ -143,12 +122,28 @@ class InstanceCreateRequest(BaseModel):
     )
 
     name: str = Field(pattern=NAME_PATTERN)
+    environment: Environment | None = Field(
+        default=None,
+        description="Destino lógico publicado por GET /v1/environments; el servidor resuelve clúster y nodo.",
+    )
     plan_id: str = Field(min_length=1, max_length=32)
     image_id: str = Field(min_length=1, max_length=64)
-    access: AccessRequest = Field(default_factory=AccessRequest)
-    commercial_context: CommercialContext | None = None
     network_profile: NetworkProfile = "lab_dhcp"
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Lista libre de tags Proxmox descriptivos. Solo se aplican los valores que envía el consumidor.",
+        examples=[["cl-105", "kvm-001", "postal"]],
+    )
+    access: AccessRequest = Field(default_factory=AccessRequest)
     start_on_create: bool = True
+
+    @field_validator("tags")
+    @classmethod
+    def valid_tags(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not value or not re.fullmatch(TAG_PATTERN, value):
+                raise ValueError("tags debe contener etiquetas en minúsculas y con formato Proxmox válido")
+        return list(dict.fromkeys(values))
 
 
 class ProvisionRequest(BaseModel):
@@ -167,15 +162,16 @@ class OperationRequest(BaseModel):
     """Internal/operator request retained for explicit plan/apply control."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
                     "command": "plan",
                     "action": "provision",
-                    "stack": "mng01",
+                    "environment": "lab",
                     "plan_id": "kvm-2",
                     "spec": {
-                        "name": "iacp-v2-demo",
+                        "name": "iacp-api-demo",
                         "image": "ubuntu-2404",
                         "vcpus": 2,
                         "memory_mb": 4096,
@@ -219,7 +215,7 @@ class OperationRequest(BaseModel):
     plan_operation_id: str | None = None
     power_action: PowerAction | None = None
     source_operation_id: str | None = None
-    stack: Literal["mng01", "local"] = "mng01"
+    environment: Environment | None = None
 
     @model_validator(mode="after")
     def valid_command(self):

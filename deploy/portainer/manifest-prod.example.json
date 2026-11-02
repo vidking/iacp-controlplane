@@ -1,0 +1,17 @@
+{
+  "project": "iacp-controlplane-prod-v1",
+  "compose_file": "deploy/portainer/docker-compose.yml",
+  "environment_file": "/etc/iacp/stacks/prod.env",
+  "stage": "production",
+  "domain": "iac.cyberfuel.com",
+  "service_alias": "iacp-controlplane-api-prod",
+  "proxy_network": "proxy_network",
+  "backend": "s3",
+  "state_bucket": "cyberfuel-iacp-tfstate-lab",
+  "state_prefix": "iacp/prod-runtime-v1",
+  "max_concurrent": 1,
+  "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
+  "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
+  "dynamic_config": "/etc/iacp/tls/dynamic/iacp.yml",
+  "certification_file": "/etc/iacp/certification/controlplane-v1.json"
+}

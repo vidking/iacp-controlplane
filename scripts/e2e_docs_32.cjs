@@ -18,7 +18,7 @@ const execFileAsync = promisify(execFile);
 const playwrightModule = process.env.IACP_PLAYWRIGHT_MODULE || "/home/despinoza/.local/share/mise/installs/npm-playwright/1.64.1/node_modules/playwright";
 const { chromium } = require(playwrightModule);
 
-const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://dev-iac.cyberfuel.com").replace(/\/$/, "");
+const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://dev.iac.cyberfuel.com").replace(/\/$/, "");
 const API_TOKEN = process.env.IACP_E2E_API_TOKEN || "";
 const PROXMOX_ENDPOINT = (process.env.IACP_E2E_PROXMOX_ENDPOINT || "").replace(/\/$/, "");
 const PROXMOX_TOKEN = process.env.IACP_E2E_PROXMOX_TOKEN || "";
@@ -33,7 +33,7 @@ const NETWORK_TIMEOUT = Number(process.env.IACP_E2E_NETWORK_TIMEOUT || 360);
 const SSH_TIMEOUT = Number(process.env.IACP_E2E_SSH_TIMEOUT || 360);
 const SSH_ATTEMPT_TIMEOUT = Number(process.env.IACP_E2E_SSH_ATTEMPT_TIMEOUT || 45);
 const PING_TIMEOUT = Number(process.env.IACP_E2E_PING_TIMEOUT || 8);
-const MAX_WORKERS = Number(process.env.IACP_E2E_MAX_WORKERS || 6);
+const MAX_WORKERS = Number(process.env.IACP_E2E_MAX_WORKERS || 2);
 
 const IMAGES = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"];
 const PLANS = ["kvm-1", "kvm-2", "kvm-3", "kvm-4"];
@@ -45,7 +45,6 @@ const WEAK_PASSWORDS = [
   "Network!2026A01", "Reboot!2026A001", "Shutdown!2026A1", "Destroy!2026A01", "AlmaLab!2026A01", "Ubuntu!2026A001", "Iacp!Test2026A1", "Lab!Kvm2026A0001",
 ];
 const KEY_VARIANTS = ["ed25519-a", "rsa-3072", "ecdsa-p256", "ed25519-b"];
-let NETWORK_PROFILE_ENDPOINT_SUPPORTED = true;
 const terminalStatuses = new Set(["completed", "failed", "uncertain"]);
 
 class E2EError extends Error {
@@ -346,17 +345,14 @@ async function createFromDocs(page, testCase, telemetry) {
   const name = `e2e-docs-${RUN_ID}-${String(index).padStart(2, "0")}-${image.replaceAll("-", "")}-${plan.replaceAll("-", "")}-${mode}`;
   await page.locator("#plan").selectOption(plan);
   await page.locator("#image").selectOption(image);
+  await page.locator("#environment").selectOption("lab");
   const networkProfile = page.locator("#network-profile");
   if (await networkProfile.count()) await networkProfile.selectOption(NETWORK_PROFILE);
   await page.locator("#name").fill(name);
   await page.locator("#root-password").fill(password);
   await page.locator("#ssh-key").fill(key.publicKey);
-  const advanced = page.locator(".advanced-card");
-  await advanced.evaluate((details) => { details.open = true; });
-  await page.locator("#customer-id").fill(`e2e-docs-${RUN_ID}-${String(index).padStart(2, "0")}`);
-  await page.locator("#customer-tag").fill(`e2e-docs-${RUN_ID}-${String(index).padStart(2, "0")}`.toLowerCase());
-  await page.locator("#order-id").fill(`e2e-order-docs-${RUN_ID}-${String(index).padStart(2, "0")}`);
-  await page.locator("#product-id").fill(`e2e-${image}-${plan}`);
+  await page.locator(".advanced-card").evaluate((details) => { details.open = true; });
+  await page.locator("#tags").fill(`e2e, cl-e2e-${String(index).padStart(2, "0")}, kvm-${String(index).padStart(3, "0")}`);
   const startOnCreate = index % 2 === 0;
   const started = page.locator("#started");
   if ((await started.isChecked()) !== startOnCreate) await started.click();
@@ -375,7 +371,8 @@ async function createFromDocs(page, testCase, telemetry) {
     const requestBody = createRequest?.postDataJSON() || null;
     const idempotencyKey = createRequest?.headers()["idempotency-key"] || null;
     if (!requestBody || !idempotencyKey) throw new E2EError("la creación visual no expuso cuerpo o Idempotency-Key");
-    if (NETWORK_PROFILE_ENDPOINT_SUPPORTED && requestBody.network_profile !== NETWORK_PROFILE) throw new E2EError(`Docs envió un perfil de red inesperado: ${requestBody.network_profile}`);
+    if (requestBody.environment !== "lab") throw new E2EError(`Docs envió un entorno inesperado: ${requestBody.environment}`);
+    if (requestBody.network_profile !== NETWORK_PROFILE) throw new E2EError(`Docs envió un perfil de red inesperado: ${requestBody.network_profile}`);
     const replay = await api("POST", "/v1/instances", requestBody, idempotencyKey);
     if (replay.instance_id !== created.instance_id || replay.operation_id !== created.operation_id) throw new E2EError("replay de idempotencia divergente");
     telemetry.uiRequests.push({ action: "create", idempotencyKey, operationId: created.operation_id });
@@ -422,10 +419,8 @@ async function runCase(page, testCase) {
     vmid = Number(current.vmid);
     if (vmid < 40001) throw new E2EError(`VMID fuera de rango: ${vmid}`);
     if (current.image_id !== testCase.image || current.plan_id !== testCase.plan) throw new E2EError("catálogo divergente");
-    if (NETWORK_PROFILE_ENDPOINT_SUPPORTED && current.spec?.network_profile !== NETWORK_PROFILE) throw new E2EError(`perfil de red divergente: ${current.spec?.network_profile}`);
-    if (!NETWORK_PROFILE_ENDPOINT_SUPPORTED && current.spec?.network_mode && current.spec.network_mode !== "dhcp") throw new E2EError(`contrato remoto no quedó en DHCP: ${current.spec.network_mode}`);
-    if (NETWORK_PROFILE_ENDPOINT_SUPPORTED && NETWORK_PROFILE === "lab_dhcp" && current.network_allocation !== null) throw new E2EError("lab_dhcp no debe reservar IP en IPAM");
-    if (JSON.stringify(current.commercial_context) !== JSON.stringify(createdCase.body.commercial_context)) throw new E2EError("commercial_context divergente");
+    if (current.spec?.network_profile !== NETWORK_PROFILE) throw new E2EError(`perfil de red divergente: ${current.spec?.network_profile}`);
+    if (JSON.stringify(current.spec?.tags) !== JSON.stringify(createdCase.body.tags)) throw new E2EError("tags divergentes en el detalle de la instancia");
     const pool = await proxmox(`/pools/${encodeURIComponent(POOL_ID)}`);
     const inPool = (pool.members || []).some((member) => String(member.vmid) === String(vmid));
     if (!inPool) throw new E2EError(`VMID ${vmid} no pertenece a ${POOL_ID}`);
@@ -488,6 +483,7 @@ function buildCases() {
 }
 
 async function main() {
+  if (!Number.isInteger(MAX_WORKERS) || MAX_WORKERS < 1 || MAX_WORKERS > 2) throw new E2EError("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2");
   if (!API_TOKEN) throw new E2EError("IACP_E2E_API_TOKEN es obligatorio");
   if (!PROXMOX_ENDPOINT || !PROXMOX_TOKEN) throw new E2EError("faltan credenciales Proxmox para validar destrucción física");
   if (!PUBLIC_KEY) throw new E2EError("IACP_E2E_SSH_PUBLIC_KEY es obligatorio para la matriz de llaves");
@@ -496,16 +492,13 @@ async function main() {
   const images = await api("GET", "/v1/images");
   if (JSON.stringify((plans.plans || []).map((item) => item.plan_id)) !== JSON.stringify(PLANS)) throw new E2EError("catálogo de planes inesperado");
   if (JSON.stringify((images.images || []).map((item) => item.image_id)) !== JSON.stringify(IMAGES)) throw new E2EError("catálogo de imágenes inesperado");
-  try {
-    const profiles = await api("GET", "/v1/network-profiles");
-    const profile = (profiles.network_profiles || []).find((item) => item.profile_id === NETWORK_PROFILE);
-    if (!profile?.enabled || profile.network_mode !== "dhcp") throw new E2EError("lab_dhcp no está disponible como DHCP");
-  } catch (error) {
-    if (!(error instanceof E2EError) || !String(error.message).includes("HTTP 404")) throw error;
-    NETWORK_PROFILE_ENDPOINT_SUPPORTED = false;
-  }
+  const environments = await api("GET", "/v1/environments");
+  if (environments.default_environment !== "lab" || !(environments.environments || []).some((item) => item.environment === "lab")) throw new E2EError("el entorno lógico lab no está habilitado");
+  const profiles = await api("GET", "/v1/network-profiles");
+  const profile = (profiles.network_profiles || []).find((item) => item.profile_id === NETWORK_PROFILE);
+  if (!profile?.enabled || profile.network_mode !== "dhcp") throw new E2EError("lab_dhcp no está disponible como DHCP");
   console.log(`CATALOG PASS plans=${PLANS.join(",")} images=${IMAGES.join(",")}`);
-  console.log(`NETWORK PROFILE PASS profile=${NETWORK_PROFILE}${NETWORK_PROFILE_ENDPOINT_SUPPORTED ? "" : " (implicit in deployed contract)"}`);
+  console.log(`NETWORK PROFILE PASS profile=${NETWORK_PROFILE}`);
 
   const browser = await chromium.launch({
     headless: process.env.IACP_DOCS_HEADLESS !== "0",

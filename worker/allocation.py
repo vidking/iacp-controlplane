@@ -2,7 +2,11 @@ import os
 from datetime import datetime, timezone
 
 from api.db import database
+from api.protection import protected_vmids
 from worker.proxmox import ProxmoxClient
+
+
+_REQUIRED_MNG_INVENTORY_VMIDS = {104, 106, 29000}
 
 
 def now() -> str:
@@ -14,8 +18,12 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
     maximum = int(os.getenv("IACP_VMID_MAX", "49999"))
     reuse = os.getenv("IACP_VMID_REUSE", "1").strip().lower() not in {"0", "false", "no"}
     inventory = {int(item["vmid"]) for item in client.inventory() if str(item.get("vmid", "")).isdigit()}
+    if not _REQUIRED_MNG_INVENTORY_VMIDS.issubset(inventory):
+        raise RuntimeError("PROXMOX_INVENTORY_INCOMPLETE")
+    inventory.update(protected_vmids())
     with database() as db:
-        db.execute("BEGIN IMMEDIATE")
+        db.execute("BEGIN")
+        db.execute("SELECT pg_advisory_xact_lock(104, 3)")
         reserved = {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases WHERE status = 'held'")}
         consumed = (
             {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases")}

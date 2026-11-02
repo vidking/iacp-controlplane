@@ -134,50 +134,6 @@ variable "network_model" {
   }
 }
 
-variable "vlan_id" {
-  description = "VLAN de la interfaz principal."
-  type        = number
-  default     = null
-
-  validation {
-    condition     = var.vlan_id == null || (var.vlan_id >= 1 && var.vlan_id <= 4094 && floor(var.vlan_id) == var.vlan_id)
-    error_message = "vlan_id debe estar vacío o entre 1 y 4094."
-  }
-}
-
-variable "network_mode" {
-  description = "Modo de direccionamiento de la interfaz."
-  type        = string
-  default     = "dhcp"
-
-  validation {
-    condition     = contains(["dhcp", "static"], var.network_mode)
-    error_message = "network_mode debe ser dhcp o static."
-  }
-}
-
-variable "ipv4_cidr" {
-  description = "Dirección IPv4 estática en formato CIDR."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.ipv4_cidr == null || can(cidrnetmask(var.ipv4_cidr))
-    error_message = "ipv4_cidr debe ser null o contener una dirección IPv4 y prefijo válidos."
-  }
-}
-
-variable "ipv4_gateway" {
-  description = "Gateway IPv4 de la interfaz principal."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.ipv4_gateway == null || can(cidrnetmask("${var.ipv4_gateway}/32"))
-    error_message = "ipv4_gateway debe ser null o una dirección IPv4 válida."
-  }
-}
-
 variable "bios" {
   description = "Firmware heredado de la Golden Image."
   type        = string
@@ -267,7 +223,7 @@ variable "started" {
 variable "tags" {
   description = "Etiquetas de trazabilidad de la instancia."
   type        = set(string)
-  default     = ["iacp"]
+  default     = []
 
   validation {
     condition     = alltrue([for tag in var.tags : can(regex("^[a-z0-9][a-z0-9_-]*$", tag))])

@@ -1,134 +1,144 @@
+name: iacp-controlplane-dev
+
+x-app-environment: &app-environment
+  PGHOST: postgres
+  PGPORT: 5432
+  PGDATABASE: ${POSTGRES_DB:-iacp_controlplane}
+  PGUSER: ${POSTGRES_USER:-iacp}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD en .env}
+  IACP_TERRAFORM_PATH: /app/terraform
+  IACP_TERRAFORM_MNG_DIR: environments/mng01
+  IACP_MNG_CATALOG: /app/terraform/environments/mng01/catalog.json
+  IACP_DEFAULT_ENVIRONMENT: ${IACP_DEFAULT_ENVIRONMENT:-lab}
+  IACP_ENABLED_ENVIRONMENTS: ${IACP_ENABLED_ENVIRONMENTS:-lab}
+  IACP_RUNTIME_STAGE: ${IACP_RUNTIME_STAGE:-develop}
+  IACP_TERRAFORM_BACKEND: ${IACP_TERRAFORM_BACKEND:-local}
+  IACP_PROXMOX_MNG_ENDPOINT: ${IACP_PROXMOX_MNG_ENDPOINT:?Definir el endpoint MNG}
+  IACP_PROXMOX_MNG_API_TOKEN: ${IACP_PROXMOX_MNG_API_TOKEN:?Definir el token MNG}
+  IACP_PROXMOX_MNG_POOL_ID: ${IACP_PROXMOX_MNG_POOL_ID:-iacp-lab}
+  IACP_VMID_MIN: ${IACP_VMID_MIN:-40001}
+  IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
+  IACP_VMID_REUSE: ${IACP_VMID_REUSE:-1}
+  IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-1}
+  IACP_TERRAFORM_TIMEOUT: ${IACP_TERRAFORM_TIMEOUT:-1800}
+  IACP_POWER_TIMEOUT: ${IACP_POWER_TIMEOUT:-180}
+  IACP_PROXMOX_RETRY_ATTEMPTS: ${IACP_PROXMOX_RETRY_ATTEMPTS:-6}
+  IACP_PROXMOX_RETRY_BACKOFF: ${IACP_PROXMOX_RETRY_BACKOFF:-0.5}
+  IACP_POWER_RECOVERY_TIMEOUT: ${IACP_POWER_RECOVERY_TIMEOUT:-300}
+  IACP_RECONCILE_ATTEMPTS: ${IACP_RECONCILE_ATTEMPTS:-6}
+  IACP_RECONCILE_TIMEOUT: ${IACP_RECONCILE_TIMEOUT:-180}
+  IACP_TERRAFORM_RETRY_ATTEMPTS: ${IACP_TERRAFORM_RETRY_ATTEMPTS:-4}
+  IACP_OPERATION_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
+  IACP_RECOVERY_SCAN_SECONDS: ${IACP_RECOVERY_SCAN_SECONDS:-15}
+  IACP_WORKER_POLL_SECONDS: ${IACP_WORKER_POLL_SECONDS:-0.5}
+  IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
+  IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
+  IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+
 services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iacp_controlplane}
+      POSTGRES_USER: ${POSTGRES_USER:-iacp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD en .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   api:
     build: .
-    image: ${IACP_API_IMAGE:-iacp-controlplanev2:local}
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
     environment:
-      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
-      IACP_TERRAFORM_PATH: /workspace/terraform
-      IACP_TERRAFORM_DIR: environments/mng01
-      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
-      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
       IACP_API_TOKEN: ${IACP_API_TOKEN:-}
       IACP_REQUIRE_API_TOKEN: ${IACP_REQUIRE_API_TOKEN:-0}
-      # The API reads Proxmox only for physical network/power observation.
-      # Local deployments may provide these through the secret file or the
-      # environment; production deployments should use a secret manager.
-      IACP_PROXMOX_ENDPOINT: ${IACP_PROXMOX_ENDPOINT:-}
-      IACP_PROXMOX_API_TOKEN: ${IACP_PROXMOX_API_TOKEN:-}
-      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
       IACP_ROOT_PASSWORD_MIN_LENGTH: ${IACP_ROOT_PASSWORD_MIN_LENGTH:-12}
-      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
-      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
-      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
-      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
-      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
-      IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-0}
       IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
-      IACP_WORKER_STALE_SECONDS: ${IACP_WORKER_STALE_SECONDS:-900}
+      IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-0}
+      IACP_WORKER_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     ports:
       - "${IACP_API_PORT:-8080}:8080"
     volumes:
-      - iacp_data:/var/lib/iacp-v2
-      - ./terraform:/workspace/terraform:ro
-    secrets:
-      - proxmox_credentials
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
       interval: 10s
       timeout: 5s
+      start_period: 10s
       retries: 5
 
   worker-1:
     build: .
-    image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
-    command: python -m worker.main --worker-id worker-1
-    # Compose monta el secreto con los permisos del archivo de origen; el worker
-    # necesita leerlo para que Terraform autentique contra Proxmox.
-    user: "0:0"
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-1"]
     environment:
-      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
-      IACP_TERRAFORM_PATH: /workspace/terraform
-      IACP_TERRAFORM_DIR: environments/mng01
-      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
-      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
-      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
-      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
-      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
-      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
-      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
-      IACP_NETBOX_ALLOCATION_TAG: ${IACP_NETBOX_ALLOCATION_TAG:-ocupada}
-      IACP_NETBOX_GATEWAY_TAG: ${IACP_NETBOX_GATEWAY_TAG:-reservada}
-      IACP_NETBOX_TOKEN: ${IACP_NETBOX_TOKEN:-}
-      IACP_NETBOX_VERIFY_TLS: ${IACP_NETBOX_VERIFY_TLS:-1}
-      IACP_NETBOX_CA_FILE: ${IACP_NETBOX_CA_FILE:-}
-      IACP_NETBOX_TIMEOUT: ${IACP_NETBOX_TIMEOUT:-15}
-      IACP_NETBOX_RETRY_ATTEMPTS: ${IACP_NETBOX_RETRY_ATTEMPTS:-3}
-      IACP_VMID_MIN: ${IACP_VMID_MIN:-40001}
-      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
-      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
-      IACP_OPERATION_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
-      IACP_RECOVERY_SCAN_SECONDS: ${IACP_RECOVERY_SCAN_SECONDS:-15}
-      IACP_WORKER_POLL_SECONDS: ${IACP_WORKER_POLL_SECONDS:-0.5}
-      IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
-      IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
-      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
-      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
-      - iacp_data:/var/lib/iacp-v2
-      - ./terraform:/workspace/terraform:ro
-    secrets:
-      - proxmox_credentials
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy
 
   worker-2:
     build: .
-    image: ${IACP_WORKER_IMAGE:-iacp-controlplanev2:local}
-    command: python -m worker.main --worker-id worker-2
-    user: "0:0"
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
     environment:
-      IACP_DB_PATH: /var/lib/iacp-v2/iacp.sqlite
-      IACP_TERRAFORM_PATH: /workspace/terraform
-      IACP_TERRAFORM_DIR: environments/mng01
-      IACP_LOCAL_TERRAFORM_DIR: fixtures/local
-      IACP_MNG_CATALOG: /workspace/terraform/environments/mng01/catalog.json
-      IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
-      IACP_NETBOX_URL: ${IACP_NETBOX_URL:-https://netbox.cyberfuel.com/api}
-      IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
-      IACP_NETBOX_PREFIX_LENGTH: ${IACP_NETBOX_PREFIX_LENGTH:-24}
-      IACP_NETBOX_GATEWAY_HOST: ${IACP_NETBOX_GATEWAY_HOST:-1}
-      IACP_NETBOX_ALLOCATION_TAG: ${IACP_NETBOX_ALLOCATION_TAG:-ocupada}
-      IACP_NETBOX_GATEWAY_TAG: ${IACP_NETBOX_GATEWAY_TAG:-reservada}
-      IACP_NETBOX_TOKEN: ${IACP_NETBOX_TOKEN:-}
-      IACP_NETBOX_VERIFY_TLS: ${IACP_NETBOX_VERIFY_TLS:-1}
-      IACP_NETBOX_CA_FILE: ${IACP_NETBOX_CA_FILE:-}
-      IACP_NETBOX_TIMEOUT: ${IACP_NETBOX_TIMEOUT:-15}
-      IACP_NETBOX_RETRY_ATTEMPTS: ${IACP_NETBOX_RETRY_ATTEMPTS:-3}
-      IACP_VMID_MIN: ${IACP_VMID_MIN:-40001}
-      IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
-      IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-2}
-      IACP_OPERATION_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
-      IACP_RECOVERY_SCAN_SECONDS: ${IACP_RECOVERY_SCAN_SECONDS:-15}
-      IACP_WORKER_POLL_SECONDS: ${IACP_WORKER_POLL_SECONDS:-0.5}
-      IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
-      IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
-      IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
-      IACP_PROXMOX_CREDENTIALS_FILE: /run/secrets/proxmox_credentials
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
-      - iacp_data:/var/lib/iacp-v2
-      - ./terraform:/workspace/terraform:ro
-    secrets:
-      - proxmox_credentials
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy
 
 volumes:
-  iacp_data:
-
-secrets:
-  proxmox_credentials:
-    file: ${IACP_PROXMOX_CREDENTIALS_FILE:-./secrets/proxmox_credentials.example.json}
-
+  postgres_data:
+    name: ${IACP_POSTGRES_VOLUME:-iacp_controlplane_dev_postgres}
+  workdata:
+    name: ${IACP_WORKDATA_VOLUME:-iacp_controlplane_dev_workdata}

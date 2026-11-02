@@ -12,8 +12,8 @@ from worker.allocation import allocate, release
 from worker.golden import configured_pool_id, validate_pool, variables
 from worker.main import (
     claim,
+    configure_state_backend,
     execute_power,
-    local_variables,
     operation_output,
     physical_presence,
     recover_stale_operations,
@@ -27,7 +27,7 @@ from worker.proxmox import ProxmoxClient, ProxmoxError, credentials
 
 class FakeProxmox:
     def __init__(self):
-        self.items = []
+        self.items = [{"vmid": vmid} for vmid in (104, 106, 29000)]
 
     def inventory(self, *, uncertain=False):
         return self.items
@@ -37,7 +37,6 @@ class FakeProxmox:
 
 
 def test_allocation_reuses_released_vmid(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", "40000")
     monkeypatch.setenv("IACP_VMID_MAX", "40000")
     from api.db import initialize
@@ -51,7 +50,6 @@ def test_allocation_reuses_released_vmid(tmp_path, monkeypatch):
 
 
 def test_allocation_can_keep_unique_vmids_for_physical_matrix(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", "40000")
     monkeypatch.setenv("IACP_VMID_MAX", "40002")
     monkeypatch.setenv("IACP_VMID_REUSE", "0")
@@ -66,7 +64,6 @@ def test_allocation_can_keep_unique_vmids_for_physical_matrix(tmp_path, monkeypa
 
 
 def test_allocation_serializes_six_concurrent_requests_and_reuses_lowest_free_vmid(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", "40001")
     monkeypatch.setenv("IACP_VMID_MAX", "40010")
     monkeypatch.setenv("IACP_VMID_REUSE", "1")
@@ -88,9 +85,16 @@ def test_allocation_serializes_six_concurrent_requests_and_reuses_lowest_free_vm
     assert allocate("operation-reuse-after-six", client) == 40001
 
 
-def test_claim_serializes_six_workers_without_duplicate_operations(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
-    monkeypatch.setenv("IACP_MAX_CONCURRENT", "6")
+def test_allocation_fails_closed_when_cluster_inventory_is_incomplete(tmp_path):
+    initialize()
+    client = FakeProxmox()
+    client.items = [{"vmid": 104}, {"vmid": 106}]
+    with pytest.raises(RuntimeError, match="PROXMOX_INVENTORY_INCOMPLETE"):
+        allocate("operation-incomplete-inventory", client)
+
+
+def test_claim_never_exceeds_two_active_operations(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_MAX_CONCURRENT", "2")
     initialize()
     with database() as db:
         db.executemany(
@@ -98,21 +102,33 @@ def test_claim_serializes_six_workers_without_duplicate_operations(tmp_path, mon
             [(f"claim-operation-{index}", f"2026-01-01T00:00:0{index}+00:00") for index in range(6)],
         )
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        claimed = list(executor.map(lambda index: claim(f"worker-{index + 1}"), range(6)))
-
-    operation_ids = [item["operation_id"] for item in claimed if item]
+    operation_ids = []
+    batch_index = 0
+    while True:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            batch = list(executor.map(lambda index: claim(f"worker-{batch_index}-{index}"), range(6)))
+        claimed_ids = [item["operation_id"] for item in batch if item]
+        if not claimed_ids:
+            break
+        assert len(claimed_ids) <= 2
+        assert not set(claimed_ids) & set(operation_ids)
+        operation_ids.extend(claimed_ids)
+        with database() as db:
+            active = db.execute(
+                "SELECT COUNT(*) AS count FROM operations WHERE status IN ('running', 'planning', 'applying', 'destroying', 'powering')"
+            ).fetchone()["count"]
+            assert active <= 2
+            placeholders = ",".join("?" for _ in claimed_ids)
+            db.execute(
+                f"UPDATE operations SET status='succeeded' WHERE operation_id IN ({placeholders})",
+                claimed_ids,
+            )
+        batch_index += 1
     assert len(operation_ids) == 6
     assert len(set(operation_ids)) == 6
-    with database() as db:
-        statuses = db.execute(
-            "SELECT status, COUNT(*) AS count FROM operations GROUP BY status"
-        ).fetchall()
-    assert {row["status"]: row["count"] for row in statuses} == {"running": 6}
 
 
 def test_allocation_keeps_scheduler_target_node(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", "40001")
     monkeypatch.setenv("IACP_VMID_MAX", "40001")
     initialize()
@@ -185,20 +201,21 @@ def test_golden_variables_preserve_hardware_and_dhcp(tmp_path, monkeypatch):
     assert instance["cpu_flags"] == ["+aes"]
     assert instance["network_mode"] == "dhcp"
     assert instance["network_model"] == "virtio"
-    assert instance["ipv4_cidr"] is None
+    assert "ipv4_cidr" not in instance
+    assert instance["tags"] == []
     assert instance["boot_order"] == ["scsi0"]
     assert instance["ssh_public_keys"] == [key]
     assert instance["pool_id"] == "iacp-lab"
 
 
 def test_pool_is_configurable_only_as_internal_worker_setting(monkeypatch):
-    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
+    monkeypatch.setenv("IACP_PROXMOX_MNG_POOL_ID", "iacp-lab")
     assert configured_pool_id() == "iacp-lab"
     assert validate_pool(FakeProxmox()) == "iacp-lab"
 
 
 def test_pool_validation_rejects_missing_pool(monkeypatch):
-    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
+    monkeypatch.setenv("IACP_PROXMOX_MNG_POOL_ID", "iacp-lab")
 
     class MissingPool(FakeProxmox):
         def pools(self):
@@ -264,25 +281,13 @@ def test_scheduler_chooses_least_loaded_node_and_prefers_mng01_on_tie():
     ])) == "mng01"
 
 
-def test_local_fixture_variables_are_small_and_portable():
-    result = local_variables({
-        "name": "local-test",
-        "image": "ubuntu-2404",
-        "vcpus": 1,
-        "memory_mb": 2048,
-        "disk_gb": 20,
-    })
-    assert result["environment"] == "local"
-    assert result["instance"]["name"] == "local-test"
-
-
 def test_proxmox_credentials_accept_portainer_environment(monkeypatch):
-    monkeypatch.delenv("IACP_PROXMOX_CREDENTIALS_FILE", raising=False)
-    monkeypatch.setenv("IACP_PROXMOX_ENDPOINT", "https://mng01.cyberfuel.com:8006/")
-    monkeypatch.setenv("IACP_PROXMOX_API_TOKEN", "user@pam!token=example")
+    monkeypatch.delenv("IACP_PROXMOX_MNG_CREDENTIALS_FILE", raising=False)
+    monkeypatch.setenv("IACP_PROXMOX_MNG_ENDPOINT", "https://mng01.cyberfuel.com:8006/")
+    monkeypatch.setenv("IACP_PROXMOX_MNG_API_TOKEN", "user@pam!token=unit-test")
     endpoint, token = credentials()
     assert endpoint == "https://mng01.cyberfuel.com:8006"
-    assert token == "user@pam!token=example"
+    assert token == "user@pam!token=unit-test"
 
 
 def test_unknown_terraform_command_cannot_fall_through_to_destroy():
@@ -302,6 +307,50 @@ def test_destroy_does_not_reuse_deleted_bootstrap_secret():
 def test_provision_terraform_commands_have_one_plan_and_one_apply():
     commands = terraform_commands("provision", "/tmp/plan.tfplan")
     assert [command[1] for command in commands] == ["init", "plan", "apply"]
+
+
+def test_develop_backend_keeps_state_local(monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
+    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "local")
+    assert configure_state_backend("/tmp/workspace", "lab", "instance-123") is None
+
+
+def test_production_backend_uses_dedicated_wasabi_prefix_and_lockfile(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "s3")
+    monkeypatch.setenv("IACP_TFSTATE_BUCKET", "iacp-production-state")
+    monkeypatch.setenv("IACP_TFSTATE_PREFIX", "iacp/prod-runtime-v1")
+    monkeypatch.setenv("IACP_TFSTATE_ENDPOINT", "https://s3.us-east-1.wasabisys.com")
+    monkeypatch.setenv("IACP_TFSTATE_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    config_path = configure_state_backend(str(workspace), "lab", "instance-123")
+
+    config_file = workspace / ".iacp-backend.json"
+    config = json.loads(config_file.read_text())
+    assert config_path == str(config_file)
+    assert config["key"] == "iacp/prod-runtime-v1/instances/instance-123/terraform.tfstate"
+    assert config["use_path_style"] is True
+    assert config["use_lockfile"] is True
+    assert "test-secret" not in config_file.read_text()
+
+
+def test_production_backend_rejects_historical_lab_prefix(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "s3")
+    monkeypatch.setenv("IACP_TFSTATE_BUCKET", "iacp-production-state")
+    monkeypatch.setenv("IACP_TFSTATE_PREFIX", "iacp/lab")
+    monkeypatch.setenv("IACP_TFSTATE_ENDPOINT", "https://s3.us-east-1.wasabisys.com")
+    monkeypatch.setenv("IACP_TFSTATE_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    with pytest.raises(RuntimeError, match="TERRAFORM_BACKEND_CONFIGURATION_INVALID"):
+        configure_state_backend(str(workspace), "lab", "instance-123")
 
 
 def test_power_task_identity_accepts_stop_fallback():
@@ -425,15 +474,14 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
 
 
 def test_power_operation_updates_instance_and_operation(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
     operation_id = "power-operation"
     instance_id = "power-instance"
     with database() as db:
         db.execute(
             """
-            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
-            VALUES (?, 'power', 'power', 'running', ?, ?, 'mng01', 'now')
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, environment, created_at)
+            VALUES (?, 'power', 'power', 'running', ?, ?, 'lab', 'now')
             """,
             (operation_id, json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id}), instance_id),
         )
@@ -460,7 +508,6 @@ def test_power_operation_updates_instance_and_operation(tmp_path, monkeypatch):
 
 
 def test_heartbeat_refreshes_operation_phase_and_worker_age(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
     with database() as db:
         db.execute(
@@ -488,7 +535,6 @@ def test_heartbeat_refreshes_operation_phase_and_worker_age(tmp_path, monkeypatc
 
 
 def test_stale_worker_claim_is_closed_and_reconciled_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_OPERATION_STALE_SECONDS", "30")
     initialize()
     old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
@@ -497,8 +543,8 @@ def test_stale_worker_claim_is_closed_and_reconciled_once(tmp_path, monkeypatch)
             """
             INSERT INTO operations(
               operation_id, command, action, status, payload_json, instance_id,
-              vmid, stack, created_at, started_at, last_heartbeat, phase
-            ) VALUES (?, 'provision', 'provision', 'running', ?, ?, 40000, 'mng01', ?, ?, ?, 'apply')
+              vmid, environment, created_at, started_at, last_heartbeat, phase
+            ) VALUES (?, 'provision', 'provision', 'running', ?, ?, 40000, 'lab', ?, ?, ?, 'apply')
             """,
             (
                 "stale-operation",

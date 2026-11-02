@@ -12,17 +12,19 @@ import concurrent.futures
 import ipaddress
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
 import time
+from threading import Lock
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, build_opener
 
 
-BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://dev-iac.cyberfuel.com").rstrip("/")
+BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://dev.iac.cyberfuel.com").rstrip("/")
 API_TOKEN = os.environ["IACP_E2E_API_TOKEN"]
 PROXMOX_ENDPOINT = os.getenv("IACP_E2E_PROXMOX_ENDPOINT", "").rstrip("/")
 PROXMOX_TOKEN = os.getenv("IACP_E2E_PROXMOX_TOKEN", "")
@@ -30,7 +32,7 @@ POOL_ID = os.getenv("IACP_E2E_POOL_ID", "iacp-lab")
 PRIVATE_KEY = Path(os.getenv("IACP_E2E_SSH_PRIVATE_KEY", "/home/despinoza/.ssh/iacp-lab-kvm"))
 PUBLIC_KEY = os.getenv("IACP_E2E_SSH_PUBLIC_KEY", "").strip()
 KEY_DIR = Path(os.getenv("IACP_E2E_KEY_DIR", "")) if os.getenv("IACP_E2E_KEY_DIR") else None
-MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "6"))
+MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "2"))
 OPERATION_TIMEOUT = int(os.getenv("IACP_E2E_OPERATION_TIMEOUT", "1800"))
 NETWORK_TIMEOUT = int(os.getenv("IACP_E2E_NETWORK_TIMEOUT", "360"))
 SSH_TIMEOUT = int(os.getenv("IACP_E2E_SSH_TIMEOUT", "360"))
@@ -39,31 +41,13 @@ PING_TIMEOUT = int(os.getenv("IACP_E2E_PING_TIMEOUT", "8"))
 RUN_ID = os.getenv("IACP_E2E_RUN_ID", time.strftime("%Y%m%d%H%M%S", time.gmtime()))
 CHANNEL = os.getenv("IACP_E2E_CHANNEL", "cli")
 NETWORK_PROFILE = os.getenv("IACP_E2E_NETWORK_PROFILE", "lab_dhcp")
-NETWORK_PROFILE_ENDPOINT_SUPPORTED = True
 
 IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
-WEAK_PASSWORDS = (
-    # Deliberately predictable lab values. They remain weak operationally,
-    # but satisfy the AlmaLinux Golden Image policy (15 chars and four
-    # character classes) so this matrix can exercise the complete lifecycle.
-    "IacpLab!2026A001",
-    "CyberFuel!2026A1",
-    "TestKvm!2026A01",
-    "VmLab!2026A0001",
-    "Control!2026A01",
-    "QemuLab!2026A01",
-    "Cloud!2026A0001",
-    "Provision!2026A1",
-    "Network!2026A01",
-    "Reboot!2026A001",
-    "Shutdown!2026A1",
-    "Destroy!2026A01",
-    "AlmaLab!2026A01",
-    "Ubuntu!2026A001",
-    "Iacp!Test2026A1",
-    "Lab!Kvm2026A0001",
-)
+_TEST_PASSWORDS: set[str] = set()
+_TEST_PASSWORDS_LOCK = Lock()
+_PASSWORD_CLASSES = ("ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnopqrstuvwxyz", "23456789", "!@#%+-_")
+_PASSWORD_ALPHABET = "".join(_PASSWORD_CLASSES)
 KEY_VARIANTS = ("ed25519-a", "rsa-3072", "ecdsa-p256", "ed25519-b")
 
 
@@ -76,7 +60,9 @@ class E2EError(RuntimeError):
 
 def redact(value: object) -> str:
     text = str(value)
-    secrets_to_redact = [API_TOKEN, PROXMOX_TOKEN, PUBLIC_KEY, *WEAK_PASSWORDS]
+    with _TEST_PASSWORDS_LOCK:
+        generated_passwords = tuple(_TEST_PASSWORDS)
+    secrets_to_redact = [API_TOKEN, PROXMOX_TOKEN, PUBLIC_KEY, *generated_passwords]
     if KEY_DIR:
         for variant in KEY_VARIANTS:
             public_path = KEY_DIR / f"{variant}.pub"
@@ -435,7 +421,12 @@ def run_case(case: dict) -> dict:
     plan = case["plan"]
     mode = case["mode"]
     name = f"e2e-{CHANNEL}-{RUN_ID}-{case['index']:02d}-{image.replace('-', '')}-{plan.replace('-', '')}-{mode}"
-    password = WEAK_PASSWORDS[(case["index"] - 1) % len(WEAK_PASSWORDS)]
+    password_chars = [secrets.choice(characters) for characters in _PASSWORD_CLASSES]
+    password_chars.extend(secrets.choice(_PASSWORD_ALPHABET) for _ in range(24))
+    secrets.SystemRandom().shuffle(password_chars)
+    password = "".join(password_chars)
+    with _TEST_PASSWORDS_LOCK:
+        _TEST_PASSWORDS.add(password)
     public_key = ""
     private_key = None
     if mode == "key":
@@ -451,19 +442,14 @@ def run_case(case: dict) -> dict:
             raise E2EError("falta la llave pública SSH para el caso de llave")
     body = {
         "name": name,
+        "environment": "lab",
         "plan_id": plan,
         "image_id": image,
+        "network_profile": NETWORK_PROFILE,
+        "tags": ["e2e", f"cl-e2e-{case['index']:02d}", f"kvm-{case['index']:03d}"],
         "access": {"root_password": password, "ssh_public_keys": [public_key] if mode == "key" else []},
-        "commercial_context": {
-            "customer_id": f"e2e-{CHANNEL}-{RUN_ID}-{case['index']:02d}",
-            "customer_tag": f"e2e-{CHANNEL}-{RUN_ID.lower()}-{case['index']:02d}",
-            "order_id": f"e2e-order-{CHANNEL}-{RUN_ID}-{case['index']:02d}",
-            "product_id": f"e2e-{image}-{plan}",
-        },
         "start_on_create": case["index"] % 2 == 0,
     }
-    if NETWORK_PROFILE_ENDPOINT_SUPPORTED:
-        body["network_profile"] = NETWORK_PROFILE
     create_key = f"{label}-create"
     instance_id = None
     vmid = None
@@ -487,14 +473,10 @@ def run_case(case: dict) -> dict:
             raise E2EError(f"VMID fuera de rango: {vmid}")
         if current.get("image_id") != image or current.get("plan_id") != plan:
             raise E2EError(f"catálogo divergente: {redact(current)}")
-        if NETWORK_PROFILE_ENDPOINT_SUPPORTED and (current.get("spec") or {}).get("network_profile") != NETWORK_PROFILE:
+        if (current.get("spec") or {}).get("network_profile") != NETWORK_PROFILE:
             raise E2EError(f"perfil de red divergente: {redact(current)}")
-        if not NETWORK_PROFILE_ENDPOINT_SUPPORTED and (current.get("spec") or {}).get("network_mode") not in {None, "dhcp"}:
-            raise E2EError(f"contrato remoto no quedó en DHCP: {redact(current)}")
-        if NETWORK_PROFILE_ENDPOINT_SUPPORTED and NETWORK_PROFILE == "lab_dhcp" and current.get("network_allocation") is not None:
-            raise E2EError(f"lab_dhcp no debe reservar IP en IPAM: {redact(current)}")
-        if current.get("commercial_context") != body["commercial_context"]:
-            raise E2EError("commercial_context no se conservó íntegro")
+        if (current.get("spec") or {}).get("tags") != body["tags"]:
+            raise E2EError("los tags enviados no se conservaron en la instancia")
         if not pool_contains(vmid):
             raise E2EError(f"VMID {vmid} no pertenece a {POOL_ID}")
         stage_seconds["provision"] = round(time.monotonic() - stage_started, 3)
@@ -639,7 +621,11 @@ def print_matrix_metrics(results: list[dict], wall_seconds: float) -> None:
 
 
 def validate_catalog() -> None:
-    global NETWORK_PROFILE_ENDPOINT_SUPPORTED
+    environments = api("GET", "/v1/environments")
+    if environments.get("default_environment") != "lab" or "lab" not in {
+        item.get("environment") for item in environments.get("environments", [])
+    }:
+        raise E2EError(f"entorno de laboratorio no disponible: {environments}")
     plans = api("GET", "/v1/plans")
     images = api("GET", "/v1/images")
     actual_plans = [item.get("plan_id") for item in plans.get("plans", [])]
@@ -647,21 +633,12 @@ def validate_catalog() -> None:
     if actual_plans != list(PLANS) or actual_images != list(IMAGES):
         raise E2EError(f"catálogo inesperado planes={actual_plans} images={actual_images}")
     print(f"CATALOG PASS plans={','.join(actual_plans)} images={','.join(actual_images)}", flush=True)
-    try:
-        profiles = api("GET", "/v1/network-profiles")
-    except E2EError as error:
-        if error.status != 404:
-            raise
-        NETWORK_PROFILE_ENDPOINT_SUPPORTED = False
-        print("NETWORK PROFILE PASS profile=lab_dhcp (implicit in deployed contract)", flush=True)
-    else:
-        available_profiles = {item.get("profile_id"): item for item in profiles.get("network_profiles", [])}
-        selected_profile = available_profiles.get(NETWORK_PROFILE)
-        if not selected_profile or not selected_profile.get("enabled"):
-            raise E2EError(f"perfil de red no disponible: {NETWORK_PROFILE}")
-        if NETWORK_PROFILE == "lab_dhcp" and selected_profile.get("network_mode") != "dhcp":
-            raise E2EError("lab_dhcp no está configurado como DHCP")
-        print(f"NETWORK PROFILE PASS profile={NETWORK_PROFILE}", flush=True)
+    profiles = api("GET", "/v1/network-profiles")
+    available_profiles = {item.get("profile_id"): item for item in profiles.get("network_profiles", [])}
+    selected_profile = available_profiles.get(NETWORK_PROFILE)
+    if not selected_profile or not selected_profile.get("enabled") or selected_profile.get("network_mode") != "dhcp":
+        raise E2EError(f"perfil DHCP no disponible: {NETWORK_PROFILE}")
+    print(f"NETWORK PROFILE PASS profile={NETWORK_PROFILE}", flush=True)
     observability = api("GET", "/v1/observability")
     capacity = observability.get("max_concurrent") if isinstance(observability, dict) else None
     if capacity is not None and int(capacity) < MAX_WORKERS:
@@ -670,8 +647,8 @@ def validate_catalog() -> None:
 
 
 def main() -> int:
-    if not 1 <= MAX_WORKERS <= 6:
-        raise SystemExit("IACP_E2E_MAX_WORKERS debe estar entre 1 y 6")
+    if not 1 <= MAX_WORKERS <= 2:
+        raise SystemExit("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2")
     if not PROXMOX_ENDPOINT or not PROXMOX_TOKEN:
         raise SystemExit(
             "IACP_E2E_PROXMOX_ENDPOINT y IACP_E2E_PROXMOX_TOKEN son obligatorios para validar limpieza física"

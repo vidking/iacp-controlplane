@@ -1,0 +1,16 @@
+{
+  "project": "iacp-controlplane-dev-v1",
+  "compose_file": "deploy/portainer/docker-compose.yml",
+  "environment_file": "/etc/iacp/stacks/dev.env",
+  "stage": "develop",
+  "domain": "dev.iac.cyberfuel.com",
+  "service_alias": "iacp-controlplane-api-dev",
+  "proxy_network": "proxy_network",
+  "backend": "local",
+  "state_bucket": "",
+  "state_prefix": "",
+  "max_concurrent": 1,
+  "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
+  "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
+  "dynamic_config": "/etc/iacp/tls/dynamic/dev-iacp.yml"
+}

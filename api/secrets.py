@@ -3,8 +3,7 @@ from pathlib import Path
 
 
 def secret_root() -> Path:
-    database_path = os.getenv("IACP_DB_PATH", "/var/lib/iacp-v2/iacp.sqlite")
-    root = Path(database_path).parent / "operation-secrets"
+    root = Path(os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")) / "operation-secrets"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         root.chmod(0o700)
