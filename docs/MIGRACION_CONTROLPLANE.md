@@ -464,3 +464,42 @@ auditoría para VM 104, el acceso administrativo efectivo requerido para la
 purga completa del bucket y la reconciliación documentada de las cinco
 incertidumbres previas; el conteo de la base legacy consultada no demuestra
 por sí solo que aquellas incertidumbres estén resueltas.
+
+## ACL de auditoría para VM 104 — 2 de noviembre de 2026
+
+El usuario indicó conservar el token MNG actual y ampliar sus políticas; no se
+debe crear otro token. La inspección de solo lectura del clúster MNG confirma:
+
+- La identidad es `iacp-orchestrator@pve!runtime-lab` y tiene `privsep=1`.
+- El rol actual `PVEPoolAdmin` no incluye `VM.Audit` ni
+  `Permissions.Modify`.
+- Existen entradas explícitas `NoAccess` en `/vms/104` para el usuario
+  `iacp-orchestrator@pve` y para el token `runtime-lab`. Las entradas de
+  `iacp-provision@pve` y `iacp-lifecycle@pve` también permanecen en `NoAccess`.
+- El rol integrado `PVEAuditor` del clúster incluye privilegios de auditoría,
+  pero no `VM.PowerMgmt`, permisos de configuración de VM, `VM.Allocate` ni
+  `Permissions.Modify`. En el path exacto `/vms/104` sirve para hacer visible
+  ese recurso sin otorgar Lifecycle ni aprovisionamiento.
+
+Como el token tiene separación de privilegios, el administrador del clúster
+debe cambiar las dos entradas existentes —usuario y token— a `PVEAuditor` en
+`/vms/104`, con propagación desactivada. El token actual no puede realizar el
+cambio: carece de `Permissions.Modify`. El acceso SSH administrativo probado
+al nodo `mng01` falla en la validación de host key; no se omitió esa validación.
+No se alteró ninguna ACL. Proxmox documenta que los permisos efectivos de un
+token separado son la intersección de los permisos del usuario y del token, y
+documenta `pveum acl modify` para asignar ambos [en su guía oficial de
+`pveum`](https://github.com/proxmox/pve-docs/blob/master/pveum.adoc).
+
+Cambios que debe aplicar un administrador del clúster MNG sobre el ACL actual:
+
+```sh
+pveum acl modify /vms/104 --users iacp-orchestrator@pve --roles PVEAuditor --propagate 0
+pveum acl modify /vms/104 --tokens 'iacp-orchestrator@pve!runtime-lab' --roles PVEAuditor --propagate 0
+```
+
+Esto sustituye el `NoAccess` del servicio de orquestación solo en VM 104 y deja
+sin cambios las protecciones de VM 106, VM 29000 y las ACL de Lifecycle y
+aprovisionamiento. Después de aplicar el cambio, se debe volver a comprobar
+`GET /cluster/resources?type=vm` desde el IACP Control Plane (VM 104) y
+confirmar que el VMID 104 aparece antes de promover el runtime.
