@@ -39,6 +39,17 @@ El request no contiene nombres de clúster o nodo. `iac.cyberfuel.com` puede adm
 cuando se configure y certifique; `dev.iac.cyberfuel.com` queda limitado a
 MNG.
 
+Los rangos VMID son disjuntos y se fijan por manifiesto y archivo de entorno:
+
+| Stack | Host configurado | Rango VMID |
+| --- | --- | --- |
+| `develop` | `dev.iac.cyberfuel.com` | `40000–49999` |
+| `production` | `iac.cyberfuel.com` | `30000–39999` |
+
+Configura ambos límites explícitamente en cada archivo privado. El Compose de
+Portainer y `iacpctl` rechazan valores ausentes o un rango asignado al entorno
+equivocado. El Compose local usa por defecto el rango de desarrollo.
+
 En el runtime productivo configura `IACP_RUNTIME_STAGE=production`,
 `IACP_TERRAFORM_BACKEND=s3`, el bucket `iacp-cyberfuel` y el prefijo
 exacto `iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
@@ -80,8 +91,10 @@ debe revisar logs y la salida de `GET /v1/environments` antes de habilitarlo.
 
 ## Verificación local de configuración
 
-Para inspeccionar el Compose de desarrollo, copia `.env.example` a `.env`,
-rellena los marcadores y ejecuta:
+Para inspeccionar el Compose local de desarrollo, configura `.env` con las
+credenciales MNG locales y `IACP_VMID_MIN=40000` / `IACP_VMID_MAX=49999`.
+`deploy/portainer/.env.example` contiene valores de referencia para producción;
+no lo copies sin cambiar el rango al usarlo en desarrollo. Luego ejecuta:
 
 ```bash
 docker compose config

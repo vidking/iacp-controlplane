@@ -32,17 +32,19 @@ El candidato no importa registros ni VMs del runtime anterior.
 
 | Runtime | URL planeada | Entornos publicados al inicio | State Terraform |
 | --- | --- | --- | --- |
-| `develop` | `https://dev.iac.cyberfuel.com` | `lab` → MNG; el catálogo candidato solo habilita `mng01` | Local en volumen persistente de desarrollo |
-| `production` | `https://iac.cyberfuel.com` | `lab` → MNG; el catálogo candidato solo habilita `mng01`; PRX permanece deshabilitado | Wasabi S3, prefijo `iacp/prod-runtime-v1` |
+| `develop` | `https://dev.iac.cyberfuel.com` | `lab` → MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
+| `production` | `https://iac.cyberfuel.com` | `lab` → MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Wasabi S3, prefijo `iacp/prod-runtime-v1` |
 
 La URL y la promoción se configuran en despliegue. Este checkout no cambia DNS,
 contenedores, bases de datos ni volúmenes de ningún runtime.
 
 ## Ejecución local
 
-1. Copia `.env.example` a `.env` y configura credenciales de desarrollo para
-   MNG, la IP verificada del endpoint Proxmox y una contraseña local de
-   PostgreSQL.
+1. Crea `.env` para desarrollo con credenciales MNG, la IP verificada del
+   endpoint Proxmox, una contraseña local de PostgreSQL y el rango
+   `IACP_VMID_MIN=40000` / `IACP_VMID_MAX=49999`. El archivo
+   `deploy/portainer/.env.example` sirve como referencia productiva y usa el
+   rango `30000–39999`.
 2. Levanta el stack local:
 
    ```bash

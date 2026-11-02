@@ -22,6 +22,8 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_PRX_ENABLED": "0",
         "IACP_MAX_CONCURRENT": "1",
+        "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
+        "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
         "IACP_REQUIRE_API_TOKEN": "1",
         "PGHOST": "postgres",
         "PGPORT": "5432",
@@ -44,6 +46,8 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "PGDATABASE": database_name,
         "PGUSER": "iacp_test",
         "PGPASSWORD": database_password,
+        "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
+        "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
     }
     if include_aws:
         worker_environment.update({"AWS_ACCESS_KEY_ID": "access-key-value", "AWS_SECRET_ACCESS_KEY": "secret-key-value"})
@@ -88,6 +92,8 @@ def _manifest(stage="production", **overrides):
         "state_bucket": "iacp-cyberfuel" if stage == "production" else "",
         "state_prefix": "iacp/prod-runtime-v1" if stage == "production" else "",
         "max_concurrent": 1,
+        "vmid_min": 30000 if stage == "production" else 40000,
+        "vmid_max": 39999 if stage == "production" else 49999,
         "image_repository": IMAGE_REPOSITORY,
         "image_tag": IMAGE_TAG,
     }
@@ -108,6 +114,7 @@ def test_production_configuration_passes_policy(tmp_path):
     assert summary["state_prefix"] == "iacp/prod-runtime-v1"
     assert summary["enabled_environments"] == ["lab"]
     assert summary["image_tag"] == IMAGE_TAG
+    assert summary["vmid_range"] == {"min": 30000, "max": 39999}
 
 
 def test_development_rejects_wasabi_credentials(tmp_path):
@@ -128,6 +135,23 @@ def test_development_configuration_passes_without_wasabi(tmp_path):
     assert summary["backend"] == "local"
     assert summary["state_prefix"] == ""
     assert summary["prx_enabled"] is False
+    assert summary["vmid_range"] == {"min": 40000, "max": 49999}
+
+
+def test_production_rejects_development_vmid_range(tmp_path):
+    with pytest.raises(go_live.GateError, match="rango VMID no coincide"):
+        go_live._check_policy(
+            _manifest(vmid_min=40000, vmid_max=49999),
+            _configuration(),
+            _private_env(tmp_path),
+        )
+
+
+def test_production_rejects_mismatched_worker_vmid_range(tmp_path):
+    config = _configuration()
+    config["services"]["worker-2"]["environment"]["IACP_VMID_MIN"] = "40000"
+    with pytest.raises(go_live.GateError, match="rango VMID de API y workers"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
 
 
 def test_production_rejects_unexpected_state_prefix(tmp_path):

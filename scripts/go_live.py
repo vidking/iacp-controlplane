@@ -55,7 +55,7 @@ def _manifest(path: Path, *, require_runtime: bool = True) -> tuple[dict, Path, 
     required = {
         "project", "compose_file", "environment_file", "stage", "domain",
         "service_alias", "backend", "state_bucket", "state_prefix",
-        "max_concurrent", "dynamic_config", "proxy_network",
+        "max_concurrent", "vmid_min", "vmid_max", "dynamic_config", "proxy_network",
     }
     if not isinstance(data, dict) or not required.issubset(data):
         raise GateError("El manifiesto no contiene los campos requeridos")
@@ -120,6 +120,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
             "postgres_volume": "iacp_controlplane_prod_postgres",
             "workdata_volume": "iacp_controlplane_prod_workdata",
             "database": "iacp_controlplane",
+            "vmid_min": 30000,
+            "vmid_max": 39999,
         },
         "develop": {
             "project": "iacp-controlplane-dev-v1",
@@ -128,11 +130,16 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
             "postgres_volume": "iacp_controlplane_dev_postgres",
             "workdata_volume": "iacp_controlplane_dev_workdata",
             "database": "iacp_controlplane_dev",
+            "vmid_min": 40000,
+            "vmid_max": 49999,
         },
     }[stage]
     for key in ("project", "domain", "service_alias"):
         if data[key] != expected_identity[key]:
             raise GateError(f"El manifiesto no coincide con la identidad autorizada de {stage}")
+    expected_vmid_range = (expected_identity["vmid_min"], expected_identity["vmid_max"])
+    if (data.get("vmid_min"), data.get("vmid_max")) != expected_vmid_range:
+        raise GateError(f"El rango VMID no coincide con el entorno {stage}")
     if data["proxy_network"] != "proxy_network":
         raise GateError("La red compartida debe ser proxy_network")
     api_env = _service_env(config, "api")
@@ -162,6 +169,17 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("El stack debe exponer únicamente MNG y mantener PRX apagado")
     if str(api_env.get("IACP_MAX_CONCURRENT", "")) != "1" or data["max_concurrent"] != 1:
         raise GateError("Cada stack debe limitarse a una operación simultánea")
+    expected_range = tuple(str(value) for value in expected_vmid_range)
+    for service_environment in (api_env, *worker_envs):
+        configured_range = (
+            str(service_environment.get("IACP_VMID_MIN", "")),
+            str(service_environment.get("IACP_VMID_MAX", "")),
+        )
+        if configured_range != expected_range:
+            raise GateError(
+                f"El rango VMID de API y workers debe ser "
+                f"{expected_range[0]}–{expected_range[1]} en {stage}"
+            )
     if api_env.get("IACP_REQUIRE_API_TOKEN") not in {"1", 1, True}:
         raise GateError("La API debe exigir Bearer token")
     for key in ("IACP_API_TOKEN", "IACP_PROXMOX_MNG_API_TOKEN"):
@@ -261,6 +279,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "backend": data["backend"],
         "state_prefix": data["state_prefix"],
         "max_concurrent_per_stack": 1,
+        "vmid_range": {"min": expected_vmid_range[0], "max": expected_vmid_range[1]},
         "enabled_environments": ["lab"],
         "prx_enabled": False,
     }

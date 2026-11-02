@@ -6,7 +6,10 @@ from api.protection import protected_vmids
 from worker.proxmox import ProxmoxClient
 
 
-_REQUIRED_MNG_INVENTORY_VMIDS = {104, 106, 29000}
+# Require the active Golden Images to be visible. VM 104 remains protected by
+# api.protection but is intentionally not an inventory-visibility requirement.
+# VMID 106 is protected as a historical reservation, not an allocation sentinel.
+_REQUIRED_MNG_INVENTORY_VMIDS = {29000, 29001, 29010, 29011}
 
 
 def now() -> str:
@@ -14,7 +17,7 @@ def now() -> str:
 
 
 def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = None) -> int:
-    minimum = int(os.getenv("IACP_VMID_MIN", "40001"))
+    minimum = int(os.getenv("IACP_VMID_MIN", "40000"))
     maximum = int(os.getenv("IACP_VMID_MAX", "49999"))
     reuse = os.getenv("IACP_VMID_REUSE", "1").strip().lower() not in {"0", "false", "no"}
     inventory = {int(item["vmid"]) for item in client.inventory() if str(item.get("vmid", "")).isdigit()}

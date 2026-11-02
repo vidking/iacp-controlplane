@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from api.db import database, initialize
+from api.protection import is_protected_vmid
 from worker.allocation import allocate, release
 from worker.golden import configured_pool_id, validate_pool, variables
 from worker.main import (
@@ -27,7 +28,7 @@ from worker.proxmox import ProxmoxClient, ProxmoxError, credentials
 
 class FakeProxmox:
     def __init__(self):
-        self.items = [{"vmid": vmid} for vmid in (104, 106, 29000)]
+        self.items = [{"vmid": vmid} for vmid in (104, 106, 29000, 29001, 29010, 29011)]
 
     def inventory(self, *, uncertain=False):
         return self.items
@@ -47,6 +48,21 @@ def test_allocation_reuses_released_vmid(tmp_path, monkeypatch):
     release(first)
     second = allocate("operation-b", client)
     assert first == second == 40000
+
+
+def test_allocation_uses_production_range_without_controlplane_or_historical_vm_visibility(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_VMID_MIN", "30000")
+    monkeypatch.setenv("IACP_VMID_MAX", "39999")
+    initialize()
+    client = FakeProxmox()
+    client.items = [{"vmid": vmid} for vmid in (29000, 29001, 29010, 29011)]
+    assert allocate("operation-production-range", client) == 30000
+
+
+def test_controlplane_and_historical_vmids_remain_protected():
+    assert is_protected_vmid(104)
+    assert is_protected_vmid(106)
+    assert is_protected_vmid(29000)
 
 
 def test_allocation_can_keep_unique_vmids_for_physical_matrix(tmp_path, monkeypatch):

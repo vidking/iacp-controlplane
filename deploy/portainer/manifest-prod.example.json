@@ -10,6 +10,8 @@
   "state_bucket": "iacp-cyberfuel",
   "state_prefix": "iacp/prod-runtime-v1",
   "max_concurrent": 1,
+  "vmid_min": 30000,
+  "vmid_max": 39999,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
   "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
   "dynamic_config": "/etc/iacp/tls/dynamic/iacp.yml",
