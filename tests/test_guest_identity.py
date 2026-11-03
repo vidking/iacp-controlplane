@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import json
+import re
 from urllib.parse import parse_qsl
 
 import pytest
@@ -170,6 +171,28 @@ def test_guest_program_is_one_shot_and_changes_machine_and_dhcp_identity():
     assert '"dhcp-identifier":"mac"' in PROGRAM.replace("'", '"')
     assert "pending.unlink(missing_ok=True)" in PROGRAM
     assert r"write(marker,json.dumps(evidence,sort_keys=True)+'\n')" in PROGRAM
+
+
+def test_cloud_init_accepts_done_with_only_deprecation_warnings():
+    program = ast.parse(PROGRAM)
+    helper = next(
+        node for node in program.body
+        if isinstance(node, ast.FunctionDef) and node.name == "cloud_init_completed"
+    )
+    namespace = {"re": re}
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<guest-program>", "exec"), namespace)
+    completed = namespace["cloud_init_completed"]
+    warning_output = (
+        "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n"
+        "\t- 'user' of type string is deprecated in 22.2\n"
+    )
+    assert completed(2, warning_output, True)
+    assert completed(0, "status: done\nerrors: []\n", True)
+    assert not completed(2, "status: running\nerrors: []\n", True)
+    assert not completed(2, "status: done\nerrors: [bad config]\n", True)
+    assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n", True)
+    assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nNETWORK:\n\t- retry\n", True)
+    assert not completed(2, warning_output, False)
 
 
 def test_worker_only_dispatches_identity_for_running_supported_guest(monkeypatch):
