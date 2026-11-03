@@ -42,7 +42,7 @@ def _report():
         "environment": "lab",
         "cluster": "MNG",
         "vmid_range": [30000, 39999],
-        "max_simultaneous_provisions": 2,
+        "max_simultaneous_provisions": 6,
         "images": list(IMAGES),
         "plans": list(PLANS),
         "outcome": "PASS",
@@ -50,7 +50,7 @@ def _report():
             "contention_detected": False,
             "sampling_errors": [],
             "foreign_activity": [],
-            "peak_test_busy_workers": 2,
+            "peak_test_busy_workers": 6,
         },
         "results": results,
     }
@@ -80,18 +80,18 @@ def test_physical_matrix_refuses_the_development_api(monkeypatch):
         e2e_matrix.validate_execution_config()
 
 
-def test_physical_matrix_limits_simultaneous_provisions_to_two(monkeypatch):
+def test_physical_matrix_requires_six_simultaneous_provisions(monkeypatch):
     monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://iac.cyberfuel.com")
     monkeypatch.setattr(e2e_matrix, "API_TOKEN", "api-test-token")
     monkeypatch.setattr(e2e_matrix, "PROXMOX_ENDPOINT", "https://mng01.cyberfuel.com:8006")
     monkeypatch.setattr(e2e_matrix, "PROXMOX_TOKEN", "mng-test-token")
     monkeypatch.setattr(e2e_matrix, "RUN_ID", RUN_ID)
-    monkeypatch.setattr(e2e_matrix, "MAX_WORKERS", 3)
+    monkeypatch.setattr(e2e_matrix, "MAX_WORKERS", 5)
     monkeypatch.setattr(e2e_matrix, "VMID_MIN", 30000)
     monkeypatch.setattr(e2e_matrix, "VMID_MAX", 39999)
     monkeypatch.setattr(e2e_matrix, "NETWORK_PROFILE", "lab_dhcp")
 
-    with pytest.raises(e2e_matrix.E2EError, match="dos aprovisionamientos"):
+    with pytest.raises(e2e_matrix.E2EError, match="seis aprovisionamientos"):
         e2e_matrix.validate_execution_config()
 
 
@@ -106,6 +106,18 @@ def test_external_pass_evidence_matches_this_run(tmp_path):
 
     assert report["outcome"] == "PASS"
     assert len(digest) == 64
+
+
+def test_purge_evidence_requires_six_simultaneous_provisions(tmp_path):
+    workdata = tmp_path / "workdata"
+    workdata.mkdir()
+    evidence = tmp_path / "evidence.json"
+    report = _report()
+    report["max_simultaneous_provisions"] = 2
+    evidence.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(PurgeRefused, match="no certifica PASS"):
+        _load_evidence(RUN_ID, evidence, workdata)
 
 
 def test_evidence_inside_workdata_cannot_authorize_purge(tmp_path):

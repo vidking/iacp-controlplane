@@ -33,7 +33,7 @@ const NETWORK_TIMEOUT = Number(process.env.IACP_E2E_NETWORK_TIMEOUT || 360);
 const SSH_TIMEOUT = Number(process.env.IACP_E2E_SSH_TIMEOUT || 360);
 const SSH_ATTEMPT_TIMEOUT = Number(process.env.IACP_E2E_SSH_ATTEMPT_TIMEOUT || 45);
 const PING_TIMEOUT = Number(process.env.IACP_E2E_PING_TIMEOUT || 8);
-const MAX_WORKERS = Number(process.env.IACP_E2E_MAX_WORKERS || 2);
+const MAX_WORKERS = Number(process.env.IACP_E2E_MAX_WORKERS || 6);
 
 const IMAGES = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"];
 const PLANS = ["kvm-1", "kvm-2", "kvm-3", "kvm-4"];
@@ -484,7 +484,7 @@ function buildCases() {
 }
 
 async function main() {
-  if (!Number.isInteger(MAX_WORKERS) || MAX_WORKERS < 1 || MAX_WORKERS > 2) throw new E2EError("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2");
+  if (!Number.isInteger(MAX_WORKERS) || MAX_WORKERS !== 6) throw new E2EError("IACP_E2E_MAX_WORKERS debe ser 6 para validar la capacidad completa");
   const baseUrl = new URL(BASE_URL);
   if (baseUrl.protocol !== "https:" || baseUrl.hostname !== "iac.cyberfuel.com" || baseUrl.pathname) throw new E2EError("IACP_E2E_BASE_URL debe ser exactamente https://iac.cyberfuel.com");
   if (!API_TOKEN) throw new E2EError("IACP_E2E_API_TOKEN es obligatorio");
@@ -518,12 +518,13 @@ async function main() {
   const results = [];
   const cases = buildCases();
   try {
+    const totalWaves = Math.ceil(cases.length / MAX_WORKERS);
     for (let offset = 0, wave = 1; offset < cases.length; offset += MAX_WORKERS, wave += 1) {
       const batch = cases.slice(offset, offset + MAX_WORKERS);
-      console.log(`WAVE ${wave}/8 start=${batch.map((item) => `${item.image}/${item.plan}/${item.mode}`).join(",")}`);
+      console.log(`WAVE ${wave}/${totalWaves} start=${batch.map((item) => `${item.image}/${item.plan}/${item.mode}`).join(",")}`);
       const waveResults = await Promise.all(batch.map((testCase, index) => runCase(pages[index], testCase)));
       results.push(...waveResults);
-      console.log(`WAVE ${wave}/8 done failed=${waveResults.filter((item) => item.status !== "passed").length}`);
+      console.log(`WAVE ${wave}/${totalWaves} done failed=${waveResults.filter((item) => item.status !== "passed").length}`);
       if (waveResults.some((item) => item.status !== "passed")) {
         console.error(`ABORT after wave ${wave}: se detiene para reparar sin crear más VMs.`);
         break;

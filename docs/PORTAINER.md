@@ -117,9 +117,9 @@ Estas comprobaciones no ejecutan un despliegue ni crean máquinas virtuales.
 
 El health check valida PostgreSQL y configuración de destino. Antes de una
 prueba física se requiere identidad de prueba, cola y credenciales aisladas. La
-capacidad del runtime es seis operaciones; cada ronda de certificación física
-mantiene como máximo dos aprovisionamientos simultáneos. Mantén los servicios y
-volúmenes anteriores fuera de este stack.
+capacidad del runtime es seis operaciones. Cada ronda de certificación física
+ejecuta seis aprovisionamientos simultáneos para validar la capacidad completa.
+Mantén los servicios y volúmenes anteriores fuera de este stack.
 
 ## Cambios futuros
 
