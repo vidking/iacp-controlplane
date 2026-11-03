@@ -89,8 +89,9 @@ mantener la operación en estado incierto hasta contar con evidencia.
 
 Usar credenciales, colas, base, prefijo y workers dedicados al ensayo. No
 interrumpir workers ni servicios compartidos del IACP Control Plane (VM 104).
-Mantener como máximo dos aprovisionamientos simultáneos. Cubrir pérdida de
-worker, timeout de Terraform, respuesta ambigua de Proxmox, duplicidad de
+Ejecutar la matriz física con seis aprovisionamientos simultáneos cuando los seis
+workers estén sanos y libres; si falta capacidad, detener la prueba. Cubrir pérdida
+de worker, timeout de Terraform, respuesta ambigua de Proxmox, duplicidad de
 solicitud, reconciliación y recuperación de state. Registrar para cada caso
 alcance, versión, fecha, resultado PASS/FAIL/BLOCKED y evidencia, distinguiendo
 recuperación automática, intervención manual y contención fail-closed.
@@ -98,8 +99,8 @@ recuperación automática, intervención manual y contención fail-closed.
 La solicitud de migración autoriza ensayos físicos de aprovisionamiento, pero
 no el envío de operaciones hasta demostrar aislamiento por cola, proceso,
 instancia y credenciales de prueba. La primera ejecución física será en el
-clúster MNG, nodo `mng01`, con una sola operación simultánea por stack y límites
-de cuota revisados. Ante visibilidad incompleta, estados inciertos o workers
+clúster MNG, nodo `mng01`, con seis operaciones simultáneas en la cola única y
+límites de cuota revisados. Ante visibilidad incompleta, estados inciertos o workers
 compartidos, se detienen nuevas inyecciones y se conserva la intención para
 recuperación controlada.
 
@@ -130,7 +131,7 @@ continuará limitado a MNG.
 - Las cinco operaciones inciertas y el `403` de Wasabi tienen resolución
   documentada y evidencia suficiente, sin borrar state ni forzar locks.
 - La reconciliación y los escenarios críticos están certificados con
-  aislamiento demostrado y un máximo de dos aprovisionamientos simultáneos.
+  aislamiento demostrado y seis aprovisionamientos simultáneos comprobados.
 - El dictamen integral es GO antes de cambiar tráfico o retirar componentes del
   runtime actual.
 

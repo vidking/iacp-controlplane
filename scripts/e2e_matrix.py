@@ -41,7 +41,7 @@ POOL_ID = os.getenv("IACP_E2E_POOL_ID", "iacp-lab")
 PRIVATE_KEY = Path(os.getenv("IACP_E2E_SSH_PRIVATE_KEY", "/home/despinoza/.ssh/iacp-lab-kvm"))
 PUBLIC_KEY = os.getenv("IACP_E2E_SSH_PUBLIC_KEY", "").strip()
 KEY_DIR = Path(os.getenv("IACP_E2E_KEY_DIR", "")) if os.getenv("IACP_E2E_KEY_DIR") else None
-MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "2"))
+MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "6"))
 VMID_MIN = int(os.getenv("IACP_E2E_VMID_MIN", "30000"))
 VMID_MAX = int(os.getenv("IACP_E2E_VMID_MAX", "39999"))
 OPERATION_TIMEOUT = int(os.getenv("IACP_E2E_OPERATION_TIMEOUT", "1800"))
@@ -110,8 +110,8 @@ def validate_execution_config() -> None:
         raise E2EError("las credenciales de lectura Proxmox del clúster MNG son obligatorias")
     if not re.fullmatch(r"\d{14}", RUN_ID):
         raise E2EError("IACP_E2E_RUN_ID debe usar 14 dígitos UTC: AAAAMMDDHHMMSS")
-    if MAX_WORKERS != 2:
-        raise E2EError("la matriz física debe limitarse a dos aprovisionamientos simultáneos")
+    if MAX_WORKERS != 6:
+        raise E2EError("la matriz física debe usar los seis aprovisionamientos simultáneos")
     if (VMID_MIN, VMID_MAX) != (30000, 39999):
         raise E2EError("la matriz de iac.cyberfuel.com solo puede usar VMID 30000–39999")
     if NETWORK_PROFILE != "lab_dhcp":
@@ -948,8 +948,8 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
 
 def main() -> int:
     validate_execution_config()
-    if not 1 <= MAX_WORKERS <= 2:
-        raise SystemExit("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2")
+    if MAX_WORKERS != 6:
+        raise SystemExit("IACP_E2E_MAX_WORKERS debe ser 6 para validar la capacidad completa")
     if not PROXMOX_ENDPOINT or not PROXMOX_TOKEN:
         raise SystemExit(
             "las credenciales Proxmox de solo lectura para MNG son obligatorias para validar limpieza física"
@@ -1008,12 +1008,12 @@ def main() -> int:
     failed = len(results) - passed
     print(f"SUMMARY total={len(results)} passed={passed} failed={failed}", flush=True)
     print_matrix_metrics(results, time.monotonic() - matrix_started)
-    if passed == len(cases) and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 2:
+    if passed == len(cases) and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 6:
         try:
             require_idle_runtime()
         except Exception as error:
             _record_contention(f"runtime no quedó idle al terminar: {redact(error)}")
-    outcome = "PASS" if passed == len(cases) and not failed and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 2 else "BLOCKED" if _CONTENTION.is_set() else "FAIL"
+    outcome = "PASS" if passed == len(cases) and not failed and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 6 else "BLOCKED" if _CONTENTION.is_set() else "FAIL"
     telemetry["contention_detected"] = _CONTENTION.is_set()
     write_evidence(results, telemetry, outcome)
     print(
@@ -1025,8 +1025,8 @@ def main() -> int:
         for result in results:
             if result["status"] != "passed":
                 print(json.dumps(result, sort_keys=True), flush=True)
-        if passed == len(cases) and telemetry["peak_test_busy_workers"] < 2:
-            print("FAIL: no se observó evidencia simultánea de dos workers de prueba.", flush=True)
+        if passed == len(cases) and telemetry["peak_test_busy_workers"] < 6:
+            print("FAIL: no se observó evidencia simultánea de los seis workers de prueba.", flush=True)
         return 1
     return 0
 

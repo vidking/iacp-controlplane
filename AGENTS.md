@@ -28,7 +28,10 @@ Comprobar `origin/main`, versión realmente ejecutada, imágenes, servicios, esq
 
 Utilizar el procedimiento vigente de `scripts/iacpctl` y `scripts/go_live.py`, el Compose canónico y manifiestos revisados. Preservar volúmenes, configuraciones, secretos, credenciales y certificados. Nunca ejecutar `docker compose down -v`, alterar producción, borrar states/versiones históricos ni forzar desbloqueos para aprobar una prueba.
 
-Los ensayos físicos requieren aislamiento demostrado por cola, proceso, instancia y credenciales de prueba. No interrumpir workers ni dependencias compartidos. Detener nuevas inyecciones ante incertidumbre; conservar la intención y requerir recuperación controlada. Mantener las cuotas autorizadas y como máximo dos aprovisionamientos simultáneos.
+Los ensayos físicos requieren aislamiento demostrado por cola, proceso, instancia y credenciales de prueba. No interrumpir workers ni dependencias compartidos. Detener nuevas inyecciones ante incertidumbre; conservar la intención y requerir recuperación controlada. Mantener las cuotas autorizadas y ejecutar la matriz física con seis
+aprovisionamientos simultáneos. Antes de inyectar, comprobar que los seis
+workers estén sanos, idle y disponibles; si falta capacidad, detener la prueba y
+no reducirla a dos o cuatro.
 
 Registrar PASS, FAIL o BLOCKED con alcance, versión, fecha y evidencia. Distinguir recuperación automática, manual y contención fail-closed. Separar el dictamen de integración piloto del dictamen de certificación integral. No declarar GO integral con escenarios críticos pendientes.
 

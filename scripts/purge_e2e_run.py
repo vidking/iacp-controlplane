@@ -61,7 +61,7 @@ def _load_evidence(run_id: str, evidence_path: Path, workdata_root: Path) -> tup
         or report.get("environment") != "lab"
         or report.get("cluster") != "MNG"
         or report.get("vmid_range") != [30000, 39999]
-        or report.get("max_simultaneous_provisions") != 2
+        or report.get("max_simultaneous_provisions") != 6
         or report.get("images") != list(IMAGES)
         or report.get("plans") != list(PLANS)
         or report.get("outcome") != "PASS"
@@ -72,9 +72,9 @@ def _load_evidence(run_id: str, evidence_path: Path, workdata_root: Path) -> tup
         metrics.get("contention_detected")
         or metrics.get("sampling_errors")
         or metrics.get("foreign_activity")
-        or int(metrics.get("peak_test_busy_workers", 0)) < 2
+        or int(metrics.get("peak_test_busy_workers", 0)) < 6
     ):
-        raise PurgeRefused("la evidencia no confirma aislamiento ni simultaneidad de dos workers de prueba")
+        raise PurgeRefused("la evidencia no confirma aislamiento ni simultaneidad de los seis workers de prueba")
     results = report.get("results")
     expected = _instance_names(run_id)
     if not isinstance(results, list) or len(results) != 16:
