@@ -9,7 +9,7 @@ import os
 import re
 import time
 from uuid import UUID
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from api.protection import is_protected_vmid
 from worker.golden import configured_pool_id
@@ -243,6 +243,81 @@ def _observe(client: ProxmoxClient, node: str, vmid: int, instance_id: str, mac:
     return {"mac_address": mac, "ipv4": lease_address, "mode": MODE}
 
 
+def _wait_for_pool_membership(
+    client: ProxmoxClient,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    pool_id: str,
+    heartbeat=None,
+    timeout: float | None = None,
+    poll_interval: float | None = None,
+) -> None:
+    """Confirmar por inventario y miembros del pool antes de usar Guest Agent."""
+
+    wait_seconds = max(
+        0.01,
+        float(
+            timeout
+            if timeout is not None
+            else os.getenv("IACP_GUEST_POOL_TIMEOUT", "30")
+        ),
+    )
+    delay = max(
+        0.01,
+        float(
+            poll_interval
+            if poll_interval is not None
+            else os.getenv("IACP_GUEST_IDENTITY_POLL_SECONDS", "2")
+        ),
+    )
+    deadline = time.monotonic() + wait_seconds
+    observed = False
+    pool_path = f"/pools/{quote(pool_id, safe='')}"
+
+    while time.monotonic() < deadline:
+        if heartbeat is not None:
+            heartbeat()
+        try:
+            inventory = client.inventory()
+            pool = client.get(pool_path)
+            observed = True
+        except ProxmoxError as error:
+            if error.status in {401, 403}:
+                raise GuestIdentityError("GUEST_IDENTITY_PERMISSION_REQUIRED") from error
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            continue
+
+        physical = [
+            item for item in inventory
+            if isinstance(item, dict) and str(item.get("vmid", "")) == str(vmid)
+        ]
+        members = pool.get("members") if isinstance(pool, dict) else None
+        members = members if isinstance(members, list) else []
+        pooled = [
+            item for item in members
+            if isinstance(item, dict)
+            and str(item.get("vmid", "")) == str(vmid)
+            and item.get("type") == "qemu"
+        ]
+        if (
+            isinstance(pool, dict)
+            and pool.get("poolid") == pool_id
+            and len(physical) == 1
+            and physical[0].get("name") == name
+            and physical[0].get("node") == node
+            and len(pooled) == 1
+            and pooled[0].get("name") == name
+            and pooled[0].get("node") == node
+        ):
+            return
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+
+    code = "GUEST_IDENTITY_POOL_MISMATCH" if observed else "GUEST_IDENTITY_POOL_OBSERVATION_FAILED"
+    raise GuestIdentityError(code)
+
+
 def _ensure(
     client: ProxmoxClient,
     *,
@@ -267,18 +342,16 @@ def _ensure(
     config = client.vm_config(node, vmid)
     mac = _mac_from_config(config, name)
     pool_id = configured_pool_id()
-    matches = [
-        item
-        for item in client.inventory()
-        if isinstance(item, dict) and str(item.get("vmid", "")) == str(vmid)
-    ]
-    if (
-        len(matches) != 1
-        or matches[0].get("name") != name
-        or matches[0].get("node") != node
-        or matches[0].get("pool") != pool_id
-    ):
-        raise GuestIdentityError("GUEST_IDENTITY_POOL_MISMATCH")
+    _wait_for_pool_membership(
+        client,
+        node=node,
+        vmid=vmid,
+        name=name,
+        pool_id=pool_id,
+        heartbeat=heartbeat,
+        timeout=timeout,
+        poll_interval=poll_interval,
+    )
 
     # Proxmox reports ACLs inherited from the VM's resource pool at the pool
     # path. Querying /vms/{vmid} alone returns zeroes for these inherited
