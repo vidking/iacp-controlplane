@@ -239,9 +239,14 @@ def test_cloud_init_accepts_done_with_only_deprecation_warnings():
         node for node in program.body
         if isinstance(node, ast.FunctionDef) and node.name == "cloud_init_completed"
     )
+    pending_helper = next(
+        node for node in program.body
+        if isinstance(node, ast.FunctionDef) and node.name == "cloud_init_pending"
+    )
     namespace = {"re": re}
-    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<guest-program>", "exec"), namespace)
+    exec(compile(ast.Module(body=[helper, pending_helper], type_ignores=[]), "<guest-program>", "exec"), namespace)
     completed = namespace["cloud_init_completed"]
+    pending = namespace["cloud_init_pending"]
     warning_output = (
         "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n"
         "\t- 'user' of type string is deprecated in 22.2\n"
@@ -253,6 +258,10 @@ def test_cloud_init_accepts_done_with_only_deprecation_warnings():
     assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n", True)
     assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nNETWORK:\n\t- retry\n", True)
     assert not completed(2, warning_output, False)
+    assert pending("status: running\nerrors: []\n", False)
+    assert pending("status: running\nerrors: []\n", True)
+    assert not pending("status: error\nerrors: [bad config]\n", True)
+    assert not pending("status: done\nerrors: []\n", True)
 
 
 def test_guest_program_failure_diagnostic_returns_only_fixed_stage_code():

@@ -72,6 +72,9 @@ def cloud_init_completed(returncode,output,boot_finished):
         and lines[0] == 'DEPRECATED:'
         and all(line.startswith('- ') and 'deprecated' in line.lower() for line in warnings)
     )
+def cloud_init_pending(output,boot_finished):
+    status=re.search(r'(?m)^status:\s*([a-zA-Z_-]+)\s*$',output)
+    return not boot_finished or status is None or status.group(1).lower() in {'running','not run'}
 release=Path('/etc/os-release').read_text()
 assert 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release, 'IACP_GUEST_IDENTITY_STAGE=OS_RELEASE'
 interfaces=[p for p in Path('/sys/class/net').glob('*/address') if p.read_text().strip().lower()==mac]
@@ -104,18 +107,31 @@ with lock.open('a') as stream:
             evidence['ifindex']=ifindex
             write(marker,json.dumps(evidence,sort_keys=True)+'\n')
         sys.exit(0)
-    cloud_init = subprocess.run(
-        ['/usr/bin/cloud-init', 'status', '--wait', '--long'],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
-    assert cloud_init_completed(
-        cloud_init.returncode,
-        cloud_init.stdout or '',
-        Path('/var/lib/cloud/instance/boot-finished').is_file(),
-    ), 'IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT'
+    cloud_init_deadline=time.monotonic()+90
+    while time.monotonic()<cloud_init_deadline:
+        remaining=cloud_init_deadline-time.monotonic()
+        try:
+            cloud_init=subprocess.run(
+                ['/usr/bin/cloud-init','status','--long'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=min(15,remaining),
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except OSError:
+            raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
+        cloud_init_output=cloud_init.stdout or ''
+        boot_finished=Path('/var/lib/cloud/instance/boot-finished').is_file()
+        if cloud_init_completed(cloud_init.returncode,cloud_init_output,boot_finished):
+            break
+        if cloud_init_pending(cloud_init_output,boot_finished):
+            time.sleep(min(2,max(0,cloud_init_deadline-time.monotonic())))
+            continue
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
+    else:
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
     config=yaml.safe_load(Path('/etc/netplan/50-cloud-init.yaml').read_text())['network']
     assert config['version']==2 and set(config)<= {'version','renderer','ethernets'}, 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_STRUCTURE'
     assert config.get('renderer','networkd')=='networkd' and len(config['ethernets'])==1, 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_RENDERER'
