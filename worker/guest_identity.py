@@ -25,7 +25,7 @@ FAILURE_MARKER = "/var/lib/iacp/guest-identity.failure.json"
 
 
 PROGRAM = r'''
-import fcntl,hashlib,json,os,re,subprocess,sys,tempfile,uuid
+import fcntl,hashlib,json,os,re,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 import yaml
 identifier,mac,program_sha=sys.argv[1:]

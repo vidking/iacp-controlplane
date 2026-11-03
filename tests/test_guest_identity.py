@@ -225,7 +225,14 @@ def test_guest_identity_does_not_accept_lease_claimed_by_another_dhcp_client():
 
 
 def test_guest_program_is_one_shot_and_changes_machine_and_dhcp_identity():
-    ast.parse(PROGRAM)
+    program = ast.parse(PROGRAM)
+    imports = {
+        alias.name
+        for node in program.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "time" in imports
     assert "flock(stream,fcntl.LOCK_EX)" in PROGRAM
     assert "uuid.uuid4().hex" in PROGRAM
     assert '"dhcp-identifier":"mac"' in PROGRAM.replace("'", '"')
