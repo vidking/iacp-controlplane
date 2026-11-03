@@ -134,3 +134,44 @@ durante este trabajo, VMID 106 apareció en `mng02`; no se operó ni modificó.
 El plan de migración histórico permanece intacto. Las correcciones actuales de
 hostname, rangos, contrato visual y operación están en `origin/main`; esta
 auditoría añade el resultado del despliegue sin reescribir registros previos.
+
+## Cambio del backend remoto durante el laboratorio — 2 de noviembre de 2026
+
+`iac.cyberfuel.com` continúa siendo el nombre del endpoint; el destino operativo
+actual es el laboratorio del clúster MNG, no producción física. El commit
+`f9b436e3f7646cd7e27ac8dc78111e342c785cff` incorpora el interruptor
+`IACP_WASABI_ENABLED`. En `/etc/iacp/stacks/prod.env` quedó en `false`; el
+manifiesto privado declara `backend=local`, y bucket, endpoint, región, prefijo
+y credenciales Wasabi quedan vacíos. Terraform guarda state local en el volumen
+persistente `iacp_controlplane_prod_workdata`. El valor heredado
+`IACP_TERRAFORM_BACKEND=local` se conserva únicamente para que un Compose de un
+release anterior falle cerrado; el Compose nuevo no lo consume.
+
+La revisión `f9b436e` está integrada en `origin/main`, instalada en el
+IACP Control Plane (VM 104) y atendiendo el host público. El GET de
+`/health/ready` devolvió HTTP 200 y la revisión esperada. `iacpctl preflight`,
+`deploy --preloaded-images` y `verify` pasaron. En los tres resultados, el
+backend figura como `local`, `remote_state=deshabilitado` y
+`writes_performed=false`. No se consultó ni se escribió Wasabi durante este
+cambio. PostgreSQL conserva sus volúmenes; los dos workers terminaron en idle y
+la cola quedó sin operaciones activas. Las 62 pruebas enfocadas de worker y
+despliegue pasaron en una base PostgreSQL temporal, cuyo contenedor se retiró.
+
+Se retiraron de la base del runtime las filas de las tres canarias ya marcadas
+como eliminadas: 3 instancias, 10 operaciones, 57 eventos, 10 claves de
+idempotencia y 1 lease liberado. También se borraron sus archivos temporales de
+contraseña, plan, variables Terraform y configuración S3 en workdata. Las filas
+de canaria ya no aparecen en el API. Se conservaron los tres archivos
+`.terraform/terraform.tfstate` de metadatos y las evidencias privadas bajo
+`/opt/iacp/evidence/` para no eliminar material de state o auditoría. No se
+eliminaron VMs ni objetos o versiones de Wasabi. La consulta actual de
+configuración Proxmox desde VM 104 recibió HTTP 403; por tanto, no se hizo una
+acción física en MNG durante esta limpieza. El ciclo de eliminación anterior
+había terminado con éxito, pero el modo local todavía no tiene una nueva
+canaria física y no se declara recertificación integral.
+
+Evidencias de esta actualización:
+
+- `/opt/iacp/evidence/prod-wasabi-disabled-f9b436e/`
+- `/opt/iacp/evidence/prod-wasabi-disabled-deploy-f9b436e/`
+- `/opt/iacp/evidence/prod-wasabi-disabled-verify-f9b436e/`

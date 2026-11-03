@@ -60,7 +60,9 @@ rechaza una configuración contradictoria y no consulta Wasabi. Solo cuando el
 servicio opere como producción real se cambia a `true`, se configura el bucket
 `iacp-cyberfuel` y el prefijo `iacp/prod-runtime-v1`, y se cargan las
 credenciales en ese archivo. El preflight de Wasabi se ejecuta únicamente con
-el booleano en `true`.
+el booleano en `true`. `IACP_TERRAFORM_BACKEND=local` queda allí solo como
+compatibilidad fail-closed con releases anteriores; el Compose actual no la
+usa y el interruptor vigente es `IACP_WASABI_ENABLED`.
 La guía oficial de Terraform describe la configuración parcial del backend S3
 y el lock file: [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
 Wasabi recomienda path-style para sus solicitudes S3:
