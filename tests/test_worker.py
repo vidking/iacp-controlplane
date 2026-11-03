@@ -689,6 +689,64 @@ def test_power_operation_updates_instance_and_operation(tmp_path, monkeypatch):
     assert instance["power_state"] == "running"
 
 
+def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    operation_id = "power-identity-operation"
+    instance_id = "power-identity-instance"
+    spec = {
+        "image": "ubuntu-2404",
+        "network_profile": "lab_dhcp",
+        "network_mode": "dhcp",
+        "started": False,
+    }
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'power', 'power', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (
+                operation_id,
+                json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id}),
+                instance_id,
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, ?, 'identity-test', 'ubuntu-2404', 40000, 'mng01', 'ready', 'stopped', ?, 'now', 'now')
+            """,
+            (instance_id, "plan-identity", json.dumps(spec)),
+        )
+
+    class FakePower:
+        def power(self, node, vmid, name, action):
+            assert (node, vmid, name, action) == ("mng01", 40000, "identity-test", "start")
+            return {"action": action, "power_state": "running"}
+
+    calls = []
+    monkeypatch.setattr(
+        "worker.main.ensure_guest_identity_for_operation",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    execute_power(
+        "worker-1",
+        {
+            "operation_id": operation_id,
+            "payload_json": json.dumps(
+                {"command": "power", "power_action": "start", "instance_id": instance_id}
+            ),
+        },
+        FakePower(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["instance_id"] == instance_id
+    assert calls[0][1]["vmid"] == 40000
+    assert calls[0][1]["spec"] == spec
+
+
 def test_heartbeat_refreshes_operation_phase_and_worker_age(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()

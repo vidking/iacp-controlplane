@@ -13,6 +13,7 @@ from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
 from worker.golden import observe, validate_pool, variables as golden_variables
+from worker.guest_identity import GuestIdentityError, ensure as ensure_guest_identity, required as guest_identity_required
 from worker.heartbeat import heartbeat
 from worker.netbox import NetBoxAllocation, NetBoxClient, NetBoxError, configured as netbox_configured
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
@@ -859,6 +860,75 @@ def instance_identity(instance_id: str | None) -> dict:
     return dict(row) if row else {}
 
 
+def instance_spec(instance_id: str | None) -> dict:
+    if not instance_id:
+        return {}
+    with database() as db:
+        row = db.execute(
+            "SELECT spec_json FROM instances WHERE instance_id=?",
+            (instance_id,),
+        ).fetchone()
+    if row is None:
+        return {}
+    try:
+        value = json.loads(row["spec_json"] or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def operation_spec(source_operation: dict, fallback_payload: dict | None = None) -> dict:
+    try:
+        payload = json.loads(source_operation.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    spec = payload.get("spec") if isinstance(payload, dict) else None
+    if not isinstance(spec, dict) and isinstance(fallback_payload, dict):
+        spec = fallback_payload.get("spec")
+    return spec if isinstance(spec, dict) else {}
+
+
+def ensure_guest_identity_for_operation(
+    worker_id: str,
+    operation_id: str,
+    client: ProxmoxClient,
+    *,
+    stack: str,
+    node: str,
+    vmid: int,
+    name: str,
+    instance_id: str,
+    spec: dict,
+    started: bool = True,
+) -> dict | None:
+    if not guest_identity_required(spec, stack, vmid):
+        return None
+    if not started:
+        emit(operation_id, "guest.identity.deferred", "pending", "se ejecutará al encender la VM")
+        return None
+    try:
+        emit(operation_id, "guest.identity.started", "running", "Ubuntu 24.04; DHCP identificado por MAC")
+        result = ensure_guest_identity(
+            client,
+            node=node,
+            vmid=int(vmid),
+            name=name,
+            instance_id=instance_id,
+            heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="guest_identity"),
+        )
+        detail = {"ipv4": result.get("ipv4"), "mode": result.get("mode")}
+        emit(operation_id, "guest.identity.verified", "succeeded", json.dumps(detail, sort_keys=True))
+        return result
+    except GuestIdentityError as error:
+        try:
+            emit(operation_id, "guest.identity.uncertain", "uncertain", str(error))
+        except Exception:
+            pass
+        raise
+    except Exception as error:
+        raise GuestIdentityError("GUEST_IDENTITY_AUDIT_FAILED") from error
+
+
 def settle_physical_operation(
     operation_id: str,
     command: str,
@@ -1038,6 +1108,18 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
             raise ProxmoxError("POWER_REBOOT_REQUIRES_REVIEW", uncertain=True)
         else:
             result = client.power(node, int(vmid), name, action)
+        if action == "start" and result.get("power_state") == "running":
+            ensure_guest_identity_for_operation(
+                worker_id,
+                operation_id,
+                client,
+                stack=source.get("stack") or "mng01",
+                node=node,
+                vmid=int(vmid),
+                name=name,
+                instance_id=instance_id,
+                spec=instance_spec(instance_id),
+            )
         update_instance(instance_id, "ready", vmid=int(vmid), power_state=result.get("power_state"), node=node)
         close_source_after_reconciliation(
             source, instance_id, int(vmid), node, source_payload,
@@ -1070,6 +1152,20 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="reconcile"),
     )
     if present:
+        if source_command in {"apply", "provision"}:
+            spec = operation_spec(source, source_payload)
+            ensure_guest_identity_for_operation(
+                worker_id,
+                operation_id,
+                client,
+                stack=source.get("stack") or "mng01",
+                node=node,
+                vmid=int(vmid),
+                name=name,
+                instance_id=instance_id,
+                spec=spec,
+                started=bool(spec.get("started", True)),
+            )
         close_source_after_reconciliation(
             source, instance_id, int(vmid), node, source_payload,
             succeeded=True,
@@ -1114,7 +1210,7 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     instance_id = payload.get("instance_id") or operation.get("instance_id")
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, vmid, node, name, status FROM instances WHERE instance_id=?",
+            "SELECT instance_id, vmid, node, name, status, spec_json FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     if row is None or row["vmid"] is None:
@@ -1137,6 +1233,22 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     heartbeat(worker_id, "running", operation_id, phase=f"power_{action}")
     result = client.power(node, vmid, row["name"], action)
     power_state = result.get("power_state")
+    if action in {"start", "reboot"} and power_state == "running":
+        try:
+            spec = json.loads(row["spec_json"] or "{}")
+        except (TypeError, ValueError):
+            spec = {}
+        ensure_guest_identity_for_operation(
+            worker_id,
+            operation_id,
+            client,
+            stack=operation.get("stack") or "mng01",
+            node=node,
+            vmid=vmid,
+            name=row["name"],
+            instance_id=instance_id,
+            spec=spec if isinstance(spec, dict) else {},
+        )
     update_operation(
         operation_id,
         status="succeeded",
@@ -1399,6 +1511,21 @@ def execute(worker_id: str, operation: dict) -> None:
                         heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="recovery"),
                     )
                 if recovered:
+                    if command in {"apply", "provision"}:
+                        spec = operation_spec(source_operation, source_payload)
+                        started = requested_started if requested_started is not None else bool(spec.get("started", True))
+                        ensure_guest_identity_for_operation(
+                            worker_id,
+                            operation_id,
+                            client,
+                            stack=stack,
+                            node=target_node or "mng01",
+                            vmid=int(vmid),
+                            name=instance_identity(instance_id).get("name", ""),
+                            instance_id=instance_id,
+                            spec=spec,
+                            started=started,
+                        )
                     settle_physical_operation(
                         operation_id,
                         command,
@@ -1453,6 +1580,23 @@ def execute(worker_id: str, operation: dict) -> None:
                     f"reconciliacion fisica fallida: VMID {vmid} no coincide con {expected}"
                 )
 
+        if command in {"apply", "provision"} and vmid is not None and client is not None:
+            spec = operation_spec(source_operation, source_payload)
+            started = requested_started if requested_started is not None else bool(spec.get("started", True))
+            instance = instance_identity(instance_id)
+            ensure_guest_identity_for_operation(
+                worker_id,
+                operation_id,
+                client,
+                stack=stack,
+                node=target_node or instance.get("node") or "mng01",
+                vmid=int(vmid),
+                name=instance.get("name", ""),
+                instance_id=instance_id,
+                spec=spec,
+                started=started,
+            )
+
         if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
             update_operation(
                 operation_id,
@@ -1501,6 +1645,33 @@ def execute(worker_id: str, operation: dict) -> None:
             delete_secret(source_operation.get("secret_path"))
         emit(operation_id, f"terraform.{command}.completed", "succeeded")
     except Exception as error:
+        if isinstance(error, GuestIdentityError):
+            current = instance_identity(instance_id)
+            vmid = vmid or current.get("vmid")
+            target_node = target_node or current.get("node")
+            # El intento de reconciliación queda terminal para que una nueva
+            # petición pueda volver a seleccionar la operación fuente incierta.
+            status = "failed" if command == "reconcile" else "uncertain"
+            update_operation(
+                operation_id,
+                status=status,
+                phase="failed" if status == "failed" else "guest_identity_recovery_required",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=1,
+                error=operation_output(str(error)),
+            )
+            update_instance(
+                instance_id,
+                "uncertain",
+                vmid=vmid,
+                power_state="unknown",
+                node=target_node,
+            )
+            if command == "provision":
+                delete_secret(secret_path)
+            emit(operation_id, "guest.identity.reconciliation_required", status, str(error))
+            return
         physical = stack == "mng01" and phase in {"apply", "destroy", "reconcile"}
         power_uncertain = command == "power" and isinstance(error, ProxmoxError) and error.uncertain
         resource_protected = "PROTECTED_INSTANCE" in str(error)

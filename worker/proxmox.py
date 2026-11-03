@@ -69,7 +69,7 @@ class ProxmoxClient:
         self,
         method: str,
         path: str,
-        parameters: dict | None = None,
+        parameters: dict | list[tuple[str, str]] | None = None,
         *,
         uncertain: bool = False,
         timeout: float | None = None,
@@ -162,10 +162,10 @@ class ProxmoxClient:
             attempts=attempts,
         )
 
-    def post(self, path: str, parameters: dict | None = None):
+    def post(self, path: str, parameters: dict | list[tuple[str, str]] | None = None):
         return self._request("POST", path, parameters, uncertain=True)
 
-    def put(self, path: str, parameters: dict | None = None):
+    def put(self, path: str, parameters: dict | list[tuple[str, str]] | None = None):
         return self._request("PUT", path, parameters, uncertain=True)
 
     def inventory(self, *, uncertain: bool = False) -> list[dict]:
@@ -257,6 +257,42 @@ class ProxmoxClient:
             result = data.get("result", [])
             return result if isinstance(result, list) else []
         return data if isinstance(data, list) else []
+
+    def guest_agent_info(self, node: str, vmid: int) -> dict:
+        return self.get(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/info",
+            timeout=float(os.getenv("IACP_GUEST_AGENT_TIMEOUT", "8")),
+            attempts=1,
+        ) or {}
+
+    def guest_agent_exec(self, node: str, vmid: int, command: list[str]) -> dict:
+        if not command or any(not isinstance(item, str) for item in command):
+            raise ProxmoxError("GUEST_AGENT_COMMAND_INVALID")
+        parameters = [("command", item) for item in command]
+        return self._request(
+            "POST",
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/exec",
+            parameters,
+            uncertain=True,
+            timeout=float(os.getenv("IACP_GUEST_AGENT_EXEC_TIMEOUT", "15")),
+            attempts=1,
+        ) or {}
+
+    def guest_agent_exec_status(self, node: str, vmid: int, pid: int) -> dict:
+        query = urlencode({"pid": int(pid)})
+        return self.get(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/exec-status?{query}",
+            timeout=float(os.getenv("IACP_GUEST_AGENT_TIMEOUT", "8")),
+            attempts=1,
+        ) or {}
+
+    def guest_agent_file_read(self, node: str, vmid: int, path: str) -> dict:
+        query = urlencode({"file": path, "count": 8192})
+        return self.get(
+            f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/file-read?{query}",
+            timeout=float(os.getenv("IACP_GUEST_AGENT_TIMEOUT", "8")),
+            attempts=1,
+        ) or {}
 
     @staticmethod
     def _recoverable_power_error(error: ProxmoxError) -> bool:
