@@ -28,6 +28,12 @@ class PurgeRefused(RuntimeError):
     pass
 
 
+def _sql_placeholders(count: int) -> str:
+    if count < 1:
+        raise PurgeRefused("una consulta de purga requiere al menos un ID")
+    return ",".join("?" for _ in range(count))
+
+
 def _instance_names(run_id: str) -> set[str]:
     prefix = f"{RUN_PREFIX}{run_id}-"
     return {
@@ -174,7 +180,7 @@ def _verify_state(workspace_root: Path, name: str, vmid: int) -> dict:
 
 
 def _assert_idle(db) -> None:
-    placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+    placeholders = _sql_placeholders(len(ACTIVE_STATUSES))
     active = db.execute(
         f"SELECT COUNT(*) AS count FROM operations WHERE status IN ({placeholders})",
         ACTIVE_STATUSES,
@@ -210,14 +216,15 @@ def _read_plan(db, run_id: str, workdata_root: Path) -> dict:
         raise PurgeRefused("la matriz persistida no contiene cada combinación única de imagen y plan")
 
     instance_ids = [row["instance_id"] for row in instances]
-    placeholders = ",".join("?" for _ in instance_ids)
+    instance_placeholders = _sql_placeholders(len(instance_ids))
     operations = db.execute(
-        f"SELECT * FROM operations WHERE instance_id IN ({placeholders}) ORDER BY created_at, operation_id",
+        f"SELECT * FROM operations WHERE instance_id IN ({instance_placeholders}) ORDER BY created_at, operation_id",
         instance_ids,
     ).fetchall()
     if not operations or any(row["status"] != "succeeded" for row in operations):
         raise PurgeRefused("todas las operaciones de la corrida deben estar en estado terminal exitoso")
     operation_ids = {row["operation_id"] for row in operations}
+    operation_placeholders = _sql_placeholders(len(operation_ids))
     provision_by_instance = {
         row["instance_id"]: row
         for row in operations
@@ -227,7 +234,7 @@ def _read_plan(db, run_id: str, workdata_root: Path) -> dict:
         raise PurgeRefused("no se encontraron las 16 operaciones originales de aprovisionamiento")
 
     lease_rows = db.execute(
-        f"SELECT * FROM vmid_leases WHERE operation_id IN ({placeholders})",
+        f"SELECT * FROM vmid_leases WHERE operation_id IN ({operation_placeholders})",
         list(operation_ids),
     ).fetchall()
     lease_by_operation = {row["operation_id"]: row for row in lease_rows}
@@ -237,7 +244,7 @@ def _read_plan(db, run_id: str, workdata_root: Path) -> dict:
             raise PurgeRefused("un lease de VMID no está liberado o no coincide con su instancia")
 
     allocations = db.execute(
-        f"SELECT COUNT(*) AS count FROM ip_allocations WHERE instance_id IN ({placeholders})",
+        f"SELECT COUNT(*) AS count FROM ip_allocations WHERE instance_id IN ({instance_placeholders})",
         instance_ids,
     ).fetchone()["count"]
     if allocations:
@@ -366,8 +373,8 @@ def _delete_files(plan: dict) -> None:
 def _delete_database_rows(db, plan: dict, run_id: str) -> None:
     instance_ids = plan["instance_ids"]
     operation_ids = plan["operation_ids"]
-    instance_placeholders = ",".join("?" for _ in instance_ids)
-    operation_placeholders = ",".join("?" for _ in operation_ids)
+    instance_placeholders = _sql_placeholders(len(instance_ids))
+    operation_placeholders = _sql_placeholders(len(operation_ids))
     db.execute(
         f"DELETE FROM events WHERE operation_id IN ({operation_placeholders})",
         operation_ids,
