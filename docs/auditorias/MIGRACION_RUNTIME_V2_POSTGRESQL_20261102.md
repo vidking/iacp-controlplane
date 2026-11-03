@@ -46,7 +46,10 @@
 | Gate `config-check` | PASS | Manifiesto temporal y valores ficticios; sin conexión a servicios externos. |
 | Gate `preflight` | PASS | `/tmp/iacp-workers6-final-gate-20261102/evidence-preflight-final`; Wasabi apagado, sin llamadas a Wasabi o Proxmox. |
 | Runtime en contenedores locales | PASS | PostgreSQL esquema 2, API `ready`, seis heartbeats saludables `idle`, `max_concurrent=6`, cola y operaciones activas vacías; OpenAPI `1.0.0`, sin `/v2`. |
-| IACP Control Plane (VM 104) | SIN CAMBIOS | El stack activo mantiene dos workers y concurrencia 1. |
+| Baseline del IACP Control Plane (VM 104) | PASS | Antes del cambio, API healthy en imagen `050748b28601949c967c7ad69d6457aba4b79548`, dos workers idle, `IACP_MAX_CONCURRENT=1`, MNG habilitado, Wasabi apagado; PostgreSQL reportó 0 instancias, 0 operaciones, 0 leases held y 0 advisory locks. |
+| Volúmenes de PostgreSQL y workdata | IDENTIFICADOS | `iacp_controlplane_prod_postgres` y `iacp_controlplane_prod_workdata`; conservar para mantener PostgreSQL y permitir rollback. |
+| Inventario previo del clúster MNG | PASS | Consulta Proxmox de solo lectura: 7 recursos y cero VMID entre `30000–39999`; no se iniciaron ensayos físicos. |
+| IACP Control Plane (VM 104) | SIN CAMBIOS | No se ha desplegado ni reiniciado el runtime candidato. |
 | Aprovisionamientos físicos en el clúster MNG | PENDIENTE | Aún no se han iniciado; requieren release integrado y despliegue verificado. |
 
 ## Criterio de continuación
