@@ -52,6 +52,16 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
         assert set(detail.json()["timings"]) == {"queue_seconds", "execution_seconds", "total_seconds"}
 
 
+def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    revision = "a" * 40
+    monkeypatch.setenv("IACP_BUILD_REVISION", revision)
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.headers["X-IACP-Build-Revision"] == revision
+
+
 def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
