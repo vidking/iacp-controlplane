@@ -10,6 +10,7 @@ from scripts.purge_e2e_run import (
     PurgeRefused,
     _instance_names,
     _load_evidence,
+    _sql_placeholders,
     _verify_state,
 )
 from scripts import e2e_matrix
@@ -64,6 +65,10 @@ def _resource(name: str, vmid: int) -> dict:
         "provider": "provider[\"registry.terraform.io/bpg/proxmox\"]",
         "instances": [{"schema_version": 0, "attributes": {"name": name, "vm_id": vmid}}],
     }
+
+
+def test_purge_sql_placeholders_match_all_lifecycle_operation_ids():
+    assert _sql_placeholders(72).count("?") == 72
 
 
 def test_purge_run_names_cover_the_16_unique_image_plan_pairs():
