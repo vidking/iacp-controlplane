@@ -642,6 +642,35 @@ def test_reconcile_route_is_idempotent_and_targets_uncertain_operation(tmp_path,
         assert "/v1/instances/{instance_id}/reconcile" in client.get("/openapi.json").json()["paths"]
 
 
+def test_reconcile_can_close_physical_uncertainty_after_instance_was_deleted(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-reconcile-deleted"},
+            json=public_body("reconcile-deleted"),
+        )
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='uncertain', error='GUEST_IDENTITY_PROGRAM_FAILED' WHERE operation_id=?",
+                (source_id,),
+            )
+            db.execute(
+                "UPDATE instances SET status='deleted', vmid=40000, power_state='unknown' WHERE instance_id=?",
+                (instance_id,),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile",
+            headers={"Idempotency-Key": "reconcile-deleted-uncertain"},
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["source_operation_id"] == source_id
+        assert response.json()["command"] == "reconcile"
+
+
 def test_power_state_reports_missing_permission_without_hiding_endpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:

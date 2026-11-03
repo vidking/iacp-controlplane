@@ -581,18 +581,27 @@ def _insert_operation(
         ).fetchone()
         if target is None:
             raise HTTPException(status_code=404, detail="instance_id no existe")
-        if target["status"] == "deleted":
-            raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
         source_id = request.source_operation_id
+        source = None
         if source_id:
             source = db.execute(
-                "SELECT operation_id, instance_id, status, stack FROM operations WHERE operation_id=?",
+                "SELECT operation_id, instance_id, status, stack, command FROM operations WHERE operation_id=?",
                 (source_id,),
             ).fetchone()
             if source is None or source["instance_id"] != instance_id:
                 raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
             if source["status"] != "uncertain":
                 raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
+        if target["status"] == "deleted" and (
+            source is None or source["command"] not in {"apply", "provision", "destroy"}
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
+            )
+        if target["status"] == "deleted" and source["status"] != "uncertain":
+            raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
+        if source is not None:
             effective_stack = source["stack"] or effective_stack
         payload["source_operation_id"] = source_id
 
@@ -908,8 +917,6 @@ def create_reconcile(
         if instance is None:
             raise HTTPException(status_code=404, detail="instance not found")
         _reject_protected_vmid(instance["vmid"])
-        if instance["status"] == "deleted":
-            raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
         selected = source_operation_id
         if selected is None:
             row = db.execute(
@@ -931,6 +938,11 @@ def create_reconcile(
             raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
         if source["status"] != "uncertain":
             raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
+        if instance["status"] == "deleted" and source["command"] not in {"apply", "provision", "destroy"}:
+            raise HTTPException(
+                status_code=409,
+                detail="la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
+            )
         response, operation_id = _insert_operation(
             db,
             OperationRequest(

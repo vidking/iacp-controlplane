@@ -269,6 +269,7 @@ class ProxmoxClient:
         if not command or any(not isinstance(item, str) for item in command):
             raise ProxmoxError("GUEST_AGENT_COMMAND_INVALID")
         parameters = [("command", item) for item in command]
+        parameters.append(("capture-output", "1"))
         return self._request(
             "POST",
             f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/exec",

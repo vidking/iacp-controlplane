@@ -1,4 +1,5 @@
 import ast
+import base64
 import hashlib
 import json
 import re
@@ -12,6 +13,7 @@ from worker.guest_identity import (
     PROGRAM,
     PROGRAM_SHA256,
     GuestIdentityError,
+    _guest_program_failure_stage,
     ensure,
     required,
 )
@@ -251,6 +253,13 @@ def test_cloud_init_accepts_done_with_only_deprecation_warnings():
     assert not completed(2, warning_output, False)
 
 
+def test_guest_program_failure_diagnostic_returns_only_fixed_stage_code():
+    stderr = "Traceback (most recent call last):\nRuntimeError: IACP_GUEST_IDENTITY_STAGE=NETPLAN_APPLY\n"
+    encoded = base64.b64encode(stderr.encode()).decode()
+    assert _guest_program_failure_stage({"err-data": encoded}) == "NETPLAN_APPLY"
+    assert _guest_program_failure_stage({"err-data": "not-base64"}) == "UNKNOWN"
+
+
 def test_worker_only_dispatches_identity_for_running_supported_guest(monkeypatch):
     events = []
     calls = []
@@ -299,4 +308,6 @@ def test_proxmox_guest_exec_encodes_repeated_command_parameters(monkeypatch):
     monkeypatch.setattr(client.opener, "open", open_request)
     command = ["/usr/bin/python3", "-c", "print('ok')", INSTANCE_ID, MAC, PROGRAM_SHA256]
     assert client.guest_agent_exec("mng01", 30000, command) == {"pid": 7}
-    assert [value for key, value in parse_qsl(captured["request"].data.decode()) if key == "command"] == command
+    parameters = parse_qsl(captured["request"].data.decode())
+    assert [value for key, value in parameters if key == "command"] == command
+    assert ("capture-output", "1") in parameters
