@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -471,8 +472,54 @@ def _terraform_backend_configuration(environment: str, instance_id: str | None) 
 def configure_state_backend(workspace: str, environment: str, instance_id: str | None) -> str | None:
     config = _terraform_backend_configuration(environment, instance_id)
     if config is None:
+        local_backend_path = os.path.join(workspace, "iacp.local.backend.tf")
+        local_backend_source = (
+            'terraform {\n'
+            '  backend "local" {\n'
+            '    path = "terraform.tfstate"\n'
+            '  }\n'
+            '}\n'
+        )
+        s3_backend = re.compile(
+            r'(?m)^[ \t]*backend[ \t]+"s3"[ \t]*\{[ \t]*\}[ \t]*(?:\r?\n|$)'
+        )
+        backend_declaration = re.compile(r'(?m)^[ \t]*backend[ \t]+"([A-Za-z0-9_-]+)"[ \t]*\{')
+        declarations: list[str] = []
+        for filename in os.listdir(workspace):
+            if not filename.endswith(".tf"):
+                continue
+            path = os.path.join(workspace, filename)
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
+            source, removed = s3_backend.subn("", source)
+            if removed:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(source)
+            declarations.extend(backend_declaration.findall(source))
+
+        if declarations:
+            existing_local_backend = ""
+            if os.path.isfile(local_backend_path):
+                with open(local_backend_path, encoding="utf-8") as handle:
+                    existing_local_backend = handle.read()
+            if declarations != ["local"] or existing_local_backend != local_backend_source:
+                raise RuntimeError("LOCAL_BACKEND_CONFIGURATION_INVALID")
+        else:
+            with open(local_backend_path, "w", encoding="utf-8") as handle:
+                handle.write(local_backend_source)
         return None
     config_path = os.path.join(workspace, ".iacp-backend.json")
+    if os.path.exists(os.path.join(workspace, "iacp.local.backend.tf")):
+        raise RuntimeError("REMOTE_BACKEND_CONFIGURATION_INVALID")
+    backend_declaration = re.compile(r'(?m)^[ \t]*backend[ \t]+"([A-Za-z0-9_-]+)"[ \t]*\{')
+    declarations = []
+    for filename in os.listdir(workspace):
+        if not filename.endswith(".tf"):
+            continue
+        with open(os.path.join(workspace, filename), encoding="utf-8") as handle:
+            declarations.extend(backend_declaration.findall(handle.read()))
+    if declarations != ["s3"]:
+        raise RuntimeError("REMOTE_BACKEND_CONFIGURATION_INVALID")
     with open(config_path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, sort_keys=True)
         handle.write("\n")
@@ -573,8 +620,6 @@ def terraform_commands(
     ]
     if backend_config_path:
         init.extend(["-reconfigure", f"-backend-config={backend_config_path}"])
-    else:
-        init.append("-backend=false")
     if command == "plan":
         return [
             init,

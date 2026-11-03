@@ -323,20 +323,44 @@ def test_destroy_does_not_reuse_deleted_bootstrap_secret():
 def test_provision_terraform_commands_have_one_plan_and_one_apply():
     commands = terraform_commands("provision", "/tmp/plan.tfplan")
     assert [command[1] for command in commands] == ["init", "plan", "apply"]
+    assert "-backend=false" not in commands[0]
 
 
-def test_develop_backend_keeps_state_local(monkeypatch):
+def _workspace_with_s3_backend(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "versions.tf").write_text(
+        'terraform {\n  required_version = ">= 1.16.6"\n  backend "s3" {}\n}\n',
+        encoding="utf-8",
+    )
+    return workspace
+
+
+def _assert_workspace_uses_local_state(workspace):
+    versions = (workspace / "versions.tf").read_text(encoding="utf-8")
+    local_backend = (workspace / "iacp.local.backend.tf").read_text(encoding="utf-8")
+    assert 'backend "s3"' not in versions
+    assert 'backend "local"' in local_backend
+    assert 'path = "terraform.tfstate"' in local_backend
+    assert not (workspace / ".iacp-backend.json").exists()
+
+
+def test_develop_backend_keeps_state_local(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
     monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
-    assert configure_state_backend("/tmp/workspace", "lab", "instance-123") is None
+    workspace = _workspace_with_s3_backend(tmp_path)
+    assert configure_state_backend(str(workspace), "lab", "instance-123") is None
+    _assert_workspace_uses_local_state(workspace)
 
 
-def test_production_runtime_can_keep_lab_state_local_when_wasabi_is_disabled(monkeypatch):
+def test_production_runtime_can_keep_lab_state_local_when_wasabi_is_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
     monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
     monkeypatch.setenv("IACP_TFSTATE_BUCKET", "")
     monkeypatch.setenv("IACP_TFSTATE_PREFIX", "")
-    assert configure_state_backend("/tmp/workspace", "lab", "instance-123") is None
+    workspace = _workspace_with_s3_backend(tmp_path)
+    assert configure_state_backend(str(workspace), "lab", "instance-123") is None
+    _assert_workspace_uses_local_state(workspace)
 
 
 def test_invalid_wasabi_switch_fails_closed(monkeypatch):
@@ -357,12 +381,17 @@ def test_production_backend_uses_dedicated_wasabi_prefix_and_lockfile(tmp_path, 
     monkeypatch.setenv("IACP_WASABI_SECRET_ACCESS_KEY", "test-secret")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    (workspace / "versions.tf").write_text(
+        'terraform {\n  backend "s3" {}\n}\n',
+        encoding="utf-8",
+    )
 
     config_path = configure_state_backend(str(workspace), "lab", "instance-123")
 
     config_file = workspace / ".iacp-backend.json"
     config = json.loads(config_file.read_text())
     assert config_path == str(config_file)
+    assert not (workspace / "iacp.local.backend.tf").exists()
     assert config["key"] == "iacp/prod-runtime-v1/instances/instance-123/terraform.tfstate"
     assert config["use_path_style"] is True
     assert config["use_lockfile"] is True
@@ -381,6 +410,19 @@ def test_production_backend_rejects_historical_lab_prefix(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     with pytest.raises(RuntimeError, match="TERRAFORM_BACKEND_CONFIGURATION_INVALID"):
+        configure_state_backend(str(workspace), "lab", "instance-123")
+
+
+def test_local_backend_rejects_unrecognized_backend_declarations(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "versions.tf").write_text(
+        'terraform {\n  backend "azurerm" {}\n}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="LOCAL_BACKEND_CONFIGURATION_INVALID"):
         configure_state_backend(str(workspace), "lab", "instance-123")
 
 
