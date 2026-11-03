@@ -1,14 +1,16 @@
-# Preparación de stacks Portainer
+# Configuración y operación de stacks
 
-Este documento describe los manifiestos del candidato. No confirma promoción,
-no cambia el IACP Control Plane (VM 104) y no autoriza un corte de dominio.
+Esta guía documenta el Compose canónico, los manifiestos de ejemplo y los
+controles para operar los stacks de API v1. El estado del runtime productivo y
+las pruebas físicas se registran en
+[`PRODUCCION_CONTROLPLANE_V1_20261102.md`](auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).
 
 ## Manifiestos y separación
 
 | Stack | Manifiesto | Imagen | Destino inicial | Persistencia |
 | --- | --- | --- | --- | --- |
-| Desarrollo | `deploy/portainer/docker-compose.yml` con variables de desarrollo | tag `develop` | MNG, entorno lógico `lab` | PostgreSQL y workdata propios; state Terraform local |
-| Producción | `deploy/portainer/docker-compose.yml` con variables de producción | tag aprobado | MNG, entorno lógico `lab`; PRX apagado | PostgreSQL y workdata propios; Wasabi `iacp/prod-runtime-v1` |
+| Desarrollo | `deploy/portainer/docker-compose.yml` con variables de desarrollo | SHA inmutable; ruta pendiente de DNS y TLS | clúster MNG, entorno lógico `lab` | PostgreSQL y workdata propios; state Terraform local |
+| Producción | `deploy/portainer/docker-compose.yml` con variables de producción | SHA inmutable aprobado | clúster MNG, entorno lógico `lab`; PRX apagado | PostgreSQL y workdata propios; Wasabi `iacp/prod-runtime-v1` |
 
 Cada entorno necesita nombres de volumen exclusivos. Los valores de ejemplo
 son `iacp_controlplane_dev_postgres`, `iacp_controlplane_dev_workdata`,
@@ -33,37 +35,31 @@ IACP_DEFAULT_ENVIRONMENT=lab
 IACP_ENABLED_ENVIRONMENTS=lab
 ```
 
-El entorno lógico `lab` se resuelve a MNG. El catálogo de este candidato solo
+El entorno lógico `lab` se resuelve al clúster MNG. El catálogo del runtime solo
 habilita `mng01`; `mng02` no se ofrecerá hasta validar su storage e imágenes.
 El request no contiene nombres de clúster o nodo. `iac.cyberfuel.com` puede admitir PRX
-cuando se configure y certifique; `dev.iac.cyberfuel.com` queda limitado a
+cuando se configure y certifique; `dev-cyberfuel.com` queda limitado a
 MNG.
 
 Los rangos VMID son disjuntos y se fijan por manifiesto y archivo de entorno:
 
 | Stack | Host configurado | Rango VMID |
 | --- | --- | --- |
-| `develop` | `dev.iac.cyberfuel.com` | `40000–49999` |
+| `develop` | `dev-cyberfuel.com` | `40000–49999` |
 | `production` | `iac.cyberfuel.com` | `30000–39999` |
 
 Configura ambos límites explícitamente en cada archivo privado. El Compose de
 Portainer y `iacpctl` rechazan valores ausentes o un rango asignado al entorno
 equivocado. El Compose local usa por defecto el rango de desarrollo.
 
-En el runtime productivo configura `IACP_RUNTIME_STAGE=production`,
-`IACP_TERRAFORM_BACKEND=s3`, el bucket `iacp-cyberfuel` y el prefijo
-exacto `iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
-`IACP_WASABI_SECRET_ACCESS_KEY` se entregan solo a los workers para operar el
-backend. El endpoint se configura con HTTPS y path-style para Wasabi; Terraform
-usa un lock file S3. Revisa permisos y versionado del bucket antes del corte.
-El bucket se renombró a `iacp-cyberfuel`. El acceso actual de runtime recibe
-HTTP 403, por lo que no se debe ejecutar `deploy` ni aprovisionar hasta que la
-política permita operar el prefijo productivo. Se autorizó borrar todos los
-objetos y todas sus versiones del bucket, sin respaldo; esa purga requiere una
-credencial administrativa y no se ha ejecutado. Tras la purga, limita la llave
-de runtime a `iacp/prod-runtime-v1`. El `preflight` firma una consulta
-`ListObjectsV2` limitada a ese prefijo y no escribe objetos; el piloto físico
-debe certificar aparte la escritura, el lock S3 y su reconciliación.
+En producción configura `IACP_RUNTIME_STAGE=production`,
+`IACP_TERRAFORM_BACKEND=s3`, el bucket `iacp-cyberfuel` y el prefijo exacto
+`iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
+`IACP_WASABI_SECRET_ACCESS_KEY` se entregan solo a los workers. Terraform usa
+HTTPS, path-style y locks S3. El preflight lee solo el prefijo autorizado; el
+ciclo físico de producción ya verificó escritura del state y creación y
+liberación del lock. Conserva los objetos y versiones de state al limpiar VMs
+de prueba; no hagas una purga general del bucket.
 La guía oficial de Terraform describe la configuración parcial del backend S3
 y el lock file: [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
 Wasabi recomienda path-style para sus solicitudes S3:
@@ -121,25 +117,27 @@ prueba física se requiere identidad de prueba, cola y credenciales aisladas, y
 un máximo de dos operaciones simultáneas. Mantén los servicios y volúmenes
 anteriores fuera de este stack.
 
-## Promoción futura
+## Cambios futuros
 
-1. Revisa los volúmenes nuevos, secretos, imagen, manifiesto y `origin/main`.
+1. Revisa los volúmenes, secretos, imagen, manifiesto y `origin/main`.
 2. Ejecuta el protocolo de promoción vigente y registra la versión realmente
    ejecutada, esquema, workers, locks y colas.
-3. Certifica el piloto técnico y, por separado, cada escenario crítico de
-   recuperación.
-4. Cambia el endpoint público solo después de un dictamen integral aprobado.
+3. Certifica los escenarios físicos nuevos de forma aislada y registra cada
+   recuperación automática, manual o fail-closed.
+4. Cambia rutas públicas solo tras verificar DNS, TLS y readiness del runtime.
 
 No borres volúmenes, estados versionados, locks ni operaciones históricas para
-forzar un resultado. Los gates pendientes y el procedimiento del corte están
-en [`MIGRACION_CONTROLPLANE.md`](MIGRACION_CONTROLPLANE.md).
+forzar un resultado. El informe de producción vigente está en
+[`auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md`](auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).
 
 ## Ruta de desarrollo
 
 `deploy/portainer/traefik-dev.yml` define una ruta dinámica separada para
-`dev.iac.cyberfuel.com`. La activación requiere que el certificado TLS tenga
-`dev.iac.cyberfuel.com` o `*.iac.cyberfuel.com` en SAN; el certificado actual
-solo incluye `*.cyberfuel.com` y no cubre el subdominio anidado. La ruta reutiliza
+`dev-cyberfuel.com`. La activación requiere que el certificado TLS incluya
+`dev-cyberfuel.com` como SAN exacto. El certificado actual contiene
+`*.cyberfuel.com` y `cyberfuel.com`, que no cubren ese dominio; tampoco se
+resuelve DNS para `dev-cyberfuel.com` desde el entorno de despliegue. La ruta
+permanece desactivada hasta configurar ambos. Cuando se active, reutiliza
 la lista de IPs internas, sanitización de headers, rate limit y límite de
 solicitudes; publica solo el alias `iacp-controlplane-api-dev`. La plantilla
 permite el origen web de dev y mantiene el endpoint limitado a MNG por la

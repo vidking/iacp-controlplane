@@ -24,15 +24,15 @@ aceptada para procesamiento; no significa que la VM ya esté lista.
 El contrato público usa rutas `/v1`. No existe un prefijo `/v2`: el nombre
 histórico del repositorio de origen no cambia la versión visible del API.
 
-| Runtime | Base URL planeada | Destino lógico inicial |
+| Runtime | Base URL / estado | Destino lógico |
 | --- | --- | --- |
-| Desarrollo | `https://dev.iac.cyberfuel.com` | `lab`, resuelto a MNG |
-| Producción | `https://iac.cyberfuel.com` | `lab`, resuelto a MNG; PRX queda apagado hasta su certificación |
+| Desarrollo | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab`, resuelto al clúster MNG |
+| Producción | `https://iac.cyberfuel.com` · activa | `lab`, resuelto al clúster MNG; PRX está apagado hasta su certificación |
 
 La API privada requiere HTTPS y, si `IACP_REQUIRE_API_TOKEN=1`, un token Bearer:
 
 ```bash
-export IACP_BASE_URL=https://dev.iac.cyberfuel.com
+export IACP_BASE_URL=https://dev-cyberfuel.com
 export IACP_API_TOKEN=TOKEN_DE_INTEGRACION
 
 curl --fail-with-body --silent --show-error \

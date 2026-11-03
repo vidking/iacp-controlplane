@@ -3,7 +3,7 @@
   "compose_file": "deploy/portainer/docker-compose.yml",
   "environment_file": "/etc/iacp/stacks/dev.env",
   "stage": "develop",
-  "domain": "dev.iac.cyberfuel.com",
+  "domain": "dev-cyberfuel.com",
   "service_alias": "iacp-controlplane-api-dev",
   "proxy_network": "proxy_network",
   "backend": "local",

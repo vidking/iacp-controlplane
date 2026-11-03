@@ -1,7 +1,7 @@
 http:
   routers:
     iacp-dev-admin:
-      rule: 'Host(`dev.iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || HeaderRegexp(`Origin`, `^(?:https://dev\.iac\.cyberfuel\.com)$`))'
+      rule: 'Host(`dev-cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || HeaderRegexp(`Origin`, `^(?:https://dev-cyberfuel\.com)$`))'
       priority: 10
       entryPoints:
         - websecure
@@ -17,7 +17,7 @@ http:
         - body-limit@file
         - iacp-dev-headers
     iacp-dev-http:
-      rule: Host(`dev.iac.cyberfuel.com`)
+      rule: Host(`dev-cyberfuel.com`)
       entryPoints:
         - webhttp
       service: noop@internal
@@ -33,7 +33,7 @@ http:
     iacp-dev-headers:
       headers:
         accessControlAllowOriginList:
-          - https://dev.iac.cyberfuel.com
+          - https://dev-cyberfuel.com
         accessControlAllowMethods:
           - GET
           - POST

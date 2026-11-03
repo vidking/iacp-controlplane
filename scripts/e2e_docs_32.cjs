@@ -18,7 +18,7 @@ const execFileAsync = promisify(execFile);
 const playwrightModule = process.env.IACP_PLAYWRIGHT_MODULE || "/home/despinoza/.local/share/mise/installs/npm-playwright/1.64.1/node_modules/playwright";
 const { chromium } = require(playwrightModule);
 
-const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://dev.iac.cyberfuel.com").replace(/\/$/, "");
+const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://dev-cyberfuel.com").replace(/\/$/, "");
 const API_TOKEN = process.env.IACP_E2E_API_TOKEN || "";
 const PROXMOX_ENDPOINT = (process.env.IACP_E2E_PROXMOX_ENDPOINT || "").replace(/\/$/, "");
 const PROXMOX_TOKEN = process.env.IACP_E2E_PROXMOX_TOKEN || "";

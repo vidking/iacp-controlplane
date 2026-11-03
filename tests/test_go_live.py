@@ -86,7 +86,7 @@ def _manifest(stage="production", **overrides):
     result = {
         "stage": stage,
         "project": "iacp-controlplane-prod-v1" if stage == "production" else "iacp-controlplane-dev-v1",
-        "domain": "iac.cyberfuel.com" if stage == "production" else "dev.iac.cyberfuel.com",
+        "domain": "iac.cyberfuel.com" if stage == "production" else "dev-cyberfuel.com",
         "service_alias": "iacp-controlplane-api-prod" if stage == "production" else "iacp-controlplane-api-dev",
         "proxy_network": "proxy_network",
         "backend": "s3" if stage == "production" else "local",
@@ -433,7 +433,7 @@ def test_development_activation_removes_new_route_when_external_readiness_fails(
     evidence = go_live._new_evidence_dir(tmp_path / "evidence")
     manifest = {
         "stage": "develop",
-        "domain": "dev.iac.cyberfuel.com",
+        "domain": "dev-cyberfuel.com",
         "service_alias": "iacp-controlplane-api-dev",
         "dynamic_config": "/etc/iacp/tls/dynamic/dev-iac.yml",
         "tls_certificate_file": "/etc/iacp/tls/certs/fullchain.pem",
@@ -469,8 +469,10 @@ def test_development_route_content_is_bound_to_the_dev_service(tmp_path):
 
 
 def test_tls_wildcards_cover_only_one_subdomain_label():
-    assert go_live._dns_pattern_matches("*.iac.cyberfuel.com", "dev.iac.cyberfuel.com")
+    assert go_live._dns_pattern_matches("*.cyberfuel.com", "api.cyberfuel.com")
     assert go_live._dns_pattern_matches("iac.cyberfuel.com", "iac.cyberfuel.com")
+    assert not go_live._dns_pattern_matches("*.cyberfuel.com", "dev-cyberfuel.com")
+    assert not go_live._dns_pattern_matches("*.iac.cyberfuel.com", "dev-cyberfuel.com")
     assert not go_live._dns_pattern_matches("*.cyberfuel.com", "dev.iac.cyberfuel.com")
 
 

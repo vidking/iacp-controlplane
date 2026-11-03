@@ -238,11 +238,11 @@
         <section class="route-view hidden" data-view="guides">
           <div class="page-heading compact"><p class="eyebrow">GUÍAS DE USO</p><h1>Referencia técnica completa</h1><p>Consulta el contrato, genera una solicitud de ejemplo y sigue el aprovisionamiento desde esta página.</p></div>
           <div class="guide-stack">
-            <details class="guide-card" open><summary>Contrato estable v1</summary><div><p>Consulta <code>GET /v1/environments</code>, <code>GET /v1/plans</code> y <code>GET /v1/images</code>. Crea con <code>POST /v1/instances</code>. El consumidor envía un entorno lógico, un plan, una imagen y tags opcionales; no envía clúster ni nodo.</p><pre>Base URL actual: <span id="guide-base-url">https://dev.iac.cyberfuel.com</span>
+            <details class="guide-card" open><summary>Contrato estable v1</summary><div><p>Consulta <code>GET /v1/environments</code>, <code>GET /v1/plans</code> y <code>GET /v1/images</code>. Crea con <code>POST /v1/instances</code>. El consumidor envía un entorno lógico, un plan, una imagen y tags opcionales; no envía clúster ni nodo.</p><pre>Base URL actual: <span id="guide-base-url">https://dev-cyberfuel.com</span>
 POST /v1/instances
 Idempotency-Key: alta-kvm-001
 Authorization: Bearer &lt;token&gt;</pre></div></details>
-            <details class="guide-card"><summary>Cómo consumir la API</summary><div><p>En desarrollo la base es <code id="guide-base-url-inline">https://dev.iac.cyberfuel.com</code>; producción usa <code>https://iac.cyberfuel.com</code>. Ambos mantienen las rutas y cuerpos de <code>/v1</code>.</p><pre># 1) catálogo
+            <details class="guide-card"><summary>Cómo consumir la API</summary><div><p>En desarrollo la base es <code id="guide-base-url-inline">https://dev-cyberfuel.com</code>; producción usa <code>https://iac.cyberfuel.com</code>. Ambos mantienen las rutas y cuerpos de <code>/v1</code>.</p><pre># 1) catálogo
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/environments
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images

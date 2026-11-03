@@ -1,8 +1,8 @@
 # IACP Control Plane
 
 IACP Control Plane aprovisiona y administra máquinas virtuales KVM con una API
-HTTP pública **v1**, workers Python y Terraform. El código de este candidato
-proviene del repositorio `controlplanev2`; ese nombre identifica su origen, no
+HTTP pública **v1**, workers Python y Terraform. El código integrado proviene
+del repositorio `controlplanev2`; ese nombre identifica su origen, no
 una versión diferente del contrato. El servicio y la documentación mantienen
 el nombre IACP Control Plane y las rutas `/v1`.
 
@@ -12,8 +12,8 @@ el nombre IACP Control Plane y las rutas `/v1`.
   observabilidad.
 - PostgreSQL 17 conserva operaciones, instancias, eventos, leases de VMID,
   workers e idempotencia.
-- Dos workers como máximo reclaman operaciones desde una cola PostgreSQL; un
-  lock transaccional mantiene el límite global de concurrencia en 2.
+- Dos workers reclaman operaciones desde una cola PostgreSQL. El límite global
+  se configura por entorno; producción está fijada en una operación simultánea.
 - Terraform administra el state de cada instancia. El runtime `production`
   usa Wasabi S3 en `iacp-cyberfuel` con el prefijo
   `iacp/prod-runtime-v1`; `develop` usa state local persistido
@@ -26,17 +26,17 @@ el nombre IACP Control Plane y las rutas `/v1`.
 
 La instancia IACP Control Plane (VM 104), la VM 106 y las Golden Images están
 protegidas frente a aprovisionamiento, lifecycle y eliminación desde la API.
-El candidato no importa registros ni VMs del runtime anterior.
+La base productiva se inició sin importar registros del runtime anterior.
 
 ## Entornos
 
-| Runtime | URL planeada | Entornos publicados al inicio | State Terraform |
+| Runtime | URL y estado | Entornos publicados | State Terraform |
 | --- | --- | --- | --- |
-| `develop` | `https://dev.iac.cyberfuel.com` | `lab` → MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
-| `production` | `https://iac.cyberfuel.com` | `lab` → MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Wasabi S3, prefijo `iacp/prod-runtime-v1` |
+| `develop` | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab` → clúster MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
+| `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Wasabi S3, prefijo `iacp/prod-runtime-v1` |
 
-La URL y la promoción se configuran en despliegue. Este checkout no cambia DNS,
-contenedores, bases de datos ni volúmenes de ningún runtime.
+El registro de promoción, las pruebas físicas y las limitaciones vigentes están
+en [`docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md`](docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).
 
 ## Ejecución local
 
@@ -90,10 +90,9 @@ Word anterior se retiró porque describía un contrato obsoleto.
 
 PRX se publica solo cuando endpoint, credenciales, pool, catálogo, Terraform y
 backend pasan las validaciones; por ahora `IACP_PRX_ENABLED=0` y solo `lab`
-está habilitado. El detalle del corte futuro, los bloqueos pendientes y las
-evidencias requeridas están en
-[`docs/MIGRACION_CONTROLPLANE.md`](docs/MIGRACION_CONTROLPLANE.md).
+está habilitado. El procedimiento operativo y los controles para próximos
+cambios están en [`docs/PORTAINER.md`](docs/PORTAINER.md). El plan histórico de
+migración se conserva en [`docs/MIGRACION_CONTROLPLANE.md`](docs/MIGRACION_CONTROLPLANE.md).
 
-Consulta [`docs/PORTAINER.md`](docs/PORTAINER.md) para preparar los stacks de
-desarrollo y producción. La preparación descrita allí no ejecuta ni aprueba un
-despliegue.
+Consulta [`docs/API_MANUAL_DESARROLLO.md`](docs/API_MANUAL_DESARROLLO.md) para
+consumir el contrato `/v1`.

@@ -24,7 +24,7 @@ from urllib.parse import quote
 from urllib.request import Request, build_opener
 
 
-BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://dev.iac.cyberfuel.com").rstrip("/")
+BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://dev-cyberfuel.com").rstrip("/")
 API_TOKEN = os.environ["IACP_E2E_API_TOKEN"]
 PROXMOX_ENDPOINT = os.getenv("IACP_E2E_PROXMOX_ENDPOINT", "").rstrip("/")
 PROXMOX_TOKEN = os.getenv("IACP_E2E_PROXMOX_TOKEN", "")

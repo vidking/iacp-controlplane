@@ -125,7 +125,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         },
         "develop": {
             "project": "iacp-controlplane-dev-v1",
-            "domain": "dev.iac.cyberfuel.com",
+            "domain": "dev-cyberfuel.com",
             "service_alias": "iacp-controlplane-api-dev",
             "postgres_volume": "iacp_controlplane_dev_postgres",
             "workdata_volume": "iacp_controlplane_dev_workdata",
@@ -479,15 +479,15 @@ def _dev_route_content(template: Path) -> str:
     except (OSError, KeyError, IndexError, TypeError, yaml.YAMLError) as error:
         raise GateError("La plantilla Traefik de desarrollo no es válida") from error
     expected_rule = (
-        "Host(`dev.iac.cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || "
-        "HeaderRegexp(`Origin`, `^(?:https://dev\\.iac\\.cyberfuel\\.com)$`))"
+        "Host(`dev-cyberfuel.com`) && (!HeaderRegexp(`Origin`, `.+`) || "
+        "HeaderRegexp(`Origin`, `^(?:https://dev-cyberfuel\\.com)$`))"
     )
     expected_middlewares = [
         "internal-sources@file", "strip-identity@file", "root-tls-transport@file",
         "request-rate@file", "inflight@file", "body-limit@file", "iacp-dev-headers",
     ]
     expected_headers = {
-        "accessControlAllowOriginList": ["https://dev.iac.cyberfuel.com"],
+        "accessControlAllowOriginList": ["https://dev-cyberfuel.com"],
         "accessControlAllowMethods": ["GET", "POST", "OPTIONS"],
         "accessControlAllowHeaders": ["Authorization", "Content-Type", "Idempotency-Key"],
         "accessControlExposeHeaders": ["X-Request-ID"],
@@ -508,7 +508,7 @@ def _dev_route_content(template: Path) -> str:
         or router.get("tls") != {"options": "corporate"}
         or router.get("middlewares") != expected_middlewares
         or not isinstance(http_router, dict)
-        or http_router.get("rule") != "Host(`dev.iac.cyberfuel.com`)"
+        or http_router.get("rule") != "Host(`dev-cyberfuel.com`)"
         or http_router.get("entryPoints") != ["webhttp"]
         or http_router.get("service") != "noop@internal"
         or http_router.get("middlewares") != ["internal-sources@file", "https-only@file"]
@@ -768,7 +768,7 @@ def _restore_legacy(data: dict, evidence: Path) -> dict:
 def _develop_route_paths(data: dict) -> tuple[Path, Path, Path, Path]:
     if (
         data.get("stage") != "develop"
-        or data.get("domain") != "dev.iac.cyberfuel.com"
+        or data.get("domain") != "dev-cyberfuel.com"
         or data.get("service_alias") != "iacp-controlplane-api-dev"
     ):
         raise GateError("El manifiesto no identifica el runtime de desarrollo aprobado")
