@@ -146,6 +146,8 @@ y credenciales Wasabi quedan vacíos. Terraform guarda state local en el volumen
 persistente `iacp_controlplane_prod_workdata`. El valor heredado
 `IACP_TERRAFORM_BACKEND=local` se conserva únicamente para que un Compose de un
 release anterior falle cerrado; el Compose nuevo no lo consume.
+La copia previa de configuración quedó con permisos root-only en
+`/opt/iacp/backups/wasabi-toggle-20261102-predeploy/`; no se ha restaurado.
 
 La revisión `f9b436e` está integrada en `origin/main`, instalada en el
 IACP Control Plane (VM 104) y atendiendo el host público. El GET de
