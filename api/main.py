@@ -5,7 +5,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -61,6 +61,15 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+@app.middleware("http")
+async def add_build_revision_header(request: Request, call_next):
+    response = await call_next(request)
+    revision = os.getenv("IACP_BUILD_REVISION", "").strip()
+    if revision:
+        response.headers["X-IACP-Build-Revision"] = revision
+    return response
 
 CONSOLE_DIR = Path(__file__).parent / "static" / "console"
 DOCS_DIR = Path(__file__).parent / "static" / "docs"
