@@ -677,6 +677,7 @@
       name: $("name").value.trim(),
       plan_id: $("plan").value,
       image_id: $("image").value,
+      environment: "lab",
       network_profile: $("network-profile").value,
       tags: collectTags($("vm-tags").value),
       access: { root_password: password, ssh_public_keys: ssh ? [ssh] : [] },

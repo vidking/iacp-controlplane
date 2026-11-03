@@ -34,6 +34,8 @@ Así el consumidor siempre usa identificadores publicados por el servidor.
 
 ```bash
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  "${IACP_BASE_URL}/v1/environments"
+curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
   "${IACP_BASE_URL}/v1/plans"
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
   "${IACP_BASE_URL}/v1/images"
@@ -41,9 +43,9 @@ curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
   "${IACP_BASE_URL}/v1/network-profiles"
 ```
 
-La API no ofrece una ruta `/v1/environments`; tampoco acepta `environment` en
-el cuerpo de aprovisionamiento ni como selector de catálogo. `GET /v1/plans`,
-`GET /v1/images` y `GET /v1/network-profiles` son las rutas de catálogo.
+`GET /v1/environments` devuelve únicamente `lab`. En `POST /v1/instances`,
+envía `"environment": "lab"`; el servidor resuelve MNG y elige internamente
+el nodo. El JSON no permite seleccionar `mng01` ni `mng02`.
 
 Los planes e imágenes disponibles dependen del catálogo instalado. El perfil
 `lab_dhcp` está disponible para DHCP. `prod_static` se publica deshabilitado
@@ -59,6 +61,7 @@ pero nunca envía IP, prefijo, gateway, VLAN ni una selección de nodo.
   "name": "kvm-cl-105",
   "plan_id": "kvm-2",
   "image_id": "ubuntu-2404",
+  "environment": "lab",
   "access": {
     "root_password": "CAMBIAR_POR_SECRETO",
     "ssh_public_keys": []
@@ -80,6 +83,7 @@ pero nunca envía IP, prefijo, gateway, VLAN ni una selección de nodo.
 | `name` | string | Obligatorio; de 1 a 63 caracteres, minúsculas, números y guiones; comienza y termina con letra o número. |
 | `plan_id` | string | Obligatorio; ID publicado por `GET /v1/plans`. |
 | `image_id` | string | Obligatorio; ID publicado por `GET /v1/images`. |
+| `environment` | string | `lab`; opcional por compatibilidad y predeterminado a `lab`. |
 | `access.root_password` | string o `null` | Opcional; se valida con `IACP_ROOT_PASSWORD_MIN_LENGTH` y nunca se devuelve. |
 | `access.ssh_public_keys` | array de strings | Opcional; acepta claves `ssh-ed25519`, `ssh-rsa` o `ecdsa-sha2-*`. Puede aplicarse una clave predeterminada del runtime. |
 | `commercial_context` | objeto o `null` | Opcional. Si se envía, requiere `customer_id`, `customer_tag`, `order_id` y `product_id`. Solo aporta trazabilidad. |
@@ -87,9 +91,9 @@ pero nunca envía IP, prefijo, gateway, VLAN ni una selección de nodo.
 | `tags` | array de strings | Opcional; etiquetas Proxmox adicionales. Cada valor cumple el formato descrito abajo. |
 | `start_on_create` | boolean | Si es `true`, solicita iniciar la KVM al terminar; si es `false`, la deja apagada. |
 
-El campo `environment` no forma parte del contrato. El servidor elige el
-destino físico. Tampoco se aceptan `cluster`, `node`, `pool`, `vmid`, VLAN,
-IP, gateway, credenciales Proxmox o datos de Terraform.
+El servidor resuelve el destino físico a partir de `environment: "lab"`.
+Tampoco se aceptan `cluster`, `node`, `pool`, `vmid`, VLAN, IP, gateway,
+credenciales Proxmox o datos de Terraform.
 
 ### Tags Proxmox
 
@@ -205,7 +209,10 @@ estado y no borra Terraform state ni fuerza locks.
 
 `POST /v1/operations` es el endpoint técnico explícito para operadores. Las
 integraciones deben preferir `POST /v1/instances`, que valida plan e imagen y
-encola la creación completa.
+encola la creación completa. Si se usa el endpoint técnico, envía
+`environment: "lab"`; el request no admite `stack` ni `node`. El servidor
+resuelve el destino físico y conserva seis workers con un límite global de seis
+operaciones concurrentes.
 
 El Compose declara seis workers (`worker-1` a `worker-6`) y limita la ejecución
 global a seis operaciones concurrentes. `/v1/workers` y `/v1/observability`

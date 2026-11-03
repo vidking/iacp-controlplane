@@ -17,6 +17,7 @@ from api.catalog import (
     plan_catalog,
 )
 from api.db import database
+from api.environments import EnvironmentConfigurationError, resolve_environment
 from api.models import Action, Command, CommercialContext, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, write_secret
@@ -406,6 +407,7 @@ def _request_plain_payload(request: InstanceCreateRequest) -> dict:
         "name": request.name,
         "plan_id": request.plan_id,
         "image_id": request.image_id,
+        "environment": request.environment,
         "access": access,
         "commercial_context": (
             request.commercial_context.model_dump(mode="json")
@@ -486,7 +488,13 @@ def _idempotent_mutation(
             raise
 
 
-def _resolve_public_request(request: InstanceCreateRequest) -> tuple[InstanceSpec, dict, dict, str | None]:
+def _resolve_public_request(
+    request: InstanceCreateRequest,
+) -> tuple[InstanceSpec, dict, dict, str | None, str]:
+    try:
+        environment = resolve_environment(request.environment)
+    except EnvironmentConfigurationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.code) from error
     plan = plan_by_id(request.plan_id)
     if plan is None:
         raise HTTPException(status_code=422, detail=f"plan_id no disponible: {request.plan_id}")
@@ -523,7 +531,7 @@ def _resolve_public_request(request: InstanceCreateRequest) -> tuple[InstanceSpe
         if request.access.root_password is not None
         else None
     )
-    return spec, plan, image, password
+    return spec, plan, image, password, environment
 
 
 def _insert_operation(
@@ -533,10 +541,15 @@ def _insert_operation(
     commercial_context: dict | None = None,
     secret_path: str | None = None,
     operation_id: str | None = None,
+    environment: str = "lab",
 ) -> tuple[dict, str]:
     operation_id = operation_id or str(uuid.uuid4())
     instance_id = str(uuid.uuid4()) if request.command in {Command.plan, Command.provision} else request.instance_id
-    effective_stack = request.stack.value if hasattr(request.stack, "value") else request.stack
+    try:
+        environment = resolve_environment(environment or request.environment)
+    except EnvironmentConfigurationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.code) from error
+    effective_stack = "mng01"
     created = now()
     payload = request.model_dump(mode="json")
 
@@ -646,6 +659,7 @@ def _insert_operation(
             )
 
     payload["instance_id"] = instance_id
+    payload["environment"] = environment
     if request.command == Command.power:
         payload["stack"] = effective_stack
     if secret_path:
@@ -669,8 +683,8 @@ def _insert_operation(
         """
         INSERT INTO operations(
           operation_id, command, action, status, payload_json, plan_id, commercial_context_json,
-          secret_path, instance_id, plan_operation_id, stack, created_at
-        ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+          secret_path, instance_id, plan_operation_id, stack, environment, created_at
+        ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             operation_id,
@@ -683,6 +697,7 @@ def _insert_operation(
             instance_id,
             request.plan_operation_id,
             effective_stack,
+            environment,
             created,
         ),
     )
@@ -690,9 +705,9 @@ def _insert_operation(
         db.execute(
             """
             INSERT INTO instances(
-              instance_id, operation_id, name, image, plan_id, status, power_state,
+              instance_id, operation_id, name, image, plan_id, environment, status, power_state,
               spec_json, commercial_context_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -700,6 +715,7 @@ def _insert_operation(
                 request.spec.name,
                 request.spec.image,
                 plan_id,
+                environment,
                 request.spec.model_dump_json(),
                 context_json,
                 created,
@@ -713,6 +729,7 @@ def _insert_operation(
         "status": "queued" if request.command in {Command.provision, Command.reconcile} else "pending",
         "command": request.command.value,
         "action": request.action.value,
+        "environment": environment,
     }
     if request.command in {Command.provision, Command.reconcile}:
         response["job_id"] = operation_id
@@ -726,7 +743,7 @@ def create_operation(request: OperationRequest) -> dict:
 
 
 def create_instance(request: InstanceCreateRequest, idempotency_key: str | None) -> dict:
-    spec, plan, _image, password = _resolve_public_request(request)
+    spec, plan, _image, password, environment = _resolve_public_request(request)
     context = request.commercial_context.model_dump(mode="json") if request.commercial_context else None
     body = _request_plain_payload(request)
     scope = "POST:/v1/instances"
@@ -741,7 +758,7 @@ def create_instance(request: InstanceCreateRequest, idempotency_key: str | None)
             action=Action.provision,
             plan_id=plan["plan_id"],
             spec=spec,
-            stack="mng01",
+            environment=environment,
         )
         try:
             response, created_operation_id = _insert_operation(
@@ -750,6 +767,7 @@ def create_instance(request: InstanceCreateRequest, idempotency_key: str | None)
                 commercial_context=context,
                 secret_path=secret_path,
                 operation_id=operation_id,
+                environment=environment,
             )
         except Exception:
             delete_secret(secret_path)
@@ -950,7 +968,6 @@ def create_reconcile(
                 action=Action.reconcile,
                 instance_id=instance_id,
                 source_operation_id=selected,
-                stack=source["stack"] or "mng01",
             ),
             commercial_context=_commercial_dict(source["commercial_context_json"]),
         )

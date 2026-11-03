@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the real MNG v1 lifecycle matrix with bounded concurrency.
+"""Ejecuta la matriz real de lifecycle v1 de iac.cyberfuel.com sobre MNG.
 
-The runner intentionally keeps credentials in the process environment and
-prints only redacted operation results. It is for controlled lab validation,
-not for production provisioning.
+Las credenciales permanecen en el entorno del proceso y la salida redacta
+resultados operativos. La matriz valida el runtime de laboratorio publicado
+bajo el entorno lógico ``lab``.
 """
 
 from __future__ import annotations
@@ -12,40 +12,60 @@ import concurrent.futures
 import ipaddress
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
 import tempfile
 import time
-from threading import Lock
+from threading import Event, Lock, Thread
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, build_opener
 
 
-BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://dev-cyberfuel.com").rstrip("/")
-API_TOKEN = os.environ["IACP_E2E_API_TOKEN"]
-PROXMOX_ENDPOINT = os.getenv("IACP_E2E_PROXMOX_ENDPOINT", "").rstrip("/")
-PROXMOX_TOKEN = os.getenv("IACP_E2E_PROXMOX_TOKEN", "")
+BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://iac.cyberfuel.com").rstrip("/")
+API_TOKEN = os.getenv("IACP_E2E_API_TOKEN") or os.getenv("IACP_API_TOKEN", "")
+PROXMOX_ENDPOINT = (
+    os.getenv("IACP_E2E_MNG_PROXMOX_ENDPOINT")
+    or os.getenv("IACP_PROXMOX_MNG_ENDPOINT")
+    or os.getenv("IACP_E2E_PROXMOX_ENDPOINT", "")
+).rstrip("/")
+PROXMOX_TOKEN = (
+    os.getenv("IACP_E2E_MNG_PROXMOX_TOKEN")
+    or os.getenv("IACP_PROXMOX_MNG_API_TOKEN")
+    or os.getenv("IACP_E2E_PROXMOX_TOKEN", "")
+)
 POOL_ID = os.getenv("IACP_E2E_POOL_ID", "iacp-lab")
 PRIVATE_KEY = Path(os.getenv("IACP_E2E_SSH_PRIVATE_KEY", "/home/despinoza/.ssh/iacp-lab-kvm"))
 PUBLIC_KEY = os.getenv("IACP_E2E_SSH_PUBLIC_KEY", "").strip()
 KEY_DIR = Path(os.getenv("IACP_E2E_KEY_DIR", "")) if os.getenv("IACP_E2E_KEY_DIR") else None
 MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "2"))
+VMID_MIN = int(os.getenv("IACP_E2E_VMID_MIN", "30000"))
+VMID_MAX = int(os.getenv("IACP_E2E_VMID_MAX", "39999"))
 OPERATION_TIMEOUT = int(os.getenv("IACP_E2E_OPERATION_TIMEOUT", "1800"))
 NETWORK_TIMEOUT = int(os.getenv("IACP_E2E_NETWORK_TIMEOUT", "360"))
 SSH_TIMEOUT = int(os.getenv("IACP_E2E_SSH_TIMEOUT", "360"))
 SSH_ATTEMPT_TIMEOUT = int(os.getenv("IACP_E2E_SSH_ATTEMPT_TIMEOUT", "45"))
 PING_TIMEOUT = int(os.getenv("IACP_E2E_PING_TIMEOUT", "8"))
 RUN_ID = os.getenv("IACP_E2E_RUN_ID", time.strftime("%Y%m%d%H%M%S", time.gmtime()))
-CHANNEL = os.getenv("IACP_E2E_CHANNEL", "cli")
+CHANNEL = "iac-prod-mng"
 NETWORK_PROFILE = os.getenv("IACP_E2E_NETWORK_PROFILE", "lab_dhcp")
+EVIDENCE_FILE = Path(os.environ["IACP_E2E_EVIDENCE_FILE"]) if os.getenv("IACP_E2E_EVIDENCE_FILE") else None
+RUN_PREFIX = f"e2e-{CHANNEL}-{RUN_ID}"
 
 IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
 _TEST_PASSWORDS: set[str] = set()
 _TEST_PASSWORDS_LOCK = Lock()
+_RUN_INSTANCE_IDS: set[str] = set()
+_RUN_INSTANCE_IDS_LOCK = Lock()
+_LIVE_IPS: dict[str, str] = {}
+_LIVE_IPS_LOCK = Lock()
+_CONTENTION = Event()
+_CONTENTION_DETAILS: list[str] = []
+_CONTENTION_LOCK = Lock()
 _PASSWORD_CLASSES = ("ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnopqrstuvwxyz", "23456789", "!@#%+-_")
 _PASSWORD_ALPHABET = "".join(_PASSWORD_CLASSES)
 KEY_VARIANTS = ("ed25519-a", "rsa-3072", "ecdsa-p256", "ed25519-b")
@@ -72,6 +92,160 @@ def redact(value: object) -> str:
         if secret:
             text = text.replace(secret, "<redacted>")
     return text.replace("root_password", "<secret>")
+
+
+def validate_execution_config() -> None:
+    parsed = urlsplit(BASE_URL)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "iac.cyberfuel.com"
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise E2EError("IACP_E2E_BASE_URL debe ser exactamente https://iac.cyberfuel.com")
+    if not API_TOKEN:
+        raise E2EError("IACP_E2E_API_TOKEN es obligatorio para la API oficial de IAC")
+    if not PROXMOX_ENDPOINT.startswith("https://") or not PROXMOX_TOKEN:
+        raise E2EError("las credenciales de lectura Proxmox del clúster MNG son obligatorias")
+    if not re.fullmatch(r"\d{14}", RUN_ID):
+        raise E2EError("IACP_E2E_RUN_ID debe usar 14 dígitos UTC: AAAAMMDDHHMMSS")
+    if MAX_WORKERS != 2:
+        raise E2EError("la matriz física debe limitarse a dos aprovisionamientos simultáneos")
+    if (VMID_MIN, VMID_MAX) != (30000, 39999):
+        raise E2EError("la matriz de iac.cyberfuel.com solo puede usar VMID 30000–39999")
+    if NETWORK_PROFILE != "lab_dhcp":
+        raise E2EError("esta matriz debe ejecutarse con IACP_E2E_NETWORK_PROFILE=lab_dhcp")
+    if EVIDENCE_FILE is None:
+        raise E2EError("IACP_E2E_EVIDENCE_FILE debe conservar el reporte fuera del volumen de workdata")
+    evidence_path = EVIDENCE_FILE.expanduser().resolve(strict=False)
+    workdata_path = Path(os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")).expanduser().resolve(strict=False)
+    try:
+        evidence_path.relative_to(workdata_path)
+    except ValueError:
+        pass
+    else:
+        raise E2EError("la evidencia debe quedar fuera de IACP_WORKDATA_DIR")
+    if evidence_path.exists():
+        raise E2EError("el archivo de evidencia ya existe; usa un RUN_ID nuevo para no reemplazar registros")
+
+
+def _record_contention(detail: str) -> None:
+    _CONTENTION.set()
+    with _CONTENTION_LOCK:
+        if detail not in _CONTENTION_DETAILS:
+            _CONTENTION_DETAILS.append(detail)
+
+
+def _operation_instance_name(operation: dict) -> str:
+    name = operation.get("instance_name")
+    if name:
+        return str(name)
+    payload = operation.get("payload") or {}
+    spec = payload.get("spec") or {}
+    return str(spec.get("name") or "")
+
+
+def _is_run_operation(operation: dict) -> bool:
+    if _operation_instance_name(operation).startswith(RUN_PREFIX):
+        return True
+    instance_id = operation.get("instance_id")
+    with _RUN_INSTANCE_IDS_LOCK:
+        return bool(instance_id and str(instance_id) in _RUN_INSTANCE_IDS)
+
+
+def _runtime_snapshot() -> dict:
+    payload = api("GET", "/v1/observability")
+    if not isinstance(payload, dict):
+        raise E2EError("la observabilidad de IAC devolvió una respuesta inválida")
+    return payload
+
+
+def require_idle_runtime() -> dict:
+    observed = _runtime_snapshot()
+    workers = observed.get("workers") or []
+    if int(observed.get("max_concurrent", 0)) != 6:
+        raise E2EError("el runtime de iac.cyberfuel.com no anuncia concurrencia configurada de seis")
+    if int(observed.get("active_operations", -1)) != 0:
+        raise E2EError("hay operaciones activas en la cola compartida; no se inyectan pruebas")
+    if int(observed.get("queue_depth", -1)) != 0:
+        raise E2EError("la cola compartida no está vacía; no se inyectan pruebas")
+    if int(observed.get("uncertain_operations", -1)) != 0:
+        raise E2EError("hay operaciones uncertain; se requiere reconciliación antes de probar")
+    if len(workers) != 6 or any(
+        worker.get("liveness") != "healthy"
+        or worker.get("status") != "idle"
+        or worker.get("current_operation_id")
+        for worker in workers
+    ):
+        raise E2EError("se requieren los seis workers saludables, idle y sin operación asignada")
+    return observed
+
+
+class RuntimeSampler:
+    """Mide carga y detecta actividad ajena sin intervenir workers compartidos."""
+
+    def __init__(self):
+        self.stop_event = Event()
+        self.metrics = {
+            "samples": 0,
+            "peak_active_operations": 0,
+            "peak_queue_depth": 0,
+            "peak_test_busy_workers": 0,
+            "foreign_activity": [],
+            "sampling_errors": [],
+        }
+        self.thread = Thread(target=self._run, name="iac-e2e-observability", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> dict:
+        self.stop_event.set()
+        self.thread.join(timeout=10)
+        return self.metrics
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                observed = _runtime_snapshot()
+                self.metrics["samples"] += 1
+                self.metrics["peak_active_operations"] = max(
+                    self.metrics["peak_active_operations"],
+                    int(observed.get("active_operations", 0)),
+                )
+                self.metrics["peak_queue_depth"] = max(
+                    self.metrics["peak_queue_depth"], int(observed.get("queue_depth", 0))
+                )
+                test_busy = 0
+                for worker in observed.get("workers") or []:
+                    current = worker.get("current_operation") or {}
+                    if current:
+                        name = _operation_instance_name(current)
+                        if _is_run_operation(current):
+                            test_busy += 1
+                        else:
+                            detail = f"worker={worker.get('worker_id')} instance={name or 'unknown'}"
+                            if detail not in self.metrics["foreign_activity"]:
+                                self.metrics["foreign_activity"].append(detail)
+                            _record_contention(detail)
+                self.metrics["peak_test_busy_workers"] = max(
+                    self.metrics["peak_test_busy_workers"], test_busy
+                )
+                for operation in observed.get("recent_operations") or []:
+                    status = operation.get("internal_status") or operation.get("status")
+                    if status in {"pending", "queued", "planning", "planned", "applying", "running", "destroying", "powering"}:
+                        name = _operation_instance_name(operation)
+                        if not _is_run_operation(operation):
+                            detail = f"operation={operation.get('operation_id')} instance={name or 'unknown'}"
+                            if detail not in self.metrics["foreign_activity"]:
+                                self.metrics["foreign_activity"].append(detail)
+                            _record_contention(detail)
+            except Exception as error:
+                detail = f"observabilidad no disponible durante la matriz: {redact(error)}"
+                self.metrics["sampling_errors"].append(detail)
+                _record_contention(detail)
+            self.stop_event.wait(2)
 
 
 def _json_body(raw: bytes) -> object:
@@ -360,27 +534,56 @@ def pool_contains(vmid: int) -> bool:
     while time.monotonic() < deadline:
         payload = proxmox(f"/pools/{quote(POOL_ID, safe='')}")
         if not isinstance(payload, dict):
-            return True
+            raise E2EError(f"no se pudo verificar el pool {POOL_ID} en Proxmox")
         members = payload.get("members") or []
         if any(isinstance(member, dict) and str(member.get("vmid")) == str(vmid) for member in members):
             return True
         inventory = proxmox("/cluster/resources?type=vm")
-        if isinstance(inventory, list):
-            for item in inventory:
-                if isinstance(item, dict) and str(item.get("vmid")) == str(vmid):
-                    if item.get("pool") == POOL_ID:
-                        return True
-                    break
+        if not isinstance(inventory, list):
+            raise E2EError("no se pudo verificar el inventario del clúster MNG")
+        for item in inventory:
+            if isinstance(item, dict) and str(item.get("vmid")) == str(vmid):
+                if item.get("pool") == POOL_ID:
+                    return True
+                break
         time.sleep(3)
     return False
 
 
 def vm_exists(vmid: int) -> bool:
     inventory = proxmox("/cluster/resources?type=vm")
-    return bool(
-        isinstance(inventory, list)
-        and any(isinstance(item, dict) and int(item.get("vmid", -1)) == vmid for item in inventory)
-    )
+    if not isinstance(inventory, list):
+        raise E2EError("no se pudo verificar el inventario del clúster MNG")
+    return any(isinstance(item, dict) and int(item.get("vmid", -1)) == vmid for item in inventory)
+
+
+def claim_live_ip(instance_id: str, ip: str) -> None:
+    with _LIVE_IPS_LOCK:
+        existing = _LIVE_IPS.get(ip)
+        if existing and existing != instance_id:
+            raise E2EError(f"IP duplicada entre KVM de prueba simultáneas: {ip}")
+        for current_ip, owner in list(_LIVE_IPS.items()):
+            if owner == instance_id and current_ip != ip:
+                del _LIVE_IPS[current_ip]
+        _LIVE_IPS[ip] = instance_id
+
+
+def release_live_ip(instance_id: str | None) -> None:
+    if not instance_id:
+        return
+    with _LIVE_IPS_LOCK:
+        for ip, owner in list(_LIVE_IPS.items()):
+            if owner == instance_id:
+                del _LIVE_IPS[ip]
+
+
+def instance_by_name(name: str) -> dict | None:
+    payload = api("GET", f"/v1/instances?{urlencode({'name': name, 'include_deleted': 'true', 'limit': 10})}")
+    rows = payload.get("instances", []) if isinstance(payload, dict) else []
+    matches = [row for row in rows if isinstance(row, dict) and row.get("name") == name]
+    if len(matches) > 1:
+        raise E2EError(f"nombre de prueba no único en IAC: {name}")
+    return matches[0] if matches else None
 
 
 def cleanup(instance_id: str | None, label: str) -> str:
@@ -389,7 +592,18 @@ def cleanup(instance_id: str | None, label: str) -> str:
     try:
         current = instance(instance_id)
         if current.get("status") == "deleted":
+            vmid = current.get("vmid")
+            if vmid is not None and vm_exists(int(vmid)):
+                return "cleanup-failed: VM física presente tras estado deleted"
+            release_live_ip(instance_id)
             return "already-deleted"
+        latest = current.get("latest_operation") or {}
+        if latest.get("status") in {"queued", "running"}:
+            wait_operation(str(latest.get("operation_id") or latest.get("job_id")))
+            current = instance(instance_id)
+            latest = current.get("latest_operation") or {}
+        if current.get("status") == "uncertain" or latest.get("status") == "uncertain":
+            return "cleanup-blocked: requiere reconciliación controlada"
         vmid = current.get("vmid")
         if vmid is not None:
             try:
@@ -409,6 +623,12 @@ def cleanup(instance_id: str | None, label: str) -> str:
             idempotency_key=f"{label}-cleanup-destroy",
         )
         wait_operation(operation_id(destroy))
+        final = instance(instance_id)
+        if final.get("status") != "deleted":
+            raise E2EError(f"cleanup no dejó la instancia eliminada: {redact(final)}")
+        if vmid is not None and vm_exists(int(vmid)):
+            raise E2EError(f"cleanup dejó VMID {vmid} presente en Proxmox")
+        release_live_ip(instance_id)
         return "destroyed"
     except Exception as error:
         print(f"CLEANUP {label}: {redact(error)}", flush=True)
@@ -420,7 +640,9 @@ def run_case(case: dict) -> dict:
     image = case["image"]
     plan = case["plan"]
     mode = case["mode"]
-    name = f"e2e-{CHANNEL}-{RUN_ID}-{case['index']:02d}-{image.replace('-', '')}-{plan.replace('-', '')}-{mode}"
+    name = f"{RUN_PREFIX}-{case['index']:02d}-{image.replace('-', '')}-{plan}"
+    if len(name) > 63:
+        raise E2EError(f"nombre de prueba excede 63 caracteres: {len(name)}")
     password_chars = [secrets.choice(characters) for characters in _PASSWORD_CLASSES]
     password_chars.extend(secrets.choice(_PASSWORD_ALPHABET) for _ in range(24))
     secrets.SystemRandom().shuffle(password_chars)
@@ -455,22 +677,33 @@ def run_case(case: dict) -> dict:
     vmid = None
     deleted = False
     started_explicitly = False
+    create_operation = None
+    operation_ids: list[str] = []
     ping_statuses: list[str] = []
+    current_ip = None
     case_started = time.monotonic()
     stage_seconds: dict[str, float] = {}
     try:
         stage_started = time.monotonic()
         created = api("POST", "/v1/instances", body=body, idempotency_key=create_key)
         instance_id = created.get("instance_id") if isinstance(created, dict) else None
+        if instance_id:
+            with _RUN_INSTANCE_IDS_LOCK:
+                _RUN_INSTANCE_IDS.add(str(instance_id))
         create_operation = operation_id(created)
+        operation_ids.append(create_operation)
         replay = api("POST", "/v1/instances", body=body, idempotency_key=create_key)
         if operation_id(replay) != create_operation or replay.get("instance_id") != instance_id:
             raise E2EError("Idempotency-Key no repitió la misma creación")
         wait_operation(create_operation)
         current = instance(instance_id)
         vmid = int(current["vmid"])
-        if vmid < 40001:
+        if not VMID_MIN <= vmid <= VMID_MAX:
             raise E2EError(f"VMID fuera de rango: {vmid}")
+        if current.get("environment") != "lab":
+            raise E2EError(f"entorno lógico inesperado: {current.get('environment')}")
+        if current.get("cluster") != "mng":
+            raise E2EError(f"clúster inesperado para lab: {current.get('cluster')}")
         if current.get("image_id") != image or current.get("plan_id") != plan:
             raise E2EError(f"catálogo divergente: {redact(current)}")
         if (current.get("spec") or {}).get("network_profile") != NETWORK_PROFILE:
@@ -487,7 +720,9 @@ def run_case(case: dict) -> dict:
                 f"/v1/instances/{quote(instance_id, safe='')}/power/start",
                 idempotency_key=f"{label}-start",
             )
-            wait_operation(operation_id(started))
+            started_operation = operation_id(started)
+            operation_ids.append(started_operation)
+            wait_operation(started_operation)
             started_explicitly = True
         wait_power(instance_id, "running")
         stage_seconds["start"] = round(time.monotonic() - stage_started, 3)
@@ -500,6 +735,8 @@ def run_case(case: dict) -> dict:
         api("GET", "/v1/observability")
         stage_started = time.monotonic()
         ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        claim_live_ip(instance_id, ip)
+        current_ip = ip
         ping_statuses.append(ping_status)
         stage_seconds["ssh_initial"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
@@ -508,11 +745,15 @@ def run_case(case: dict) -> dict:
             f"/v1/instances/{quote(instance_id, safe='')}/power/reboot",
             idempotency_key=f"{label}-reboot",
         )
-        wait_operation(operation_id(reboot))
+        reboot_operation = operation_id(reboot)
+        operation_ids.append(reboot_operation)
+        wait_operation(reboot_operation)
         wait_power(instance_id, "running")
         stage_seconds["reboot"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
         ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        claim_live_ip(instance_id, ip)
+        current_ip = ip
         ping_statuses.append(ping_status)
         stage_seconds["ssh_reboot"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
@@ -521,7 +762,9 @@ def run_case(case: dict) -> dict:
             f"/v1/instances/{quote(instance_id, safe='')}/power/shutdown",
             idempotency_key=f"{label}-shutdown",
         )
-        wait_operation(operation_id(shutdown))
+        shutdown_operation = operation_id(shutdown)
+        operation_ids.append(shutdown_operation)
+        wait_operation(shutdown_operation)
         wait_power(instance_id, "stopped")
         stage_seconds["shutdown"] = round(time.monotonic() - stage_started, 3)
         instance(instance_id)
@@ -535,13 +778,16 @@ def run_case(case: dict) -> dict:
             f"/v1/instances/{quote(instance_id, safe='')}",
             idempotency_key=f"{label}-destroy",
         )
-        wait_operation(operation_id(destroy))
-        deleted = True
+        destroy_operation = operation_id(destroy)
+        operation_ids.append(destroy_operation)
+        wait_operation(destroy_operation)
         final = instance(instance_id)
         if final.get("status") != "deleted":
             raise E2EError(f"destroy no dejó la instancia eliminada: {redact(final)}")
         if vm_exists(vmid):
             raise E2EError(f"VMID {vmid} sigue presente en Proxmox")
+        deleted = True
+        release_live_ip(instance_id)
         stage_seconds["destroy"] = round(time.monotonic() - stage_started, 3)
         duration_seconds = round(time.monotonic() - case_started, 3)
         print(
@@ -550,6 +796,10 @@ def run_case(case: dict) -> dict:
         )
         return {
             "label": label,
+            "name": name,
+            "instance_id": instance_id,
+            "create_operation_id": create_operation,
+            "operation_ids": operation_ids,
             "status": "passed",
             "vmid": vmid,
             "ip": ip,
@@ -558,6 +808,22 @@ def run_case(case: dict) -> dict:
             "stages": stage_seconds,
         }
     except Exception as error:
+        if not instance_id:
+            try:
+                replay = api("POST", "/v1/instances", body=body, idempotency_key=create_key)
+                instance_id = replay.get("instance_id") if isinstance(replay, dict) else None
+                if instance_id:
+                    with _RUN_INSTANCE_IDS_LOCK:
+                        _RUN_INSTANCE_IDS.add(str(instance_id))
+            except Exception:
+                try:
+                    found = instance_by_name(name)
+                    instance_id = found.get("instance_id") if found else None
+                    if instance_id:
+                        with _RUN_INSTANCE_IDS_LOCK:
+                            _RUN_INSTANCE_IDS.add(str(instance_id))
+                except Exception:
+                    instance_id = None
         duration_seconds = round(time.monotonic() - case_started, 3)
         cleanup_status = cleanup(instance_id, label) if not deleted else "already-deleted"
         print(
@@ -566,8 +832,13 @@ def run_case(case: dict) -> dict:
         )
         return {
             "label": label,
+            "name": name,
+            "instance_id": instance_id,
+            "create_operation_id": create_operation,
+            "operation_ids": operation_ids,
             "status": "failed",
             "vmid": vmid,
+            "ip": current_ip,
             "error": redact(error),
             "cleanup": cleanup_status,
             "duration_seconds": duration_seconds,
@@ -622,9 +893,8 @@ def print_matrix_metrics(results: list[dict], wall_seconds: float) -> None:
 
 def validate_catalog() -> None:
     environments = api("GET", "/v1/environments")
-    if environments.get("default_environment") != "lab" or "lab" not in {
-        item.get("environment") for item in environments.get("environments", [])
-    }:
+    configured_environments = [item.get("environment") for item in environments.get("environments", [])]
+    if environments.get("default_environment") != "lab" or configured_environments != ["lab"]:
         raise E2EError(f"entorno de laboratorio no disponible: {environments}")
     plans = api("GET", "/v1/plans")
     images = api("GET", "/v1/images")
@@ -639,66 +909,124 @@ def validate_catalog() -> None:
     if not selected_profile or not selected_profile.get("enabled") or selected_profile.get("network_mode") != "dhcp":
         raise E2EError(f"perfil DHCP no disponible: {NETWORK_PROFILE}")
     print(f"NETWORK PROFILE PASS profile={NETWORK_PROFILE}", flush=True)
+    inventory = proxmox("/cluster/resources?type=vm")
+    pool = proxmox(f"/pools/{quote(POOL_ID, safe='')}")
+    if not isinstance(inventory, list) or not isinstance(pool, dict):
+        raise E2EError("no se pudo consultar el inventario y pool del clúster MNG")
+    print(f"MNG PASS pool={POOL_ID} inventory_vms={len(inventory)}", flush=True)
     observability = api("GET", "/v1/observability")
     capacity = observability.get("max_concurrent") if isinstance(observability, dict) else None
-    if capacity is not None and int(capacity) < MAX_WORKERS:
+    if capacity is None or int(capacity) != 6:
         raise E2EError(f"capacidad observada insuficiente: max_concurrent={capacity}, workers solicitados={MAX_WORKERS}")
-    print(f"CAPACITY PASS configured={capacity if capacity is not None else 'unknown'} requested={MAX_WORKERS}", flush=True)
+    print(f"CAPACITY PASS configured={capacity} requested={MAX_WORKERS}", flush=True)
+
+
+def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
+    if EVIDENCE_FILE is None:
+        return
+    report = {
+        "run_id": RUN_ID,
+        "base_url": BASE_URL,
+        "runtime_stage": "production",
+        "environment": "lab",
+        "cluster": "MNG",
+        "vmid_range": [VMID_MIN, VMID_MAX],
+        "max_simultaneous_provisions": MAX_WORKERS,
+        "images": list(IMAGES),
+        "plans": list(PLANS),
+        "outcome": outcome,
+        "metrics": metrics,
+        "contention_details": list(_CONTENTION_DETAILS),
+        "results": results,
+    }
+    EVIDENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = EVIDENCE_FILE.with_suffix(EVIDENCE_FILE.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, EVIDENCE_FILE)
+    print(f"EVIDENCE {EVIDENCE_FILE}", flush=True)
 
 
 def main() -> int:
+    validate_execution_config()
     if not 1 <= MAX_WORKERS <= 2:
         raise SystemExit("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2")
     if not PROXMOX_ENDPOINT or not PROXMOX_TOKEN:
         raise SystemExit(
-            "IACP_E2E_PROXMOX_ENDPOINT y IACP_E2E_PROXMOX_TOKEN son obligatorios para validar limpieza física"
+            "las credenciales Proxmox de solo lectura para MNG son obligatorias para validar limpieza física"
         )
-    if NETWORK_PROFILE != "lab_dhcp":
-        raise SystemExit("esta matriz debe ejecutarse con IACP_E2E_NETWORK_PROFILE=lab_dhcp")
     validate_catalog()
+    baseline = require_idle_runtime()
+    print(
+        "BASELINE PASS "
+        f"workers={len(baseline['workers'])} max_concurrent={baseline['max_concurrent']} "
+        f"active={baseline['active_operations']} queue={baseline['queue_depth']} "
+        f"uncertain={baseline['uncertain_operations']}",
+        flush=True,
+    )
     cases = []
     index = 1
-    for image in IMAGES:
-        for plan in PLANS:
-            for mode in ("password", "key"):
-                cases.append(
-                    {
-                        "index": index,
-                        "image": image,
-                        "plan": plan,
-                        "mode": mode,
-                        "label": f"{RUN_ID}-{index:02d}-{image}-{plan}-{mode}",
-                    }
-                )
-                index += 1
+    for image_index, image in enumerate(IMAGES):
+        for plan_index, plan in enumerate(PLANS):
+            mode = "password" if (image_index + plan_index) % 2 == 0 else "key"
+            cases.append(
+                {
+                    "index": index,
+                    "image": image,
+                    "plan": plan,
+                    "mode": mode,
+                    "label": f"{RUN_ID}-{index:02d}-{image}-{plan}",
+                }
+            )
+            index += 1
     results = []
     matrix_started = time.monotonic()
     total_waves = (len(cases) + MAX_WORKERS - 1) // MAX_WORKERS
-    for wave_number, wave in enumerate(chunks(cases, MAX_WORKERS), 1):
-        print(
-            f"WAVE {wave_number}/{total_waves} start="
-            + ",".join(f"{case['image']}/{case['plan']}/{case['mode']}" for case in wave),
-            flush=True,
-        )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(run_case, case) for case in wave]
-            results.extend(future.result() for future in futures)
-        failed = [result for result in results[-len(wave) :] if result["status"] != "passed"]
-        print(f"WAVE {wave_number}/{total_waves} done failed={len(failed)}", flush=True)
-        if failed:
+    sampler = RuntimeSampler()
+    sampler.start()
+    try:
+        for wave_number, wave in enumerate(chunks(cases, MAX_WORKERS), 1):
+            if wave_number > 1:
+                require_idle_runtime()
             print(
-                f"ABORT after wave {wave_number}: se detiene para reparar sin crear más VMs.",
+                f"WAVE {wave_number}/{total_waves} start="
+                + ",".join(f"{case['image']}/{case['plan']}/{case['mode']}" for case in wave),
                 flush=True,
             )
-            break
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = [executor.submit(run_case, case) for case in wave]
+                wave_results = [future.result() for future in futures]
+                results.extend(wave_results)
+            failed = [result for result in wave_results if result["status"] != "passed"]
+            print(f"WAVE {wave_number}/{total_waves} done failed={len(failed)}", flush=True)
+            if failed or _CONTENTION.is_set():
+                reason = "se detectó actividad externa o pérdida de observabilidad" if _CONTENTION.is_set() else "falló un caso"
+                print(f"ABORT after wave {wave_number}: {reason}; no se inyectan más VMs.", flush=True)
+                break
+    finally:
+        telemetry = sampler.stop()
     passed = sum(result["status"] == "passed" for result in results)
     failed = len(results) - passed
     print(f"SUMMARY total={len(results)} passed={passed} failed={failed}", flush=True)
     print_matrix_metrics(results, time.monotonic() - matrix_started)
-    if failed:
+    if passed == len(cases) and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 2:
+        try:
+            require_idle_runtime()
+        except Exception as error:
+            _record_contention(f"runtime no quedó idle al terminar: {redact(error)}")
+    outcome = "PASS" if passed == len(cases) and not failed and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 2 else "BLOCKED" if _CONTENTION.is_set() else "FAIL"
+    telemetry["contention_detected"] = _CONTENTION.is_set()
+    write_evidence(results, telemetry, outcome)
+    print(
+        f"CONCURRENCY observed_peak_workers={telemetry['peak_test_busy_workers']} "
+        f"configured_workers={MAX_WORKERS} samples={telemetry['samples']}",
+        flush=True,
+    )
+    if outcome != "PASS":
         for result in results:
             if result["status"] != "passed":
                 print(json.dumps(result, sort_keys=True), flush=True)
+        if passed == len(cases) and telemetry["peak_test_busy_workers"] < 2:
+            print("FAIL: no se observó evidencia simultánea de dos workers de prueba.", flush=True)
         return 1
     return 0
 

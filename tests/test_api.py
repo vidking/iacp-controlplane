@@ -19,6 +19,7 @@ def public_body(name: str = "console-local", *, password_only: bool = False) -> 
         "name": name,
         "plan_id": "kvm-2",
         "image_id": "ubuntu-2404",
+        "environment": "lab",
         "access": access,
         "commercial_context": {
             "customer_id": "CL-0000",
@@ -39,9 +40,9 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
             json={
                 "command": "plan",
                 "action": "provision",
-                "stack": "local",
+                "environment": "lab",
                 "plan_id": "kvm-1",
-                "spec": {"name": "local-test", "image": "ubuntu-2404"},
+                "spec": {"name": "lab-operation", "image": "ubuntu-2404"},
             },
         )
         assert response.status_code == 200
@@ -49,7 +50,31 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
         detail = client.get(f"/v1/operations/{operation_id}")
         assert detail.status_code == 200
         assert detail.json()["status"] == "queued"
+        assert detail.json()["environment"] == "lab"
+        assert detail.json()["stack"] == "mng01"
         assert set(detail.json()["timings"]) == {"queue_seconds", "execution_seconds", "total_seconds"}
+        physical_selection = client.post(
+            "/v1/operations",
+            json={
+                "command": "plan",
+                "action": "provision",
+                "stack": "mng02",
+                "plan_id": "kvm-1",
+                "spec": {"name": "node-selection", "image": "ubuntu-2404"},
+            },
+        )
+        assert physical_selection.status_code == 422
+        nested_node_selection = client.post(
+            "/v1/operations",
+            json={
+                "command": "plan",
+                "action": "provision",
+                "environment": "lab",
+                "plan_id": "kvm-1",
+                "spec": {"name": "nested-node-selection", "image": "ubuntu-2404", "node": "mng02"},
+            },
+        )
+        assert nested_node_selection.status_code == 422
 
 
 def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatch):
@@ -80,6 +105,29 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
             ("almalinux-9", 29010),
             ("almalinux-10", 29011),
         ]
+
+
+def test_environment_catalog_exposes_only_lab_and_resolves_to_mng(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_DEFAULT_ENVIRONMENT", "lab")
+    monkeypatch.setenv("IACP_ENABLED_ENVIRONMENTS", "lab")
+    with TestClient(app) as client:
+        response = client.get("/v1/environments")
+    assert response.status_code == 200
+    assert response.json() == {
+        "default_environment": "lab",
+        "environments": [{"environment": "lab", "label": "Laboratorio"}],
+    }
+
+
+def test_environment_configuration_fails_closed_if_prx_is_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_DEFAULT_ENVIRONMENT", "lab")
+    monkeypatch.setenv("IACP_ENABLED_ENVIRONMENTS", "lab,production")
+    with TestClient(app) as client:
+        response = client.get("/v1/environments")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "ENVIRONMENT_CONFIGURATION_INCOMPLETE"
 
 
 def test_network_profiles_keep_dhcp_default_and_hide_unconfigured_static_profile(tmp_path, monkeypatch):
@@ -174,9 +222,14 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
         schema = client.get("/openapi.json").json()
         assert "Bearer" in schema["components"]["securitySchemes"]
         assert "/v1/operations" in schema["paths"]
+        assert "/v1/environments" in schema["paths"]
         assert "/v1/instances" in schema["paths"]
         request_schema = schema["components"]["schemas"]["InstanceCreateRequest"]
         assert request_schema["additionalProperties"] is False
+        assert request_schema["properties"]["environment"]["const"] == "lab"
+        operation_schema = schema["components"]["schemas"]["OperationRequest"]
+        assert operation_schema["properties"]["environment"]["const"] == "lab"
+        assert "stack" not in operation_schema["properties"]
         assert "tags" in request_schema["properties"]
         assert "etiquetas proxmox adicionales" in request_schema["properties"]["tags"]["description"].lower()
         assert request_schema["properties"]["tags"]["items"]["maxLength"] == 63
@@ -185,10 +238,19 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
         assert schema["paths"]["/v1/instances/{instance_id}/power/start"]["post"]["tags"] == ["kvm-lifecycle"]
         assert "/v1/instances/{instance_id}/network" in schema["paths"]
         assert client.get("/v1/plans").status_code == 401
+        assert client.get("/v1/environments").status_code == 401
         response = client.get(
             "/v1/plans", headers={"Authorization": "Bearer swagger-test-token"}
         )
         assert response.status_code == 200
+        environments = client.get(
+            "/v1/environments", headers={"Authorization": "Bearer swagger-test-token"}
+        )
+        assert environments.status_code == 200
+        assert environments.json() == {
+            "default_environment": "lab",
+            "environments": [{"environment": "lab", "label": "Laboratorio"}],
+        }
 
 
 def test_network_observation_uses_guest_agent_and_does_not_guess_ip(tmp_path, monkeypatch):
@@ -269,6 +331,7 @@ def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypa
         response = created.json()
         assert response["status"] == "queued"
         assert response["job_id"] == response["operation_id"]
+        assert response["environment"] == "lab"
 
         operation = client.get(f"/v1/operations/{response['operation_id']}")
         assert operation.status_code == 200
@@ -285,6 +348,7 @@ def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypa
         value = detail.json()
         assert value["cluster"] == "mng"
         assert value["stack"] == "mng01"
+        assert value["environment"] == "lab"
         assert value["plan_id"] == "kvm-2"
         assert value["image_id"] == "ubuntu-2404"
         assert value["spec"]["vcpus"] == 2
@@ -294,6 +358,23 @@ def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypa
         assert value["commercial_context"]["customer_tag"] == "cl-0000"
 
 
+def test_instance_environment_defaults_to_lab_for_existing_consumers(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    body = public_body("environment-default")
+    body.pop("environment")
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "environment-default"},
+            json=body,
+        )
+        assert response.status_code == 202
+        assert response.json()["environment"] == "lab"
+        detail = client.get(f"/v1/instances/{response.json()['instance_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["environment"] == "lab"
+
+
 def test_public_request_validates_additional_tags_and_rejects_unknown_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     invalid_bodies = []
@@ -301,9 +382,12 @@ def test_public_request_validates_additional_tags_and_rejects_unknown_fields(tmp
         body = public_body(f"tag-invalid-{len(invalid_bodies)}")
         body["tags"] = [tag]
         invalid_bodies.append(body)
-    unknown_field_body = public_body("unknown-environment")
-    unknown_field_body["environment"] = "lab"
-    invalid_bodies.append(unknown_field_body)
+    invalid_environment_body = public_body("invalid-environment")
+    invalid_environment_body["environment"] = "production"
+    invalid_bodies.append(invalid_environment_body)
+    node_selection_body = public_body("node-selection")
+    node_selection_body["node"] = "mng01"
+    invalid_bodies.append(node_selection_body)
 
     with TestClient(app) as client:
         for index, body in enumerate(invalid_bodies):

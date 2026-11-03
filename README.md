@@ -35,7 +35,7 @@ SQLite ni elimina filas históricas.
 | Runtime | URL y estado | Entornos publicados | State Terraform |
 | --- | --- | --- | --- |
 | `develop` | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab` → clúster MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
-| `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Local persistido; `IACP_WASABI_ENABLED=false` |
+| `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; el servidor resuelve el nodo; VMID `30000–39999`; PRX deshabilitado | Local persistido; `IACP_WASABI_ENABLED=false` |
 
 El registro de promoción, las pruebas físicas y las limitaciones vigentes están
 en [`docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md`](docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).
@@ -65,14 +65,15 @@ físicos hasta tener autorización y credenciales de ensayo aisladas.
 
 Antes de crear una instancia, el consumidor consulta:
 
+- `GET /v1/environments`
 - `GET /v1/plans`
 - `GET /v1/images`
 - `GET /v1/network-profiles`
 
 `POST /v1/instances` recibe un JSON fijo con `name`, `plan_id`, `image_id`,
-`access`, `commercial_context` opcional, `network_profile`, `tags` y
-`start_on_create`. No recibe `environment`, nodo ni clúster; el servidor
-resuelve el destino físico. `tags` admite cero o varias etiquetas, por ejemplo
+`environment: "lab"`, `access`, `commercial_context` opcional,
+`network_profile`, `tags` y `start_on_create`. El servidor resuelve `lab` a MNG
+y elige internamente el nodo; el consumidor no envía nodo ni clúster. `tags` admite cero o varias etiquetas, por ejemplo
 `["kvm-001", "postal"]`. Cada etiqueta debe usar minúsculas, números, guion o
 guion bajo y tener hasta 63 caracteres. `customer_tag`, cuando se informa,
 también se aplica en Proxmox.
