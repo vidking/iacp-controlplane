@@ -1,138 +1,136 @@
 # Manual de consumo de la API IACP Control Plane
 
-*Contrato HTTP v1 para integraciones, portales y servicios de backend*
+*Contrato HTTP `/v1` para integraciones, portales y servicios de backend*
 
-El consumidor declara qué VM necesita mediante campos técnicos estables. IACP
-valida el catálogo, asigna recursos, ejecuta Terraform y conserva el progreso
-como operaciones observables. Un `202 Accepted` confirma que la solicitud fue
-aceptada para procesamiento; no significa que la VM ya esté lista.
+El consumidor describe la KVM que necesita mediante un JSON estable. IACP
+valida planes, imágenes y red, persiste la intención y encola el
+aprovisionamiento. Una respuesta `202 Accepted` confirma que la operación fue
+aceptada; no que la VM ya esté lista.
 
-## Contenido
+## 1. Contrato, destino y autenticación
 
-1. Contrato y autenticación
-2. Descubrir entornos, planes e imágenes
-3. Estructura del request
-4. Crear y seguir una VM
-5. Tags Proxmox
-6. Inventario, red y lifecycle
-7. Idempotencia, errores y reconciliación
-8. API explícita para operadores
-9. Swagger y documentación
+El runtime proviene del repositorio `controlplanev2`, pero el producto y la
+versión pública se llaman **IACP Control Plane v1**. No se publica una ruta
+`/v2`.
 
-## 1. Contrato y autenticación
+El destino de Proxmox, el nodo, el pool, el rango de VMID y Terraform se
+resuelven dentro del servidor. El consumidor no envía clúster, nodo ni
+parámetros de infraestructura. En esta configuración, la API publica el perfil
+de laboratorio MNG; el servidor decide el destino físico.
 
-El contrato público usa rutas `/v1`. No existe un prefijo `/v2`: el nombre
-histórico del repositorio de origen no cambia la versión visible del API.
+Si `IACP_REQUIRE_API_TOKEN` está habilitado, cada ruta `/v1` requiere:
 
-| Runtime | Base URL / estado | Destino lógico |
-| --- | --- | --- |
-| Desarrollo | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab`, resuelto al clúster MNG |
-| Producción | `https://iac.cyberfuel.com` · activa | `lab`, resuelto al clúster MNG; PRX está apagado hasta su certificación |
-
-La API privada requiere HTTPS y, si `IACP_REQUIRE_API_TOKEN=1`, un token Bearer:
-
-```bash
-export IACP_BASE_URL=https://dev-cyberfuel.com
-export IACP_API_TOKEN=TOKEN_DE_INTEGRACION
-
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer ${IACP_API_TOKEN}" \
-  "${IACP_BASE_URL}/v1/environments"
+```http
+Authorization: Bearer <token>
 ```
 
-Guarda el token y las contraseñas en el backend de la integración. No los
-incluyas en JavaScript del navegador, URLs, logs o repositorios.
+Guarda el token y las contraseñas en el backend de tu integración. No los
+incluyas en JavaScript público, URLs, logs ni repositorios.
 
-El consumidor elige `environment=lab`; no manda `cluster`, `node`, `pool_id`,
-`target_node`, nombre de stack ni configuración Terraform. El runtime de
-desarrollo solo ofrece MNG. Producción comienza también en MNG y podrá mostrar
-PRX cuando la configuración y certificación estén completas.
+## 2. Consultar catálogos
 
-## 2. Descubrir entornos, planes e imágenes
-
-Consulta los catálogos al iniciar la integración y cuando se abra el formulario.
-No mantengas una copia independiente de planes o templates.
+Carga los catálogos al iniciar la integración y cuando se abra el formulario.
+Así el consumidor siempre usa identificadores publicados por el servidor.
 
 ```bash
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
-  "${IACP_BASE_URL}/v1/environments"
+  "${IACP_BASE_URL}/v1/plans"
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
-  "${IACP_BASE_URL}/v1/plans?environment=lab"
-curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
-  "${IACP_BASE_URL}/v1/images?environment=lab"
+  "${IACP_BASE_URL}/v1/images"
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
   "${IACP_BASE_URL}/v1/network-profiles"
 ```
 
-`GET /v1/environments` devuelve `default_environment` y la lista de valores
-lógicos habilitados. `GET /v1/plans` y `/v1/images` aceptan `environment`
-opcional; si se omite, el servidor utiliza su entorno predeterminado.
+La API no ofrece una ruta `/v1/environments`; tampoco acepta `environment` en
+el cuerpo de aprovisionamiento ni como selector de catálogo. `GET /v1/plans`,
+`GET /v1/images` y `GET /v1/network-profiles` son las rutas de catálogo.
 
-Los IDs actuales de catálogo pueden incluir planes `kvm-1` a `kvm-4` e
-imágenes `ubuntu-2404`, `ubuntu-2604`, `almalinux-9` y `almalinux-10`. El
-catálogo del runtime es la autoridad y puede diferir entre entornos.
-
-El perfil disponible es `lab_dhcp`. La VM usa DHCP en la red que configura el
-entorno. El consumidor no envía una dirección, prefijo, gateway, VLAN ni una
-selección de IPAM.
+Los planes e imágenes disponibles dependen del catálogo instalado. El perfil
+`lab_dhcp` está disponible para DHCP. `prod_static` se publica deshabilitado
+hasta que el IPAM autorizado esté configurado. El consumidor elige el perfil,
+pero nunca envía IP, prefijo, gateway, VLAN ni una selección de nodo.
 
 ## 3. Estructura fija del request
 
-`POST /v1/instances` recibe el siguiente objeto. Los campos se mantienen en
-esta forma para que Swagger, el portal y las integraciones muestren un contrato
-legible y uniforme:
+`POST /v1/instances` acepta este JSON. Los campos desconocidos se rechazan:
 
 ```json
 {
-  "name": "cliente-cl-105",
-  "environment": "lab",
+  "name": "kvm-cl-105",
   "plan_id": "kvm-2",
   "image_id": "ubuntu-2404",
-  "network_profile": "lab_dhcp",
-  "tags": ["cl-105", "kvm-001", "postal"],
   "access": {
     "root_password": "CAMBIAR_POR_SECRETO",
     "ssh_public_keys": []
   },
+  "commercial_context": {
+    "customer_id": "CL-105",
+    "customer_tag": "cl-105",
+    "order_id": "ORD-1001",
+    "product_id": "KVM-2"
+  },
+  "network_profile": "lab_dhcp",
+  "tags": ["kvm-001", "postal", "smtp-relay"],
   "start_on_create": true
 }
 ```
 
 | Campo | Tipo | Regla |
 | --- | --- | --- |
-| `name` | string | Obligatorio; de 1 a 63 caracteres, minúsculas, números y guiones. Debe empezar y terminar con letra o número. |
-| `environment` | string | `lab` o un valor que haya publicado `/v1/environments`. Si se omite, se usa el default del runtime. |
-| `plan_id` | string | Obligatorio; identificador devuelto por `/v1/plans`. |
-| `image_id` | string | Obligatorio; identificador devuelto por `/v1/images`. |
-| `network_profile` | string | `lab_dhcp`; no se acepta IP estática en este contrato. |
-| `tags` | array de strings | Opcional; lista descriptiva de etiquetas Proxmox. Vacía significa que no se agregan etiquetas. |
-| `access.root_password` | string | Contraseña temporal de la cuenta inicial `root`; respeta la longitud mínima del runtime. |
-| `access.ssh_public_keys` | array de strings | Una o más claves públicas; puede usarse sin contraseña. |
-| `start_on_create` | boolean | `true` solicita iniciar la VM después del aprovisionamiento; `false` la deja apagada. |
+| `name` | string | Obligatorio; de 1 a 63 caracteres, minúsculas, números y guiones; comienza y termina con letra o número. |
+| `plan_id` | string | Obligatorio; ID publicado por `GET /v1/plans`. |
+| `image_id` | string | Obligatorio; ID publicado por `GET /v1/images`. |
+| `access.root_password` | string o `null` | Opcional; se valida con `IACP_ROOT_PASSWORD_MIN_LENGTH` y nunca se devuelve. |
+| `access.ssh_public_keys` | array de strings | Opcional; acepta claves `ssh-ed25519`, `ssh-rsa` o `ecdsa-sha2-*`. Puede aplicarse una clave predeterminada del runtime. |
+| `commercial_context` | objeto o `null` | Opcional. Si se envía, requiere `customer_id`, `customer_tag`, `order_id` y `product_id`. Solo aporta trazabilidad. |
+| `network_profile` | string | `lab_dhcp` o `prod_static`; este último puede estar deshabilitado hasta configurar NetBox. |
+| `tags` | array de strings | Opcional; etiquetas Proxmox adicionales. Cada valor cumple el formato descrito abajo. |
+| `start_on_create` | boolean | Si es `true`, solicita iniciar la KVM al terminar; si es `false`, la deja apagada. |
 
-Los campos desconocidos se rechazan para detectar errores de integración en vez
-de aceptar un JSON que el servicio no interpreta. No se envían campos de
-cliente, orden, producto, `cluster`, `node`, credenciales Proxmox ni estado
-Terraform.
+El campo `environment` no forma parte del contrato. El servidor elige el
+destino físico. Tampoco se aceptan `cluster`, `node`, `pool`, `vmid`, VLAN,
+IP, gateway, credenciales Proxmox o datos de Terraform.
 
-## 4. Crear y seguir una VM
+### Tags Proxmox
 
-Envía una `Idempotency-Key` estable para que un reintento de red no cree otra
-intención. El mismo valor debe acompañar al mismo cuerpo.
+Envía los tags adicionales como una lista JSON:
+
+```json
+"tags": ["kvm-001", "postal", "smtp-relay"]
+```
+
+Cada tag debe usar minúsculas, números, guion o guion bajo, comenzar con letra
+o número y tener hasta 63 caracteres. Los duplicados se eliminan conservando
+el primer orden. `commercial_context.customer_tag` se aplica automáticamente
+junto con los tags de `tags`; no hace falta duplicarlo dentro de esa lista.
+El servidor no deriva etiquetas del nombre de la KVM.
+
+Por ejemplo, con `customer_tag: "cl-105"` y `tags: ["kvm-001", "postal"]`,
+Proxmox recibe `cl-105`, `kvm-001` y `postal`.
+
+## 4. Crear y seguir una KVM
+
+Envía una llave de idempotencia estable. Si hay un timeout de red, repite el
+mismo cuerpo con la misma llave; no crees otra intención.
 
 ```bash
 cat > request.json <<'JSON'
 {
-  "name": "cliente-cl-105",
-  "environment": "lab",
+  "name": "kvm-cl-105",
   "plan_id": "kvm-2",
   "image_id": "ubuntu-2404",
-  "network_profile": "lab_dhcp",
-  "tags": ["cl-105", "kvm-001", "postal"],
   "access": {
     "root_password": "CAMBIAR_POR_SECRETO",
     "ssh_public_keys": []
   },
+  "commercial_context": {
+    "customer_id": "CL-105",
+    "customer_tag": "cl-105",
+    "order_id": "ORD-1001",
+    "product_id": "KVM-2"
+  },
+  "network_profile": "lab_dhcp",
+  "tags": ["kvm-001", "postal"],
   "start_on_create": true
 }
 JSON
@@ -145,23 +143,21 @@ curl --fail-with-body --silent --show-error \
   --data-binary @request.json
 ```
 
-La respuesta `202` entrega los identificadores para seguimiento:
+La respuesta `202` entrega los IDs para consultar el progreso:
 
 ```json
 {
   "operation_id": "22222222-2222-4222-8222-222222222222",
-  "job_id": "22222222-2222-4222-8222-222222222222",
   "instance_id": "11111111-1111-4111-8111-111111111111",
   "status": "queued",
   "command": "provision",
   "action": "provision",
-  "environment": "lab",
+  "job_id": "22222222-2222-4222-8222-222222222222",
   "idempotency_key": "alta-cl-105-kvm-001"
 }
 ```
 
-Consulta hasta un estado terminal. La operación representa plan y apply; no
-envíes `apply` como una segunda creación.
+Consulta la operación hasta `completed`, `failed` o `uncertain`:
 
 ```bash
 curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
@@ -170,109 +166,55 @@ curl -H "Authorization: Bearer ${IACP_API_TOKEN}" \
   "${IACP_BASE_URL}/v1/instances/11111111-1111-4111-8111-111111111111"
 ```
 
-Estados de operación: `queued`, `running`, `completed`, `failed` y
-`uncertain`. Estados de instancia: `pending`, `provisioning`, `ready`,
-`stopped`, `deleting`, `failed`, `uncertain` y `deleted`. Un `ready` describe
-una VM encendida; `stopped` es una VM administrada que está apagada.
+`POST /v1/instances` ejecuta el aprovisionamiento en una sola intención; la
+integración de consumo no necesita enviar un `apply` separado. Si la API
+devuelve `uncertain`, inspecciona la operación y reconcilia antes de reintentar.
 
-## 5. Tags Proxmox
-
-Los tags se declaran como array JSON, no como objeto ni como una única cadena:
-
-```json
-"tags": ["cl-105", "kvm-001", "postal", "smtp-relay"]
-```
-
-Esto permite enviar etiquetas de cliente, nombre técnico u otra clasificación
-sin modificar el esquema cada vez que aparece un nuevo tipo. Cada valor debe
-usar minúsculas, números, guion o guion bajo, empezar con letra o número y no
-superar 63 caracteres. Los duplicados se eliminan conservando el primer orden
-en el registro de la API. Proxmox puede mostrar el conjunto ordenado.
-
-El orquestador aplica únicamente los elementos enviados. No crea por su cuenta
-`iacp`, el entorno, el cliente ni el nombre como tags. El nombre de la VM sigue
-siendo el campo independiente `name`.
-
-## 6. Inventario, red y lifecycle
+## 5. Inventario, red y ciclo de vida
 
 | Método y ruta | Uso |
 | --- | --- |
-| `GET /v1/instances` | Listar instancias con paginación y filtros. |
-| `GET /v1/instances/{instance_id}` | Consultar detalle, spec y última operación. |
-| `GET /v1/instances/{instance_id}/network` | Consultar IP observada por QEMU Guest Agent. |
-| `GET /v1/instances/{instance_id}/power` | Observar el estado de energía. |
-| `POST /v1/instances/{instance_id}/power/start` | Encolar inicio. |
-| `POST /v1/instances/{instance_id}/power/shutdown` | Encolar apagado ordenado. |
-| `POST /v1/instances/{instance_id}/power/reboot` | Encolar reinicio. |
-| `DELETE /v1/instances/{instance_id}` | Destruir una VM administrada apagada. |
+| `GET /v1/instances` | Lista instancias; admite `limit`, `offset`, `status`, `name` e `include_deleted`. |
+| `GET /v1/instances/{instance_id}` | Consulta detalle, configuración y última operación. |
+| `GET /v1/instances/{instance_id}/network` | Consulta IP observada por QEMU Guest Agent y asignación IPAM. |
+| `GET /v1/instances/{instance_id}/power` | Consulta energía directamente en Proxmox. |
+| `POST /v1/instances/{instance_id}/power/start` | Encola inicio. |
+| `POST /v1/instances/{instance_id}/power/shutdown` | Encola apagado ordenado. |
+| `POST /v1/instances/{instance_id}/power/reboot` | Encola reinicio. |
+| `DELETE /v1/instances/{instance_id}` | Encola la eliminación administrada. |
+| `POST /v1/instances/{instance_id}/reconcile` | Compara la intención incierta con el estado observado. |
 
-Las acciones de lifecycle y delete son asíncronas y devuelven `operation_id`.
-Sigue la operación hasta el estado terminal. El servicio no debe reportar
-éxito si Proxmox no confirmó el cambio.
+Las solicitudes que cambian estado aceptan `Idempotency-Key`. Si la misma
+llave se reutiliza con un cuerpo distinto, la API devuelve `409`. La IP
+observada solo aparece cuando QEMU Guest Agent la reporta; `unavailable` no
+equivale a asignación manual.
 
-La dirección DHCP aparece en `observed_ipv4` solo cuando responde Guest Agent.
-Un resultado `unavailable` indica que la IP no se pudo confirmar; no significa
-que el contrato permita fijar una IP desde el consumidor.
-
-La API bloquea mutaciones a recursos protegidos. La VM 104, la VM 106 y las
-Golden Images base no son instancias de consumidor.
-
-## 7. Idempotencia, errores y reconciliación
-
-Usa una llave diferente por intención de cambio y conserva la llave mientras
-reintentas esa misma intención. Reutilizarla con otro cuerpo produce `409`.
-Al exceder `IACP_MAX_QUEUE_DEPTH`, la API devuelve `429` con `Retry-After`;
-espera y reintenta conservando la llave.
-
-Una mutación física puede perder su respuesta aunque Proxmox la haya aplicado.
-En ese caso el worker observa primero la VM. Si no logra determinar el estado,
-la operación termina `uncertain`; no la trates como `failed` ni vuelvas a
-aprovisionar con otra llave.
-
-Consulta eventos en orden cronológico:
+## 6. Operaciones y observabilidad
 
 ```http
+GET /v1/operations?limit=50&offset=0
+GET /v1/operations/{operation_id}
 GET /v1/events?operation_id={operation_id}&sort=asc
+GET /v1/workers
 GET /v1/observability
 ```
 
-La reconciliación disponible para una instancia incierta se encola con:
+`uncertain` indica que no fue posible confirmar el resultado físico; no lo
+interpretes como una falla limpia. La reconciliación vuelve a observar el
+estado y no borra Terraform state ni fuerza locks.
 
-```http
-POST /v1/instances/{instance_id}/reconcile
-Authorization: Bearer <token>
-Idempotency-Key: reconcile-{operation_id}
-```
+`POST /v1/operations` es el endpoint técnico explícito para operadores. Las
+integraciones deben preferir `POST /v1/instances`, que valida plan e imagen y
+encola la creación completa.
 
-La reconciliación compara la intención persistida con el estado físico antes
-de cerrar una operación. No borra states ni fuerza locks.
+El Compose declara seis workers (`worker-1` a `worker-6`) y limita la ejecución
+global a seis operaciones concurrentes. `/v1/workers` y `/v1/observability`
+permiten revisar heartbeats, cola y operaciones activas.
 
-## 8. API explícita para operadores
+## 7. Swagger y el formulario de documentación
 
-`POST /v1/operations` permite encolar `plan`, `apply`, `destroy`, `power` o
-`reconcile` con un request técnico explícito. Para un plan, `spec` admite
-`name`, `image`, `vcpus`, `memory_mb`, `disk_gb`, acceso, estado inicial y
-`tags`. Sigue usando `environment` lógico; no admite `stack`, `cluster` o
-`target_node` del consumidor.
-
-Las integraciones de aprovisionamiento deben preferir `POST /v1/instances`,
-que valida `plan_id` e `image_id` y ejecuta plan + apply en una sola intención.
-
-## 9. Swagger y documentación
-
-El portal `/docs` explica el flujo, permite seleccionar entorno y catálogo, y
-genera el JSON y cURL desde los valores del formulario. La contraseña se
-redacta en la vista previa. `/swagger` presenta el esquema OpenAPI con
-descripciones y ejemplos enlazados al modelo Pydantic; `/redoc` y
-`/openapi.json` ofrecen las otras vistas del mismo contrato.
-
-Rutas públicas de salud y documentación:
-
-- `/health/live`
-- `/health/ready`
-- `/docs`
-- `/swagger`
-- `/redoc`
-- `/openapi.json`
-
-Las operaciones protegidas requieren el Bearer que configure el runtime.
+`/docs` permite consultar los catálogos y completar el formulario. El portal
+genera el JSON y el cURL con los mismos campos del contrato; la contraseña se
+redacta en la vista previa. El modelo Pydantic genera el ejemplo de
+`POST /v1/instances` que Swagger muestra en `/swagger`. Descarga el esquema
+completo en `/openapi.json` o léelo en `/redoc`.

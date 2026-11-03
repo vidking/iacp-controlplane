@@ -133,6 +133,10 @@
                   <label>Llave pública SSH opcional<textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small>El worker puede usar la clave pública por defecto de Portainer.</small></label>
                 </div>
                 <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
+                <label class="vm-tags-field">Tags Proxmox adicionales (opcional)
+                  <input id="vm-tags" autocomplete="off" placeholder="kvm-001, postal, smtp-relay">
+                  <small>Una etiqueta por coma. El campo comercial Customer tag también se aplica; no se generan tags desde el nombre.</small>
+                </label>
                 <details class="advanced-card">
                   <summary>Trazabilidad avanzada de la API (opcional)</summary>
                   <p>Se conserva para auditoría, pero no concede permisos ni cambia el plan técnico.</p>
@@ -252,7 +256,7 @@ curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/operations/&lt;operation_i
 curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
 curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
 curl -X DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
-            <details class="guide-card"><summary>Catálogo de planes, imágenes y red</summary><div><p>Consulta <code>GET /v1/plans</code>, <code>GET /v1/images</code> y <code>GET /v1/network-profiles</code> para conocer las opciones certificadas. Elige un <code>plan_id</code>, un <code>image_id</code> y un <code>network_profile</code>; la API conserva los valores técnicos y no requiere que el consumidor conozca la infraestructura interna.</p><p><code>lab_dhcp</code> es el perfil de laboratorio. <code>prod_static</code> asigna una IP libre del prefijo `/24` autorizado en NetBox, reserva <code>x.x.x.1</code> como gateway y no acepta que el consumidor envíe una IP arbitraria. Permanece deshabilitado hasta completar la configuración del IPAM.</p><p>Las imágenes base son inmutables. <code>customer_tag</code>, cuando existe, se conserva como metadata de trazabilidad.</p><pre class="api-example">curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
+            <details class="guide-card"><summary>Catálogo de planes, imágenes y red</summary><div><p>Consulta <code>GET /v1/plans</code>, <code>GET /v1/images</code> y <code>GET /v1/network-profiles</code> para conocer las opciones certificadas. Elige un <code>plan_id</code>, un <code>image_id</code> y un <code>network_profile</code>; la API conserva los valores técnicos y resuelve el destino físico en el servidor.</p><p><code>lab_dhcp</code> asigna la red por DHCP. <code>prod_static</code> puede aparecer deshabilitado hasta que el IPAM autorizado esté configurado; el consumidor nunca envía una IP, prefijo o gateway.</p><p>Las imágenes base son inmutables. <code>commercial_context.customer_tag</code> se agrega como etiqueta Proxmox junto con las etiquetas adicionales de <code>tags</code>. El nombre de la VM no genera etiquetas automáticamente.</p><pre class="api-example">curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/network-profiles</pre></div></details>
             <details class="guide-card"><summary>Acceso, contraseña y SSH</summary><div><p>La consola pide contraseña para el usuario inicial <code>root</code> y replica el flujo operativo de referencia. La API también acepta SSH-only para automatizaciones. La contraseña se transporta mediante un secreto temporal y se elimina al terminar el aprovisionamiento.</p><p>Ubuntu y AlmaLinux usan <code>root</code>; el portal nunca muestra la contraseña después del envío.</p></div></details>
@@ -266,7 +270,7 @@ GET BASE/v1/instances/&lt;instance_id&gt;/power</pre></div></details>
 POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
 POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
 DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
-            <details class="guide-card"><summary>Trazabilidad avanzada de API</summary><div><p><code>customer_id</code>, <code>customer_tag</code>, <code>order_id</code> y <code>product_id</code> son metadata opcional y completa. No conceden permisos, no cambian el plan y no seleccionan nodo.</p></div></details>
+            <details class="guide-card"><summary>Trazabilidad avanzada de API</summary><div><p><code>customer_id</code>, <code>customer_tag</code>, <code>order_id</code> y <code>product_id</code> son metadata opcional que se envía completa. No concede permisos, no cambia el plan ni selecciona nodo; <code>customer_tag</code> también se aplica en Proxmox.</p></div></details>
           </div>
         </section>
 
@@ -275,6 +279,6 @@ DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
-    <script src="/docs/assets/docs.js?v=20261029-3"></script>
+    <script src="/docs/assets/docs.js?v=20261102-tags1"></script>
   </body>
 </html>

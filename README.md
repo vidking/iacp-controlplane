@@ -19,10 +19,11 @@ el nombre IACP Control Plane y las rutas `/v1`.
   volumen de trabajo, incluso cuando el endpoint es `iac.cyberfuel.com`; `true`
   habilita Wasabi únicamente para el stack `production`.
 - Los nodos, pools, credenciales, catálogos y directorios Terraform se resuelven
-  en el servidor. El consumidor solo elige un entorno lógico publicado por la
-  API.
-- Los tags son una lista descriptiva de Proxmox. Se aplican los valores que el
-  consumidor envía; no se agregan tags automáticamente.
+  en el servidor. El consumidor elige un plan, una imagen y un perfil de red
+  publicados por la API.
+- `commercial_context.customer_tag` se aplica como etiqueta Proxmox. El campo
+  `tags` permite agregar etiquetas técnicas o de servicio; el servidor no
+  deriva etiquetas del nombre de la KVM.
 
 La instancia IACP Control Plane (VM 104), la VM 106 y las Golden Images están
 protegidas frente a aprovisionamiento, lifecycle y eliminación desde la API.
@@ -64,14 +65,17 @@ físicos hasta tener autorización y credenciales de ensayo aisladas.
 
 Antes de crear una instancia, el consumidor consulta:
 
-- `GET /v1/environments`
-- `GET /v1/plans?environment=lab`
-- `GET /v1/images?environment=lab`
+- `GET /v1/plans`
+- `GET /v1/images`
 - `GET /v1/network-profiles`
 
-El request `POST /v1/instances` mantiene una estructura fija. `tags` admite
-valores como `cl-105`, `kvm-001` y `postal`; puede incluir cero o varias
-etiquetas. El servidor no deriva tags desde el nombre.
+`POST /v1/instances` recibe un JSON fijo con `name`, `plan_id`, `image_id`,
+`access`, `commercial_context` opcional, `network_profile`, `tags` y
+`start_on_create`. No recibe `environment`, nodo ni clúster; el servidor
+resuelve el destino físico. `tags` admite cero o varias etiquetas, por ejemplo
+`["kvm-001", "postal"]`. Cada etiqueta debe usar minúsculas, números, guion o
+guion bajo y tener hasta 63 caracteres. `customer_tag`, cuando se informa,
+también se aplica en Proxmox.
 
 El portal `/docs` construye el JSON y cURL a partir del formulario. Swagger en
 `/swagger` y OpenAPI en `/openapi.json` muestran el ejemplo generado desde el

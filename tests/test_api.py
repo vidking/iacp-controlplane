@@ -143,6 +143,8 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
         assert 'id="worker-operation-timeline"' in portal.text
         assert 'id="network-profile"' in portal.text
         assert 'id="network-profile-help"' in portal.text
+        assert 'id="vm-tags"' in portal.text
+        assert "customer_tag" in portal.text
         assert 'id="obs-live-status"' in portal.text
         assert 'id="workers-live-status"' in portal.text
         assert "Cómo consumir la API" in portal.text
@@ -163,6 +165,12 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
         assert "Bearer" in schema["components"]["securitySchemes"]
         assert "/v1/operations" in schema["paths"]
         assert "/v1/instances" in schema["paths"]
+        request_schema = schema["components"]["schemas"]["InstanceCreateRequest"]
+        assert request_schema["additionalProperties"] is False
+        assert "tags" in request_schema["properties"]
+        assert "etiquetas proxmox adicionales" in request_schema["properties"]["tags"]["description"].lower()
+        assert request_schema["properties"]["tags"]["items"]["maxLength"] == 63
+        assert request_schema["properties"]["tags"]["items"]["pattern"] == r"^[a-z0-9][a-z0-9_-]{0,62}$"
         assert schema["paths"]["/v1/instances"]["get"]["operationId"] == "listInstances"
         assert schema["paths"]["/v1/instances/{instance_id}/power/start"]["post"]["tags"] == ["kvm-lifecycle"]
         assert "/v1/instances/{instance_id}/network" in schema["paths"]
@@ -240,6 +248,7 @@ def test_network_observation_reports_pending_before_provisioning(tmp_path, monke
 def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     body = public_body(password_only=True)
+    body["tags"] = ["kvm-001", "postal", "kvm-001", "cl-0000"]
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -271,8 +280,29 @@ def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypa
         assert value["spec"]["vcpus"] == 2
         assert value["spec"]["memory_mb"] == 4096
         assert value["spec"]["disk_gb"] == 100
-        assert value["spec"]["tags"] == ["cl-0000"]
+        assert value["spec"]["tags"] == ["cl-0000", "kvm-001", "postal"]
         assert value["commercial_context"]["customer_tag"] == "cl-0000"
+
+
+def test_public_request_validates_additional_tags_and_rejects_unknown_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    invalid_bodies = []
+    for tag in ("KVM-001", "-invalid", "x" * 64):
+        body = public_body(f"tag-invalid-{len(invalid_bodies)}")
+        body["tags"] = [tag]
+        invalid_bodies.append(body)
+    unknown_field_body = public_body("unknown-environment")
+    unknown_field_body["environment"] = "lab"
+    invalid_bodies.append(unknown_field_body)
+
+    with TestClient(app) as client:
+        for index, body in enumerate(invalid_bodies):
+            response = client.post(
+                "/v1/instances",
+                headers={"Idempotency-Key": f"invalid-public-contract-{index}"},
+                json=body,
+            )
+            assert response.status_code == 422
 
 
 def test_ready_and_stopped_are_separate_public_instance_states(tmp_path, monkeypatch):
@@ -480,6 +510,7 @@ def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
 def test_public_mutations_generate_idempotency_and_replay_safely(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     body = public_body()
+    body["tags"] = ["kvm-001"]
     with TestClient(app) as client:
         generated = client.post("/v1/instances", json=public_body("generated-key"))
         assert generated.status_code == 202
@@ -498,13 +529,38 @@ def test_public_mutations_generate_idempotency_and_replay_safely(tmp_path, monke
         assert first.status_code == replay.status_code == 202
         assert replay.json() == first.json()
 
-        changed = public_body("different-name")
+        changed = public_body()
+        changed["tags"] = ["kvm-002"]
         conflict = client.post(
             "/v1/instances",
             headers={"Idempotency-Key": "same-request"},
             json=changed,
         )
         assert conflict.status_code == 409
+
+
+def test_network_profile_is_part_of_public_idempotency_fingerprint(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
+    monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example.invalid/api")
+    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "123")
+    body = public_body("idempotency-network-profile")
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "same-network-request"},
+            json=body,
+        )
+        assert first.status_code == 202
+
+        changed = {**body, "network_profile": "prod_static"}
+        response = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "same-network-request"},
+            json=changed,
+        )
+        assert response.status_code == 409
 
 
 def test_power_routes_are_listed_and_queue_with_idempotency(tmp_path, monkeypatch):

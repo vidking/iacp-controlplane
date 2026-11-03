@@ -412,6 +412,8 @@ def _request_plain_payload(request: InstanceCreateRequest) -> dict:
             if request.commercial_context is not None
             else None
         ),
+        "network_profile": request.network_profile,
+        "tags": list(request.tags),
         "start_on_create": request.start_on_create,
     }
 
@@ -502,7 +504,8 @@ def _resolve_public_request(request: InstanceCreateRequest) -> tuple[InstanceSpe
         raise HTTPException(status_code=422, detail="network_profile no disponible")
     if not profile["enabled"]:
         raise HTTPException(status_code=503, detail="NETWORK_PROFILE_NOT_CONFIGURED")
-    tags = [request.commercial_context.customer_tag] if request.commercial_context else []
+    tags = ([request.commercial_context.customer_tag] if request.commercial_context else [])
+    tags.extend(request.tags)
     spec = InstanceSpec(
         name=request.name,
         image=request.image_id,

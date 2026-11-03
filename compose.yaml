@@ -19,7 +19,8 @@ x-app-environment: &app-environment
   IACP_VMID_MIN: ${IACP_VMID_MIN:-40000}
   IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
   IACP_VMID_REUSE: ${IACP_VMID_REUSE:-1}
-  IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-1}
+  IACP_ADDITIONAL_PROTECTED_VMIDS: ${IACP_ADDITIONAL_PROTECTED_VMIDS:-}
+  IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-6}
   IACP_TERRAFORM_TIMEOUT: ${IACP_TERRAFORM_TIMEOUT:-1800}
   IACP_POWER_TIMEOUT: ${IACP_POWER_TIMEOUT:-180}
   IACP_PROXMOX_RETRY_ATTEMPTS: ${IACP_PROXMOX_RETRY_ATTEMPTS:-6}
@@ -126,6 +127,102 @@ services:
     cap_drop:
       - ALL
     command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
+    environment:
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
+    volumes:
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-3:
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-3"]
+    environment:
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
+    volumes:
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-4:
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-4"]
+    environment:
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
+    volumes:
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-5:
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-5"]
+    environment:
+      <<: *app-environment
+      IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
+    extra_hosts:
+      - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
+    volumes:
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-6:
+    build: .
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python", "-m", "worker.main", "--worker-id", "worker-6"]
     environment:
       <<: *app-environment
       IACP_WORKDATA_DIR: /var/lib/iacp-controlplane

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 import stat
 from urllib.error import HTTPError
 
@@ -10,6 +11,21 @@ from scripts import go_live
 
 IMAGE_TAG = "a" * 40
 IMAGE_REPOSITORY = "scm.cyberfuel.com/cyberfuel/iacp-controlplane"
+
+
+def test_local_compose_declares_six_workers_with_shared_capacity():
+    compose = (Path(__file__).resolve().parents[1] / "compose.yaml").read_text(encoding="utf-8")
+    workers = re.findall(r"(?m)^  (worker-\d+):$", compose)
+    assert workers == [f"worker-{index}" for index in range(1, 7)]
+    assert "IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-6}" in compose
+    for worker in workers:
+        block = re.search(
+            rf"(?ms)^  {worker}:\n(.*?)(?=^  [a-zA-Z][\w-]*:\n|^volumes:|\Z)",
+            compose,
+        )
+        assert block is not None
+        assert f'"--worker-id", "{worker}"' in block.group(1)
+        assert "IACP_WORKDATA_DIR: /var/lib/iacp-controlplane" in block.group(1)
 
 
 def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/prod-runtime-v1", include_aws=True):

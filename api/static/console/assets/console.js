@@ -17,6 +17,15 @@
     node.classList.toggle("error", error);
   }
 
+  function collectTags(value) {
+    const tags = [...new Set(value.split(",").map((tag) => tag.trim()).filter(Boolean))];
+    const validTag = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+    if (tags.some((tag) => !validTag.test(tag))) {
+      throw new Error("Cada tag debe usar minúsculas, números, guion o guion bajo y tener hasta 63 caracteres.");
+    }
+    return tags;
+  }
+
   function newIdempotencyKey(prefix) {
     if (window.crypto && typeof window.crypto.randomUUID === "function") {
       return `${prefix}-${window.crypto.randomUUID()}`;
@@ -213,11 +222,15 @@
     if (hasCommercialContext && commercialValues.some((value) => !value)) {
       return setMessage("create-message", "Completa los cuatro campos de trazabilidad comercial o déjalos vacíos.", true);
     }
+    let tags;
+    try { tags = collectTags($("vm-tags").value); }
+    catch (error) { return setMessage("create-message", error.message, true); }
     const body = {
       name: $("name").value.trim(),
       plan_id: $("plan").value,
       image_id: $("image").value,
       network_profile: $("network-profile").value,
+      tags,
       access: { ssh_public_keys: ssh ? [ssh] : [] },
       start_on_create: $("started").checked,
     };

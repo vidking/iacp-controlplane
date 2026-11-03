@@ -221,6 +221,15 @@
     return state.networkProfiles.find((profile) => profile.profile_id === id);
   }
 
+  function collectTags(value) {
+    const tags = [...new Set(value.split(",").map((tag) => tag.trim()).filter(Boolean))];
+    const validTag = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+    if (tags.some((tag) => !validTag.test(tag))) {
+      throw new Error("Cada tag debe usar minúsculas, números, guion o guion bajo y tener hasta 63 caracteres.");
+    }
+    return tags;
+  }
+
   async function loadCatalog() {
     const [plansBody, imagesBody, profilesBody] = await Promise.all([
       api("/v1/plans"),
@@ -669,6 +678,7 @@
       plan_id: $("plan").value,
       image_id: $("image").value,
       network_profile: $("network-profile").value,
+      tags: collectTags($("vm-tags").value),
       access: { root_password: password, ssh_public_keys: ssh ? [ssh] : [] },
       start_on_create: $("started").checked,
     };

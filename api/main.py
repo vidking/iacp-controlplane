@@ -255,8 +255,10 @@ def post_operation(request: OperationRequest):
     status_code=202,
     summary="Crear una instancia técnica",
     description=(
-        "Crea una instancia persistida y encola el plan y apply como una operación transparente. "
-        "Use Idempotency-Key para reintentos seguros."
+        "Crea una instancia y encola el aprovisionamiento como una operación transparente. "
+        "El cuerpo admite commercial_context para trazabilidad y tags para etiquetas Proxmox adicionales; "
+        "customer_tag se agrega automáticamente. Consulte los catálogos antes de enviar el request y use "
+        "Idempotency-Key para reintentos seguros. El destino físico lo resuelve el servidor."
     ),
     operation_id="createInstance",
 )

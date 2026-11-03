@@ -112,6 +112,7 @@ label small { color: var(--muted-2); font-size: 9px; line-height: 1.35; font-wei
 .network-profile-note p { margin: 0; color: var(--muted); font-size: 10px; }
 .check-control { display: flex; align-items: center; gap: 8px; width: fit-content; margin-top: 17px; color: #c4d0ce; }
 .check-control input { width: auto; accent-color: var(--cyan); }
+.vm-tags-field { margin-top: 14px; }
 .compact-check { margin: 0; }
 .advanced-card { margin-top: 18px; border: 1px solid #334348; border-radius: 4px; background: rgba(8, 13, 15, .28); }
 .advanced-card summary { padding: 10px 12px; color: var(--cyan); cursor: pointer; font-size: 11px; font-weight: 700; }

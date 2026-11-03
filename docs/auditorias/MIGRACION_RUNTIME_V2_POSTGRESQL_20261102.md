@@ -60,3 +60,29 @@ verificarán imagen, migración PostgreSQL, ocho servicios del stack, seis
 heartbeats y cola vacía en el IACP Control Plane (VM 104). Las cuatro pruebas
 físicas se ejecutarán en dos rondas de hasta dos aprovisionamientos en el
 clúster MNG.
+
+## Adenda del 2026-11-02: seis workers y contrato de tags
+
+Durante la revisión posterior se encontró que el Compose local del repositorio
+todavía declaraba dos workers y concurrencia uno. Se corrigió para declarar
+`worker-1` a `worker-6`, compartir el volumen de trabajo y usar el límite global
+de seis; el Compose de Portainer ya tenía esa capacidad.
+
+También se cerró la diferencia entre el contrato público y la guía: `tags` es
+ahora un arreglo de etiquetas Proxmox adicionales en `POST /v1/instances`,
+`commercial_context.customer_tag` se aplica automáticamente y el nombre no
+genera etiquetas. Swagger documenta patrón y longitud, el request rechaza
+campos extraños y las dos interfaces producen el mismo arreglo JSON. Las guías
+ahora describen las rutas reales de catálogo; no anuncian `/v1/environments` ni
+un selector `environment` en el cuerpo.
+
+| Comprobación adicional | Resultado | Evidencia |
+| --- | --- | --- |
+| Suite API, workers y gates | PASS | `106 passed` contra PostgreSQL 17.6 temporal local; incluye una regresión del Compose local para seis workers y concurrencia seis. |
+| Formulario `/docs` en Chromium | PASS | JSON con tags deduplicados y `customer_tag`; tag inválido bloqueado antes de enviar `POST /v1/instances`. |
+| Compose local | PASS | API + seis workers; `IACP_MAX_CONCURRENT=6`; volumen de trabajo compartido. |
+| Compose Portainer | PASS | API + seis workers; concurrencia seis; Wasabi y PRX apagados. |
+| Imagen y Terraform | PASS | Imagen local `sha256:2a7bc77c96a204b965cb4a1d1e8596c1e5453095e7ee9585c872dcbf189ed0ab`; `terraform validate` pasó para MNG y PRX. |
+| Runtime aislado en contenedores | PASS | PostgreSQL esquema 2, API `ready`, seis heartbeats saludables, `max_concurrent=6`, cero instancias/operaciones/locks; no se llamó Proxmox ni Wasabi. Se retiraron contenedores, red y volúmenes temporales tras verificar. |
+| Sintaxis JavaScript/Python y `git diff --check` | PASS | Sin errores de sintaxis ni whitespace. |
+| IACP Control Plane (VM 104) y clúster MNG | SIN CAMBIOS | Sin despliegue ni aprovisionamientos físicos; las cuatro pruebas siguen pendientes de release integrado. |
