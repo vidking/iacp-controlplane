@@ -15,6 +15,7 @@ from worker.main import (
     execute,
     execute_power,
     execute_reconcile,
+    guest_identity_previously_verified,
     local_variables,
     operation_output,
     physical_presence,
@@ -761,6 +762,137 @@ def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monke
     assert calls[0][1]["instance_id"] == instance_id
     assert calls[0][1]["vmid"] == 40000
     assert calls[0][1]["spec"] == spec
+
+
+def test_power_reboot_reuses_audited_guest_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    instance_id = "power-reboot-verified-instance"
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+            VALUES ('power-reboot-verified-provision', 'provision', 'succeeded', '{}', ?, 'now')
+            """,
+            (instance_id,),
+        )
+        db.execute(
+            """
+            INSERT INTO events(operation_id, kind, status, occurred_at)
+            VALUES ('power-reboot-verified-provision', 'guest.identity.verified', 'succeeded', 'now')
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES ('power-reboot-verified-action', 'power', 'power', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (json.dumps({"command": "power", "power_action": "reboot", "instance_id": instance_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, 'power-reboot-verified-provision', 'power-reboot-verified', 'ubuntu-2404', 40000, 'mng01', 'ready', 'running', '{}', 'now', 'now')
+            """,
+            (instance_id,),
+        )
+
+    class FakePower:
+        def power(self, *_args):
+            return {"action": "reboot", "power_state": "running"}
+
+    monkeypatch.setattr(
+        "worker.main.ensure_guest_identity_for_operation",
+        lambda *_args, **_kwargs: pytest.fail("la identidad verificada no debe depender del Guest Agent tras reboot"),
+    )
+    execute_power(
+        "worker-1",
+        {
+            "operation_id": "power-reboot-verified-action",
+            "payload_json": json.dumps(
+                {"command": "power", "power_action": "reboot", "instance_id": instance_id}
+            ),
+        },
+        FakePower(),
+    )
+    assert guest_identity_previously_verified(instance_id)
+    with database() as db:
+        operation = db.execute(
+            "SELECT status FROM operations WHERE operation_id='power-reboot-verified-action'"
+        ).fetchone()
+    assert operation["status"] == "succeeded"
+
+
+def test_reconcile_closes_reboot_identity_agent_outage_without_rebooting_again(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    instance_id = "reconcile-reboot-verified-instance"
+    source_id = "reconcile-reboot-verified-source"
+    recovery_id = "reconcile-reboot-verified-operation"
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, vmid, stack, created_at, error)
+            VALUES (?, 'power', 'power', 'uncertain', ?, ?, 40001, 'mng01', 'now', 'GUEST_IDENTITY_AGENT_UNAVAILABLE')
+            """,
+            (source_id, json.dumps({"power_action": "reboot", "instance_id": instance_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'reconcile', 'reconcile', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (recovery_id, json.dumps({"instance_id": instance_id, "source_operation_id": source_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, ?, 'reconcile-reboot-verified', 'ubuntu-2404', 40001, 'mng01', 'uncertain', 'unknown', '{}', 'now', 'now')
+            """,
+            (instance_id, source_id),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+            VALUES ('reconcile-reboot-verified-provision', 'provision', 'succeeded', '{}', ?, 'now')
+            """,
+            (instance_id,),
+        )
+        db.execute(
+            """
+            INSERT INTO events(operation_id, kind, status, occurred_at)
+            VALUES ('reconcile-reboot-verified-provision', 'guest.identity.verified', 'succeeded', 'now')
+            """
+        )
+
+    class ObservedRunning:
+        def set_heartbeat(self, _callback):
+            pass
+
+        def power_state(self, node, vmid, name):
+            assert (node, vmid, name) == ('mng01', 40001, 'reconcile-reboot-verified')
+            return {"power_state": "running", "qmp_status": "running", "uptime": 90}
+
+        def power(self, *_args):
+            pytest.fail("la reconciliación no debe repetir el reboot")
+
+    execute_reconcile(
+        "worker-1",
+        {
+            "operation_id": recovery_id,
+            "payload_json": json.dumps(
+                {"command": "reconcile", "instance_id": instance_id, "source_operation_id": source_id}
+            ),
+        },
+        ObservedRunning(),
+    )
+    with database() as db:
+        source = db.execute("SELECT status FROM operations WHERE operation_id=?", (source_id,)).fetchone()
+        recovery = db.execute("SELECT status FROM operations WHERE operation_id=?", (recovery_id,)).fetchone()
+        instance = db.execute("SELECT status, power_state FROM instances WHERE instance_id=?", (instance_id,)).fetchone()
+    assert source["status"] == "succeeded"
+    assert recovery["status"] == "succeeded"
+    assert (instance["status"], instance["power_state"]) == ("ready", "running")
 
 
 def test_heartbeat_refreshes_operation_phase_and_worker_age(tmp_path, monkeypatch):

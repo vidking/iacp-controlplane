@@ -929,6 +929,25 @@ def ensure_guest_identity_for_operation(
         raise GuestIdentityError("GUEST_IDENTITY_AUDIT_FAILED") from error
 
 
+def guest_identity_previously_verified(instance_id: str) -> bool:
+    """Return true only when a successful identity check is in the audit log."""
+
+    with database() as db:
+        row = db.execute(
+            """
+            SELECT 1
+            FROM operations AS operation
+            JOIN events AS event ON event.operation_id = operation.operation_id
+            WHERE operation.instance_id = ?
+              AND event.kind = 'guest.identity.verified'
+              AND event.status = 'succeeded'
+            LIMIT 1
+            """,
+            (instance_id,),
+        ).fetchone()
+    return row is not None
+
+
 def settle_physical_operation(
     operation_id: str,
     command: str,
@@ -1102,10 +1121,20 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         if action in {"start", "shutdown"} and observed.get("power_state") == desired:
             result = {"action": action, "already": True, **observed}
         elif action == "reboot":
-            # A worker crash can happen after qmreboot was accepted but before
-            # its task result was persisted. Running alone cannot prove that a
-            # reboot happened, so never issue a second reboot automatically.
-            raise ProxmoxError("POWER_REBOOT_REQUIRES_REVIEW", uncertain=True)
+            # execute_power reaches guest identity only after Proxmox accepted
+            # the reboot and reported the VM running. If identity was already
+            # verified during provisioning, a temporary post-reboot Guest
+            # Agent outage must not trigger a second reboot during recovery.
+            if (
+                observed.get("power_state") == "running"
+                and source.get("error") == "GUEST_IDENTITY_AGENT_UNAVAILABLE"
+                and guest_identity_previously_verified(instance_id)
+            ):
+                result = {"action": action, "already": True, **observed}
+            else:
+                # Running alone cannot prove the reboot was accepted for any
+                # other failure mode, so keep the recovery fail-closed.
+                raise ProxmoxError("POWER_REBOOT_REQUIRES_REVIEW", uncertain=True)
         else:
             result = client.power(node, int(vmid), name, action)
         if action == "start" and result.get("power_state") == "running":
@@ -1233,7 +1262,11 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     heartbeat(worker_id, "running", operation_id, phase=f"power_{action}")
     result = client.power(node, vmid, row["name"], action)
     power_state = result.get("power_state")
-    if action in {"start", "reboot"} and power_state == "running":
+    if (
+        action in {"start", "reboot"}
+        and power_state == "running"
+        and not guest_identity_previously_verified(instance_id)
+    ):
         try:
             spec = json.loads(row["spec_json"] or "{}")
         except (TypeError, ValueError):
