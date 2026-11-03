@@ -29,6 +29,23 @@ import yaml
 identifier,mac,program_sha=sys.argv[1:]
 assert str(uuid.UUID(identifier))==identifier and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac)
 assert re.fullmatch(r'[0-9a-f]{64}',program_sha)
+def cloud_init_completed(returncode,output,boot_finished):
+    if not boot_finished or not re.search(r'(?m)^status:\s*done\s*$', output):
+        return False
+    if not re.search(r'(?m)^errors:\s*\[\]\s*$', output):
+        return False
+    if returncode == 0:
+        return True
+    if returncode != 2 or 'recoverable_errors:' not in output:
+        return False
+    recoverable = output.split('recoverable_errors:', 1)[1]
+    lines = [line.strip() for line in recoverable.splitlines() if line.strip()]
+    warnings = lines[1:]
+    return bool(
+        len(lines) > 1
+        and lines[0] == 'DEPRECATED:'
+        and all(line.startswith('- ') and 'deprecated' in line.lower() for line in warnings)
+    )
 release=Path('/etc/os-release').read_text()
 assert 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release
 interfaces=[p for p in Path('/sys/class/net').glob('*/address') if p.read_text().strip().lower()==mac]
@@ -61,8 +78,18 @@ with lock.open('a') as stream:
             evidence['ifindex']=ifindex
             write(marker,json.dumps(evidence,sort_keys=True)+'\n')
         sys.exit(0)
-    subprocess.run(['/usr/bin/cloud-init','status','--wait'],check=True,capture_output=True,timeout=90)
-    assert Path('/var/lib/cloud/instance/boot-finished').is_file()
+    cloud_init = subprocess.run(
+        ['/usr/bin/cloud-init', 'status', '--wait', '--long'],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert cloud_init_completed(
+        cloud_init.returncode,
+        cloud_init.stdout or '',
+        Path('/var/lib/cloud/instance/boot-finished').is_file(),
+    )
     config=yaml.safe_load(Path('/etc/netplan/50-cloud-init.yaml').read_text())['network']
     assert config['version']==2 and set(config)<= {'version','renderer','ethernets'}
     assert config.get('renderer','networkd')=='networkd' and len(config['ethernets'])==1
