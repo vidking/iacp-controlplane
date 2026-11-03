@@ -12,6 +12,7 @@ from scripts.purge_e2e_run import (
     _load_evidence,
     _sql_placeholders,
     _verify_state,
+    _verify_vmid_leases,
 )
 from scripts import e2e_matrix
 
@@ -69,6 +70,52 @@ def _resource(name: str, vmid: int) -> dict:
 
 def test_purge_sql_placeholders_match_all_lifecycle_operation_ids():
     assert _sql_placeholders(72).count("?") == 72
+
+
+def test_vmid_leases_accept_reuse_when_current_lease_is_released():
+    instances = []
+    provisions = {}
+    latest = {}
+    for index in range(16):
+        vmid = 30000 + index % 6
+        operation_id = f"provision-{index:02d}"
+        instance_id = f"instance-{index:02d}"
+        timestamp = f"2026-11-03T12:{index:02d}:00+00:00"
+        instances.append({"instance_id": instance_id, "vmid": vmid})
+        provisions[instance_id] = {"operation_id": operation_id, "started_at": timestamp, "created_at": timestamp}
+        latest[vmid] = {"vmid": vmid, "operation_id": operation_id, "status": "released"}
+
+    result = _verify_vmid_leases(instances, provisions, list(latest.values()))
+
+    assert result == {
+        "unique_vmids": 6,
+        "reused_instance_allocations": 10,
+        "current_leases_released": True,
+    }
+
+
+def test_vmid_lease_reuse_refuses_a_released_but_stale_lease():
+    instances = [
+        {"instance_id": "instance-old", "vmid": 30001},
+        {"instance_id": "instance-new", "vmid": 30001},
+    ]
+    provisions = {
+        "instance-old": {"operation_id": "provision-old", "created_at": "2026-11-03T12:00:00+00:00"},
+        "instance-new": {"operation_id": "provision-new", "created_at": "2026-11-03T12:01:00+00:00"},
+    }
+    leases = [{"vmid": 30001, "operation_id": "provision-old", "status": "released"}]
+
+    with pytest.raises(PurgeRefused, match="no corresponde al último aprovisionamiento"):
+        _verify_vmid_leases(instances, provisions, leases)
+
+
+def test_vmid_lease_reuse_refuses_a_held_or_stale_lease():
+    instances = [{"instance_id": "instance-1", "vmid": 30001}]
+    provisions = {"instance-1": {"operation_id": "provision-1", "created_at": "2026-11-03T12:00:00+00:00"}}
+    leases = [{"vmid": 30001, "operation_id": "provision-1", "status": "held"}]
+
+    with pytest.raises(PurgeRefused, match="vigente no está liberado"):
+        _verify_vmid_leases(instances, provisions, leases)
 
 
 def test_purge_run_names_cover_the_16_unique_image_plan_pairs():
