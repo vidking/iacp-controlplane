@@ -47,7 +47,7 @@ def isolated_postgres_schema(monkeypatch, tmp_path):
     monkeypatch.setenv("IACP_ROOT_PASSWORD_MIN_LENGTH", "12")
     monkeypatch.setenv("IACP_API_TOKEN", "")
     monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "0")
-    monkeypatch.setenv("IACP_MAX_CONCURRENT", "2")
+    monkeypatch.setenv("IACP_MAX_CONCURRENT", "6")
     monkeypatch.setenv("IACP_MAX_QUEUE_DEPTH", "0")
     monkeypatch.delenv("IACP_PRX_ENABLED", raising=False)
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)

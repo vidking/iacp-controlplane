@@ -54,26 +54,9 @@
   }
 
   async function loadCatalog() {
-    const environmentsBody = await api("/v1/environments");
-    const environmentSelect = $("environment");
-    const currentEnvironment = environmentSelect.value;
-    environmentSelect.innerHTML = "";
-    const environments = environmentsBody.environments || [];
-    environments.forEach((environment) => {
-      const option = document.createElement("option");
-      option.value = environment.environment;
-      option.textContent = environment.label;
-      environmentSelect.append(option);
-    });
-    const selectedEnvironment = environments.some((item) => item.environment === currentEnvironment)
-      ? currentEnvironment
-      : (environmentsBody.default_environment || environments[0]?.environment || "");
-    environmentSelect.value = selectedEnvironment;
-    if (!selectedEnvironment) throw new Error("No hay entornos habilitados para esta API.");
-    const environmentQuery = `?environment=${encodeURIComponent(selectedEnvironment)}`;
     const [imagesBody, plansBody, profilesBody] = await Promise.all([
-      api(`/v1/images${environmentQuery}`),
-      api(`/v1/plans${environmentQuery}`),
+      api("/v1/images"),
+      api("/v1/plans"),
       api("/v1/network-profiles"),
     ]);
     const imageSelect = $("image");
@@ -107,7 +90,10 @@
   }
 
   function updateNetworkProfileHelp() {
-    $("network-profile-help").textContent = "DHCP; no se envían direcciones IP ni gateway desde el consumidor.";
+    const profile = $("network-profile").value;
+    $("network-profile-help").textContent = profile === "prod_static"
+      ? "NetBox asignará la IP libre del /24 autorizado y x.x.x.1 será el gateway."
+      : "DHCP de laboratorio; no se envía una IP desde el consumidor.";
   }
 
   function renderWorkers(body) {
@@ -139,7 +125,7 @@
     }
     node.innerHTML = body.instances.map((instance) => `
       <div class="instance-row ${instance.instance_id === state.selectedId ? "selected" : ""}" data-instance-id="${escapeHtml(instance.instance_id)}">
-        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(instance.environment || "lab")} · ${escapeHtml(instance.image_id || instance.image)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
+        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(instance.image_id || instance.image)} · ${escapeHtml(instance.stack)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
         <div class="instance-meta"><span class="badge ${statusClass(instance.status)}">${escapeHtml(instance.status)}</span><span class="pill">${escapeHtml(instance.power_state || "unknown")}</span></div>
       </div>`).join("");
     node.querySelectorAll("[data-instance-id]").forEach((item) => item.addEventListener("click", () => selectInstance(item.dataset.instanceId)));
@@ -168,10 +154,11 @@
       $("detail-status").textContent = instance.status;
       $("detail-status").className = `badge ${statusClass(instance.status)}`;
       $("detail-facts").innerHTML = [
-        ["Instance ID", instance.instance_id], ["Entorno", instance.environment || "lab"], ["VMID", instance.vmid ?? "pendiente"],
+        ["Instance ID", instance.instance_id], ["VMID", instance.vmid ?? "pendiente"],
+        ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"],
         ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image],
         ["vCPU", instance.spec.vcpus], ["Memoria", `${instance.spec.memory_mb} MB`],
-        ["Disco", `${instance.spec.disk_gb} GB`], ["Tags", instance.spec.tags?.join(", ") || "—"],
+        ["Disco", `${instance.spec.disk_gb} GB`],
       ].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
       $("operation-output").textContent = operationPayload(instance.latest_operation || { status: "sin operación" });
       if (instance.vmid && !["pending", "provisioning", "deleting", "deleted"].includes(instance.status)) {
@@ -221,17 +208,26 @@
     if (!state.token) return setMessage("create-message", "Autoriza primero la API.", true);
     const ssh = $("ssh-key").value.trim();
     const password = $("root-password").value;
+    const commercialValues = ["customer-id", "customer-tag", "order-id", "product-id"].map((id) => $(id).value.trim());
+    const hasCommercialContext = commercialValues.some(Boolean);
+    if (hasCommercialContext && commercialValues.some((value) => !value)) {
+      return setMessage("create-message", "Completa los cuatro campos de trazabilidad comercial o déjalos vacíos.", true);
+    }
     const body = {
       name: $("name").value.trim(),
-      environment: $("environment").value,
       plan_id: $("plan").value,
       image_id: $("image").value,
       network_profile: $("network-profile").value,
-      tags: $("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean),
       access: { ssh_public_keys: ssh ? [ssh] : [] },
       start_on_create: $("started").checked,
     };
     if (password) body.access.root_password = password;
+    if (hasCommercialContext) {
+      body.commercial_context = {
+        customer_id: commercialValues[0], customer_tag: commercialValues[1],
+        order_id: commercialValues[2], product_id: commercialValues[3],
+      };
+    }
     try {
       const result = await api("/v1/instances", {
         method: "POST",
@@ -303,7 +299,6 @@
   $("instance-form").addEventListener("submit", createInstance);
   $("refresh-instances").addEventListener("click", loadInstances);
   $("refresh-observability").addEventListener("click", loadObservability);
-  $("environment").addEventListener("change", () => loadCatalog().catch((error) => setMessage("auth-message", error.message, true)));
   $("network-profile").addEventListener("change", updateNetworkProfileHelp);
   $("refresh-detail").addEventListener("click", refreshDetail);
   $("delete-button").addEventListener("click", destroyInstance);

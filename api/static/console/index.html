@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light">
     <title>IACP Control Plane · Consola</title>
-    <link rel="stylesheet" href="/console/assets/console.css">
+    <link rel="stylesheet" href="/console/assets/console.css?v=20261102-workers6">
   </head>
   <body>
     <header class="masthead">
       <div class="brand-mark">IACP</div>
       <div>
-        <p class="eyebrow">CYBERFUEL · IACP CONTROL PLANE</p>
+        <p class="eyebrow">CYBERFUEL · CONTROL PLANE</p>
         <h1>Consola de infraestructura</h1>
       </div>
       <div class="header-links">
@@ -64,7 +64,7 @@
           <article class="card">
             <div class="section-heading">
               <div><p class="eyebrow">APROVISIONAMIENTO</p><h3>Nueva instancia</h3></div>
-              <span class="pill">Entorno lógico · VMID asignado por el orquestador</span>
+              <span class="pill">MNG · mng01 · VMID 40001+</span>
             </div>
             <form id="instance-form" class="form-grid">
               <label>Nombre
@@ -75,9 +75,6 @@
               </label>
               <label>Imagen
                 <select id="image"><option value="ubuntu-2404">ubuntu-2404</option></select>
-              </label>
-              <label>Entorno lógico
-                <select id="environment" required><option value="">Autoriza para cargar entornos</option></select>
               </label>
               <label>Perfil de red
                 <select id="network-profile" required><option value="lab_dhcp">Lab_DHCP · red de laboratorio</option></select>
@@ -90,9 +87,18 @@
               <label class="full-width">Clave pública SSH (opcional; una línea)
                 <textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea>
               </label>
-              <label class="full-width">Tags de Proxmox (opcional; separados por coma)
-                <input id="tags" placeholder="cl-105, kvm-001, postal">
-                <small class="hint">Se aplican como etiquetas descriptivas; no se agregan automáticamente.</small>
+              <div class="full-width form-subheading">Trazabilidad comercial (opcional; completar los cuatro)</div>
+              <label>Customer ID
+                <input id="customer-id" placeholder="CL-0000">
+              </label>
+              <label>Customer tag
+                <input id="customer-tag" pattern="[a-z0-9][a-z0-9_-]{0,62}" placeholder="cl-0000">
+              </label>
+              <label>Order ID
+                <input id="order-id" placeholder="ORD-1001">
+              </label>
+              <label>Product ID
+                <input id="product-id" placeholder="KVM-2">
               </label>
               <div class="form-actions full-width">
                 <button class="primary" type="submit">Crear instancia</button>

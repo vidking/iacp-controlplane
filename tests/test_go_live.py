@@ -21,7 +21,7 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_DEFAULT_ENVIRONMENT": "lab",
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_PRX_ENABLED": "0",
-        "IACP_MAX_CONCURRENT": "1",
+        "IACP_MAX_CONCURRENT": "6",
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
         "IACP_REQUIRE_API_TOKEN": "1",
@@ -32,6 +32,10 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "PGPASSWORD": database_password,
         "IACP_API_TOKEN": "api-token-with-sufficient-entropy",
         "IACP_PROXMOX_MNG_API_TOKEN": "proxmox-token-with-entropy",
+        "IACP_PROXMOX_MNG_ENDPOINT": "https://mng01.cyberfuel.com:8006/",
+        "IACP_PROXMOX_API_TOKEN": "proxmox-token-with-entropy",
+        "IACP_PROXMOX_ENDPOINT": "https://mng01.cyberfuel.com:8006/",
+        "IACP_TERRAFORM_DIR": "environments/mng01",
         "IACP_WASABI_ENABLED": "true" if wasabi else "false",
         "IACP_TFSTATE_BUCKET": bucket if wasabi else "",
         "IACP_TFSTATE_ENDPOINT": "https://s3.us-east-1.wasabisys.com" if wasabi else "",
@@ -46,15 +50,22 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "PGDATABASE": database_name,
         "PGUSER": "iacp_test",
         "PGPASSWORD": database_password,
+        "IACP_MAX_CONCURRENT": "6",
+        "IACP_PROXMOX_MNG_API_TOKEN": "proxmox-token-with-entropy",
+        "IACP_PROXMOX_MNG_ENDPOINT": "https://mng01.cyberfuel.com:8006/",
+        "IACP_PROXMOX_API_TOKEN": "proxmox-token-with-entropy",
+        "IACP_PROXMOX_ENDPOINT": "https://mng01.cyberfuel.com:8006/",
+        "IACP_TERRAFORM_DIR": "environments/mng01",
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
     }
     worker_environment["IACP_WASABI_ENABLED"] = "true" if wasabi else "false"
     if include_aws and wasabi:
         worker_environment.update({"IACP_WASABI_ACCESS_KEY_ID": "access-key-value", "IACP_WASABI_SECRET_ACCESS_KEY": "secret-key-value"})
+    worker_names = tuple(f"worker-{number}" for number in range(1, 7))
     services = {
         name: {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
-        for name in ("api", "worker-1", "worker-2")
+        for name in ("api", *worker_names)
     }
     services["api"]["environment"] = api_environment
     services["postgres"] = {
@@ -68,10 +79,9 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
     alias = "iacp-controlplane-api-prod" if stage == "production" else "iacp-controlplane-api-dev"
     services["api"]["networks"] = {"internal": {}, "proxy": {"aliases": [alias]}}
     services["api"]["extra_hosts"] = ["mng01.cyberfuel.com=192.0.2.10"]
-    services["worker-1"]["environment"] = worker_environment
-    services["worker-2"]["environment"] = worker_environment
-    services["worker-1"]["extra_hosts"] = ["mng01.cyberfuel.com=192.0.2.10"]
-    services["worker-2"]["extra_hosts"] = ["mng01.cyberfuel.com=192.0.2.10"]
+    for name in worker_names:
+        services[name]["environment"] = worker_environment
+        services[name]["extra_hosts"] = ["mng01.cyberfuel.com=192.0.2.10"]
     volume_suffix = "prod" if stage == "production" else "dev"
     return {
         "services": services,
@@ -94,7 +104,7 @@ def _manifest(stage="production", **overrides):
         "backend": "s3" if stage == "production" else "local",
         "state_bucket": "iacp-cyberfuel" if stage == "production" else "",
         "state_prefix": "iacp/prod-runtime-v1" if stage == "production" else "",
-        "max_concurrent": 1,
+        "max_concurrent": 6,
         "vmid_min": 30000 if stage == "production" else 40000,
         "vmid_max": 39999 if stage == "production" else 49999,
         "image_repository": IMAGE_REPOSITORY,
@@ -122,7 +132,7 @@ def test_production_configuration_passes_policy(tmp_path):
 
 def test_development_rejects_wasabi_credentials(tmp_path):
     config = _configuration(stage="develop", include_aws=False)
-    for name in ("worker-1", "worker-2"):
+    for name in (f"worker-{number}" for number in range(1, 7)):
         config["services"][name]["environment"].update({
             "IACP_WASABI_ACCESS_KEY_ID": "unexpected-access",
             "IACP_WASABI_SECRET_ACCESS_KEY": "unexpected-secret",
@@ -170,7 +180,7 @@ def test_production_domain_can_run_lab_with_local_state_and_wasabi_disabled(tmp_
         "IACP_TFSTATE_REGION": "",
         "IACP_TFSTATE_PREFIX": "",
     })
-    for name in ("worker-1", "worker-2"):
+    for name in (f"worker-{number}" for number in range(1, 7)):
         config["services"][name]["environment"]["IACP_WASABI_ENABLED"] = "false"
 
     def forbidden_wasabi_request(*args, **kwargs):
@@ -217,6 +227,15 @@ def test_production_rejects_old_wasabi_bucket_name(tmp_path):
             _configuration(bucket="cyberfuel-iacp-tfstate-lab"),
             _private_env(tmp_path),
         )
+
+
+def test_all_six_workers_share_additional_protected_vmids(tmp_path):
+    config = _configuration()
+    config["services"]["api"]["environment"]["IACP_ADDITIONAL_PROTECTED_VMIDS"] = "31001,31002"
+    config["services"]["worker-4"]["environment"]["IACP_ADDITIONAL_PROTECTED_VMIDS"] = "31001"
+
+    with pytest.raises(go_live.GateError, match="lista de VMID protegidos"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
 
 
 def test_preflight_rejects_candidate_without_a_dedicated_mng_token(tmp_path):
@@ -335,7 +354,7 @@ def test_external_health_retries_until_traefik_serves_the_candidate(monkeypatch)
 def test_verify_checks_runtime_contract_and_served_revision(monkeypatch):
     services = [
         {"service": name, "state": "running", "health": "healthy" if name in {"postgres", "api"} else "", "image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
-        for name in ("postgres", "api", "worker-1", "worker-2")
+        for name in ("postgres", "api", *(f"worker-{number}" for number in range(1, 7)))
     ]
     monkeypatch.setattr(go_live, "_inventory", lambda *args: {"containers": services})
     monkeypatch.setattr(
@@ -346,6 +365,9 @@ def test_verify_checks_runtime_contract_and_served_revision(monkeypatch):
             "api_version": "1.0.0",
             "provision_path": True,
             "build_revision": IMAGE_TAG,
+            "schema_version": 2,
+            "ip_allocations_table": True,
+            "worker_ids": [f"worker-{number}" for number in range(1, 7)],
         }),
     )
     result = go_live._verify({"project": "iacp-controlplane-prod-v1", "image_tag": IMAGE_TAG}, Path("compose.yml"), Path("runtime.env"))
@@ -540,8 +562,10 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
     config = {
         "services": {
             "api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
-            "worker-1": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
-            "worker-2": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            **{
+                f"worker-{number}": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
+                for number in range(1, 7)
+            },
             "postgres": {"image": "postgres:17.6"},
         }
     }
@@ -554,8 +578,10 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
     monkeypatch.setattr(go_live, "_run", inspect)
     verified = go_live._verify_preloaded_images(config)
 
-    assert [item["service"] for item in verified] == ["api", "postgres", "worker-1", "worker-2"]
-    assert len(calls) == 4
+    assert [item["service"] for item in verified] == [
+        "api", "postgres", *(f"worker-{number}" for number in range(1, 7))
+    ]
+    assert len(calls) == 8
     assert all(call[0][:3] == ["docker", "image", "inspect"] for call in calls)
 
 

@@ -9,8 +9,6 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
 from typing import Callable
 
-from api.targets import EnvironmentError, proxmox_credentials
-
 
 class ProxmoxError(RuntimeError):
     def __init__(self, message: str, status: int | None = None, *, uncertain: bool = False):
@@ -19,24 +17,38 @@ class ProxmoxError(RuntimeError):
         self.uncertain = uncertain
 
 
-def credentials(environment: str = "lab") -> tuple[str, str]:
+def credentials() -> tuple[str, str]:
+    endpoint_env = os.getenv("IACP_PROXMOX_ENDPOINT") or os.getenv("PROXMOX_VE_ENDPOINT")
+    token_env = os.getenv("IACP_PROXMOX_API_TOKEN") or os.getenv("PROXMOX_VE_API_TOKEN")
+    if endpoint_env or token_env:
+        if not endpoint_env or not token_env:
+            raise ProxmoxError("credencial Proxmox por entorno incompleta")
+        return str(endpoint_env).rstrip("/"), str(token_env)
+
+    path = os.getenv("IACP_PROXMOX_CREDENTIALS_FILE", "/run/secrets/proxmox_credentials")
     try:
-        return proxmox_credentials(environment)
-    except EnvironmentError as error:
-        raise ProxmoxError(error.code) from error
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise ProxmoxError(f"no se pudo leer credencial Proxmox: {error}") from error
+    endpoint = data.get("PROXMOX_VE_ENDPOINT") or data.get("endpoint")
+    token = data.get("PROXMOX_VE_API_TOKEN") or data.get("api_token")
+    if not endpoint or not token:
+        raise ProxmoxError("credencial Proxmox incompleta")
+    return str(endpoint).rstrip("/"), str(token)
 
 
-def load_environment(environment: str = "lab") -> tuple[str, str]:
-    endpoint, token = credentials(environment)
+def load_environment() -> tuple[str, str]:
+    endpoint, token = credentials()
     os.environ["PROXMOX_VE_ENDPOINT"] = endpoint
     os.environ["PROXMOX_VE_API_TOKEN"] = token
     return endpoint, token
 
 
 class ProxmoxClient:
-    def __init__(self, endpoint: str | None = None, token: str | None = None, *, environment: str = "lab"):
+    def __init__(self, endpoint: str | None = None, token: str | None = None):
         if endpoint is None or token is None:
-            endpoint, token = credentials(environment)
+            endpoint, token = credentials()
         endpoint = endpoint.rstrip("/")
         self.base = endpoint if endpoint.endswith("/api2/json") else f"{endpoint}/api2/json"
         self.token = token

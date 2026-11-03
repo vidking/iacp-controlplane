@@ -15,11 +15,15 @@ instance = {
   cpu_hotplugged         = 2
   memory_mb              = 2048
   network_bridge         = "vmbr0"
+  network_mode           = "dhcp"
+  vlan_id                = null
+  ipv4_cidr              = null
+  ipv4_gateway           = null
   cloudinit_datastore_id = "local-lvm"
   cloudinit_username     = "root"
   ssh_public_keys        = ["ssh-ed25519 AAAA... reemplazar"]
   guest_agent_enabled    = false
   started                = false
-  tags                   = []
+  tags                   = ["iacp", "mng01"]
 }
 

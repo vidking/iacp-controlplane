@@ -6,16 +6,7 @@
     <meta name="color-scheme" content="light">
     <meta name="description" content="Referencia y consola operativa de IACP Control Plane.">
     <link rel="icon" href="/docs/assets/favicon.svg" type="image/svg+xml">
-    <script>
-      (() => {
-        const requested = new URLSearchParams(window.location.search).get("theme");
-        const override = ["develop", "production"].includes(requested) ? requested : null;
-        const host = window.location.hostname.toLowerCase();
-        const domainTheme = host === "iac.cyberfuel.com" ? "production" : "develop";
-        document.documentElement.dataset.theme = override || domainTheme;
-      })();
-    </script>
-    <link rel="stylesheet" href="/docs/assets/docs.css?v=20261102-5">
+    <link rel="stylesheet" href="/docs/assets/docs.css?v=20261102-workers6">
     <title>IACP Control Plane · Referencia de API</title>
   </head>
   <body>
@@ -34,7 +25,7 @@
     <div class="portal-shell">
       <aside class="sidebar" aria-label="Navegación de referencia">
         <div class="sidebar-intro">
-          <p class="eyebrow" id="environment-label">CENTRO DE DESARROLLO</p>
+          <p class="eyebrow">CENTRO DE DESARROLLO</p>
           <h2>Referencia de API</h2>
         </div>
 
@@ -76,10 +67,10 @@
           <div class="page-heading">
             <p class="eyebrow">APROVISIONAMIENTO · CATÁLOGO AUTORIZADO</p>
             <h1>Crear y administrar máquinas virtuales</h1>
-            <p>Selecciona el entorno lógico, un plan y un sistema operativo del catálogo, añade nombre, acceso y tags, y crea la VM. La asociación con Proxmox y los parámetros certificados permanecen en el orquestador.</p>
+            <p>Selecciona un plan y un sistema operativo del catálogo real, introduce nombre y acceso y crea la VM con identidad autorizada. El cluster y los parámetros certificados se mantienen en el orquestador.</p>
           </div>
 
-          <nav class="step-strip" aria-label="Pasos de aprovisionamiento">
+          <div class="step-strip" aria-label="Pasos de aprovisionamiento">
             <button data-step-link="access">1. Acceso</button>
             <button data-step-link="configure">2. Configurar máquina virtual</button>
             <button data-step-link="json">3. JSON</button>
@@ -89,11 +80,11 @@
             <button data-step-link="ssh">7. SSH</button>
             <button data-step-link="lifecycle">8. Lifecycle</button>
             <button data-step-link="delete">9. Eliminar</button>
-          </nav>
+          </div>
 
           <div class="portal-note">
             <strong>Tenant técnico autorizado.</strong>
-            <span>La API aplica un contrato técnico. Los tags son opcionales y descriptivos; el servidor resuelve el catálogo y el destino físico.</span>
+            <span>La API no evalúa políticas comerciales para aprovisionar. Los datos de trazabilidad son opcionales y no alteran el plan, la Golden Image ni el nodo seleccionado.</span>
             <span><code>Idempotency-Key</code> es opcional; la consola la genera para reintentos seguros y nunca muestra la contraseña enviada.</span>
           </div>
 
@@ -124,7 +115,7 @@
             <summary><span class="step-number">2.</span> Configurar máquina virtual <span class="summary-status" id="catalog-summary">Consulta el catálogo</span></summary>
             <div class="step-body">
               <div class="catalog-toolbar">
-              <p><a href="#access" data-step-link="access">Autorizar</a>: introduce tu Bearer una vez y pulsa consultar catálogo.</p>
+                <p><a href="#access" data-step-link="access">Authorize</a>: introduce tu Bearer una vez y pulsa consultar catálogo.</p>
                 <button class="button secondary" id="load-catalog" type="button">Consultar catálogo técnico</button>
               </div>
               <form id="create-form" class="create-form">
@@ -134,8 +125,8 @@
                   <label>Nombre obligatorio<input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="mi-servidor-001"><small>1–63 caracteres: minúsculas, números y guiones; comienza y termina con letra o número.</small></label>
                 </div>
                 <div class="form-grid two-columns network-form-grid">
-                  <label>Entorno<select id="environment" required><option value="">Consulta los entornos habilitados</option></select><small>El servidor decide el destino físico asociado a este entorno.</small></label>
-                  <label>Perfil de red<select id="network-profile" required><option value="lab_dhcp">DHCP</option></select><small id="network-profile-help">La VM recibe su configuración por DHCP.</small></label>
+                  <label>Perfil de red<select id="network-profile" required><option value="lab_dhcp">Lab_DHCP · red de laboratorio</option></select><small id="network-profile-help">La VM recibe su configuración por DHCP en el entorno de laboratorio.</small></label>
+                  <div class="network-profile-note"><strong>Asignación controlada</strong><p>El consumidor elige el perfil, no envía IP, gateway ni prefijo. <code>Prod_Static</code> solo aparece habilitado cuando el prefijo NetBox autorizado está configurado.</p></div>
                 </div>
                 <div class="form-grid two-columns access-form-grid">
                   <label>Contraseña root obligatoria<input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small>Se entrega por bootstrap seguro, nunca se devuelve y debe tener al menos 12 caracteres en producción.</small></label>
@@ -143,9 +134,14 @@
                 </div>
                 <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
                 <details class="advanced-card">
-                  <summary>Tags de la máquina virtual (opcional)</summary>
-                  <p>Se aplican como metadata descriptiva en Proxmox. Escribe una etiqueta por coma; por ejemplo <code>cl-105, kvm-001, postal</code>.</p>
-                  <label>Tags<input id="tags" placeholder="cl-105, kvm-001, postal"><small>Minúsculas, números, guion y guion bajo. No se agregan tags automáticamente.</small></label>
+                  <summary>Trazabilidad avanzada de la API (opcional)</summary>
+                  <p>Se conserva para auditoría, pero no concede permisos ni cambia el plan técnico.</p>
+                  <div class="form-grid four-columns">
+                    <label>Customer ID<input id="customer-id" placeholder="CL-0000"></label>
+                    <label>Customer tag<input id="customer-tag" pattern="[a-z0-9][a-z0-9_-]{0,62}" placeholder="cl-0000"></label>
+                    <label>Order ID<input id="order-id" placeholder="ORD-1001"></label>
+                    <label>Product ID<input id="product-id" placeholder="KVM-2"></label>
+                  </div>
                 </details>
                 <div class="form-actions"><button class="button primary large" id="create-button" type="submit">Crear máquina virtual</button><span id="create-message" class="form-hint"></span></div>
               </form>
@@ -153,7 +149,7 @@
           </details>
 
           <details class="step-card" id="step-json" data-step="json">
-            <summary><span class="step-number">3.</span> JSON de ejemplo <span class="summary-status">Contrato API v1</span></summary>
+            <summary><span class="step-number">3.</span> JSON de ejemplo <span class="summary-status">Cuerpo del contrato v1</span></summary>
             <div class="step-body code-panel"><p>Este es el cuerpo JSON que se enviará a <code>POST /v1/instances</code>. La contraseña se redacta en la vista y solo se entrega dentro de la solicitud real.</p><div class="code-toolbar"><button class="button secondary" id="copy-json" type="button">Copiar JSON</button></div><pre id="json-preview">Completa el formulario para generar el JSON de ejemplo.</pre></div>
           </details>
 
@@ -236,29 +232,27 @@
         </section>
 
         <section class="route-view hidden" data-view="guides">
-          <div class="page-heading compact"><p class="eyebrow">GUÍAS DE USO</p><h1>Referencia técnica completa</h1><p>Consulta el contrato, genera una solicitud de ejemplo y sigue el aprovisionamiento desde esta página.</p></div>
+          <div class="page-heading compact"><p class="eyebrow">GUÍAS DE USO</p><h1>Referencia técnica completa</h1><p>La experiencia visual explica el contrato real sin convertir la trazabilidad comercial en un requisito operativo.</p></div>
           <div class="guide-stack">
-            <details class="guide-card" open><summary>Contrato estable v1</summary><div><p>Consulta <code>GET /v1/environments</code>, <code>GET /v1/plans</code> y <code>GET /v1/images</code>. Crea con <code>POST /v1/instances</code>. El consumidor envía un entorno lógico, un plan, una imagen y tags opcionales; no envía clúster ni nodo.</p><pre>Base URL actual: <span id="guide-base-url">https://dev-cyberfuel.com</span>
+            <details class="guide-card" open><summary>Contrato estable v1</summary><div><p>Consulta <code>GET /v1/plans</code> y <code>GET /v1/images</code>. Crea con <code>POST /v1/instances</code>, usando <code>plan_id</code> e <code>image_id</code>. El consumidor no envía nodo, vCPU, memoria ni disco: esos valores vienen del catálogo certificado.</p><pre>Base URL actual: <span id="guide-base-url">https://dev-iac.cyberfuel.com</span>
 POST /v1/instances
-Idempotency-Key: alta-kvm-001
+Idempotency-Key: alta-ORD-1001
 Authorization: Bearer &lt;token&gt;</pre></div></details>
-            <details class="guide-card"><summary>Cómo consumir la API</summary><div><p>En desarrollo la base es <code id="guide-base-url-inline">https://dev-cyberfuel.com</code>; producción usa <code>https://iac.cyberfuel.com</code>. Ambos mantienen las rutas y cuerpos de <code>/v1</code>.</p><pre># 1) catálogo
-curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/environments
+            <details class="guide-card"><summary>Cómo consumir la API</summary><div><p>En desarrollo la base es <code id="guide-base-url-inline">https://dev-iac.cyberfuel.com</code>; al promover el mismo contrato la base será <code>https://iac.cyberfuel.com</code>. La versión, rutas y cuerpos permanecen en <code>/v1</code>.</p><pre># 1) catálogo
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/network-profiles
 
 # 2) crear y seguir
 curl -X POST BASE/v1/instances -H "Authorization: Bearer &lt;TOKEN&gt;" \
-  -H "Idempotency-Key: alta-kvm-001" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: alta-ORD-1001" -H "Content-Type: application/json" \
   --data @create-instance.json
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/operations/&lt;operation_id&gt;</pre></div></details>
             <details class="guide-card"><summary>Comandos de lifecycle y eliminación</summary><div><p><code>ready</code> significa aprovisionada y encendida; <code>stopped</code> significa aprovisionada pero apagada. Ambas conservan la misma identidad y pueden gestionarse con lifecycle. El destroy es asíncrono y siempre debe seguirse por su <code>operation_id</code>; los fallos sin VM física también pueden limpiarse de forma lógica y auditable.</p><pre>curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/start
 curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
 curl -X POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
 curl -X DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
-            <details class="guide-card"><summary>Entornos, catálogo y tags</summary><div><p><code>GET /v1/environments</code> muestra los nombres lógicos habilitados. El endpoint productivo inicia en <code>lab</code>, asociado a MNG; PRX permanece deshabilitado hasta configurarlo y autorizarlo. Desarrollo solo ofrece <code>lab</code>. El JSON nunca recibe clúster ni nodo.</p><p>El perfil de red disponible es <code>lab_dhcp</code>. No se envían direcciones IP, prefijos ni gateways. Las etiquetas incluidas en <code>tags</code> se aplican tal como las envía el consumidor; no tienen significado comercial obligatorio.</p><pre class="api-example">curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/environments
-curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
+            <details class="guide-card"><summary>Catálogo de planes, imágenes y red</summary><div><p>Consulta <code>GET /v1/plans</code>, <code>GET /v1/images</code> y <code>GET /v1/network-profiles</code> para conocer las opciones certificadas. Elige un <code>plan_id</code>, un <code>image_id</code> y un <code>network_profile</code>; la API conserva los valores técnicos y no requiere que el consumidor conozca la infraestructura interna.</p><p><code>lab_dhcp</code> es el perfil de laboratorio. <code>prod_static</code> asigna una IP libre del prefijo `/24` autorizado en NetBox, reserva <code>x.x.x.1</code> como gateway y no acepta que el consumidor envíe una IP arbitraria. Permanece deshabilitado hasta completar la configuración del IPAM.</p><p>Las imágenes base son inmutables. <code>customer_tag</code>, cuando existe, se conserva como metadata de trazabilidad.</p><pre class="api-example">curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/plans
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/images
 curl -H "Authorization: Bearer &lt;TOKEN&gt;" BASE/v1/network-profiles</pre></div></details>
             <details class="guide-card"><summary>Acceso, contraseña y SSH</summary><div><p>La consola pide contraseña para el usuario inicial <code>root</code> y replica el flujo operativo de referencia. La API también acepta SSH-only para automatizaciones. La contraseña se transporta mediante un secreto temporal y se elimina al terminar el aprovisionamiento.</p><p>Ubuntu y AlmaLinux usan <code>root</code>; el portal nunca muestra la contraseña después del envío.</p></div></details>
@@ -272,16 +266,7 @@ GET BASE/v1/instances/&lt;instance_id&gt;/power</pre></div></details>
 POST BASE/v1/instances/&lt;instance_id&gt;/power/shutdown
 POST BASE/v1/instances/&lt;instance_id&gt;/power/reboot
 DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
-            <details class="guide-card"><summary>Formato claro del JSON</summary><div><p>El objeto mantiene ocho campos de nivel superior. <code>tags</code> es un array porque el consumidor puede enviar cero, una o varias etiquetas sin agregar nuevos campos al contrato. Swagger y el generador de esta página usan el mismo modelo.</p><pre class="api-example">{
-  "name": "cliente-cl-105",
-  "environment": "lab",
-  "plan_id": "kvm-2",
-  "image_id": "ubuntu-2404",
-  "network_profile": "lab_dhcp",
-  "tags": ["cl-105", "kvm-001", "postal"],
-  "access": {"root_password": "CAMBIAR_POR_SECRETO", "ssh_public_keys": []},
-  "start_on_create": true
-}</pre><p>El nombre y los tags son independientes. La API solo aplica los tags enviados; no genera etiquetas automáticamente.</p></div></details>
+            <details class="guide-card"><summary>Trazabilidad avanzada de API</summary><div><p><code>customer_id</code>, <code>customer_tag</code>, <code>order_id</code> y <code>product_id</code> son metadata opcional y completa. No conceden permisos, no cambian el plan y no seleccionan nodo.</p></div></details>
           </div>
         </section>
 
@@ -290,6 +275,6 @@ DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
-    <script src="/docs/assets/docs.js?v=20261102-5"></script>
+    <script src="/docs/assets/docs.js?v=20261029-3"></script>
   </body>
 </html>

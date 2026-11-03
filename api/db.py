@@ -67,6 +67,13 @@ class DatabaseConnection:
         self._connection = connection
 
     def execute(self, statement: str, parameters: Any = ()):
+        # SQLite BEGIN IMMEDIATE serializaba los claims y la asignación de
+        # VMID. Reproducimos esa sección crítica entre procesos PostgreSQL
+        # con un advisory transaction lock; sin él, seis workers podrían
+        # reclamar de más o reservar el mismo VMID.
+        if statement.strip().upper() == "BEGIN IMMEDIATE":
+            self._connection.execute("BEGIN")
+            return self._connection.execute("SELECT pg_advisory_xact_lock(104, 101)")
         return self._connection.execute(_postgres_sql(statement), parameters)
 
     def executemany(self, statement: str, parameters: Any):
@@ -106,6 +113,8 @@ _SCHEMA = (
         status TEXT NOT NULL,
         payload_json TEXT NOT NULL,
         plan_id TEXT,
+        stack TEXT NOT NULL DEFAULT 'mng01',
+        commercial_context_json TEXT NOT NULL DEFAULT '{}',
         environment TEXT NOT NULL DEFAULT 'lab',
         instance_id TEXT,
         vmid BIGINT,
@@ -126,10 +135,6 @@ _SCHEMA = (
         error TEXT NOT NULL DEFAULT ''
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_operations_heartbeat ON operations(status, last_heartbeat)",
-    "CREATE INDEX IF NOT EXISTS idx_operations_instance_status ON operations(instance_id, status, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_operations_plan_id ON operations(plan_id)",
     """
     CREATE TABLE IF NOT EXISTS events (
         event_id BIGSERIAL PRIMARY KEY,
@@ -152,7 +157,6 @@ _SCHEMA = (
         heartbeat_count BIGINT NOT NULL DEFAULT 0
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(last_heartbeat)",
     """
     CREATE TABLE IF NOT EXISTS instances (
         instance_id TEXT PRIMARY KEY,
@@ -166,13 +170,11 @@ _SCHEMA = (
         status TEXT NOT NULL,
         power_state TEXT,
         spec_json TEXT NOT NULL,
+        commercial_context_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_instances_vmid ON instances(vmid)",
-    "CREATE INDEX IF NOT EXISTS idx_instances_status_power ON instances(status, power_state, updated_at)",
-    "CREATE INDEX IF NOT EXISTS idx_instances_plan_id ON instances(plan_id)",
     """
     CREATE TABLE IF NOT EXISTS vmid_leases (
         vmid BIGINT PRIMARY KEY,
@@ -194,9 +196,71 @@ _SCHEMA = (
         PRIMARY KEY (scope, idempotency_key)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_keys(created_at)",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS stack TEXT NOT NULL DEFAULT 'mng01'",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'provision'",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS plan_id TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS instance_id TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS vmid BIGINT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS workspace_path TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS plan_path TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS plan_operation_id TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS target_node TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS secret_path TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS commercial_context_json TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'queued'",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS started_at TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS finished_at TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS last_heartbeat TEXT",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS exit_code INTEGER",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS output TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE operations ADD COLUMN IF NOT EXISTS error TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE operations ADD COLUMN IF NOT EXISTS environment TEXT NOT NULL DEFAULT 'lab'",
+    "ALTER TABLE instances ADD COLUMN IF NOT EXISTS plan_id TEXT",
+    "ALTER TABLE instances ADD COLUMN IF NOT EXISTS commercial_context_json TEXT NOT NULL DEFAULT '{}'",
     "ALTER TABLE instances ADD COLUMN IF NOT EXISTS environment TEXT NOT NULL DEFAULT 'lab'",
+    "ALTER TABLE instances ADD COLUMN IF NOT EXISTS power_state TEXT",
+    "ALTER TABLE workers ADD COLUMN IF NOT EXISTS started_at TEXT",
+    "ALTER TABLE workers ADD COLUMN IF NOT EXISTS heartbeat_count BIGINT NOT NULL DEFAULT 0",
+    "CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_operations_heartbeat ON operations(status, last_heartbeat)",
+    "CREATE INDEX IF NOT EXISTS idx_operations_instance_status ON operations(instance_id, status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_operations_plan_id ON operations(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(last_heartbeat)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_vmid ON instances(vmid)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_status_power ON instances(status, power_state, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_plan_id ON instances(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_keys(created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS ip_allocations (
+        allocation_id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'netbox',
+        profile TEXT NOT NULL,
+        prefix_id BIGINT NOT NULL,
+        netbox_ip_id BIGINT,
+        address TEXT NOT NULL DEFAULT '',
+        gateway TEXT NOT NULL DEFAULT '',
+        marker TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        released_at TEXT,
+        last_error TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_allocations_active_instance
+    ON ip_allocations(instance_id, profile)
+    WHERE status IN ('allocating', 'allocated', 'release_pending')
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ip_allocations_operation ON ip_allocations(operation_id, status)",
+    """
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -204,6 +268,10 @@ def initialize() -> None:
     with database() as db:
         for statement in _SCHEMA:
             db.execute(statement)
+        db.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?) ON CONFLICT(version) DO NOTHING",
+            (2, datetime.now(timezone.utc).isoformat()),
+        )
 
 
 def prune_history() -> dict[str, int]:

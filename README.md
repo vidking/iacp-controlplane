@@ -12,8 +12,8 @@ el nombre IACP Control Plane y las rutas `/v1`.
   observabilidad.
 - PostgreSQL 17 conserva operaciones, instancias, eventos, leases de VMID,
   workers e idempotencia.
-- Dos workers reclaman operaciones desde una cola PostgreSQL. El límite global
-  se configura por entorno; producción está fijada en una operación simultánea.
+- Seis workers reclaman operaciones desde una cola PostgreSQL. El límite global
+  se fija en seis operaciones simultáneas, igual que el runtime de controlplanev2.
 - Terraform administra el state de cada instancia. El interruptor
   `IACP_WASABI_ENABLED` controla el state remoto: `false` usa state local en el
   volumen de trabajo, incluso cuando el endpoint es `iac.cyberfuel.com`; `true`
@@ -26,7 +26,8 @@ el nombre IACP Control Plane y las rutas `/v1`.
 
 La instancia IACP Control Plane (VM 104), la VM 106 y las Golden Images están
 protegidas frente a aprovisionamiento, lifecycle y eliminación desde la API.
-La base productiva se inició sin importar registros del runtime anterior.
+La capa PostgreSQL migra de forma aditiva; este runtime no importa archivos
+SQLite ni elimina filas históricas.
 
 ## Entornos
 

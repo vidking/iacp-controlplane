@@ -143,7 +143,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     if data["proxy_network"] != "proxy_network":
         raise GateError("La red compartida debe ser proxy_network")
     api_env = _service_env(config, "api")
-    worker_envs = [_service_env(config, "worker-1"), _service_env(config, "worker-2")]
+    worker_names = tuple(f"worker-{number}" for number in range(1, 7))
+    worker_envs = [_service_env(config, name) for name in worker_names]
     postgres_env = _service_env(config, "postgres")
     api_service = config["services"]["api"]
     api_networks = api_service.get("networks", {})
@@ -182,8 +183,16 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     enabled = {part.strip() for part in str(api_env.get("IACP_ENABLED_ENVIRONMENTS", "")).split(",") if part.strip()}
     if enabled != {"lab"} or str(api_env.get("IACP_PRX_ENABLED", "0")) != "0":
         raise GateError("El stack debe exponer únicamente MNG y mantener PRX apagado")
-    if str(api_env.get("IACP_MAX_CONCURRENT", "")) != "1" or data["max_concurrent"] != 1:
-        raise GateError("Cada stack debe limitarse a una operación simultánea")
+    if str(api_env.get("IACP_MAX_CONCURRENT", "")) != "6" or data["max_concurrent"] != 6:
+        raise GateError("API y manifiesto deben habilitar seis operaciones simultáneas")
+    if any(str(environment.get("IACP_MAX_CONCURRENT", "")) != "6" for environment in worker_envs):
+        raise GateError("Los seis workers deben compartir el límite de seis operaciones")
+    additional_protected = str(api_env.get("IACP_ADDITIONAL_PROTECTED_VMIDS", ""))
+    if any(
+        str(environment.get("IACP_ADDITIONAL_PROTECTED_VMIDS", "")) != additional_protected
+        for environment in worker_envs
+    ):
+        raise GateError("La lista de VMID protegidos debe coincidir entre API y los seis workers")
     expected_range = tuple(str(value) for value in expected_vmid_range)
     for service_environment in (api_env, *worker_envs):
         configured_range = (
@@ -201,6 +210,13 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         value = api_env.get(key)
         if not isinstance(value, str) or len(value.strip()) < 16 or "REEMPLAZAR" in value.upper():
             raise GateError(f"Falta configurar {key}")
+    for environment in (api_env, *worker_envs):
+        if (
+            environment.get("IACP_PROXMOX_ENDPOINT") != environment.get("IACP_PROXMOX_MNG_ENDPOINT")
+            or environment.get("IACP_PROXMOX_API_TOKEN") != environment.get("IACP_PROXMOX_MNG_API_TOKEN")
+            or environment.get("IACP_TERRAFORM_DIR") != "environments/mng01"
+        ):
+            raise GateError("API y workers deben resolver el destino MNG y su Terraform canónico")
     database_password = postgres_env.get("POSTGRES_PASSWORD")
     if not isinstance(database_password, str) or len(database_password.strip()) < 16 or "REEMPLAZAR" in database_password.upper():
         raise GateError("Falta configurar POSTGRES_PASSWORD")
@@ -226,7 +242,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("PRX debe quedar sin configurar mientras esté deshabilitado")
     mng_host = "mng01.cyberfuel.com"
     host_mappings = []
-    for service_name in ("api", "worker-1", "worker-2"):
+    for service_name in ("api", *worker_names):
         mapping = _extra_host_map(config["services"][service_name]).get(mng_host)
         try:
             ipaddress.ip_address(str(mapping or ""))
@@ -251,8 +267,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
                 if not isinstance(value, str) or len(value.strip()) < 8 or "REEMPLAZAR" in value.upper():
                     raise GateError(f"Falta configurar la credencial de producción {key}")
         for key in ("IACP_WASABI_ACCESS_KEY_ID", "IACP_WASABI_SECRET_ACCESS_KEY"):
-            if worker_envs[0].get(key) != worker_envs[1].get(key):
-                raise GateError("Las credenciales Wasabi deben coincidir entre ambos workers")
+            if len({worker_env.get(key) for worker_env in worker_envs}) != 1:
+                raise GateError("Las credenciales Wasabi deben coincidir entre los seis workers")
     else:
         if any(api_env.get(key) for key in ("IACP_TFSTATE_BUCKET", "IACP_TFSTATE_ENDPOINT", "IACP_TFSTATE_REGION", "IACP_TFSTATE_PREFIX")):
             raise GateError("Wasabi deshabilitado no debe configurar bucket, endpoint, región ni prefijo")
@@ -264,7 +280,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     if repository != "scm.cyberfuel.com/cyberfuel/iacp-controlplane":
         raise GateError("El repositorio de imagen no coincide con el artefacto aprobado")
     image_tags = set()
-    for service in ("api", "worker-1", "worker-2"):
+    for service in ("api", *worker_names):
         image = config["services"][service].get("image", "")
         if not image.startswith(repository + ":"):
             raise GateError(f"La imagen de {service} no usa el repositorio aprobado")
@@ -294,7 +310,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "volumes": sorted(named_volumes),
         "backend": data["backend"],
         "state_prefix": data["state_prefix"],
-        "max_concurrent_per_stack": 1,
+        "max_concurrent_per_stack": 6,
         "vmid_range": {"min": expected_vmid_range[0], "max": expected_vmid_range[1]},
         "enabled_environments": ["lab"],
         "prx_enabled": False,
@@ -669,23 +685,48 @@ def _inventory(data: dict, compose: Path, env_file: Path) -> dict:
 def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     prefix = _compose_args(data, compose, env_file)
     statuses = _inventory(data, compose, env_file)["containers"]
-    expected = {"postgres", "api", "worker-1", "worker-2"}
+    expected = {"postgres", "api", *(f"worker-{number}" for number in range(1, 7))}
     if {item["service"] for item in statuses} != expected:
-        raise GateError("No están activos exactamente los cuatro servicios esperados")
+        raise GateError("No están activos PostgreSQL, API y los seis workers esperados")
     if any(item["state"] != "running" for item in statuses):
         raise GateError("Hay servicios del stack que no están running")
     postgres = next(item for item in statuses if item["service"] == "postgres")
     api = next(item for item in statuses if item["service"] == "api")
     if postgres["health"] != "healthy" or api["health"] != "healthy":
         raise GateError("PostgreSQL o la API no está healthy")
-    script = (
-        "import json,urllib.request; "
-        "response=urllib.request.urlopen('http://127.0.0.1:8080/health/ready',timeout=5); "
-        "health=json.load(response); revision=response.headers.get('X-IACP-Build-Revision',''); "
-        "spec=json.load(urllib.request.urlopen('http://127.0.0.1:8080/openapi.json',timeout=5)); "
-        "print(json.dumps({'health':health.get('status'),'api_version':spec.get('info',{}).get('version'),"
-        "'provision_path':'/v1/instances' in spec.get('paths',{}),'build_revision':revision}))"
-    )
+    script = """
+import json, time, urllib.request
+from api.db import database
+health_response = urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=5)
+health = json.load(health_response)
+revision = health_response.headers.get('X-IACP-Build-Revision', '')
+spec = json.load(urllib.request.urlopen('http://127.0.0.1:8080/openapi.json', timeout=5))
+expected_workers = [f'worker-{number}' for number in range(1, 7)]
+deadline = time.monotonic() + 60
+worker_ids = []
+schema_version = None
+core_tables = set()
+while time.monotonic() < deadline:
+    with database() as db:
+        row = db.execute('SELECT MAX(version) AS version FROM schema_migrations').fetchone()
+        schema_version = row['version'] if row else None
+        worker_ids = [row['worker_id'] for row in db.execute('SELECT worker_id FROM workers ORDER BY worker_id').fetchall()]
+        core_tables = {row['table_name'] for row in db.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+        ).fetchall()}
+    if set(worker_ids) >= set(expected_workers):
+        break
+    time.sleep(1)
+print(json.dumps({
+    'health': health.get('status'),
+    'api_version': spec.get('info', {}).get('version'),
+    'provision_path': '/v1/instances' in spec.get('paths', {}),
+    'build_revision': revision,
+    'schema_version': schema_version,
+    'ip_allocations_table': 'ip_allocations' in core_tables,
+    'worker_ids': worker_ids,
+}))
+"""
     result = _run(prefix + ["exec", "-T", "api", "python", "-c", script], label="Verificación API")
     try:
         payload = json.loads(result.strip().splitlines()[-1])
@@ -697,8 +738,11 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
         "api_version": "1.0.0",
         "provision_path": True,
         "build_revision": expected_revision,
+        "schema_version": 2,
+        "ip_allocations_table": True,
+        "worker_ids": [f"worker-{number}" for number in range(1, 7)],
     }:
-        raise GateError("La API no cumple readiness, contrato V1 y revisión de imagen")
+        raise GateError("API, PostgreSQL, migración de esquema y seis workers no cumplen el contrato V1")
     return {"services": statuses, "api": payload}
 
 

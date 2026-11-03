@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.db import database, initialize
@@ -18,24 +19,27 @@ def public_body(name: str = "console-local", *, password_only: bool = False) -> 
         "name": name,
         "plan_id": "kvm-2",
         "image_id": "ubuntu-2404",
-        "environment": "lab",
-        "network_profile": "lab_dhcp",
-        "tags": ["cl-105", "kvm-001", "postal"],
         "access": access,
+        "commercial_context": {
+            "customer_id": "CL-0000",
+            "customer_tag": "cl-0000",
+            "order_id": "ORD-1001",
+            "product_id": "KVM-2",
+        },
         "start_on_create": False,
     }
 
 
 def test_health_and_internal_operation(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         assert client.get("/health/live").json()["status"] == "alive"
-        assert client.get("/health/ready").json()["status"] == "ready"
         response = client.post(
             "/v1/operations",
             json={
                 "command": "plan",
                 "action": "provision",
-                "environment": "lab",
+                "stack": "local",
                 "plan_id": "kvm-1",
                 "spec": {"name": "local-test", "image": "ubuntu-2404"},
             },
@@ -49,6 +53,7 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
 
 
 def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         plans = client.get("/v1/plans")
         assert plans.status_code == 200
@@ -67,46 +72,61 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
         ]
 
 
-def test_network_profiles_expose_only_dhcp(tmp_path, monkeypatch):
+def test_network_profiles_keep_dhcp_default_and_hide_unconfigured_static_profile(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.delenv("IACP_PROD_STATIC_ENABLED", raising=False)
+    monkeypatch.delenv("IACP_NETBOX_URL", raising=False)
+    monkeypatch.delenv("IACP_NETBOX_PREFIX_ID", raising=False)
     with TestClient(app) as client:
         response = client.get("/v1/network-profiles")
         assert response.status_code == 200
         profiles = response.json()["network_profiles"]
-        assert profiles == [{
-            "profile_id": "lab_dhcp",
-            "label": "DHCP",
-            "network_mode": "dhcp",
-            "ipam": None,
-            "enabled": True,
-        }]
+        assert profiles[0]["profile_id"] == "lab_dhcp"
+        assert profiles[0]["enabled"] is True
+        assert profiles[1]["profile_id"] == "prod_static"
+        assert profiles[1]["enabled"] is False
 
 
-def test_public_contract_rejects_commercial_and_cluster_fields(tmp_path, monkeypatch):
-    body = public_body("legacy-fields")
-    body["commercial_context"] = {"customer_tag": "cl-105"}
-    body["cluster"] = "mng"
+def test_prod_static_requires_explicitly_enabled_profile(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.delenv("IACP_PROD_STATIC_ENABLED", raising=False)
+    body = public_body("static-disabled")
+    body["network_profile"] = "prod_static"
     with TestClient(app) as client:
         response = client.post(
             "/v1/instances",
-            headers={"Idempotency-Key": "legacy-fields"},
+            headers={"Idempotency-Key": "static-disabled"},
             json=body,
         )
-        assert response.status_code == 422
+        assert response.status_code == 503
+        assert response.json()["detail"] == "NETWORK_PROFILE_NOT_CONFIGURED"
 
 
-def test_tags_are_an_array_and_preserve_consumer_values(tmp_path, monkeypatch):
-    body = public_body("invalid-tags")
-    body["tags"] = "cl-105,kvm-001"
+def test_prod_static_request_persists_profile_without_accepting_an_ip_from_consumer(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
+    monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.cyberfuel.com/api")
+    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "123")
+    body = public_body("static-profile")
+    body["network_profile"] = "prod_static"
     with TestClient(app) as client:
         response = client.post(
             "/v1/instances",
-            headers={"Idempotency-Key": "invalid-tags"},
+            headers={"Idempotency-Key": "static-profile"},
             json=body,
         )
-        assert response.status_code == 422
+        assert response.status_code == 202
+        detail = client.get(f"/v1/instances/{response.json()['instance_id']}")
+        assert detail.status_code == 200
+        value = detail.json()
+        assert value["spec"]["network_profile"] == "prod_static"
+        assert value["spec"]["network_mode"] == "static"
+        assert value["spec"]["ipv4_cidr"] is None
+        assert value["network_allocation"]["status"] == "pending"
 
 
 def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_API_TOKEN", "swagger-test-token")
     with TestClient(app) as client:
         portal = client.get("/docs")
@@ -143,11 +163,6 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
         assert "Bearer" in schema["components"]["securitySchemes"]
         assert "/v1/operations" in schema["paths"]
         assert "/v1/instances" in schema["paths"]
-        create_schema = schema["components"]["schemas"]["InstanceCreateRequest"]
-        assert create_schema["properties"]["tags"]["type"] == "array"
-        assert "cl-105" in str(create_schema["examples"])
-        assert "commercial_context" not in create_schema["properties"]
-        assert "cluster" not in create_schema["properties"]
         assert schema["paths"]["/v1/instances"]["get"]["operationId"] == "listInstances"
         assert schema["paths"]["/v1/instances/{instance_id}/power/start"]["post"]["tags"] == ["kvm-lifecycle"]
         assert "/v1/instances/{instance_id}/network" in schema["paths"]
@@ -159,6 +174,7 @@ def test_swagger_exposes_bearer_and_protects_operations(tmp_path, monkeypatch):
 
 
 def test_network_observation_uses_guest_agent_and_does_not_guess_ip(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -197,7 +213,7 @@ def test_network_observation_uses_guest_agent_and_does_not_guess_ip(tmp_path, mo
                 ]
 
         fake = FakeProxmox()
-        monkeypatch.setattr("api.main.ProxmoxClient", lambda *args, **kwargs: fake)
+        monkeypatch.setattr("api.main.ProxmoxClient", lambda: fake)
         response = client.get(f"/v1/instances/{instance_id}/network")
         assert response.status_code == 200
         assert response.json()["observed_ipv4"] == ["10.20.30.40"]
@@ -207,6 +223,7 @@ def test_network_observation_uses_guest_agent_and_does_not_guess_ip(tmp_path, mo
 
 
 def test_network_observation_reports_pending_before_provisioning(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -220,7 +237,8 @@ def test_network_observation_reports_pending_before_provisioning(tmp_path, monke
         assert response.json()["reason"] == "VM_NOT_PROVISIONED"
 
 
-def test_instances_endpoint_is_one_step_and_preserves_public_contract(tmp_path, monkeypatch):
+def test_instances_endpoint_is_one_step_and_preserves_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     body = public_body(password_only=True)
     with TestClient(app) as client:
         created = client.post(
@@ -235,8 +253,7 @@ def test_instances_endpoint_is_one_step_and_preserves_public_contract(tmp_path, 
 
         operation = client.get(f"/v1/operations/{response['operation_id']}")
         assert operation.status_code == 200
-        assert operation.json()["environment"] == "lab"
-        assert "commercial_context" not in operation.json()
+        assert operation.json()["commercial_context"]["customer_id"] == "CL-0000"
         assert "Inicial-Segura-123!" not in operation.text
 
         listing = client.get("/v1/instances")
@@ -247,18 +264,19 @@ def test_instances_endpoint_is_one_step_and_preserves_public_contract(tmp_path, 
         detail = client.get(f"/v1/instances/{response['instance_id']}")
         assert detail.status_code == 200
         value = detail.json()
-        assert value["environment"] == "lab"
-        assert "cluster" not in value
-        assert "stack" not in value
+        assert value["cluster"] == "mng"
+        assert value["stack"] == "mng01"
         assert value["plan_id"] == "kvm-2"
         assert value["image_id"] == "ubuntu-2404"
         assert value["spec"]["vcpus"] == 2
         assert value["spec"]["memory_mb"] == 4096
         assert value["spec"]["disk_gb"] == 100
-        assert value["spec"]["tags"] == ["cl-105", "kvm-001", "postal"]
+        assert value["spec"]["tags"] == ["cl-0000"]
+        assert value["commercial_context"]["customer_tag"] == "cl-0000"
 
 
 def test_ready_and_stopped_are_separate_public_instance_states(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -300,6 +318,8 @@ def test_ready_and_stopped_are_separate_public_instance_states(tmp_path, monkeyp
 
 
 def test_events_are_newest_first_enriched_and_filterable_by_operation(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_MAX_CONCURRENT", "6")
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -324,7 +344,9 @@ def test_events_are_newest_first_enriched_and_filterable_by_operation(tmp_path, 
                 (operation_id, "test.new", "completed", "2026-01-01T00:00:01+00:00", "etapa actual"),
             )
             db.execute(
-                "INSERT INTO workers(worker_id, status, last_heartbeat, current_operation_id) VALUES (?, ?, ?, ?) ON CONFLICT (worker_id) DO UPDATE SET status=EXCLUDED.status, last_heartbeat=EXCLUDED.last_heartbeat, current_operation_id=EXCLUDED.current_operation_id",
+                "INSERT INTO workers(worker_id, status, last_heartbeat, current_operation_id) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(worker_id) DO UPDATE SET status=EXCLUDED.status, "
+                "last_heartbeat=EXCLUDED.last_heartbeat, current_operation_id=EXCLUDED.current_operation_id",
                 ("worker-test", "running", "2026-01-01T00:00:01+00:00", operation_id),
             )
 
@@ -355,11 +377,12 @@ def test_events_are_newest_first_enriched_and_filterable_by_operation(tmp_path, 
 
         observed = client.get("/v1/observability").json()
         assert observed["recent_events"][0]["kind"] == "test.new"
-        assert observed["max_concurrent"] == 2
+        assert observed["max_concurrent"] == 6
         assert "performance" in observed
 
 
 def test_observability_reports_recent_operation_timing_percentiles(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         with database() as db:
             db.executemany(
@@ -396,6 +419,7 @@ def test_observability_reports_recent_operation_timing_percentiles(tmp_path, mon
 
 
 def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -409,7 +433,7 @@ def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
             db.execute(
                 "UPDATE operations SET status='failed', worker_id='worker-public', output=?, error=? WHERE operation_id=?",
                 (
-                    "Terraform initializing modules FastAPI bpg/proxmox module.kvm /var/lib/iacp-v2",
+                    "Terraform initializing modules FastAPI bpg/proxmox module.kvm /var/lib/iacp-controlplane",
                     "Terraform apply failed in provider plugin; see HashiCorp output",
                     operation_id,
                 ),
@@ -429,7 +453,9 @@ def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
                 ),
             )
             db.execute(
-                "INSERT INTO workers(worker_id, status, last_heartbeat, current_operation_id) VALUES (?, ?, ?, ?) ON CONFLICT (worker_id) DO UPDATE SET status=EXCLUDED.status, last_heartbeat=EXCLUDED.last_heartbeat, current_operation_id=EXCLUDED.current_operation_id",
+                "INSERT INTO workers(worker_id, status, last_heartbeat, current_operation_id) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(worker_id) DO UPDATE SET status=EXCLUDED.status, "
+                "last_heartbeat=EXCLUDED.last_heartbeat, current_operation_id=EXCLUDED.current_operation_id",
                 ("worker-public", "idle", "2026-01-01T00:00:02+00:00", operation_id),
             )
 
@@ -442,7 +468,7 @@ def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
         ]
         assert all(response.status_code == 200 for response in responses)
         combined = "\n".join(response.text.lower() for response in responses)
-        for marker in ("terraform", "fastapi", "uvicorn", "bpg/proxmox", "hashicorp", "module.kvm", "/var/lib/iacp-v2"):
+        for marker in ("terraform", "fastapi", "uvicorn", "bpg/proxmox", "hashicorp", "module.kvm", "/var/lib/iacp-controlplane"):
             assert marker not in combined
         operation = responses[0].json()
         assert operation["status"] == "failed"
@@ -452,6 +478,7 @@ def test_public_operation_views_hide_internal_tool_logs(tmp_path, monkeypatch):
 
 
 def test_public_mutations_generate_idempotency_and_replay_safely(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     body = public_body()
     with TestClient(app) as client:
         generated = client.post("/v1/instances", json=public_body("generated-key"))
@@ -481,6 +508,7 @@ def test_public_mutations_generate_idempotency_and_replay_safely(tmp_path, monke
 
 
 def test_power_routes_are_listed_and_queue_with_idempotency(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -514,6 +542,7 @@ def test_power_routes_are_listed_and_queue_with_idempotency(tmp_path, monkeypatc
 
 
 def test_reconcile_route_is_idempotent_and_targets_uncertain_operation(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -548,6 +577,7 @@ def test_reconcile_route_is_idempotent_and_targets_uncertain_operation(tmp_path,
 
 
 def test_power_state_reports_missing_permission_without_hiding_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -562,9 +592,6 @@ def test_power_state_reports_missing_permission_without_hiding_endpoint(tmp_path
             )
 
         class FakeProxmox:
-            def __init__(self, *args, **kwargs):
-                pass
-
             def permissions(self, node, vmid, *, mutate=False):
                 if mutate:
                     raise ProxmoxError("POWER_PERMISSION_DENIED", 403)
@@ -586,6 +613,7 @@ def test_power_state_reports_missing_permission_without_hiding_endpoint(tmp_path
 
 
 def test_delete_is_idempotent_and_keeps_the_public_job_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -615,7 +643,65 @@ def test_delete_is_idempotent_and_keeps_the_public_job_alias(tmp_path, monkeypat
         assert first.json()["job_id"] == first.json()["operation_id"]
 
 
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000])
+def test_protected_vms_reject_public_mutations_without_queueing(tmp_path, monkeypatch, protected_vmid):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": f"protected-create-{protected_vmid}"},
+            json=public_body(f"protected-{protected_vmid}"),
+        )
+        assert created.status_code == 202
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute("UPDATE operations SET status='succeeded' WHERE operation_id=?", (source_id,))
+            db.execute(
+                "UPDATE instances SET status='ready', vmid=?, power_state='stopped' WHERE instance_id=?",
+                (protected_vmid, instance_id),
+            )
+
+        responses = [
+            client.post(f"/v1/instances/{instance_id}/provision", json={}),
+            client.delete(
+                f"/v1/instances/{instance_id}",
+                headers={"Idempotency-Key": f"protected-delete-{protected_vmid}"},
+            ),
+            client.post(
+                f"/v1/instances/{instance_id}/power/start",
+                headers={"Idempotency-Key": f"protected-power-{protected_vmid}"},
+            ),
+        ]
+        assert [(response.status_code, response.json()["detail"]) for response in responses] == [
+            (409, "PROTECTED_INSTANCE"),
+            (409, "PROTECTED_INSTANCE"),
+            (409, "PROTECTED_INSTANCE"),
+        ]
+
+        with database() as db:
+            db.execute("UPDATE operations SET status='uncertain' WHERE operation_id=?", (source_id,))
+            db.execute("UPDATE instances SET status='uncertain' WHERE instance_id=?", (instance_id,))
+        reconcile = client.post(
+            f"/v1/instances/{instance_id}/reconcile",
+            headers={"Idempotency-Key": f"protected-reconcile-{protected_vmid}"},
+        )
+        assert reconcile.status_code == 409
+        assert reconcile.json()["detail"] == "PROTECTED_INSTANCE"
+
+        with database() as db:
+            operations = db.execute(
+                "SELECT COUNT(*) AS count FROM operations WHERE instance_id=?", (instance_id,)
+            ).fetchone()["count"]
+            instance = db.execute(
+                "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
+            ).fetchone()
+        assert operations == 1
+        assert (instance["status"], instance["vmid"]) == ("uncertain", protected_vmid)
+
+
 def test_failed_instances_are_hidden_from_active_listing_and_can_be_logically_deleted(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
@@ -652,6 +738,7 @@ def test_failed_instances_are_hidden_from_active_listing_and_can_be_logically_de
 
 
 def test_observability_marks_workers_stale_by_heartbeat_age(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_WORKER_STALE_SECONDS", "30")
     old = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     with TestClient(app) as client:
@@ -671,6 +758,7 @@ def test_observability_marks_workers_stale_by_heartbeat_age(tmp_path, monkeypatc
 
 
 def test_configured_password_policy_rejects_short_root_password(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_ROOT_PASSWORD_MIN_LENGTH", "12")
     body = public_body("password-policy", password_only=True)
     body["access"]["root_password"] = "too-short"
@@ -681,6 +769,7 @@ def test_configured_password_policy_rejects_short_root_password(tmp_path, monkey
 
 
 def test_queue_limit_returns_retryable_429(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_MAX_QUEUE_DEPTH", "1")
     with TestClient(app) as client:
         first = client.post(
@@ -699,6 +788,7 @@ def test_queue_limit_returns_retryable_429(tmp_path, monkeypatch):
 
 
 def test_console_is_available_without_authentication(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         response = client.get("/console")
         assert response.status_code == 200
@@ -706,26 +796,68 @@ def test_console_is_available_without_authentication(tmp_path, monkeypatch):
         assert "Aplicar plan" not in response.text
 
 
-def test_postgres_schema_is_empty_contract_without_legacy_fields(tmp_path, monkeypatch):
+def test_initialize_migrates_existing_postgresql_schema():
+    with database() as db:
+        db.execute(
+            """
+        CREATE TABLE operations (
+            operation_id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            worker_id TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            last_heartbeat TEXT,
+            exit_code INTEGER,
+            output TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT ''
+        )
+        """
+        )
+        db.execute(
+            """
+        CREATE TABLE instances (
+            instance_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            image TEXT NOT NULL,
+            vmid INTEGER,
+            node TEXT NOT NULL DEFAULT 'mng01',
+            status TEXT NOT NULL,
+            power_state TEXT,
+            spec_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+        )
+        db.execute(
+            "CREATE TABLE events (event_id BIGSERIAL PRIMARY KEY, operation_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, occurred_at TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+        )
+        db.execute(
+            "CREATE TABLE workers (worker_id TEXT PRIMARY KEY, status TEXT NOT NULL, last_heartbeat TEXT NOT NULL, current_operation_id TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE vmid_leases (vmid BIGINT PRIMARY KEY, operation_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, released_at TEXT)"
+        )
+
     initialize()
 
     with database() as db:
         operation_columns = {
-            row["column_name"]
-            for row in db.execute(
+            row["column_name"] for row in db.execute(
                 "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='operations'"
-            ).fetchall()
+            )
         }
         instance_columns = {
-            row["column_name"]
-            for row in db.execute(
+            row["column_name"] for row in db.execute(
                 "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='instances'"
-            ).fetchall()
+            )
         }
-        assert {"action", "plan_id", "instance_id", "plan_operation_id", "environment", "target_node", "secret_path"} <= operation_columns
-        assert {"plan_id", "environment", "node"} <= instance_columns
-        assert "stack" not in operation_columns
-        assert "commercial_context_json" not in operation_columns | instance_columns
-        assert db.execute(
-            "SELECT to_regclass('idempotency_keys') AS table_name"
-        ).fetchone()["table_name"] == "idempotency_keys"
+        assert {"action", "plan_id", "instance_id", "plan_operation_id", "stack", "target_node", "secret_path", "commercial_context_json"} <= operation_columns
+        assert {"plan_id", "commercial_context_json"} <= instance_columns
+        assert db.execute("SELECT to_regclass('idempotency_keys') AS table_name").fetchone()["table_name"]
+        assert db.execute("SELECT to_regclass('ip_allocations') AS table_name").fetchone()["table_name"]
+        assert db.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()["version"] == 2

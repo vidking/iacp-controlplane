@@ -3,7 +3,8 @@ from pathlib import Path
 
 
 def secret_root() -> Path:
-    root = Path(os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")) / "operation-secrets"
+    workdata = os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")
+    root = Path(workdata) / "operation-secrets"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         root.chmod(0o700)

@@ -9,6 +9,7 @@ from typing import Callable
 from fastapi import HTTPException
 
 from api.catalog import (
+    cluster_nodes,
     image_by_id,
     image_catalog as catalog_images,
     network_profile_by_id,
@@ -16,14 +17,18 @@ from api.catalog import (
     plan_catalog,
 )
 from api.db import database
-from api.models import Action, Command, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
+from api.models import Action, Command, CommercialContext, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, write_secret
-from api.targets import EnvironmentError, resolve_environment
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _reject_protected_vmid(vmid: object) -> None:
+    if is_protected_vmid(vmid):
+        raise HTTPException(status_code=409, detail="PROTECTED_INSTANCE")
 
 
 def emit(db, operation_id: str, kind: str, status: str, detail: str = "") -> None:
@@ -70,6 +75,9 @@ PUBLIC_EVENT_KIND_REWRITES = {
     "proxmox.pool.validated": "resource.pool.validated",
     "golden.observed": "image.validated",
     "logical.delete.completed": "instance.delete.completed",
+    "ipam.address.reserved": "network.address.reserved",
+    "ipam.address.released": "network.address.released",
+    "ipam.release.pending": "network.address.release_pending",
 }
 
 PUBLIC_ERROR_CODES = {
@@ -85,6 +93,7 @@ PUBLIC_ERROR_CODES = {
     "POWER_REBOOT_REQUIRES_REVIEW": "POWER_REBOOT_REQUIRES_REVIEW",
     "POWER_INSTANCE_NOT_PROVISIONED": "POWER_INSTANCE_NOT_PROVISIONED",
     "POWER_INSTANCE_DELETED": "POWER_INSTANCE_DELETED",
+    "POWER_STACK_UNSUPPORTED": "POWER_TARGET_UNSUPPORTED",
     "PROXMOX_POOL_REQUIRED": "RESOURCE_POOL_REQUIRED",
     "PROXMOX_POOL_NOT_FOUND": "RESOURCE_POOL_NOT_FOUND",
     "VMID_RANGE_EXHAUSTED": "VMID_ALLOCATION_EXHAUSTED",
@@ -93,6 +102,18 @@ PUBLIC_ERROR_CODES = {
     "RECONCILIATION_PHYSICAL_RESOURCE_ABSENT": "RECONCILIATION_PHYSICAL_RESOURCE_ABSENT",
     "PHYSICAL_IDENTITY_MISMATCH": "PHYSICAL_IDENTITY_MISMATCH",
     "PHYSICAL_NODE_MISMATCH": "PHYSICAL_NODE_MISMATCH",
+    "IPAM_NOT_CONFIGURED": "IPAM_NOT_CONFIGURED",
+    "IPAM_CONFIGURATION_INVALID": "IPAM_CONFIGURATION_INVALID",
+    "IPAM_PREFIX_INVALID": "IPAM_PREFIX_INVALID",
+    "IPAM_PREFIX_POOL_UNSAFE": "IPAM_PREFIX_POOL_UNSAFE",
+    "IPAM_GATEWAY_NOT_RESERVED": "IPAM_GATEWAY_NOT_RESERVED",
+    "IPAM_POOL_EXHAUSTED": "IPAM_POOL_EXHAUSTED",
+    "IPAM_TAG_NOT_FOUND": "IPAM_TAG_NOT_FOUND",
+    "IPAM_PERMISSION_DENIED": "IPAM_PERMISSION_DENIED",
+    "IPAM_UNAVAILABLE": "IPAM_SERVICE_UNAVAILABLE",
+    "IPAM_REQUEST_UNCERTAIN": "IPAM_OPERATION_UNCERTAIN",
+    "IPAM_IDENTITY_MISMATCH": "IPAM_IDENTITY_MISMATCH",
+    "IPAM_RELEASE_PENDING": "IPAM_RELEASE_PENDING",
 }
 
 INTERNAL_LOG_MARKERS = (
@@ -113,7 +134,9 @@ INTERNAL_LOG_MARKERS = (
     "initializing modules",
     "execution plan",
     "terraform has been successfully initialized",
+    "netbox",
     "authorization: bearer",
+    "nbt_",
 )
 
 
@@ -155,6 +178,44 @@ def _latest_provision(db, instance_id: str):
         """,
         (instance_id,),
     ).fetchone()
+
+
+def _commercial_json(context: CommercialContext | dict | None) -> str:
+    if context is None:
+        return "{}"
+    value = context.model_dump(mode="json") if isinstance(context, CommercialContext) else context
+    return json.dumps(value, sort_keys=True)
+
+
+def _commercial_dict(value: str | None) -> dict | None:
+    if not value:
+        return None
+    parsed = json.loads(value)
+    return parsed or None
+
+
+def _network_allocation_public(db, instance_id: str, spec: dict) -> dict | None:
+    row = db.execute(
+        """
+        SELECT provider, profile, address, gateway, status, created_at, released_at
+        FROM ip_allocations
+        WHERE instance_id=?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (instance_id,),
+    ).fetchone()
+    if row is not None:
+        return dict(row)
+    if spec.get("network_profile") == "prod_static":
+        return {
+            "provider": "netbox",
+            "profile": "prod_static",
+            "address": spec.get("ipv4_cidr"),
+            "gateway": spec.get("ipv4_gateway"),
+            "status": "pending",
+        }
+    return None
 
 
 def public_event_kind(kind: str | None) -> str | None:
@@ -345,10 +406,12 @@ def _request_plain_payload(request: InstanceCreateRequest) -> dict:
         "name": request.name,
         "plan_id": request.plan_id,
         "image_id": request.image_id,
-        "environment": request.environment,
-        "network_profile": request.network_profile,
-        "tags": request.tags,
         "access": access,
+        "commercial_context": (
+            request.commercial_context.model_dump(mode="json")
+            if request.commercial_context is not None
+            else None
+        ),
         "start_on_create": request.start_on_create,
     }
 
@@ -389,8 +452,7 @@ def _idempotent_mutation(
     key = _idempotency_key_or_error(idempotency_key)
     request_hash = _fingerprint(body)
     with database() as db:
-        db.execute("BEGIN")
-        db.execute("SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", (scope, key))
+        db.execute("BEGIN IMMEDIATE")
         existing = _existing_idempotency(db, scope, key, request_hash)
         if existing is not None:
             db.execute("COMMIT")
@@ -422,17 +484,11 @@ def _idempotent_mutation(
             raise
 
 
-def _resolve_public_request(
-    request: InstanceCreateRequest,
-) -> tuple[InstanceSpec, dict, dict, str | None, str]:
-    try:
-        environment = resolve_environment(request.environment)
-    except EnvironmentError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.code) from error
-    plan = plan_by_id(request.plan_id, environment)
+def _resolve_public_request(request: InstanceCreateRequest) -> tuple[InstanceSpec, dict, dict, str | None]:
+    plan = plan_by_id(request.plan_id)
     if plan is None:
         raise HTTPException(status_code=422, detail=f"plan_id no disponible: {request.plan_id}")
-    image = image_by_id(request.image_id, environment)
+    image = image_by_id(request.image_id)
     if image is None:
         raise HTTPException(status_code=422, detail=f"image_id no disponible: {request.image_id}")
     if plan["vcpus"] < image.get("minimum_vcpus", 1):
@@ -446,6 +502,7 @@ def _resolve_public_request(
         raise HTTPException(status_code=422, detail="network_profile no disponible")
     if not profile["enabled"]:
         raise HTTPException(status_code=503, detail="NETWORK_PROFILE_NOT_CONFIGURED")
+    tags = [request.commercial_context.customer_tag] if request.commercial_context else []
     spec = InstanceSpec(
         name=request.name,
         image=request.image_id,
@@ -453,42 +510,40 @@ def _resolve_public_request(
         memory_mb=plan["memory_mb"],
         disk_gb=plan["disk_gb"],
         network_profile=request.network_profile,
-        network_mode="dhcp",
+        network_mode="static" if request.network_profile == "prod_static" else "dhcp",
         ssh_public_keys=request.access.ssh_public_keys,
         started=request.start_on_create,
-        tags=request.tags,
+        tags=tags,
     )
     password = (
         request.access.root_password.get_secret_value()
         if request.access.root_password is not None
         else None
     )
-    return spec, plan, image, password, environment
+    return spec, plan, image, password
 
 
 def _insert_operation(
     db,
     request: OperationRequest,
     *,
+    commercial_context: dict | None = None,
     secret_path: str | None = None,
     operation_id: str | None = None,
 ) -> tuple[dict, str]:
     operation_id = operation_id or str(uuid.uuid4())
     instance_id = str(uuid.uuid4()) if request.command in {Command.plan, Command.provision} else request.instance_id
-    try:
-        effective_environment = resolve_environment(request.environment)
-    except EnvironmentError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.code) from error
+    effective_stack = request.stack.value if hasattr(request.stack, "value") else request.stack
     created = now()
     payload = request.model_dump(mode="json")
 
     if request.command in {Command.apply, Command.destroy, Command.power, Command.reconcile} and instance_id:
-        protected = db.execute(
+        target = db.execute(
             "SELECT vmid FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
-        if protected is not None and is_protected_vmid(protected["vmid"]):
-            raise HTTPException(status_code=409, detail="PROTECTED_INSTANCE")
+        if target is not None:
+            _reject_protected_vmid(target["vmid"])
 
     if request.command in {Command.plan, Command.provision} and request.spec is not None:
         duplicate = db.execute(
@@ -501,8 +556,9 @@ def _insert_operation(
     if request.command == Command.power:
         target = db.execute(
             """
-            SELECT i.instance_id, i.status, i.environment
+            SELECT i.instance_id, i.status, o.stack
             FROM instances i
+            LEFT JOIN operations o ON o.operation_id = i.operation_id
             WHERE i.instance_id = ?
             """,
             (instance_id,),
@@ -511,9 +567,9 @@ def _insert_operation(
             raise HTTPException(status_code=404, detail="instance_id no existe")
         if target["status"] == "deleted":
             raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
-        if request.environment is not None and request.environment != target["environment"]:
-            raise HTTPException(status_code=409, detail="environment no coincide con la instancia")
-        effective_environment = target["environment"]
+        if target["stack"] not in {"mng01", "local"}:
+            raise HTTPException(status_code=409, detail="cluster no soportado")
+        effective_stack = target["stack"]
 
     if request.command == Command.reconcile:
         target = db.execute(
@@ -527,27 +583,27 @@ def _insert_operation(
         source_id = request.source_operation_id
         if source_id:
             source = db.execute(
-                "SELECT operation_id, instance_id, status, environment FROM operations WHERE operation_id=?",
+                "SELECT operation_id, instance_id, status, stack FROM operations WHERE operation_id=?",
                 (source_id,),
             ).fetchone()
             if source is None or source["instance_id"] != instance_id:
                 raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
             if source["status"] != "uncertain":
                 raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
-            effective_environment = source["environment"] or effective_environment
+            effective_stack = source["stack"] or effective_stack
         payload["source_operation_id"] = source_id
 
     if request.plan_operation_id:
         source = db.execute(
-            "SELECT instance_id, environment, plan_id FROM operations WHERE operation_id = ?",
+            "SELECT instance_id, stack, plan_id FROM operations WHERE operation_id = ?",
             (request.plan_operation_id,),
         ).fetchone()
         if source is None:
             raise HTTPException(status_code=404, detail="plan_operation_id no existe")
         instance_id = instance_id or source["instance_id"]
-        if source["environment"]:
-            effective_environment = source["environment"]
-            payload["environment"] = effective_environment
+        if source["stack"]:
+            effective_stack = source["stack"]
+            payload["stack"] = effective_stack
         if source["plan_id"] and not request.plan_id:
             payload["plan_id"] = source["plan_id"]
         source_operation = db.execute(
@@ -578,7 +634,8 @@ def _insert_operation(
             )
 
     payload["instance_id"] = instance_id
-    payload["environment"] = effective_environment
+    if request.command == Command.power:
+        payload["stack"] = effective_stack
     if secret_path:
         payload["secret_ref"] = "operation-secret"
 
@@ -594,13 +651,14 @@ def _insert_operation(
                 headers={"Retry-After": "5"},
             )
 
+    context_json = _commercial_json(commercial_context)
     plan_id = request.plan_id or payload.get("plan_id")
     db.execute(
         """
         INSERT INTO operations(
-          operation_id, command, action, status, payload_json, plan_id, environment,
-          secret_path, instance_id, plan_operation_id, created_at
-        ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+          operation_id, command, action, status, payload_json, plan_id, commercial_context_json,
+          secret_path, instance_id, plan_operation_id, stack, created_at
+        ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             operation_id,
@@ -608,10 +666,11 @@ def _insert_operation(
             request.action.value,
             json.dumps(payload),
             plan_id,
-            effective_environment,
+            context_json,
             secret_path,
             instance_id,
             request.plan_operation_id,
+            effective_stack,
             created,
         ),
     )
@@ -619,9 +678,9 @@ def _insert_operation(
         db.execute(
             """
             INSERT INTO instances(
-              instance_id, operation_id, name, image, plan_id, environment, status, power_state,
-              spec_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?)
+              instance_id, operation_id, name, image, plan_id, status, power_state,
+              spec_json, commercial_context_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -629,8 +688,8 @@ def _insert_operation(
                 request.spec.name,
                 request.spec.image,
                 plan_id,
-                effective_environment,
                 request.spec.model_dump_json(),
+                context_json,
                 created,
                 created,
             ),
@@ -642,7 +701,6 @@ def _insert_operation(
         "status": "queued" if request.command in {Command.provision, Command.reconcile} else "pending",
         "command": request.command.value,
         "action": request.action.value,
-        "environment": effective_environment,
     }
     if request.command in {Command.provision, Command.reconcile}:
         response["job_id"] = operation_id
@@ -656,9 +714,9 @@ def create_operation(request: OperationRequest) -> dict:
 
 
 def create_instance(request: InstanceCreateRequest, idempotency_key: str | None) -> dict:
-    spec, plan, _image, password, environment = _resolve_public_request(request)
+    spec, plan, _image, password = _resolve_public_request(request)
+    context = request.commercial_context.model_dump(mode="json") if request.commercial_context else None
     body = _request_plain_payload(request)
-    body["environment"] = environment
     scope = "POST:/v1/instances"
 
     def builder(db):
@@ -671,12 +729,13 @@ def create_instance(request: InstanceCreateRequest, idempotency_key: str | None)
             action=Action.provision,
             plan_id=plan["plan_id"],
             spec=spec,
-            environment=environment,
+            stack="mng01",
         )
         try:
             response, created_operation_id = _insert_operation(
                 db,
                 operation_request,
+                commercial_context=context,
                 secret_path=secret_path,
                 operation_id=operation_id,
             )
@@ -716,13 +775,12 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
 
     def builder(db):
         instance = db.execute(
-            "SELECT status, power_state, vmid, environment FROM instances WHERE instance_id=?",
+            "SELECT status, power_state, vmid FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
         if instance is None:
             raise HTTPException(status_code=404, detail="instance not found")
-        if is_protected_vmid(instance["vmid"]):
-            raise HTTPException(status_code=409, detail="PROTECTED_INSTANCE")
+        _reject_protected_vmid(instance["vmid"])
         if instance["status"] == "deleted":
             raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
         if instance["power_state"] == "running":
@@ -739,7 +797,6 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
                     "command": "destroy",
                     "action": "destroy",
                     "instance_id": instance_id,
-                    "environment": instance["environment"],
                     "reason": "logical_cleanup_no_physical_vm",
                 },
                 sort_keys=True,
@@ -748,15 +805,14 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
                 """
                 INSERT INTO operations(
                   operation_id, command, action, status, payload_json, instance_id,
-                  environment, created_at, started_at, finished_at, last_heartbeat,
+                  stack, created_at, started_at, finished_at, last_heartbeat,
                   exit_code, output, error
-                ) VALUES (?, 'destroy', 'destroy', 'succeeded', ?, ?, ?, ?, ?, ?, ?, 0, ?, '')
+                ) VALUES (?, 'destroy', 'destroy', 'succeeded', ?, ?, 'mng01', ?, ?, ?, ?, 0, ?, '')
                 """,
                 (
                     operation_id,
                     payload,
                     instance_id,
-                    instance["environment"],
                     created,
                     created,
                     created,
@@ -789,6 +845,7 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
                 plan_operation_id=plan["operation_id"],
                 plan_id=plan["plan_id"],
             ),
+            commercial_context=_commercial_dict(plan["commercial_context_json"]),
         )
         response["status"] = "queued"
         response["job_id"] = operation_id
@@ -806,6 +863,8 @@ def create_power(instance_id: str, action: PowerAction, idempotency_key: str | N
     body = {"instance_id": instance_id, "power_action": action.value}
 
     def builder(db):
+        provision = _latest_provision(db, instance_id)
+        context = _commercial_dict(provision["commercial_context_json"]) if provision else None
         response, operation_id = _insert_operation(
             db,
             OperationRequest(
@@ -814,6 +873,7 @@ def create_power(instance_id: str, action: PowerAction, idempotency_key: str | N
                 instance_id=instance_id,
                 power_action=action,
             ),
+            commercial_context=context,
         )
         response["status"] = "queued"
         response["job_id"] = operation_id
@@ -840,10 +900,11 @@ def create_reconcile(
 
     def builder(db):
         instance = db.execute(
-            "SELECT status FROM instances WHERE instance_id=?", (instance_id,)
+            "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
         ).fetchone()
         if instance is None:
             raise HTTPException(status_code=404, detail="instance not found")
+        _reject_protected_vmid(instance["vmid"])
         if instance["status"] == "deleted":
             raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
         selected = source_operation_id
@@ -860,7 +921,7 @@ def create_reconcile(
         if selected is None:
             raise HTTPException(status_code=409, detail="la instancia no tiene una operación uncertain para reconciliar")
         source = db.execute(
-                "SELECT * FROM operations WHERE operation_id=? AND instance_id=?",
+            "SELECT * FROM operations WHERE operation_id=? AND instance_id=?",
             (selected, instance_id),
         ).fetchone()
         if source is None:
@@ -874,8 +935,9 @@ def create_reconcile(
                 action=Action.reconcile,
                 instance_id=instance_id,
                 source_operation_id=selected,
-                environment=source["environment"] or "lab",
+                stack=source["stack"] or "mng01",
             ),
+            commercial_context=_commercial_dict(source["commercial_context_json"]),
         )
         response["status"] = "queued"
         response["job_id"] = operation_id
@@ -904,9 +966,8 @@ def operation_row(row):
     result["error_code"] = public_error_code(result.get("error"), raw_status)
     result["output"] = public_operation_output({**result, "payload": result["payload"], "status": raw_status})
     result["error"] = public_operation_error({**result, "status": raw_status})
+    result["commercial_context"] = _commercial_dict(result.pop("commercial_context_json", "{}"))
     result.pop("secret_path", None)
-    result.pop("target_node", None)
-    result.pop("worker_id", None)
     result.pop("workspace_path", None)
     result.pop("plan_path", None)
     with database() as db:
@@ -927,10 +988,17 @@ def instance_row(row):
     result = dict(row)
     result["spec"] = json.loads(result.pop("spec_json"))
     result["image_id"] = result.get("image")
-    result.pop("node", None)
+    result["commercial_context"] = _commercial_dict(result.pop("commercial_context_json", "{}"))
     result["status"] = public_instance_status(result)
     with database() as db:
+        result["network_allocation"] = _network_allocation_public(db, result["instance_id"], result["spec"])
         latest = _latest_operation(db, result["instance_id"])
+        stack = db.execute(
+            "SELECT stack FROM operations WHERE operation_id = ?",
+            (result["operation_id"],),
+        ).fetchone()
+    result["cluster"] = "mng"
+    result["stack"] = stack["stack"] if stack else "mng01"
     if latest:
         latest_result = dict(latest)
         raw_latest_status = latest_result["status"]
@@ -943,6 +1011,7 @@ def instance_row(row):
         latest_result["output"] = public_operation_output({**latest_result, "status": raw_latest_status})
         latest_result["error"] = public_operation_error({**latest_result, "status": raw_latest_status})
         latest_result.pop("secret_path", None)
+        latest_result.pop("commercial_context_json", None)
         latest_result.pop("workspace_path", None)
         latest_result.pop("plan_path", None)
         result["latest_operation"] = latest_result
@@ -1033,17 +1102,9 @@ def list_operations(
     return {"operations": [operation_row(row) for row in rows], "total": total, "limit": limit, "offset": offset}
 
 
-def plan_catalog_response(environment: str | None = None) -> list[dict]:
-    try:
-        selected = resolve_environment(environment)
-    except EnvironmentError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.code) from error
-    return plan_catalog(selected)
+def plan_catalog_response() -> list[dict]:
+    return plan_catalog()
 
 
-def image_catalog(environment: str | None = None) -> list[dict]:
-    try:
-        selected = resolve_environment(environment)
-    except EnvironmentError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.code) from error
-    return catalog_images(selected)
+def image_catalog() -> list[dict]:
+    return catalog_images()

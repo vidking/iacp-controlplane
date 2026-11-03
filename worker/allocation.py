@@ -2,14 +2,8 @@ import os
 from datetime import datetime, timezone
 
 from api.db import database
-from api.protection import protected_vmids
+from api.protection import is_protected_vmid
 from worker.proxmox import ProxmoxClient
-
-
-# Require the active Golden Images to be visible. VM 104 remains protected by
-# api.protection but is intentionally not an inventory-visibility requirement.
-# VMID 106 is protected as a historical reservation, not an allocation sentinel.
-_REQUIRED_MNG_INVENTORY_VMIDS = {29000, 29001, 29010, 29011}
 
 
 def now() -> str:
@@ -17,16 +11,12 @@ def now() -> str:
 
 
 def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = None) -> int:
-    minimum = int(os.getenv("IACP_VMID_MIN", "40000"))
+    minimum = int(os.getenv("IACP_VMID_MIN", "40001"))
     maximum = int(os.getenv("IACP_VMID_MAX", "49999"))
     reuse = os.getenv("IACP_VMID_REUSE", "1").strip().lower() not in {"0", "false", "no"}
     inventory = {int(item["vmid"]) for item in client.inventory() if str(item.get("vmid", "")).isdigit()}
-    if not _REQUIRED_MNG_INVENTORY_VMIDS.issubset(inventory):
-        raise RuntimeError("PROXMOX_INVENTORY_INCOMPLETE")
-    inventory.update(protected_vmids())
     with database() as db:
-        db.execute("BEGIN")
-        db.execute("SELECT pg_advisory_xact_lock(104, 3)")
+        db.execute("BEGIN IMMEDIATE")
         reserved = {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases WHERE status = 'held'")}
         consumed = (
             {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases")}
@@ -37,7 +27,10 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
             (
                 vmid
                 for vmid in range(minimum, maximum + 1)
-                if vmid not in inventory and vmid not in reserved and vmid not in consumed
+                if not is_protected_vmid(vmid)
+                and vmid not in inventory
+                and vmid not in reserved
+                and vmid not in consumed
             ),
             None,
         )
