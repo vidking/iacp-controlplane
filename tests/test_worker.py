@@ -15,6 +15,7 @@ from worker.main import (
     execute,
     execute_power,
     execute_reconcile,
+    ensure_vm_running_if_requested,
     guest_identity_previously_verified,
     local_variables,
     operation_output,
@@ -893,6 +894,206 @@ def test_reconcile_closes_reboot_identity_agent_outage_without_rebooting_again(t
     assert source["status"] == "succeeded"
     assert recovery["status"] == "succeeded"
     assert (instance["status"], instance["power_state"]) == ("ready", "running")
+
+
+def test_reconcile_starts_recovered_provision_vm_before_guest_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    instance_id = "reconcile-stopped-provision-instance"
+    source_id = "reconcile-stopped-provision-source"
+    recovery_id = "reconcile-stopped-provision-operation"
+    spec = {"image": "ubuntu-2404", "started": True}
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, vmid, stack, created_at)
+            VALUES (?, 'provision', 'provision', 'uncertain', ?, ?, 40002, 'mng01', 'now')
+            """,
+            (source_id, json.dumps({"command": "provision", "instance_id": instance_id, "spec": spec}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'reconcile', 'reconcile', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (recovery_id, json.dumps({"command": "reconcile", "instance_id": instance_id, "source_operation_id": source_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, ?, 'reconcile-stopped-provision', 'ubuntu-2404', 40002, 'mng01', 'uncertain', 'unknown', ?, 'now', 'now')
+            """,
+            (instance_id, source_id, json.dumps(spec)),
+        )
+
+    events = []
+
+    class StoppedVm:
+        current_state = "stopped"
+
+        def set_heartbeat(self, _callback):
+            pass
+
+        def inventory(self, *, uncertain=False):
+            return [{"vmid": 40002, "name": "reconcile-stopped-provision", "node": "mng01"}]
+
+        def power_state(self, node, vmid, name):
+            assert (node, vmid, name) == ("mng01", 40002, "reconcile-stopped-provision")
+            return {"power_state": self.current_state}
+
+        def power(self, node, vmid, name, action):
+            assert (node, vmid, name, action) == ("mng01", 40002, "reconcile-stopped-provision", "start")
+            events.append("power.start")
+            self.current_state = "running"
+            return {"action": action, "power_state": self.current_state}
+
+    monkeypatch.setattr(
+        "worker.main.ensure_guest_identity_for_operation",
+        lambda *_args, **_kwargs: events.append("guest.identity"),
+    )
+    execute_reconcile(
+        "worker-1",
+        {
+            "operation_id": recovery_id,
+            "payload_json": json.dumps(
+                {"command": "reconcile", "instance_id": instance_id, "source_operation_id": source_id}
+            ),
+        },
+        StoppedVm(),
+    )
+
+    with database() as db:
+        source = db.execute("SELECT status FROM operations WHERE operation_id=?", (source_id,)).fetchone()
+        recovery = db.execute("SELECT status FROM operations WHERE operation_id=?", (recovery_id,)).fetchone()
+        instance = db.execute("SELECT status, power_state FROM instances WHERE instance_id=?", (instance_id,)).fetchone()
+        kinds = [row["kind"] for row in db.execute("SELECT kind FROM events WHERE operation_id=? ORDER BY event_id", (recovery_id,))]
+    assert events == ["power.start", "guest.identity"]
+    assert source["status"] == "succeeded"
+    assert recovery["status"] == "succeeded"
+    assert (instance["status"], instance["power_state"]) == ("ready", "running")
+    assert "provision.power.start.started" in kinds
+    assert "provision.power.start.completed" in kinds
+
+
+def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
+    class UnknownPower:
+        def power_state(self, *_args):
+            return {"power_state": "unknown"}
+
+        def power(self, *_args):
+            pytest.fail("no debe iniciar cuando Proxmox no confirma stopped")
+
+    with pytest.raises(ProxmoxError, match="PROVISION_POWER_STATE_UNCONFIRMED") as error:
+        ensure_vm_running_if_requested(
+            "worker-1",
+            "operation-unknown-power",
+            UnknownPower(),
+            node="mng01",
+            vmid=40003,
+            name="unknown-power",
+            started=True,
+        )
+    assert error.value.uncertain
+
+
+def test_execute_starts_physically_recovered_vm_before_guest_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    operation_id = "execute-recovered-stopped-provision"
+    instance_id = "execute-recovered-stopped-instance"
+    spec = {
+        "name": "execute-recovered-stopped",
+        "image": "ubuntu-2404",
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 50,
+        "network_mode": "dhcp",
+        "network_profile": "lab_dhcp",
+        "started": True,
+        "tags": ["e2e"],
+    }
+    payload = {
+        "command": "provision",
+        "action": "provision",
+        "stack": "mng01",
+        "instance_id": instance_id,
+        "spec": spec,
+    }
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'provision', 'provision', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (operation_id, json.dumps(payload), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, ?, ?, 'ubuntu-2404', NULL, 'mng01', 'provisioning', 'unknown', ?, 'now', 'now')
+            """,
+            (instance_id, operation_id, spec["name"], json.dumps(spec)),
+        )
+
+    actions = []
+
+    class StoppedVm:
+        current_state = "stopped"
+
+        def set_heartbeat(self, _callback):
+            pass
+
+        def inventory(self, *, uncertain=False):
+            return [{"vmid": 40010, "name": spec["name"], "node": "mng01"}]
+
+        def power_state(self, node, vmid, name):
+            assert (node, vmid, name) == ("mng01", 40010, spec["name"])
+            return {"power_state": self.current_state}
+
+        def power(self, node, vmid, name, action):
+            assert (node, vmid, name, action) == ("mng01", 40010, spec["name"], "start")
+            actions.append("power.start")
+            self.current_state = "running"
+            return {"action": action, "power_state": self.current_state}
+
+    client = StoppedVm()
+    commands_run = iter([(0, "plan ready", ""), (1, "", "temporary failure in name resolution")])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr("worker.main.load_environment", lambda: None)
+    monkeypatch.setattr("worker.main.ProxmoxClient", lambda: client)
+    monkeypatch.setattr("worker.main.validate_pool", lambda _client: "iacp-lab")
+    monkeypatch.setattr("worker.main.observe", lambda *_args: {"network_model": "virtio"})
+    monkeypatch.setattr("worker.main.cluster_nodes", lambda: ["mng01"])
+    monkeypatch.setattr("worker.main.select_target_node", lambda _client: "mng01")
+    monkeypatch.setattr("worker.main.allocate", lambda *_args, **_kwargs: 40010)
+    monkeypatch.setattr("worker.main._ensure_static_allocation", lambda **kwargs: dict(kwargs["payload"]["spec"]))
+    monkeypatch.setattr("worker.main.golden_variables", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("worker.main.read_secret", lambda _path: None)
+    monkeypatch.setattr("worker.main.create_workspace", lambda *_args: (str(workspace), str(workspace)))
+    monkeypatch.setattr("worker.main.write_variables", lambda *_args: "variables.json")
+    monkeypatch.setattr("worker.main.terraform_commands", lambda *_args: [])
+    monkeypatch.setattr("worker.main.secret_path_for_command", lambda *_args: None)
+    monkeypatch.setattr("worker.main.run_commands", lambda *_args, **_kwargs: next(commands_run))
+    monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", lambda *_args, **_kwargs: actions.append("guest.identity"))
+    monkeypatch.setattr("worker.main.delete_secret", lambda _path: None)
+
+    execute(
+        "worker-1",
+        {
+            "operation_id": operation_id,
+            "stack": "mng01",
+            "instance_id": instance_id,
+            "payload_json": json.dumps(payload),
+        },
+    )
+
+    with database() as db:
+        operation = db.execute("SELECT status FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+        instance = db.execute("SELECT status, power_state, vmid FROM instances WHERE instance_id=?", (instance_id,)).fetchone()
+    assert actions == ["power.start", "guest.identity"]
+    assert operation["status"] == "succeeded"
+    assert (instance["status"], instance["power_state"], instance["vmid"]) == ("ready", "running", 40010)
 
 
 def test_heartbeat_refreshes_operation_phase_and_worker_age(tmp_path, monkeypatch):

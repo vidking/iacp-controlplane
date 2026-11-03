@@ -929,6 +929,35 @@ def ensure_guest_identity_for_operation(
         raise GuestIdentityError("GUEST_IDENTITY_AUDIT_FAILED") from error
 
 
+def ensure_vm_running_if_requested(
+    worker_id: str,
+    operation_id: str,
+    client: ProxmoxClient,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    started: bool,
+) -> dict | None:
+    """Converge a recovered VM to the requested running state before guest checks."""
+    if not started:
+        return None
+    observed = client.power_state(node, vmid, name)
+    power_state = observed.get("power_state")
+    if power_state == "running":
+        return observed
+    if power_state != "stopped":
+        raise ProxmoxError("PROVISION_POWER_STATE_UNCONFIRMED", uncertain=True)
+
+    heartbeat(worker_id, "running", operation_id, phase="provision_recovery_start")
+    emit(operation_id, "provision.power.start.started", "running", f"VMID {vmid} estaba detenida")
+    result = client.power(node, vmid, name, "start")
+    if result.get("power_state") != "running":
+        raise ProxmoxError("PROVISION_POWER_START_UNCONFIRMED", uncertain=True)
+    emit(operation_id, "provision.power.start.completed", "succeeded", f"VMID {vmid} está ejecutándose")
+    return result
+
+
 def guest_identity_previously_verified(instance_id: str) -> bool:
     """Return true only when a successful identity check is in the audit log."""
 
@@ -1183,6 +1212,16 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
     if present:
         if source_command in {"apply", "provision"}:
             spec = operation_spec(source, source_payload)
+            started = bool(spec.get("started", True))
+            ensure_vm_running_if_requested(
+                worker_id,
+                operation_id,
+                client,
+                node=node,
+                vmid=int(vmid),
+                name=name,
+                started=started,
+            )
             ensure_guest_identity_for_operation(
                 worker_id,
                 operation_id,
@@ -1193,7 +1232,7 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 name=name,
                 instance_id=instance_id,
                 spec=spec,
-                started=bool(spec.get("started", True)),
+                started=started,
             )
         close_source_after_reconciliation(
             source, instance_id, int(vmid), node, source_payload,
@@ -1547,12 +1586,22 @@ def execute(worker_id: str, operation: dict) -> None:
                     if command in {"apply", "provision"}:
                         spec = operation_spec(source_operation, source_payload)
                         started = requested_started if requested_started is not None else bool(spec.get("started", True))
+                        recovery_node = target_node or identity.get("node") or "mng01"
+                        ensure_vm_running_if_requested(
+                            worker_id,
+                            operation_id,
+                            client,
+                            node=recovery_node,
+                            vmid=int(vmid),
+                            name=identity.get("name", ""),
+                            started=started,
+                        )
                         ensure_guest_identity_for_operation(
                             worker_id,
                             operation_id,
                             client,
                             stack=stack,
-                            node=target_node or "mng01",
+                            node=recovery_node,
                             vmid=int(vmid),
                             name=instance_identity(instance_id).get("name", ""),
                             instance_id=instance_id,
@@ -1617,6 +1666,15 @@ def execute(worker_id: str, operation: dict) -> None:
             spec = operation_spec(source_operation, source_payload)
             started = requested_started if requested_started is not None else bool(spec.get("started", True))
             instance = instance_identity(instance_id)
+            ensure_vm_running_if_requested(
+                worker_id,
+                operation_id,
+                client,
+                node=target_node or instance.get("node") or "mng01",
+                vmid=int(vmid),
+                name=instance.get("name", ""),
+                started=started,
+            )
             ensure_guest_identity_for_operation(
                 worker_id,
                 operation_id,
