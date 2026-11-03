@@ -18,9 +18,9 @@ son `iacp_controlplane_dev_postgres`, `iacp_controlplane_dev_workdata`,
 compartas volúmenes entre stacks ni montes el volumen del runtime anterior.
 La base comienza vacía; no se importan operaciones ni instancias antiguas.
 
-El stack declara PostgreSQL 17 y dos workers (`worker-1`, `worker-2`). La cola
-usa locks transaccionales y limita globalmente a dos las operaciones activas.
-No escales workers sin cambiar y revisar ese límite.
+El stack declara PostgreSQL 17 y seis workers (`worker-1` a `worker-6`). La cola
+usa locks transaccionales y admite globalmente hasta seis operaciones activas.
+El límite está sincronizado entre API y workers en Compose y en el manifiesto.
 
 ## Variables y secretos
 
@@ -116,9 +116,10 @@ al stack y `docker compose -f deploy/portainer/docker-compose.yml config`.
 Estas comprobaciones no ejecutan un despliegue ni crean máquinas virtuales.
 
 El health check valida PostgreSQL y configuración de destino. Antes de una
-prueba física se requiere identidad de prueba, cola y credenciales aisladas, y
-un máximo de dos operaciones simultáneas. Mantén los servicios y volúmenes
-anteriores fuera de este stack.
+prueba física se requiere identidad de prueba, cola y credenciales aisladas. La
+capacidad del runtime es seis operaciones; cada ronda de certificación física
+mantiene como máximo dos aprovisionamientos simultáneos. Mantén los servicios y
+volúmenes anteriores fuera de este stack.
 
 ## Cambios futuros
 

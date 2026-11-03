@@ -3,25 +3,24 @@ import re
 
 from api.catalog import cluster_nodes, load_catalog
 from worker.proxmox import ProxmoxClient, ProxmoxError
-from api.targets import pool_id as environment_pool_id, terraform_target_for_environment
 
 
 DEFAULT_POOL_ID = "iacp-lab"
 
 
-def catalog(environment: str = "lab") -> dict[str, dict]:
-    return {item["image_id"]: item for item in load_catalog(environment)["images"]}
+def catalog() -> dict[str, dict]:
+    return {item["image_id"]: item for item in load_catalog()["images"]}
 
 
-def configured_pool_id(environment: str = "lab") -> str:
-    pool_id = environment_pool_id(environment).strip()
+def configured_pool_id() -> str:
+    pool_id = os.getenv("IACP_PROXMOX_POOL_ID", DEFAULT_POOL_ID).strip()
     if not pool_id or not re.fullmatch(r"[A-Za-z0-9_-]+", pool_id):
         raise ValueError("PROXMOX_POOL_REQUIRED")
     return pool_id
 
 
-def validate_pool(client: ProxmoxClient, environment: str = "lab") -> str:
-    pool_id = configured_pool_id(environment)
+def validate_pool(client: ProxmoxClient) -> str:
+    pool_id = configured_pool_id()
     if not any(str(pool.get("poolid")) == pool_id for pool in client.pools() if isinstance(pool, dict)):
         raise ProxmoxError("PROXMOX_POOL_NOT_FOUND", 404)
     return pool_id
@@ -59,8 +58,8 @@ def _boot_order(raw: str | None) -> list[str] | None:
     return order or None
 
 
-def observe(image_id: str, client: ProxmoxClient, environment: str = "lab") -> dict:
-    entry = catalog(environment).get(image_id)
+def observe(image_id: str, client: ProxmoxClient) -> dict:
+    entry = catalog().get(image_id)
     if entry is None:
         raise ValueError("IMAGE_NOT_AVAILABLE")
     node = entry["source_node"]
@@ -111,7 +110,7 @@ def variables(
     spec: dict,
     vmid: int,
     golden: dict,
-    environment: str = "lab",
+    stack: str = "mng01",
     *,
     target_node: str | None = None,
     allowed_nodes: list[str] | None = None,
@@ -119,9 +118,9 @@ def variables(
     pool_id: str | None = None,
 ) -> dict:
     image_id = spec["image"]
-    username = catalog(environment).get(image_id, {}).get("cloudinit_username", "root")
-    target_node = target_node or cluster_nodes(environment)[0]
-    allowed_nodes = allowed_nodes or cluster_nodes(environment)
+    username = catalog().get(image_id, {}).get("cloudinit_username", "root")
+    target_node = target_node or "mng01"
+    allowed_nodes = allowed_nodes or cluster_nodes()
     keys = spec.get("ssh_public_keys") or []
     if not keys:
         key_file = os.getenv("IACP_DEFAULT_SSH_PUBLIC_KEY_FILE", "")
@@ -132,12 +131,12 @@ def variables(
         keys = [os.environ["IACP_DEFAULT_SSH_PUBLIC_KEY"].strip()]
     if not keys and not has_root_password:
         raise ValueError("SSH_PUBLIC_KEY_REQUIRED")
-    pool_id = pool_id or configured_pool_id(environment)
+    pool_id = pool_id or configured_pool_id()
     disk = dict(golden["disk"])
     disk["size_gb"] = spec["disk_gb"]
     disk.pop("volume", None)
     return {
-        "environment": terraform_target_for_environment(environment),
+        "environment": stack,
         "allowed_nodes": allowed_nodes,
         "instance": {
             "vm_name": spec["name"],
@@ -157,6 +156,9 @@ def variables(
             "network_bridge": golden["network_bridge"] or "vmbr0",
             "network_model": golden.get("network_model", "virtio"),
             "network_mode": spec.get("network_mode", "dhcp"),
+            "vlan_id": spec.get("vlan_id"),
+            "ipv4_cidr": spec.get("ipv4_cidr"),
+            "ipv4_gateway": spec.get("ipv4_gateway"),
             "cloudinit_datastore_id": golden["disk"]["datastore_id"],
             "cloudinit_username": username,
             "ssh_public_keys": keys,
@@ -167,7 +169,7 @@ def variables(
             "scsi_hardware": golden.get("scsi_hardware"),
             "hotplug": golden.get("hotplug"),
             "boot_order": golden.get("boot_order"),
-            "tags": list(spec.get("tags", [])),
+            "tags": [golden["vmtag"], *spec.get("tags", [])],
             "boot_disk": disk,
         },
     }

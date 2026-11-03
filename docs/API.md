@@ -1,71 +1,73 @@
 # API IACP Control Plane v1
 
-Esta referencia resume el contrato HTTP público. La referencia interactiva y
-el OpenAPI vigente se generan desde la aplicación:
+El servicio basado en el código de `controlplanev2` conserva el nombre IACP
+Control Plane y publica el contrato HTTP `/v1`.
 
-- `/docs`: guía y consola visual; genera el JSON y cURL desde el formulario.
-- `/swagger`: Swagger UI con ejemplos de request del esquema Pydantic.
-- `/redoc`: referencia de lectura.
-- `/openapi.json`: contrato descargable.
+- `/docs`: guía operativa y formulario que genera el JSON y el cURL.
+- `/swagger`: OpenAPI interactivo con ejemplos del modelo.
+- `/redoc` y `/openapi.json`: vistas y contrato descargable.
 
-Las rutas operativas conservan el prefijo `/v1`.
+## Autenticación y catálogos
 
-## Autenticación y catálogo
-
-Las rutas `/v1` requieren `Authorization: Bearer <token>` cuando el runtime
-tiene activado `IACP_REQUIRE_API_TOKEN`.
-
-Consulta primero los destinos lógicos y catálogos autorizados:
+Cuando `IACP_REQUIRE_API_TOKEN` está habilitado, envía el token en:
 
 ```http
-GET /v1/environments
-GET /v1/plans?environment=lab
-GET /v1/images?environment=lab
+Authorization: Bearer <token>
+```
+
+Consulta las opciones válidas antes de crear una VM:
+
+```http
+GET /v1/plans
+GET /v1/images
 GET /v1/network-profiles
 ```
 
-`environment` es opcional al consultar planes e imágenes. En las solicitudes
-de aprovisionamiento puede omitirse para usar el default publicado. El
-consumidor no envía clúster, nodo, pool, VLAN, IP, gateway ni parámetros de
-Terraform.
+El cuerpo de creación no acepta `environment`, nodo, clúster, pool, VLAN, IP,
+gateway ni parámetros Terraform. El destino físico lo resuelve el servidor.
 
-## Crear una máquina virtual
+## Crear una instancia
 
-`POST /v1/instances` devuelve `202 Accepted`. El contrato tiene campos
-estables: nombre, entorno lógico, plan, imagen, perfil de red, tags, acceso
-inicial y estado de encendido.
+`POST /v1/instances` devuelve `202 Accepted` y encola el aprovisionamiento
+completo. Este es el cuerpo fijo:
 
 ```json
 {
-  "name": "cliente-cl-105",
-  "environment": "lab",
+  "name": "kvm-cl-105",
   "plan_id": "kvm-2",
   "image_id": "ubuntu-2404",
-  "network_profile": "lab_dhcp",
-  "tags": ["cl-105", "kvm-001", "postal"],
   "access": {
     "root_password": "CAMBIAR_POR_SECRETO",
     "ssh_public_keys": []
   },
+  "commercial_context": {
+    "customer_id": "CL-105",
+    "customer_tag": "cl-105",
+    "order_id": "ORD-1001",
+    "product_id": "KVM-2"
+  },
+  "network_profile": "lab_dhcp",
+  "tags": ["kvm-001", "postal", "smtp-relay"],
   "start_on_create": true
 }
 ```
 
-Las etiquetas son opcionales y se envían como una lista de strings. Si la
-lista está vacía, no se aplican tags. El orquestador no infiere `cl-xxx`,
-`kvm-xxx` ni ningún tag desde `name`.
+`commercial_context` es opcional; si se envía, incluye sus cuatro campos. Su
+`customer_tag` se agrega automáticamente a las etiquetas de Proxmox. `tags`
+agrega cero o más etiquetas adicionales y no se deriva del nombre. Cada tag
+debe usar minúsculas, números, guion o guion bajo, empezar con letra o número y
+tener hasta 63 caracteres. Los duplicados se eliminan conservando el primer
+orden.
 
-`name` admite minúsculas, números y guiones, con longitud de 1 a 63 caracteres.
-Los IDs de plan e imagen deben aparecer en el catálogo del entorno elegido.
-`network_profile` solo admite `lab_dhcp`; no se acepta configuración de IP
-estática.
+`name` admite minúsculas, números y guiones, entre 1 y 63 caracteres.
+`plan_id`, `image_id` y `network_profile` deben existir en los catálogos.
+`network_profile` admite `lab_dhcp` y `prod_static`; el segundo puede estar
+deshabilitado hasta configurar el IPAM autorizado. No se envían IP ni gateway.
+Campos adicionales se rechazan.
 
-La contraseña inicial se entrega mediante `access.root_password`; también se
-puede enviar una o varias claves en `access.ssh_public_keys`. El secreto no se
-devuelve en las respuestas. Configura al menos una de esas alternativas o una
-clave SSH por defecto en el runtime.
-
-Ejemplo de envío:
+La contraseña se valida según `IACP_ROOT_PASSWORD_MIN_LENGTH` y nunca se
+devuelve. Se puede usar `access.ssh_public_keys`; el runtime también puede
+aportar una clave SSH predeterminada.
 
 ```bash
 curl --fail-with-body --silent --show-error \
@@ -76,73 +78,51 @@ curl --fail-with-body --silent --show-error \
   --data-binary @request.json
 ```
 
-Respuesta abreviada:
-
-```json
-{
-  "operation_id": "<uuid>",
-  "job_id": "<mismo-uuid>",
-  "instance_id": "<uuid>",
-  "status": "queued",
-  "command": "provision",
-  "action": "provision",
-  "environment": "lab",
-  "idempotency_key": "alta-cl-105-kvm-001"
-}
-```
-
-## Seguimiento y recuperación
-
-Consulta `GET /v1/operations/{operation_id}` hasta `completed`, `failed` o
-`uncertain`. `job_id` es un alias de `operation_id`. Los estados `uncertain`
-requieren verificación física; no significan que la mutación haya fallado.
+La respuesta contiene `operation_id`, `job_id`, `instance_id`, `status`,
+`command` y `action`. Consulta la operación hasta alcanzar un estado terminal:
 
 ```http
 GET /v1/operations/{operation_id}
 GET /v1/instances/{instance_id}
 GET /v1/events?operation_id={operation_id}&sort=asc
-POST /v1/instances/{instance_id}/reconcile
 ```
 
-El worker observa Proxmox antes de volver a intentar una mutación con resultado
-ambiguo. Si no puede confirmar el estado, conserva la operación como incierta
-y programa reconciliación. Reutiliza la misma `Idempotency-Key` al reintentar
-una intención; si se usa la misma llave con otro cuerpo, la API responde `409`.
-Cuando se llena la cola, responde `429` y `Retry-After`.
+Estados públicos de operación: `queued`, `running`, `completed`, `failed` y
+`uncertain`. Un estado `uncertain` requiere observación y reconciliación antes
+de repetir la intención.
 
-## Lifecycle, red y eliminación
+## Inventario y ciclo de vida
 
-```http
-GET    /v1/instances/{instance_id}/power
-POST   /v1/instances/{instance_id}/power/start
-POST   /v1/instances/{instance_id}/power/shutdown
-POST   /v1/instances/{instance_id}/power/reboot
-GET    /v1/instances/{instance_id}/network
-DELETE /v1/instances/{instance_id}
-```
+| Método y ruta | Uso |
+| --- | --- |
+| `GET /v1/instances` | Lista con filtros y paginación. |
+| `GET /v1/instances/{instance_id}` | Detalle de instancia administrada. |
+| `GET /v1/instances/{instance_id}/network` | IP observada por QEMU Guest Agent e información de IPAM. |
+| `GET /v1/instances/{instance_id}/power` | Consulta estado de energía en Proxmox. |
+| `POST /v1/instances/{instance_id}/power/start` | Encola inicio. |
+| `POST /v1/instances/{instance_id}/power/shutdown` | Encola apagado ordenado. |
+| `POST /v1/instances/{instance_id}/power/reboot` | Encola reinicio. |
+| `DELETE /v1/instances/{instance_id}` | Encola destroy de una VM administrada. |
+| `POST /v1/instances/{instance_id}/reconcile` | Reconcilia el estado de una operación incierta. |
 
-Las mutaciones son asíncronas. Para eliminar, la VM debe aparecer apagada; la
-API reutiliza el workspace y state originales. La respuesta de red informa
-direcciones observadas por QEMU Guest Agent, sin presentar DHCP como una
-reserva o conectividad confirmada.
+Las acciones asíncronas aceptan `Idempotency-Key`. Reutiliza la misma llave
+solo para reintentar la misma intención con el mismo cuerpo. Una llave asociada
+a otro cuerpo devuelve `409`.
 
-La VM 104, VM 106 y las imágenes base protegidas no pueden modificarse desde
-estas rutas.
-
-## Operación y diagnóstico
-
-`POST /v1/operations` conserva el flujo explícito para operadores que necesitan
-`plan`, `apply`, `destroy` o una reconciliación manual. La creación normal de
-consumidores debe usar `POST /v1/instances`.
+## Operaciones y observabilidad
 
 ```http
-GET /v1/instances
-GET /v1/operations
+GET /v1/operations?limit=50&offset=0
+GET /v1/operations/{operation_id}
+GET /v1/events?after=0&limit=100&sort=desc
 GET /v1/workers
 GET /v1/observability
-GET /v1/events
 ```
 
-Los errores son códigos estables y no exponen rutas internas, secretos ni
-salida completa de Terraform. Consulta `/swagger` para modelos, parámetros,
-ejemplos de request y respuestas publicados por el runtime.
+`POST /v1/operations` conserva el flujo técnico explícito para operadores.
+Las integraciones de consumo deben preferir `POST /v1/instances`, que valida
+los catálogos y encola la creación como una sola intención.
+
+El runtime está configurado con seis workers y un máximo global de seis
+operaciones concurrentes. Las vistas `/docs`, `/swagger` y el OpenAPI se
+generan desde el contrato que ejecuta la API.

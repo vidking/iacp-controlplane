@@ -13,6 +13,11 @@ output "node_name" {
   value       = module.kvm.node_name
 }
 
+output "configured_ipv4_cidr" {
+  description = "IPv4 configurada, sin garantizar conectividad."
+  value       = module.kvm.configured_ipv4_cidr
+}
+
 output "environment" {
   description = "Entorno de ejecución."
   value       = var.environment

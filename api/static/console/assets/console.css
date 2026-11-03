@@ -93,3 +93,36 @@ pre { max-height: 260px; overflow: auto; margin: 0; border-radius: 10px; color: 
 
 @media (max-width: 980px) { .layout-grid { grid-template-columns: 1fr; } .sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .compact-card { display: none; } }
 @media (max-width: 680px) { .masthead { align-items: flex-start; flex-wrap: wrap; } .header-links { width: 100%; margin-left: 65px; } .shell { width: min(100% - 22px, 1380px); margin-top: 12px; } .card { padding: 16px; } .hero, .power-panel { align-items: flex-start; flex-direction: column; } .form-grid, .facts, .sidebar { grid-template-columns: 1fr; } .full-width { grid-column: auto; } .power-actions { justify-content: flex-start; } }
+
+/* Tema de producción CyberFuel: superficies blancas y acentos azules. */
+:root { color-scheme: light; --bg: #fff; --panel: #fff; --panel-2: #f1f9fe; --line: #c5deee; --text: #173a54; --muted: #416783; --cyan: #008fc8; --green: #087fb4; --yellow: #a96900; --red: #b72f36; }
+html, body { color: var(--text); background: #fff !important; }
+a { color: #0088c2; }
+.masthead { border-bottom-color: #cfe4f1; background: #fff; box-shadow: 0 3px 14px rgba(0, 104, 157, .06); }
+.brand-mark { color: #008fc8; border-color: #008fc8; }
+.masthead h1, h2, h3, h4 { color: #173a54; }
+.eyebrow { color: #007eae; }
+.header-links { color: #315d79; }
+.card { border-color: #c7deed; background: #fff; box-shadow: 0 8px 24px rgba(0, 91, 142, .08); }
+.hero p:not(.eyebrow), .muted, .muted-text, .hint, .worker-row small, .instance-row small { color: #416783; }
+.badge { color: #315d79; background: #edf6fb; }
+.badge.ok, .pill { color: #006f9f; background: #e5f4fb; }
+.badge.warn { color: #8d5a00; background: #fff5dd; }
+.badge.error { color: #a32631; background: #fff0f0; }
+.status-dot { background: #6c9dbb; }
+.status-dot.ok { background: #087fb4; }
+label { color: #315d79; }
+input, select, textarea { color: #173a54; border-color: #aacde1; background: #fff; }
+input::placeholder, textarea::placeholder { color: #6c8ba2; opacity: 1; }
+input:focus, select:focus, textarea:focus { border-color: #008fc8; box-shadow: 0 0 0 3px rgba(0, 143, 200, .14); }
+.check-row { color: #315d79; }
+.check-row input { accent-color: #008fc8; }
+button.primary { color: #fff; background: #008fc8; }
+button.primary:hover { background: #007bac; }
+button.secondary { color: #165273; border-color: #aacde1; background: #fff; }
+button.danger { color: #a32631; border: 1px solid #e8b9bd; background: #fff3f3; }
+.worker-row, .instance-row, .fact, .power-panel, .empty-state, pre, .toast { border-color: #c9dfed; background: #fff; }
+.instance-row:hover, .instance-row.selected { border-color: #008fc8; background: #eff8fd; }
+.quick-link { border-bottom-color: #d5e7f1; }
+pre { color: #174c69; background: #f4faff; }
+.toast { color: #173a54; box-shadow: 0 10px 30px rgba(0, 91, 142, .14); }

@@ -22,6 +22,10 @@ module "kvm" {
   memory_mb              = var.instance.memory_mb
   network_bridge         = var.instance.network_bridge
   network_model          = var.instance.network_model
+  network_mode           = var.instance.network_mode
+  vlan_id                = var.instance.vlan_id
+  ipv4_cidr              = var.instance.ipv4_cidr
+  ipv4_gateway           = var.instance.ipv4_gateway
   cloudinit_datastore_id = var.instance.cloudinit_datastore_id
   cloudinit_username     = var.instance.cloudinit_username
   ssh_public_keys        = var.instance.ssh_public_keys
@@ -34,5 +38,8 @@ module "kvm" {
   hotplug                = var.instance.hotplug
   boot_order             = var.instance.boot_order
 
-  tags = var.instance.tags
+  tags = setunion(
+    var.instance.tags,
+    toset(["iacp", var.environment])
+  )
 }

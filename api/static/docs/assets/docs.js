@@ -3,7 +3,6 @@
     token: "",
     route: "create",
     guide: null,
-    environments: [],
     plans: [],
     images: [],
     networkProfiles: [],
@@ -222,27 +221,19 @@
     return state.networkProfiles.find((profile) => profile.profile_id === id);
   }
 
+  function collectTags(value) {
+    const tags = [...new Set(value.split(",").map((tag) => tag.trim()).filter(Boolean))];
+    const validTag = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+    if (tags.some((tag) => !validTag.test(tag))) {
+      throw new Error("Cada tag debe usar minúsculas, números, guion o guion bajo y tener hasta 63 caracteres.");
+    }
+    return tags;
+  }
+
   async function loadCatalog() {
-    const environmentsBody = await api("/v1/environments");
-    state.environments = environmentsBody.environments || [];
-    const environmentSelect = $("environment");
-    const currentEnvironment = environmentSelect.value;
-    environmentSelect.innerHTML = "";
-    state.environments.forEach((environment) => {
-      const option = document.createElement("option");
-      option.value = environment.environment;
-      option.textContent = environment.label;
-      environmentSelect.append(option);
-    });
-    const selectedEnvironment = state.environments.some((item) => item.environment === currentEnvironment)
-      ? currentEnvironment
-      : (environmentsBody.default_environment || state.environments[0]?.environment || "");
-    environmentSelect.value = selectedEnvironment;
-    if (!selectedEnvironment) throw new Error("No hay entornos habilitados para esta API.");
-    const environmentQuery = `?environment=${encodeURIComponent(selectedEnvironment)}`;
     const [plansBody, imagesBody, profilesBody] = await Promise.all([
-      api(`/v1/plans${environmentQuery}`),
-      api(`/v1/images${environmentQuery}`),
+      api("/v1/plans"),
+      api("/v1/images"),
       api("/v1/network-profiles"),
     ]);
     state.plans = plansBody.plans || [];
@@ -287,8 +278,11 @@
     const plan = planById($("plan").value);
     const image = imageById($("image").value);
     $("plan-help").textContent = plan ? `${plan.vcpus} vCPU · ${plan.memory_mb} MB · ${plan.disk_gb} GB certificados.` : "Los vCPU, memoria y disco provienen del plan certificado.";
-    $("image-help").textContent = image ? `Golden Image ${image.template_vm_id} certificada.` : "La Golden Image se conserva sin mutaciones.";
-    $("network-profile-help").textContent = "La VM recibe su configuración por DHCP; no se envían IP ni gateway.";
+    $("image-help").textContent = image ? `VMID ${image.template_vm_id} · origen ${image.source_node} · ${image.storage}.` : "La Golden Image se conserva sin mutaciones.";
+    const profile = networkProfileById($("network-profile").value);
+    $("network-profile-help").textContent = profile?.profile_id === "prod_static"
+      ? "NetBox asignará una IP libre del /24 autorizado y usará x.x.x.1 como gateway."
+      : "La VM recibe su configuración por DHCP en el entorno de laboratorio.";
   }
 
   function navigate(route, guide = null) {
@@ -349,8 +343,8 @@
       container.innerHTML = `<div class="empty-state">No hay instancias para mostrar.</div>${containerId === "instances-table" ? renderPager("instances") : ""}`;
       return;
     }
-    container.innerHTML = `<table><thead><tr><th>Nombre</th><th>Entorno</th><th>Plan</th><th>Imagen</th><th>VMID</th><th>Estado</th><th>Energía</th></tr></thead><tbody>${filtered.map((instance) => `
-      <tr data-instance-id="${escapeHtml(instance.instance_id)}"><td><strong>${escapeHtml(instance.name)}</strong><br><small>${escapeHtml(instance.instance_id)}</small></td><td>${escapeHtml(instance.environment || "lab")}</td><td>${escapeHtml(instance.plan_id || "—")}</td><td>${escapeHtml(instance.image_id || instance.image)}</td><td>${escapeHtml(instance.vmid ?? "pendiente")}</td><td>${statusBadge(instance.status)}</td><td>${escapeHtml(instance.power_state || "unknown")}</td></tr>`).join("")}</tbody></table>${containerId === "instances-table" ? renderPager("instances") : ""}`;
+    container.innerHTML = `<table><thead><tr><th>Nombre</th><th>Plan</th><th>Imagen</th><th>VMID</th><th>Nodo</th><th>Estado</th><th>Energía</th></tr></thead><tbody>${filtered.map((instance) => `
+      <tr data-instance-id="${escapeHtml(instance.instance_id)}"><td><strong>${escapeHtml(instance.name)}</strong><br><small>${escapeHtml(instance.instance_id)}</small></td><td>${escapeHtml(instance.plan_id || "—")}</td><td>${escapeHtml(instance.image_id || instance.image)}</td><td>${escapeHtml(instance.vmid ?? "pendiente")}</td><td>${escapeHtml(instance.node || "—")}</td><td>${statusBadge(instance.status)}</td><td>${escapeHtml(instance.power_state || "unknown")}</td></tr>`).join("")}</tbody></table>${containerId === "instances-table" ? renderPager("instances") : ""}`;
     container.querySelectorAll("[data-instance-id]").forEach((row) => row.addEventListener("click", () => selectInstance(row.dataset.instanceId)));
   }
 
@@ -606,13 +600,19 @@
 
   function networkText(network) {
     if (!network) return "Sin datos de red.";
+    const allocation = network.network_allocation;
+    if (allocation?.status === "allocated" && allocation.address) {
+      return `${allocation.address} · NetBox IPAM · gateway ${allocation.gateway || "pendiente"}`;
+    }
+    if (allocation?.status === "pending") return "Perfil Prod_Static seleccionado; esperando reserva de IP en NetBox.";
     if (network.observed_ipv4?.length) return `${network.observed_ipv4.join(", ")} · Guest Agent · observado ${formatTime(network.observed_at)}`;
+    if (network.configured_ipv4_cidr) return `${network.configured_ipv4_cidr} · configuración declarada; conectividad no confirmada.`;
     if (network.status === "pending") return "VM pendiente de aprovisionamiento.";
     return `IP no confirmada (${network.reason || "Guest Agent no disponible"}).`;
   }
 
   function renderFacts(instance) {
-    return [["Instance ID", instance.instance_id], ["Entorno", instance.environment || "lab"], ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image], ["Perfil de red", instance.spec?.network_profile || "lab_dhcp"], ["VMID", instance.vmid ?? "pendiente"], ["vCPU", instance.spec?.vcpus], ["Memoria", `${instance.spec?.memory_mb ?? "—"} MB`], ["Disco", `${instance.spec?.disk_gb ?? "—"} GB`], ["Tags", instance.spec?.tags?.join(", ") || "—"]].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+    return [["Instance ID", instance.instance_id], ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image], ["Perfil de red", instance.spec?.network_profile || "lab_dhcp"], ["VMID", instance.vmid ?? "pendiente"], ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"], ["vCPU", instance.spec?.vcpus], ["Memoria", `${instance.spec?.memory_mb ?? "—"} MB`], ["Disco", `${instance.spec?.disk_gb ?? "—"} GB`], ["IP asignada", instance.network_allocation?.address || "pendiente"], ["Tag", instance.spec?.tags?.join(", ") || "—"]].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   }
 
   function setPowerButtons(enabled, selector = ".power-action") {
@@ -654,7 +654,7 @@
     $("console-network-text").textContent = networkText(network);
     $("console-operation-detail").textContent = JSON.stringify(instance.latest_operation || { status: "sin operación" }, null, 2);
     $("lifecycle-title").textContent = instance.name;
-    $("lifecycle-subtitle").textContent = `${instance.environment || "lab"} · ${instance.plan_id || "sin plan"} · VMID ${instance.vmid ?? "pendiente"}`;
+    $("lifecycle-subtitle").textContent = `${instance.plan_id || "sin plan"} · ${instance.node || "nodo pendiente"} · VMID ${instance.vmid ?? "pendiente"}`;
     $("lifecycle-status").className = `status-badge ${statusClass(instance.status)}`;
     $("lifecycle-status").textContent = instance.status;
     $("lifecycle-operation").textContent = JSON.stringify(instance.latest_operation || { status: "sin operación" }, null, 2);
@@ -672,16 +672,20 @@
   function buildCreateBody() {
     const ssh = $("ssh-key").value.trim();
     const password = $("root-password").value;
+    const values = ["customer-id", "customer-tag", "order-id", "product-id"].map((id) => $(id).value.trim());
     const body = {
       name: $("name").value.trim(),
-      environment: $("environment").value,
       plan_id: $("plan").value,
       image_id: $("image").value,
       network_profile: $("network-profile").value,
-      tags: $("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean),
+      tags: collectTags($("vm-tags").value),
       access: { root_password: password, ssh_public_keys: ssh ? [ssh] : [] },
       start_on_create: $("started").checked,
     };
+    if (values.some(Boolean)) {
+      if (values.some((value) => !value)) throw new Error("Completa los cuatro campos de trazabilidad o déjalos vacíos.");
+      body.commercial_context = { customer_id: values[0], customer_tag: values[1], order_id: values[2], product_id: values[3] };
+    }
     return body;
   }
 
@@ -843,7 +847,6 @@
   $("copy-curl").addEventListener("click", copyCurl);
   $("plan").addEventListener("change", () => { updateCatalogHelp(); renderPlanCatalog(); });
   $("image").addEventListener("change", updateCatalogHelp);
-  $("environment").addEventListener("change", () => loadCatalog().catch(showError));
   $("network-profile").addEventListener("change", updateCatalogHelp);
   $("refresh-console").addEventListener("click", () => refreshAll().catch(showError));
   $("refresh-create-instances").addEventListener("click", () => refreshInstances().catch(showError));
@@ -879,28 +882,6 @@
   });
   window.addEventListener("hashchange", () => setRoute(window.location.hash.slice(1)));
 
-  const initialEmptyStates = [
-    ["console-instances", "Autoriza la API para consultar las instancias."],
-    ["console-operations", "Autoriza la API para consultar las operaciones."],
-    ["instances-table", "Autoriza la API para cargar las instancias."],
-    ["operations-table", "Autoriza la API para consultar las operaciones."],
-    ["workers-table", "Autoriza la API para consultar los workers."],
-    ["events-table", "Autoriza la API para consultar los eventos."],
-  ];
-  initialEmptyStates.forEach(([id, message]) => {
-    const container = $(id);
-    if (container) container.innerHTML = `<div class="empty-state" role="status">${message}</div>`;
-  });
-  $("console-message").textContent = "Autoriza la API para cargar el estado del tenant.";
-  $("instance-filter").setAttribute("aria-label", "Filtrar instancias por nombre");
-  $("refresh-detail").setAttribute("aria-label", "Actualizar detalle de la operación");
-  $("refresh-detail").setAttribute("title", "Actualizar detalle");
-  $("obs-live-status").textContent = "Autoriza la API para consultar eventos.";
-  $("operations-live-status").textContent = "Autoriza la API para consultar operaciones.";
-  $("workers-live-status").textContent = "Autoriza la API para consultar workers.";
-  $("environment-label").textContent = document.documentElement.dataset.theme === "production"
-    ? "ENTORNO DE PRODUCCIÓN"
-    : "CENTRO DE DESARROLLO";
   setGuideBaseUrls();
   setAuth(false);
   setRoute(window.location.hash.slice(1) || "create");

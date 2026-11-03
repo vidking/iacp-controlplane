@@ -10,7 +10,7 @@
   "backend": "local",
   "state_bucket": "",
   "state_prefix": "",
-  "max_concurrent": 1,
+  "max_concurrent": 6,
   "vmid_min": 40000,
   "vmid_max": 49999,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",

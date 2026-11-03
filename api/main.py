@@ -5,7 +5,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -37,9 +37,7 @@ from api.service import (
     public_operation_error,
     public_operation_output,
 )
-from api.targets import EnvironmentError, public_environments
 from worker.proxmox import ProxmoxClient, ProxmoxError
-from worker.proxmox import load_environment
 
 
 tags_metadata = [
@@ -56,22 +54,13 @@ app = FastAPI(
     title="IACP Control Plane",
     version="1.0.0",
     description=(
-        "API v1 para aprovisionar y operar instancias KVM mediante un contrato técnico estable. "
-        "Los tags son metadatos descriptivos y no alteran el plan de infraestructura."
+        "Orquestador técnico para administrar instancias KVM mediante un contrato estable. "
+        "Los metadatos comerciales son trazabilidad; no conceden permisos ni cambian el plan de infraestructura."
     ),
     openapi_tags=tags_metadata,
     docs_url=None,
     redoc_url=None,
 )
-
-
-@app.middleware("http")
-async def expose_build_revision(request: Request, call_next):
-    response = await call_next(request)
-    revision = os.getenv("IACP_BUILD_REVISION", "").strip()
-    if revision:
-        response.headers["X-IACP-Build-Revision"] = revision
-    return response
 
 CONSOLE_DIR = Path(__file__).parent / "static" / "console"
 DOCS_DIR = Path(__file__).parent / "static" / "docs"
@@ -85,9 +74,9 @@ def _require_api_token() -> bool:
 
 def _max_concurrent() -> int:
     try:
-        return max(1, int(os.getenv("IACP_MAX_CONCURRENT", "1")))
+        return max(1, int(os.getenv("IACP_MAX_CONCURRENT", "6")))
     except ValueError:
-        return 1
+        return 6
 
 
 def _heartbeat_age(value: str | None) -> float | None:
@@ -207,10 +196,6 @@ def live():
 @app.get("/health/ready", tags=["health"])
 def ready():
     initialize()
-    try:
-        public_environments()
-    except EnvironmentError as error:
-        raise HTTPException(status_code=503, detail=error.code) from error
     return {"status": "ready"}
 
 
@@ -221,31 +206,8 @@ def ready():
     summary="Consultar Golden Images y su autorización",
     operation_id="listImages",
 )
-def images(environment: str | None = Query(
-    default=None,
-    max_length=16,
-    description="Entorno lógico opcional devuelto por GET /v1/environments.",
-)):
-    return {"images": image_catalog(environment)}
-
-
-@app.get(
-    "/v1/environments",
-    dependencies=[Depends(authorize)],
-    tags=["instances"],
-    summary="Consultar entornos lógicos habilitados",
-    description=(
-        "Devuelve los destinos lógicos habilitados para este runtime y su valor predeterminado. "
-        "El servidor resuelve internamente cada destino a un clúster y sus nodos. "
-        "No se envían cluster, node, pool ni Terraform al solicitar una instancia."
-    ),
-    operation_id="listEnvironments",
-)
-def environments():
-    try:
-        return public_environments()
-    except EnvironmentError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.code) from error
+def images():
+    return {"images": image_catalog()}
 
 
 @app.get(
@@ -255,12 +217,8 @@ def environments():
     summary="Consultar los planes certificados",
     operation_id="listPlans",
 )
-def plans(environment: str | None = Query(
-    default=None,
-    max_length=16,
-    description="Entorno lógico opcional devuelto por GET /v1/environments.",
-)):
-    return {"plans": plan_catalog_response(environment)}
+def plans():
+    return {"plans": plan_catalog_response()}
 
 
 @app.get(
@@ -269,8 +227,8 @@ def plans(environment: str | None = Query(
     tags=["instances"],
     summary="Consultar perfiles de red disponibles",
     description=(
-        "El perfil DHCP configura la instancia desde la red asignada por el entorno. "
-        "El consumidor no envía IP, gateway ni prefijo."
+        "Devuelve los perfiles de red certificados. El consumidor elige el perfil, "
+        "pero no envía el prefijo, la IP ni el gateway."
     ),
     operation_id="listNetworkProfiles",
 )
@@ -297,9 +255,10 @@ def post_operation(request: OperationRequest):
     status_code=202,
     summary="Crear una instancia técnica",
     description=(
-        "Crea una instancia y encola el plan y apply como una operación transparente. "
-        "Consulte /v1/environments y los catálogos antes de crearla. Los tags son una lista "
-        "descriptiva de Proxmox y se aplican tal como se envían. Use Idempotency-Key para reintentos seguros."
+        "Crea una instancia y encola el aprovisionamiento como una operación transparente. "
+        "El cuerpo admite commercial_context para trazabilidad y tags para etiquetas Proxmox adicionales; "
+        "customer_tag se agrega automáticamente. Consulte los catálogos antes de enviar el request y use "
+        "Idempotency-Key para reintentos seguros. El destino físico lo resuelve el servidor."
     ),
     operation_id="createInstance",
 )
@@ -389,7 +348,7 @@ def list_instance_endpoint(
 def _power_target(instance_id: str) -> dict:
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, name, vmid, node, environment, status, power_state FROM instances WHERE instance_id=?",
+            "SELECT instance_id, name, vmid, node, status, power_state FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     if row is None:
@@ -413,8 +372,7 @@ def _power_target(instance_id: str) -> dict:
 def get_power(instance_id: str):
     target = _power_target(instance_id)
     try:
-        endpoint, token = load_environment(target["environment"])
-        client = ProxmoxClient(endpoint, token, environment=target["environment"])
+        client = ProxmoxClient()
         client.permissions(target["node"], int(target["vmid"]), mutate=False)
         observed = client.power_state(target["node"], int(target["vmid"]), target["name"])
         mutations_available = True
@@ -474,7 +432,7 @@ def _guest_ipv4(interfaces: list[dict]) -> list[str]:
 def get_network(instance_id: str):
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, vmid, node, environment, status, spec_json FROM instances WHERE instance_id=?",
+            "SELECT instance_id, vmid, node, status, spec_json FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     if row is None:
@@ -483,21 +441,40 @@ def get_network(instance_id: str):
     response = {
         "instance_id": instance_id,
         "vmid": row["vmid"],
-        "environment": row["environment"],
+        "node": row["node"],
         "network_profile": spec.get("network_profile", "lab_dhcp"),
+        "configured_ipv4_cidr": spec.get("ipv4_cidr"),
+        "configured_ipv4_gateway": spec.get("ipv4_gateway"),
         "observed_ipv4": [],
         "source": "none",
         "status": "pending" if row["vmid"] is None else "unavailable",
         "reason": "VM_NOT_PROVISIONED" if row["vmid"] is None else None,
         "observed_at": now(),
     }
+    with database() as db:
+        allocation = db.execute(
+            """
+            SELECT provider, profile, address, gateway, status, created_at, released_at
+            FROM ip_allocations
+            WHERE instance_id=?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (instance_id,),
+        ).fetchone()
+    response["network_allocation"] = dict(allocation) if allocation is not None else None
+    if response["network_allocation"] is None and spec.get("network_profile") == "prod_static":
+        response["network_allocation"] = {
+            "provider": "netbox",
+            "profile": "prod_static",
+            "address": spec.get("ipv4_cidr"),
+            "gateway": spec.get("ipv4_gateway"),
+            "status": "pending",
+        }
     if row["vmid"] is None or row["status"] == "deleted":
         return response
     try:
-        endpoint, token = load_environment(row["environment"])
-        interfaces = ProxmoxClient(endpoint, token, environment=row["environment"]).guest_agent_interfaces(
-            row["node"], int(row["vmid"])
-        )
+        interfaces = ProxmoxClient().guest_agent_interfaces(row["node"], int(row["vmid"]))
     except ProxmoxError as error:
         response["reason"] = str(error)
         return response
@@ -675,7 +652,7 @@ def _operation_summary(row, db=None):
     result["output_tail"] = public_operation_output(result)
     result["error_code"] = public_error_code(result.get("error"), raw_status)
     result["error"] = public_operation_error({**result, "status": raw_status})
-    for key in ("payload_json", "secret_path", "target_node", "worker_id", "output", "workspace_path", "plan_path"):
+    for key in ("payload_json", "secret_path", "commercial_context_json", "output", "workspace_path", "plan_path"):
         result.pop(key, None)
     result["latest_event"] = latest_event(db, result["operation_id"]) if db is not None else None
     return result

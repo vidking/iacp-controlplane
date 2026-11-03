@@ -1,5 +1,5 @@
 variable "environment" {
-  description = "Identificador técnico interno para el clúster MNG."
+  description = "Identificador del entorno de pruebas."
   type        = string
   nullable    = false
 
@@ -67,6 +67,10 @@ variable "instance" {
     memory_mb              = optional(number, 2048)
     network_bridge         = string
     network_model          = optional(string, "virtio")
+    network_mode           = optional(string, "dhcp")
+    vlan_id                = optional(number, null)
+    ipv4_cidr              = optional(string, null)
+    ipv4_gateway           = optional(string, null)
     cloudinit_datastore_id = string
     cloudinit_username     = string
     ssh_public_keys        = list(string)
@@ -77,7 +81,7 @@ variable "instance" {
     scsi_hardware          = optional(string, null)
     hotplug                = optional(string, null)
     boot_order             = optional(list(string), null)
-    tags                   = optional(set(string), [])
+    tags                   = optional(set(string), ["iacp"])
   })
 
   validation {
@@ -88,4 +92,17 @@ variable "instance" {
     error_message = "El nodo destino no pertenece a allowed_nodes."
   }
 
+  validation {
+    condition     = contains(["dhcp", "static"], var.instance.network_mode)
+    error_message = "network_mode debe ser dhcp o static."
+  }
+
+  validation {
+    condition = var.instance.network_mode == "dhcp" ? (
+      var.instance.ipv4_cidr == null && var.instance.ipv4_gateway == null
+      ) : (
+      var.instance.ipv4_cidr != null && var.instance.ipv4_gateway != null
+    )
+    error_message = "DHCP no acepta IPv4/gateway y static requiere ambos valores."
+  }
 }
