@@ -12,6 +12,7 @@ from uuid import UUID
 from urllib.parse import urlencode
 
 from api.protection import is_protected_vmid
+from worker.golden import configured_pool_id
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
@@ -238,7 +239,24 @@ def _ensure(
 
     config = client.vm_config(node, vmid)
     mac = _mac_from_config(config, name)
-    permission_path = f"/vms/{vmid}"
+    pool_id = configured_pool_id()
+    matches = [
+        item
+        for item in client.inventory()
+        if isinstance(item, dict) and str(item.get("vmid", "")) == str(vmid)
+    ]
+    if (
+        len(matches) != 1
+        or matches[0].get("name") != name
+        or matches[0].get("node") != node
+        or matches[0].get("pool") != pool_id
+    ):
+        raise GuestIdentityError("GUEST_IDENTITY_POOL_MISMATCH")
+
+    # Proxmox reports ACLs inherited from the VM's resource pool at the pool
+    # path. Querying /vms/{vmid} alone returns zeroes for these inherited
+    # privileges even though QEMU Guest Agent calls are authorized.
+    permission_path = f"/pool/{pool_id}"
     permissions = client.get("/access/permissions?" + urlencode({"path": permission_path}))
     grants = permissions.get(permission_path, {}) if isinstance(permissions, dict) else {}
     if grants.get("VM.GuestAgent.Unrestricted") not in {1, True}:

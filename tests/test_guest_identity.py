@@ -26,10 +26,12 @@ NETWORK_CONFIG = '{"network":{"version":2,"ethernets":{"ens18":{"dhcp-identifier
 
 
 class FakeProxmox:
-    def __init__(self, *, grants=None, client_id="01bc:24:11:12:34:56"):
+    def __init__(self, *, grants=None, client_id="01bc:24:11:12:34:56", pool="iacp-lab"):
         self.grants = grants or {"VM.GuestAgent.Unrestricted": 1}
         self.client_id = client_id
+        self.pool = pool
         self.exec_calls = []
+        self.permission_paths = []
 
     def vm_config(self, node, vmid):
         return {
@@ -40,7 +42,11 @@ class FakeProxmox:
         }
 
     def get(self, path):
-        return {"/vms/30000": self.grants}
+        self.permission_paths.append(path)
+        return {"/pool/iacp-lab": self.grants}
+
+    def inventory(self):
+        return [{"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01", "pool": self.pool}]
 
     def guest_agent_info(self, node, vmid):
         return {"version": "test"}
@@ -107,6 +113,7 @@ def test_guest_identity_initializes_once_and_waits_for_mac_bound_lease():
     )
     assert result == {"mac_address": MAC, "ipv4": IP, "mode": MODE}
     assert len(client.exec_calls) == 1
+    assert client.permission_paths == ["/access/permissions?path=%2Fpool%2Fiacp-lab"]
     command = client.exec_calls[0][2]
     assert command[:3] == ["/usr/bin/python3", "-c", PROGRAM]
     assert command[-2:] == [MAC, PROGRAM_SHA256]
@@ -115,6 +122,21 @@ def test_guest_identity_initializes_once_and_waits_for_mac_bound_lease():
 def test_guest_identity_fails_closed_without_guest_agent_permission():
     client = FakeProxmox(grants={"VM.GuestAgent.Unrestricted": 0})
     with pytest.raises(GuestIdentityError, match="GUEST_IDENTITY_PERMISSION_REQUIRED"):
+        ensure(
+            client,
+            node="mng01",
+            vmid=30000,
+            name="kvm-unique-ip",
+            instance_id=INSTANCE_ID,
+            timeout=0.1,
+            poll_interval=0.001,
+        )
+    assert client.exec_calls == []
+
+
+def test_guest_identity_fails_closed_when_vm_is_outside_configured_pool():
+    client = FakeProxmox(pool="another-pool")
+    with pytest.raises(GuestIdentityError, match="GUEST_IDENTITY_POOL_MISMATCH"):
         ensure(
             client,
             node="mng01",
