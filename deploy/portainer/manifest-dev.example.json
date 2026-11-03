@@ -6,6 +6,7 @@
   "domain": "dev-cyberfuel.com",
   "service_alias": "iacp-controlplane-api-dev",
   "proxy_network": "proxy_network",
+  "wasabi_enabled": false,
   "backend": "local",
   "state_bucket": "",
   "state_prefix": "",

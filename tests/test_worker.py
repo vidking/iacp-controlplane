@@ -327,19 +327,34 @@ def test_provision_terraform_commands_have_one_plan_and_one_apply():
 
 def test_develop_backend_keeps_state_local(monkeypatch):
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
-    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "local")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
     assert configure_state_backend("/tmp/workspace", "lab", "instance-123") is None
+
+
+def test_production_runtime_can_keep_lab_state_local_when_wasabi_is_disabled(monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
+    monkeypatch.setenv("IACP_TFSTATE_BUCKET", "")
+    monkeypatch.setenv("IACP_TFSTATE_PREFIX", "")
+    assert configure_state_backend("/tmp/workspace", "lab", "instance-123") is None
+
+
+def test_invalid_wasabi_switch_fails_closed(monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "sometimes")
+    with pytest.raises(RuntimeError, match="WASABI_CONFIGURATION_INVALID"):
+        configure_state_backend("/tmp/workspace", "lab", "instance-123")
 
 
 def test_production_backend_uses_dedicated_wasabi_prefix_and_lockfile(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
-    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "s3")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "true")
     monkeypatch.setenv("IACP_TFSTATE_BUCKET", "iacp-production-state")
     monkeypatch.setenv("IACP_TFSTATE_PREFIX", "iacp/prod-runtime-v1")
     monkeypatch.setenv("IACP_TFSTATE_ENDPOINT", "https://s3.us-east-1.wasabisys.com")
     monkeypatch.setenv("IACP_TFSTATE_REGION", "us-east-1")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    monkeypatch.setenv("IACP_WASABI_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("IACP_WASABI_SECRET_ACCESS_KEY", "test-secret")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
@@ -356,13 +371,13 @@ def test_production_backend_uses_dedicated_wasabi_prefix_and_lockfile(tmp_path, 
 
 def test_production_backend_rejects_historical_lab_prefix(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
-    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "s3")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "true")
     monkeypatch.setenv("IACP_TFSTATE_BUCKET", "iacp-production-state")
     monkeypatch.setenv("IACP_TFSTATE_PREFIX", "iacp/lab")
     monkeypatch.setenv("IACP_TFSTATE_ENDPOINT", "https://s3.us-east-1.wasabisys.com")
     monkeypatch.setenv("IACP_TFSTATE_REGION", "us-east-1")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    monkeypatch.setenv("IACP_WASABI_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("IACP_WASABI_SECRET_ACCESS_KEY", "test-secret")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     with pytest.raises(RuntimeError, match="TERRAFORM_BACKEND_CONFIGURATION_INVALID"):

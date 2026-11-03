@@ -28,6 +28,17 @@ def _enabled(value: str | None) -> bool:
     return (value or "").strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def wasabi_enabled() -> bool:
+    """Lee el interruptor explícito de Wasabi y usa state local por defecto."""
+
+    value = os.getenv("IACP_WASABI_ENABLED", "false").strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise EnvironmentError("WASABI_CONFIGURATION_INVALID", status_code=503)
+
+
 def _configured(value: str | None) -> bool:
     normalized = str(value or "").strip()
     lowered = normalized.lower()
@@ -102,10 +113,13 @@ def _catalog_ready(path: str, *, allow_single_node: bool = False) -> bool:
 
 def _state_backend_ready() -> bool:
     stage = os.getenv("IACP_RUNTIME_STAGE", "develop").strip().lower()
-    backend = os.getenv("IACP_TERRAFORM_BACKEND", "local").strip().lower()
-    if stage == "develop" and backend == "local":
+    try:
+        remote_enabled = wasabi_enabled()
+    except EnvironmentError:
+        return False
+    if not remote_enabled and stage in {"develop", "production"}:
         return True
-    if stage != "production" or backend != "s3":
+    if stage != "production" or not remote_enabled:
         return False
     return bool(
         os.getenv("IACP_TFSTATE_PREFIX", "").strip().strip("/") == "iacp/prod-runtime-v1"
@@ -146,6 +160,7 @@ def _production_ready() -> bool:
     )
     state_ready = (
         _state_backend_ready()
+        and wasabi_enabled()
         and os.getenv("IACP_TFSTATE_PREFIX", "").strip().strip("/") == "iacp/prod-runtime-v1"
     )
     return bool(

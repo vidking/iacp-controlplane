@@ -10,7 +10,7 @@ las pruebas físicas se registran en
 | Stack | Manifiesto | Imagen | Destino inicial | Persistencia |
 | --- | --- | --- | --- | --- |
 | Desarrollo | `deploy/portainer/docker-compose.yml` con variables de desarrollo | SHA inmutable; ruta pendiente de DNS y TLS | clúster MNG, entorno lógico `lab` | PostgreSQL y workdata propios; state Terraform local |
-| Producción | `deploy/portainer/docker-compose.yml` con variables de producción | SHA inmutable aprobado | clúster MNG, entorno lógico `lab`; PRX apagado | PostgreSQL y workdata propios; Wasabi `iacp/prod-runtime-v1` |
+| Producción | `deploy/portainer/docker-compose.yml` con variables de producción | SHA inmutable aprobado | clúster MNG, entorno lógico `lab`; PRX apagado | PostgreSQL y workdata propios; state local persistido mientras `IACP_WASABI_ENABLED=false` |
 
 Cada entorno necesita nombres de volumen exclusivos. Los valores de ejemplo
 son `iacp_controlplane_dev_postgres`, `iacp_controlplane_dev_workdata`,
@@ -52,22 +52,23 @@ Configura ambos límites explícitamente en cada archivo privado. El Compose de
 Portainer y `iacpctl` rechazan valores ausentes o un rango asignado al entorno
 equivocado. El Compose local usa por defecto el rango de desarrollo.
 
-En producción configura `IACP_RUNTIME_STAGE=production`,
-`IACP_TERRAFORM_BACKEND=s3`, el bucket `iacp-cyberfuel` y el prefijo exacto
-`iacp/prod-runtime-v1`. Las llaves `IACP_WASABI_ACCESS_KEY_ID` y
-`IACP_WASABI_SECRET_ACCESS_KEY` se entregan solo a los workers. Terraform usa
-HTTPS, path-style y locks S3. El preflight lee solo el prefijo autorizado; el
-ciclo físico de producción ya verificó escritura del state y creación y
-liberación del lock. Conserva los objetos y versiones de state al limpiar VMs
-de prueba; no hagas una purga general del bucket.
+En el IACP Control Plane (VM 104), `IACP_WASABI_ENABLED=false` mantiene el
+state local persistido para el laboratorio MNG, también en el stack cuyo host
+es `iac.cyberfuel.com`. Con `false`, deja vacíos bucket, endpoint, región,
+prefijo y credenciales en el mismo `/etc/iacp/stacks/prod.env`; `iacpctl`
+rechaza una configuración contradictoria y no consulta Wasabi. Solo cuando el
+servicio opere como producción real se cambia a `true`, se configura el bucket
+`iacp-cyberfuel` y el prefijo `iacp/prod-runtime-v1`, y se cargan las
+credenciales en ese archivo. El preflight de Wasabi se ejecuta únicamente con
+el booleano en `true`.
 La guía oficial de Terraform describe la configuración parcial del backend S3
 y el lock file: [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3).
 Wasabi recomienda path-style para sus solicitudes S3:
 [Wasabi REST API](https://docs.wasabi.com/apidocs/rest-api-introduction).
 
 En desarrollo configura `IACP_RUNTIME_STAGE=develop` y
-`IACP_TERRAFORM_BACKEND=local`. No añadas llaves Wasabi ni un prefijo S3 al
-stack de desarrollo.
+`IACP_WASABI_ENABLED=false`. No añadas llaves Wasabi ni un prefijo S3 al stack
+de desarrollo.
 
 ## Despliegue con imágenes precargadas
 

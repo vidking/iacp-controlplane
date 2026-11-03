@@ -14,10 +14,10 @@ el nombre IACP Control Plane y las rutas `/v1`.
   workers e idempotencia.
 - Dos workers reclaman operaciones desde una cola PostgreSQL. El límite global
   se configura por entorno; producción está fijada en una operación simultánea.
-- Terraform administra el state de cada instancia. El runtime `production`
-  usa Wasabi S3 en `iacp-cyberfuel` con el prefijo
-  `iacp/prod-runtime-v1`; `develop` usa state local persistido
-  en su volumen de trabajo.
+- Terraform administra el state de cada instancia. El interruptor
+  `IACP_WASABI_ENABLED` controla el state remoto: `false` usa state local en el
+  volumen de trabajo, incluso cuando el endpoint es `iac.cyberfuel.com`; `true`
+  habilita Wasabi únicamente para el stack `production`.
 - Los nodos, pools, credenciales, catálogos y directorios Terraform se resuelven
   en el servidor. El consumidor solo elige un entorno lógico publicado por la
   API.
@@ -33,7 +33,7 @@ La base productiva se inició sin importar registros del runtime anterior.
 | Runtime | URL y estado | Entornos publicados | State Terraform |
 | --- | --- | --- | --- |
 | `develop` | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab` → clúster MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
-| `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Wasabi S3, prefijo `iacp/prod-runtime-v1` |
+| `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; solo `mng01`; VMID `30000–39999`; PRX deshabilitado | Local persistido; `IACP_WASABI_ENABLED=false` |
 
 El registro de promoción, las pruebas físicas y las limitaciones vigentes están
 en [`docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md`](docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).

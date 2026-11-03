@@ -54,7 +54,7 @@ def _manifest(path: Path, *, require_runtime: bool = True) -> tuple[dict, Path, 
         raise GateError("No se pudo leer el manifiesto") from error
     required = {
         "project", "compose_file", "environment_file", "stage", "domain",
-        "service_alias", "backend", "state_bucket", "state_prefix",
+        "service_alias", "wasabi_enabled", "backend", "state_bucket", "state_prefix",
         "max_concurrent", "vmid_min", "vmid_max", "dynamic_config", "proxy_network",
     }
     if not isinstance(data, dict) or not required.issubset(data):
@@ -170,6 +170,13 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("El stack candidato no debe publicar rutas Traefik antes de la activación")
     if api_env.get("IACP_RUNTIME_STAGE") != expected_stage:
         raise GateError("IACP_RUNTIME_STAGE no coincide con el manifiesto")
+    if not isinstance(data.get("wasabi_enabled"), bool):
+        raise GateError("wasabi_enabled debe ser booleano en el manifiesto")
+    expected_wasabi_flag = "true" if data["wasabi_enabled"] else "false"
+    if api_env.get("IACP_WASABI_ENABLED", "false").strip().lower() != expected_wasabi_flag:
+        raise GateError("IACP_WASABI_ENABLED no coincide con el manifiesto")
+    if any(environment.get("IACP_WASABI_ENABLED", "false").strip().lower() != expected_wasabi_flag for environment in worker_envs):
+        raise GateError("API y workers deben compartir IACP_WASABI_ENABLED")
     if api_env.get("IACP_DEFAULT_ENVIRONMENT") != "lab":
         raise GateError("El destino inicial debe ser lab/MNG")
     enabled = {part.strip() for part in str(api_env.get("IACP_ENABLED_ENVIRONMENTS", "")).split(",") if part.strip()}
@@ -228,30 +235,31 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         host_mappings.append(mapping)
     if len(set(host_mappings)) != 1:
         raise GateError("La resolución MNG debe coincidir en API y workers")
-    if stage == "production":
-        if data["backend"] != "s3" or api_env.get("IACP_TERRAFORM_BACKEND") != "s3":
-            raise GateError("Producción requiere backend S3")
+    expected_backend = "s3" if data["wasabi_enabled"] else "local"
+    if data["backend"] != expected_backend:
+        raise GateError("El backend declarado debe derivarse de wasabi_enabled")
+    if data["wasabi_enabled"]:
+        if stage != "production":
+            raise GateError("Wasabi solo se habilita en el stack de producción")
         if data["state_bucket"] != "iacp-cyberfuel" or api_env.get("IACP_TFSTATE_BUCKET") != data["state_bucket"]:
             raise GateError("El bucket de producción no coincide con el aprobado")
         if data["state_prefix"].strip("/") != "iacp/prod-runtime-v1" or api_env.get("IACP_TFSTATE_PREFIX", "").strip("/") != data["state_prefix"].strip("/"):
             raise GateError("El prefijo de state no coincide con el aprobado")
         for worker_env in worker_envs:
-            for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            for key in ("IACP_WASABI_ACCESS_KEY_ID", "IACP_WASABI_SECRET_ACCESS_KEY"):
                 value = worker_env.get(key)
                 if not isinstance(value, str) or len(value.strip()) < 8 or "REEMPLAZAR" in value.upper():
                     raise GateError(f"Falta configurar la credencial de producción {key}")
-        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        for key in ("IACP_WASABI_ACCESS_KEY_ID", "IACP_WASABI_SECRET_ACCESS_KEY"):
             if worker_envs[0].get(key) != worker_envs[1].get(key):
                 raise GateError("Las credenciales Wasabi deben coincidir entre ambos workers")
     else:
-        if data["backend"] != "local" or api_env.get("IACP_TERRAFORM_BACKEND") != "local":
-            raise GateError("Desarrollo debe conservar state local")
-        if any(worker_env.get("AWS_ACCESS_KEY_ID") or worker_env.get("AWS_SECRET_ACCESS_KEY") for worker_env in worker_envs):
-            raise GateError("Desarrollo no debe recibir credenciales Wasabi")
-        if api_env.get("IACP_TFSTATE_BUCKET") or api_env.get("IACP_TFSTATE_PREFIX"):
-            raise GateError("Desarrollo no debe configurar bucket ni prefijo S3")
+        if any(api_env.get(key) for key in ("IACP_TFSTATE_BUCKET", "IACP_TFSTATE_ENDPOINT", "IACP_TFSTATE_REGION", "IACP_TFSTATE_PREFIX")):
+            raise GateError("Wasabi deshabilitado no debe configurar bucket, endpoint, región ni prefijo")
         if data["state_bucket"] or data["state_prefix"]:
-            raise GateError("El manifiesto de desarrollo no debe declarar bucket ni prefijo S3")
+            raise GateError("Con Wasabi deshabilitado, el manifiesto no debe declarar bucket ni prefijo")
+        if any(worker_env.get("IACP_WASABI_ACCESS_KEY_ID") or worker_env.get("IACP_WASABI_SECRET_ACCESS_KEY") for worker_env in worker_envs):
+            raise GateError("Wasabi deshabilitado no debe recibir credenciales Wasabi en los workers")
     repository = str(data.get("image_repository", "scm.cyberfuel.com/cyberfuel/iacp-controlplane"))
     if repository != "scm.cyberfuel.com/cyberfuel/iacp-controlplane":
         raise GateError("El repositorio de imagen no coincide con el artefacto aprobado")
@@ -296,6 +304,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
 def _check_wasabi_prefix(data: dict, config: dict) -> dict:
     if (
         data.get("stage") != "production"
+        or data.get("wasabi_enabled") is not True
         or data.get("state_bucket") != "iacp-cyberfuel"
         or str(data.get("state_prefix", "")).strip("/") != "iacp/prod-runtime-v1"
     ):
@@ -304,8 +313,8 @@ def _check_wasabi_prefix(data: dict, config: dict) -> dict:
     worker_env = _service_env(config, "worker-1")
     endpoint = str(api_env.get("IACP_TFSTATE_ENDPOINT", ""))
     region = str(api_env.get("IACP_TFSTATE_REGION", ""))
-    access_key = str(worker_env.get("AWS_ACCESS_KEY_ID", ""))
-    secret_key = str(worker_env.get("AWS_SECRET_ACCESS_KEY", ""))
+    access_key = str(worker_env.get("IACP_WASABI_ACCESS_KEY_ID", ""))
+    secret_key = str(worker_env.get("IACP_WASABI_SECRET_ACCESS_KEY", ""))
     parsed = urlsplit(endpoint)
     if (
         parsed.scheme != "https"
@@ -391,9 +400,9 @@ def _check_wasabi_prefix(data: dict, config: dict) -> dict:
 
 
 def _check_runtime_backend(data: dict, config: dict) -> dict | None:
-    if data.get("stage") == "production":
+    if data.get("wasabi_enabled") is True:
         return _check_wasabi_prefix(data, config)
-    return None
+    return {"backend": "local", "remote_state": "deshabilitado", "writes_performed": False}
 
 
 def _new_evidence_dir(path: Path) -> Path:

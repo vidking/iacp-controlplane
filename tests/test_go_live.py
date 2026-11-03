@@ -13,7 +13,7 @@ IMAGE_REPOSITORY = "scm.cyberfuel.com/cyberfuel/iacp-controlplane"
 
 
 def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/prod-runtime-v1", include_aws=True):
-    backend = "s3" if stage == "production" else "local"
+    wasabi = stage == "production"
     database_name = "iacp_controlplane" if stage == "production" else "iacp_controlplane_dev"
     database_password = "postgres-password-with-entropy"
     api_environment = {
@@ -32,11 +32,11 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "PGPASSWORD": database_password,
         "IACP_API_TOKEN": "api-token-with-sufficient-entropy",
         "IACP_PROXMOX_MNG_API_TOKEN": "proxmox-token-with-entropy",
-        "IACP_TERRAFORM_BACKEND": backend,
-        "IACP_TFSTATE_BUCKET": bucket if stage == "production" else "",
-        "IACP_TFSTATE_ENDPOINT": "https://s3.us-east-1.wasabisys.com",
-        "IACP_TFSTATE_REGION": "us-east-1",
-        "IACP_TFSTATE_PREFIX": prefix if stage == "production" else "",
+        "IACP_WASABI_ENABLED": "true" if wasabi else "false",
+        "IACP_TFSTATE_BUCKET": bucket if wasabi else "",
+        "IACP_TFSTATE_ENDPOINT": "https://s3.us-east-1.wasabisys.com" if wasabi else "",
+        "IACP_TFSTATE_REGION": "us-east-1" if wasabi else "",
+        "IACP_TFSTATE_PREFIX": prefix if wasabi else "",
         "IACP_PROXY_NETWORK": "proxy_network",
         "IACP_BUILD_REVISION": IMAGE_TAG,
     }
@@ -49,8 +49,9 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
     }
-    if include_aws:
-        worker_environment.update({"AWS_ACCESS_KEY_ID": "access-key-value", "AWS_SECRET_ACCESS_KEY": "secret-key-value"})
+    worker_environment["IACP_WASABI_ENABLED"] = "true" if wasabi else "false"
+    if include_aws and wasabi:
+        worker_environment.update({"IACP_WASABI_ACCESS_KEY_ID": "access-key-value", "IACP_WASABI_SECRET_ACCESS_KEY": "secret-key-value"})
     services = {
         name: {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
         for name in ("api", "worker-1", "worker-2")
@@ -89,6 +90,7 @@ def _manifest(stage="production", **overrides):
         "domain": "iac.cyberfuel.com" if stage == "production" else "dev-cyberfuel.com",
         "service_alias": "iacp-controlplane-api-prod" if stage == "production" else "iacp-controlplane-api-dev",
         "proxy_network": "proxy_network",
+        "wasabi_enabled": stage == "production",
         "backend": "s3" if stage == "production" else "local",
         "state_bucket": "iacp-cyberfuel" if stage == "production" else "",
         "state_prefix": "iacp/prod-runtime-v1" if stage == "production" else "",
@@ -119,10 +121,16 @@ def test_production_configuration_passes_policy(tmp_path):
 
 
 def test_development_rejects_wasabi_credentials(tmp_path):
+    config = _configuration(stage="develop", include_aws=False)
+    for name in ("worker-1", "worker-2"):
+        config["services"][name]["environment"].update({
+            "IACP_WASABI_ACCESS_KEY_ID": "unexpected-access",
+            "IACP_WASABI_SECRET_ACCESS_KEY": "unexpected-secret",
+        })
     with pytest.raises(go_live.GateError, match="no debe recibir credenciales Wasabi"):
         go_live._check_policy(
             _manifest("develop"),
-            _configuration(stage="develop", include_aws=True),
+            config,
             _private_env(tmp_path),
         )
 
@@ -145,6 +153,39 @@ def test_development_configuration_passes_without_wasabi(tmp_path):
     assert summary["state_prefix"] == ""
     assert summary["prx_enabled"] is False
     assert summary["vmid_range"] == {"min": 40000, "max": 49999}
+
+
+def test_production_domain_can_run_lab_with_local_state_and_wasabi_disabled(tmp_path, monkeypatch):
+    manifest = _manifest(
+        wasabi_enabled=False,
+        backend="local",
+        state_bucket="",
+        state_prefix="",
+    )
+    config = _configuration(stage="production", include_aws=False)
+    config["services"]["api"]["environment"].update({
+        "IACP_WASABI_ENABLED": "false",
+        "IACP_TFSTATE_BUCKET": "",
+        "IACP_TFSTATE_ENDPOINT": "",
+        "IACP_TFSTATE_REGION": "",
+        "IACP_TFSTATE_PREFIX": "",
+    })
+    for name in ("worker-1", "worker-2"):
+        config["services"][name]["environment"]["IACP_WASABI_ENABLED"] = "false"
+
+    def forbidden_wasabi_request(*args, **kwargs):
+        pytest.fail("Wasabi no debe consultarse cuando el interruptor está apagado")
+
+    monkeypatch.setattr(go_live, "urlopen", forbidden_wasabi_request)
+    summary = go_live._check_policy(manifest, config, _private_env(tmp_path))
+
+    assert summary["backend"] == "local"
+    assert summary["state_prefix"] == ""
+    assert go_live._check_runtime_backend(manifest, config) == {
+        "backend": "local",
+        "remote_state": "deshabilitado",
+        "writes_performed": False,
+    }
 
 
 def test_production_rejects_development_vmid_range(tmp_path):

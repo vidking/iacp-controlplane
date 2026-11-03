@@ -34,7 +34,7 @@ def isolated_postgres_schema(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("IACP_DATABASE_URL", isolated_conninfo)
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
-    monkeypatch.setenv("IACP_TERRAFORM_BACKEND", "local")
+    monkeypatch.setenv("IACP_WASABI_ENABLED", "false")
     monkeypatch.setenv("IACP_DEFAULT_ENVIRONMENT", "lab")
     monkeypatch.setenv("IACP_ENABLED_ENVIRONMENTS", "lab")
     monkeypatch.setenv("IACP_TERRAFORM_PATH", str(REPO_ROOT / "terraform"))
@@ -52,6 +52,8 @@ def isolated_postgres_schema(monkeypatch, tmp_path):
     monkeypatch.delenv("IACP_PRX_ENABLED", raising=False)
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("IACP_WASABI_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("IACP_WASABI_SECRET_ACCESS_KEY", raising=False)
 
     try:
         yield

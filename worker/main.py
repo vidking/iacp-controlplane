@@ -11,7 +11,8 @@ from api.catalog import cluster_nodes, load_catalog
 from api.db import database, initialize
 from api.secrets import delete_secret, read_secret
 from api.protection import is_protected_vmid
-from api.targets import resolve_environment, terraform_directory
+from api.targets import EnvironmentError as TargetEnvironmentError
+from api.targets import resolve_environment, terraform_directory, wasabi_enabled
 from worker.allocation import allocate, release
 from worker.golden import observe, validate_pool, variables as golden_variables
 from worker.heartbeat import heartbeat
@@ -428,13 +429,16 @@ def create_workspace(
 
 
 def _terraform_backend_configuration(environment: str, instance_id: str | None) -> dict | None:
-    backend = (os.getenv("IACP_TERRAFORM_BACKEND", "local") or "local").strip().lower()
     stage = os.getenv("IACP_RUNTIME_STAGE", "develop").strip().lower()
-    if backend == "local" and stage == "develop":
+    try:
+        remote_enabled = wasabi_enabled()
+    except TargetEnvironmentError as error:
+        raise RuntimeError("WASABI_CONFIGURATION_INVALID") from error
+    if not remote_enabled:
         if environment != "lab":
             raise RuntimeError("REMOTE_STATE_REQUIRED_FOR_PRODUCTION")
         return None
-    if backend != "s3" or stage != "production" or not instance_id:
+    if stage != "production" or not instance_id:
         raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
     bucket = os.getenv("IACP_TFSTATE_BUCKET", "").strip()
     prefix = os.getenv("IACP_TFSTATE_PREFIX", "").strip().strip("/")
@@ -445,8 +449,8 @@ def _terraform_backend_configuration(environment: str, instance_id: str | None) 
         or not endpoint.startswith("https://")
         or not region
         or prefix != "iacp/prod-runtime-v1"
-        or not os.getenv("AWS_ACCESS_KEY_ID", "").strip()
-        or not os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+        or not os.getenv("IACP_WASABI_ACCESS_KEY_ID", "").strip()
+        or not os.getenv("IACP_WASABI_SECRET_ACCESS_KEY", "").strip()
     ):
         raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
     return {
@@ -497,6 +501,12 @@ def run_commands(
     output: list[str] = []
     errors: list[str] = []
     environment = os.environ.copy()
+    if wasabi_enabled():
+        environment["AWS_ACCESS_KEY_ID"] = os.getenv("IACP_WASABI_ACCESS_KEY_ID", "")
+        environment["AWS_SECRET_ACCESS_KEY"] = os.getenv("IACP_WASABI_SECRET_ACCESS_KEY", "")
+    else:
+        environment.pop("AWS_ACCESS_KEY_ID", None)
+        environment.pop("AWS_SECRET_ACCESS_KEY", None)
     plugin_cache = os.getenv("IACP_TERRAFORM_PLUGIN_CACHE_DIR", "").strip()
     if plugin_cache:
         environment["TF_PLUGIN_CACHE_DIR"] = plugin_cache
@@ -1075,9 +1085,13 @@ def execute(worker_id: str, operation: dict) -> None:
             if not os.path.isdir(workspace):
                 raise RuntimeError(f"no existe el workspace del plan {source_operation_id}")
             existing_backend_config = os.path.join(workspace, ".iacp-backend.json")
-            backend_config_path = existing_backend_config if os.path.isfile(existing_backend_config) else None
-            if os.getenv("IACP_TERRAFORM_BACKEND", "local").strip().lower() == "s3" and not backend_config_path:
+            has_remote_backend = os.path.isfile(existing_backend_config)
+            remote_enabled = wasabi_enabled()
+            if remote_enabled and not has_remote_backend:
                 raise RuntimeError("TERRAFORM_BACKEND_CONFIGURATION_INVALID")
+            if not remote_enabled and has_remote_backend:
+                raise RuntimeError("REMOTE_STATE_DISABLED_WORKSPACE")
+            backend_config_path = existing_backend_config if remote_enabled else None
             plan_path = source_operation.get("plan_path") or os.path.join(
                 data_root(), "plans", source_operation_id, "plan.tfplan"
             )
