@@ -42,6 +42,7 @@ class PowerAction(str, Enum):
 
 
 NetworkProfile = Literal["lab_dhcp", "prod_static"]
+LogicalEnvironment = Literal["lab"]
 
 
 def _validate_ssh_keys(values: list[str]) -> list[str]:
@@ -93,6 +94,8 @@ class CommercialContext(BaseModel):
 
 
 class InstanceSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(pattern=NAME_PATTERN)
     image: str = Field(default="ubuntu-2404", pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10)$")
     vcpus: int = Field(default=2, ge=1, le=8)
@@ -146,6 +149,7 @@ class InstanceCreateRequest(BaseModel):
                     "name": "kvm-cl-0000",
                     "plan_id": "kvm-2",
                     "image_id": "ubuntu-2404",
+                    "environment": "lab",
                     "access": {
                         "root_password": "CAMBIAR_POR_SECRETO",
                         "ssh_public_keys": [],
@@ -182,6 +186,14 @@ class InstanceCreateRequest(BaseModel):
         max_length=64,
         description="ID de una Golden Image publicada por GET /v1/images.",
         examples=["ubuntu-2404"],
+    )
+    environment: LogicalEnvironment = Field(
+        default="lab",
+        description=(
+            "Entorno lógico de IAC. En este runtime solo está habilitado lab; "
+            "el servidor resuelve MNG y selecciona internamente el nodo."
+        ),
+        examples=["lab"],
     )
     access: AccessRequest = Field(
         default_factory=AccessRequest,
@@ -234,12 +246,13 @@ class OperationRequest(BaseModel):
     """Internal/operator request retained for explicit plan/apply control."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
                     "command": "plan",
                     "action": "provision",
-                    "stack": "mng01",
+                    "environment": "lab",
                     "plan_id": "kvm-2",
                     "spec": {
                         "name": "iacp-demo",
@@ -280,13 +293,20 @@ class OperationRequest(BaseModel):
 
     command: Command
     action: Action = Action.provision
+    environment: LogicalEnvironment = Field(
+        default="lab",
+        description=(
+            "Entorno lógico. Solo se admite lab; el servidor resuelve el clúster, "
+            "el stack y el nodo físico."
+        ),
+        examples=["lab"],
+    )
     plan_id: str | None = None
     spec: InstanceSpec | None = None
     instance_id: str | None = None
     plan_operation_id: str | None = None
     power_action: PowerAction | None = None
     source_operation_id: str | None = None
-    stack: Literal["mng01", "local"] = "mng01"
 
     @model_validator(mode="after")
     def valid_command(self):

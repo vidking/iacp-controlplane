@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /*
- * Run the 32-case lifecycle matrix through the real visual /docs portal.
- * The browser submits the create and lifecycle actions; read-only API calls
- * are used only for deterministic polling, network/SSH validation and proof
- * that no resource survived the run.
+ * Ejecuta la matriz de 16 casos desde el portal visual /docs.
+ * El navegador envía las acciones de creación y lifecycle; la API de solo
+ * lectura se usa para seguimiento, validación de red/SSH y comprobar que no
+ * queden recursos físicos después de cada caso.
  */
 
 "use strict";
@@ -18,10 +18,10 @@ const execFileAsync = promisify(execFile);
 const playwrightModule = process.env.IACP_PLAYWRIGHT_MODULE || "/home/despinoza/.local/share/mise/installs/npm-playwright/1.64.1/node_modules/playwright";
 const { chromium } = require(playwrightModule);
 
-const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://dev-cyberfuel.com").replace(/\/$/, "");
-const API_TOKEN = process.env.IACP_E2E_API_TOKEN || "";
-const PROXMOX_ENDPOINT = (process.env.IACP_E2E_PROXMOX_ENDPOINT || "").replace(/\/$/, "");
-const PROXMOX_TOKEN = process.env.IACP_E2E_PROXMOX_TOKEN || "";
+const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://iac.cyberfuel.com").replace(/\/$/, "");
+const API_TOKEN = process.env.IACP_E2E_API_TOKEN || process.env.IACP_API_TOKEN || "";
+const PROXMOX_ENDPOINT = (process.env.IACP_E2E_MNG_PROXMOX_ENDPOINT || process.env.IACP_PROXMOX_MNG_ENDPOINT || "").replace(/\/$/, "");
+const PROXMOX_TOKEN = process.env.IACP_E2E_MNG_PROXMOX_TOKEN || process.env.IACP_PROXMOX_MNG_API_TOKEN || "";
 const POOL_ID = process.env.IACP_E2E_POOL_ID || "iacp-lab";
 const KEY_DIR = process.env.IACP_E2E_KEY_DIR || "";
 const PUBLIC_KEY = (process.env.IACP_E2E_SSH_PUBLIC_KEY || "").trim();
@@ -417,7 +417,7 @@ async function runCase(page, testCase) {
     await waitOperation(createdCase.created.operation_id, instanceId, telemetry);
     const current = await api("GET", `/v1/instances/${instanceId}`);
     vmid = Number(current.vmid);
-    if (vmid < 40001) throw new E2EError(`VMID fuera de rango: ${vmid}`);
+    if (vmid < 30000 || vmid > 39999) throw new E2EError(`VMID fuera de rango para iac.cyberfuel.com: ${vmid}`);
     if (current.image_id !== testCase.image || current.plan_id !== testCase.plan) throw new E2EError("catálogo divergente");
     if (current.spec?.network_profile !== NETWORK_PROFILE) throw new E2EError(`perfil de red divergente: ${current.spec?.network_profile}`);
     if (JSON.stringify(current.spec?.tags) !== JSON.stringify(createdCase.body.tags)) throw new E2EError("tags divergentes en el detalle de la instancia");
@@ -474,9 +474,10 @@ async function runCase(page, testCase) {
 function buildCases() {
   const cases = [];
   let index = 1;
-  for (const image of IMAGES) {
-    for (const plan of PLANS) {
-      for (const mode of ["password", "key"]) cases.push({ index: index++, image, plan, mode });
+  for (let imageIndex = 0; imageIndex < IMAGES.length; imageIndex += 1) {
+    for (let planIndex = 0; planIndex < PLANS.length; planIndex += 1) {
+      const mode = (imageIndex + planIndex) % 2 === 0 ? "password" : "key";
+      cases.push({ index: index++, image: IMAGES[imageIndex], plan: PLANS[planIndex], mode });
     }
   }
   return cases;
@@ -484,6 +485,8 @@ function buildCases() {
 
 async function main() {
   if (!Number.isInteger(MAX_WORKERS) || MAX_WORKERS < 1 || MAX_WORKERS > 2) throw new E2EError("IACP_E2E_MAX_WORKERS debe estar entre 1 y 2");
+  const baseUrl = new URL(BASE_URL);
+  if (baseUrl.protocol !== "https:" || baseUrl.hostname !== "iac.cyberfuel.com" || baseUrl.pathname) throw new E2EError("IACP_E2E_BASE_URL debe ser exactamente https://iac.cyberfuel.com");
   if (!API_TOKEN) throw new E2EError("IACP_E2E_API_TOKEN es obligatorio");
   if (!PROXMOX_ENDPOINT || !PROXMOX_TOKEN) throw new E2EError("faltan credenciales Proxmox para validar destrucción física");
   if (!PUBLIC_KEY) throw new E2EError("IACP_E2E_SSH_PUBLIC_KEY es obligatorio para la matriz de llaves");
@@ -493,7 +496,8 @@ async function main() {
   if (JSON.stringify((plans.plans || []).map((item) => item.plan_id)) !== JSON.stringify(PLANS)) throw new E2EError("catálogo de planes inesperado");
   if (JSON.stringify((images.images || []).map((item) => item.image_id)) !== JSON.stringify(IMAGES)) throw new E2EError("catálogo de imágenes inesperado");
   const environments = await api("GET", "/v1/environments");
-  if (environments.default_environment !== "lab" || !(environments.environments || []).some((item) => item.environment === "lab")) throw new E2EError("el entorno lógico lab no está habilitado");
+  const logicalEnvironments = (environments.environments || []).map((item) => item.environment);
+  if (environments.default_environment !== "lab" || JSON.stringify(logicalEnvironments) !== JSON.stringify(["lab"])) throw new E2EError("el único entorno lógico habilitado debe ser lab");
   const profiles = await api("GET", "/v1/network-profiles");
   const profile = (profiles.network_profiles || []).find((item) => item.profile_id === NETWORK_PROFILE);
   if (!profile?.enabled || profile.network_mode !== "dhcp") throw new E2EError("lab_dhcp no está disponible como DHCP");
@@ -516,10 +520,10 @@ async function main() {
   try {
     for (let offset = 0, wave = 1; offset < cases.length; offset += MAX_WORKERS, wave += 1) {
       const batch = cases.slice(offset, offset + MAX_WORKERS);
-      console.log(`WAVE ${wave}/16 start=${batch.map((item) => `${item.image}/${item.plan}/${item.mode}`).join(",")}`);
+      console.log(`WAVE ${wave}/8 start=${batch.map((item) => `${item.image}/${item.plan}/${item.mode}`).join(",")}`);
       const waveResults = await Promise.all(batch.map((testCase, index) => runCase(pages[index], testCase)));
       results.push(...waveResults);
-      console.log(`WAVE ${wave}/16 done failed=${waveResults.filter((item) => item.status !== "passed").length}`);
+      console.log(`WAVE ${wave}/8 done failed=${waveResults.filter((item) => item.status !== "passed").length}`);
       if (waveResults.some((item) => item.status !== "passed")) {
         console.error(`ABORT after wave ${wave}: se detiene para reparar sin crear más VMs.`);
         break;

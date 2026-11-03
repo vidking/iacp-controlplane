@@ -18,13 +18,16 @@ Authorization: Bearer <token>
 Consulta las opciones válidas antes de crear una VM:
 
 ```http
+GET /v1/environments
 GET /v1/plans
 GET /v1/images
 GET /v1/network-profiles
 ```
 
-El cuerpo de creación no acepta `environment`, nodo, clúster, pool, VLAN, IP,
-gateway ni parámetros Terraform. El destino físico lo resuelve el servidor.
+`GET /v1/environments` publica únicamente `lab` en este runtime. El servidor
+resuelve ese entorno al clúster MNG y selecciona internamente un nodo. El cuerpo
+no acepta selección de nodo, clúster, pool, VLAN, IP, gateway ni parámetros
+Terraform.
 
 ## Crear una instancia
 
@@ -36,6 +39,7 @@ completo. Este es el cuerpo fijo:
   "name": "kvm-cl-105",
   "plan_id": "kvm-2",
   "image_id": "ubuntu-2404",
+  "environment": "lab",
   "access": {
     "root_password": "CAMBIAR_POR_SECRETO",
     "ssh_public_keys": []
@@ -59,6 +63,7 @@ debe usar minúsculas, números, guion o guion bajo, empezar con letra o número
 tener hasta 63 caracteres. Los duplicados se eliminan conservando el primer
 orden.
 
+`environment` acepta `lab` y, si se omite, usa el mismo valor predeterminado.
 `name` admite minúsculas, números y guiones, entre 1 y 63 caracteres.
 `plan_id`, `image_id` y `network_profile` deben existir en los catálogos.
 `network_profile` admite `lab_dhcp` y `prod_static`; el segundo puede estar
@@ -120,8 +125,10 @@ GET /v1/observability
 ```
 
 `POST /v1/operations` conserva el flujo técnico explícito para operadores.
-Las integraciones de consumo deben preferir `POST /v1/instances`, que valida
-los catálogos y encola la creación como una sola intención.
+Acepta `environment: "lab"`; `stack` y la selección de nodo no forman parte
+del contrato público. Las integraciones de consumo deben preferir
+`POST /v1/instances`, que valida los catálogos y encola la creación como una
+sola intención.
 
 El runtime está configurado con seis workers y un máximo global de seis
 operaciones concurrentes. Las vistas `/docs`, `/swagger` y el OpenAPI se

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.db import database, initialize, prune_history
 from api.catalog import network_profile_catalog
+from api.environments import EnvironmentConfigurationError, public_environment_catalog
 from api.models import InstanceCreateRequest, OperationRequest, PowerAction, ProvisionRequest
 from api.service import (
     PUBLIC_OPERATION_STATUS,
@@ -42,6 +43,7 @@ from worker.proxmox import ProxmoxClient, ProxmoxError
 
 tags_metadata = [
     {"name": "instances", "description": "Perfiles, creación y consulta de instancias propias del tenant."},
+    {"name": "environments", "description": "Entornos lógicos habilitados; la selección física permanece en el servidor."},
     {"name": "operations", "description": "Seguimiento de intenciones asíncronas, estados terminales y eventos."},
     {"name": "kvm-lifecycle", "description": "Estado de energía, inicio, reinicio y apagado ordenado de KVM autorizadas."},
     {"name": "disposable-deletion", "description": "Eliminación autorizada de instancias descartables; los recursos protegidos quedan excluidos."},
@@ -209,6 +211,21 @@ def ready():
 
 
 @app.get(
+    "/v1/environments",
+    dependencies=[Depends(authorize)],
+    tags=["environments"],
+    summary="Consultar el entorno lógico habilitado",
+    description="Este runtime expone lab, que el servidor resuelve al clúster MNG y a un nodo disponible.",
+    operation_id="listEnvironments",
+)
+def environments():
+    try:
+        return public_environment_catalog()
+    except EnvironmentConfigurationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.code) from error
+
+
+@app.get(
     "/v1/images",
     dependencies=[Depends(authorize)],
     tags=["instances"],
@@ -250,7 +267,10 @@ def network_profiles():
     dependencies=[Depends(authorize)],
     tags=["operations"],
     summary="Encolar una orden de orquestación",
-    description="Acepta una orden de ciclo de vida y devuelve sus identificadores para seguimiento.",
+    description=(
+        "Acepta una orden de ciclo de vida en el entorno lógico lab. El servidor "
+        "resuelve el stack y el nodo físico; no se admite selección de infraestructura."
+    ),
     operation_id="enqueueOperation",
 )
 def post_operation(request: OperationRequest):
