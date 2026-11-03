@@ -1,4 +1,5 @@
 import ast
+import base64
 import hashlib
 import json
 import re
@@ -9,9 +10,12 @@ import pytest
 from worker.guest_identity import (
     MODE,
     NETWORK_FILE,
+    FAILURE_MARKER,
     PROGRAM,
     PROGRAM_SHA256,
     GuestIdentityError,
+    _guest_failure_marker_stage,
+    _guest_program_failure_stage,
     ensure,
     required,
 )
@@ -27,10 +31,21 @@ NETWORK_CONFIG = '{"network":{"version":2,"ethernets":{"ens18":{"dhcp-identifier
 
 
 class FakeProxmox:
-    def __init__(self, *, grants=None, client_id="01bc:24:11:12:34:56", pool="iacp-lab"):
+    def __init__(
+        self,
+        *,
+        grants=None,
+        client_id="01bc:24:11:12:34:56",
+        pool="iacp-lab",
+        inventory_sequence=None,
+        pool_members_sequence=None,
+    ):
         self.grants = grants or {"VM.GuestAgent.Unrestricted": 1}
         self.client_id = client_id
         self.pool = pool
+        self.inventory_sequence = list(inventory_sequence or [])
+        self.pool_members_sequence = list(pool_members_sequence or [])
+        self.inventory_calls = 0
         self.exec_calls = []
         self.permission_paths = []
 
@@ -43,11 +58,33 @@ class FakeProxmox:
         }
 
     def get(self, path):
+        if path == "/pools/iacp-lab":
+            if self.pool_members_sequence:
+                members = self.pool_members_sequence.pop(0)
+                if not self.pool_members_sequence:
+                    self._last_pool_members = members
+            else:
+                members = getattr(self, "_last_pool_members", None)
+                if members is None:
+                    members = [
+                        {"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01", "type": "qemu"}
+                    ] if self.pool == "iacp-lab" else []
+            return {"poolid": "iacp-lab", "members": members}
         self.permission_paths.append(path)
         return {"/pool/iacp-lab": self.grants}
 
     def inventory(self):
-        return [{"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01", "pool": self.pool}]
+        self.inventory_calls += 1
+        if self.inventory_sequence:
+            items = self.inventory_sequence.pop(0)
+            if not self.inventory_sequence:
+                self._last_inventory = items
+            return items
+        return getattr(
+            self,
+            "_last_inventory",
+            [{"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01", "pool": self.pool}],
+        )
 
     def guest_agent_info(self, node, vmid):
         return {"version": "test"}
@@ -150,6 +187,29 @@ def test_guest_identity_fails_closed_when_vm_is_outside_configured_pool():
     assert client.exec_calls == []
 
 
+def test_guest_identity_waits_for_inventory_and_pool_membership_to_converge():
+    exact = {"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01"}
+    stale = {"vmid": 30000, "name": "previous-instance", "node": "mng01", "pool": "iacp-lab"}
+    member = {"vmid": 30000, "name": "kvm-unique-ip", "node": "mng01", "type": "qemu"}
+    old_member = {"vmid": 30000, "name": "previous-instance", "node": "mng01", "type": "qemu"}
+    client = FakeProxmox(
+        inventory_sequence=[[], [stale], [exact]],
+        pool_members_sequence=[[], [old_member], [member]],
+    )
+    result = ensure(
+        client,
+        node="mng01",
+        vmid=30000,
+        name="kvm-unique-ip",
+        instance_id=INSTANCE_ID,
+        timeout=1,
+        poll_interval=0.001,
+    )
+    assert result == {"mac_address": MAC, "ipv4": IP, "mode": MODE}
+    assert client.inventory_calls == 3
+    assert len(client.exec_calls) == 1
+
+
 def test_guest_identity_does_not_accept_lease_claimed_by_another_dhcp_client():
     client = FakeProxmox(client_id="ff:duplicate-duid")
     with pytest.raises(GuestIdentityError, match="GUEST_IDENTITY_OBSERVATION_TIMEOUT"):
@@ -165,7 +225,14 @@ def test_guest_identity_does_not_accept_lease_claimed_by_another_dhcp_client():
 
 
 def test_guest_program_is_one_shot_and_changes_machine_and_dhcp_identity():
-    ast.parse(PROGRAM)
+    program = ast.parse(PROGRAM)
+    imports = {
+        alias.name
+        for node in program.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "time" in imports
     assert "flock(stream,fcntl.LOCK_EX)" in PROGRAM
     assert "uuid.uuid4().hex" in PROGRAM
     assert '"dhcp-identifier":"mac"' in PROGRAM.replace("'", '"')
@@ -179,9 +246,14 @@ def test_cloud_init_accepts_done_with_only_deprecation_warnings():
         node for node in program.body
         if isinstance(node, ast.FunctionDef) and node.name == "cloud_init_completed"
     )
+    pending_helper = next(
+        node for node in program.body
+        if isinstance(node, ast.FunctionDef) and node.name == "cloud_init_pending"
+    )
     namespace = {"re": re}
-    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<guest-program>", "exec"), namespace)
+    exec(compile(ast.Module(body=[helper, pending_helper], type_ignores=[]), "<guest-program>", "exec"), namespace)
     completed = namespace["cloud_init_completed"]
+    pending = namespace["cloud_init_pending"]
     warning_output = (
         "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n"
         "\t- 'user' of type string is deprecated in 22.2\n"
@@ -193,6 +265,35 @@ def test_cloud_init_accepts_done_with_only_deprecation_warnings():
     assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nDEPRECATED:\n", True)
     assert not completed(2, "status: done\nerrors: []\nrecoverable_errors:\nNETWORK:\n\t- retry\n", True)
     assert not completed(2, warning_output, False)
+    assert pending("status: running\nerrors: []\n", False)
+    assert pending("status: running\nerrors: []\n", True)
+    assert not pending("status: error\nerrors: [bad config]\n", True)
+    assert not pending("status: done\nerrors: []\n", True)
+
+
+def test_guest_program_failure_diagnostic_returns_only_fixed_stage_code():
+    stderr = "Traceback (most recent call last):\nRuntimeError: IACP_GUEST_IDENTITY_STAGE=NETPLAN_APPLY\n"
+    encoded = base64.b64encode(stderr.encode()).decode()
+    assert _guest_program_failure_stage({"err-data": encoded}) == "NETPLAN_APPLY"
+    assert _guest_program_failure_stage({"err-data": "not-base64"}) == "UNKNOWN"
+
+
+def test_guest_program_failure_marker_is_bound_to_instance_and_program():
+    marker = {
+        "instance_id": INSTANCE_ID,
+        "mac_address": MAC,
+        "mode": MODE,
+        "program_sha256": PROGRAM_SHA256,
+        "stage": "NETPLAN_APPLY",
+    }
+
+    class FailedGuest:
+        def guest_agent_file_read(self, node, vmid, path):
+            assert path == FAILURE_MARKER
+            return {"content": json.dumps(marker)}
+
+    assert _guest_failure_marker_stage(FailedGuest(), "mng01", 30000, INSTANCE_ID, MAC) == "NETPLAN_APPLY"
+    assert _guest_failure_marker_stage(FailedGuest(), "mng01", 30000, "00000000-0000-4000-8000-000000000002", MAC) == "UNKNOWN"
 
 
 def test_worker_only_dispatches_identity_for_running_supported_guest(monkeypatch):
@@ -243,4 +344,6 @@ def test_proxmox_guest_exec_encodes_repeated_command_parameters(monkeypatch):
     monkeypatch.setattr(client.opener, "open", open_request)
     command = ["/usr/bin/python3", "-c", "print('ok')", INSTANCE_ID, MAC, PROGRAM_SHA256]
     assert client.guest_agent_exec("mng01", 30000, command) == {"pid": 7}
-    assert [value for key, value in parse_qsl(captured["request"].data.decode()) if key == "command"] == command
+    parameters = parse_qsl(captured["request"].data.decode())
+    assert [value for key, value in parameters if key == "command"] == command
+    assert ("capture-output", "1") not in parameters

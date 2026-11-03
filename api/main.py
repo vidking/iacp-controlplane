@@ -314,7 +314,8 @@ def delete_instance(
     summary="Reconciliar una operación incierta",
     description=(
         "Vuelve a observar el estado físico y recupera de forma segura la última operación uncertain. "
-        "No reinicia la instancia automáticamente."
+        "Si la operación pidió una VM encendida y la encuentra detenida, la inicia antes de validar su identidad. "
+        "No reinicia una VM que ya está activa."
     ),
     operation_id="reconcileInstance",
 )

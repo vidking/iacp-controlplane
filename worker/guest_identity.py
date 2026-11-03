@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -9,7 +10,7 @@ import os
 import re
 import time
 from uuid import UUID
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from api.protection import is_protected_vmid
 from worker.golden import configured_pool_id
@@ -20,15 +21,40 @@ MODE = "ubuntu-2404-mng-dhcp-mac-v1"
 MARKER = "/var/lib/iacp/guest-identity.json"
 PENDING_MARKER = "/var/lib/iacp/guest-identity.pending.json"
 NETWORK_FILE = "/etc/netplan/99-iacp-identity.yaml"
+FAILURE_MARKER = "/var/lib/iacp/guest-identity.failure.json"
 
 
 PROGRAM = r'''
-import fcntl,hashlib,json,os,re,subprocess,sys,tempfile,uuid
+import fcntl,hashlib,json,os,re,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 import yaml
 identifier,mac,program_sha=sys.argv[1:]
-assert str(uuid.UUID(identifier))==identifier and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac)
-assert re.fullmatch(r'[0-9a-f]{64}',program_sha)
+failure=Path('/var/lib/iacp/guest-identity.failure.json')
+def failure_hook(exc_type,exc,tb):
+    match=re.search(r'IACP_GUEST_IDENTITY_STAGE=([A-Z0-9_]{1,64})',str(exc))
+    stage=match.group(1) if match else 'UNEXPECTED'
+    try:
+        failure.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+        if failure.is_symlink(): return
+        fd,temporary=tempfile.mkstemp(prefix='.iacp-failure-',dir=failure.parent)
+        try:
+            with os.fdopen(fd,'w') as output:
+                os.fchmod(output.fileno(),0o600)
+                json.dump({'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-mng-dhcp-mac-v1',
+                           'program_sha256':program_sha,'stage':stage},output,sort_keys=True)
+                output.write('\n');output.flush();os.fsync(output.fileno())
+            os.replace(temporary,failure)
+        finally:
+            if os.path.exists(temporary): os.unlink(temporary)
+    except OSError:
+        pass
+sys.excepthook=failure_hook
+try:
+    failure.unlink(missing_ok=True)
+except OSError:
+    raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=FAILURE_MARKER_RESET')
+assert str(uuid.UUID(identifier))==identifier and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac), 'IACP_GUEST_IDENTITY_STAGE=INPUT'
+assert re.fullmatch(r'[0-9a-f]{64}',program_sha), 'IACP_GUEST_IDENTITY_STAGE=PROGRAM_HASH'
 def cloud_init_completed(returncode,output,boot_finished):
     if not boot_finished or not re.search(r'(?m)^status:\s*done\s*$', output):
         return False
@@ -46,10 +72,13 @@ def cloud_init_completed(returncode,output,boot_finished):
         and lines[0] == 'DEPRECATED:'
         and all(line.startswith('- ') and 'deprecated' in line.lower() for line in warnings)
     )
+def cloud_init_pending(output,boot_finished):
+    status=re.search(r'(?m)^status:\s*([a-zA-Z_-]+)\s*$',output)
+    return not boot_finished or status is None or status.group(1).lower() in {'running','not run'}
 release=Path('/etc/os-release').read_text()
-assert 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release
+assert 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release, 'IACP_GUEST_IDENTITY_STAGE=OS_RELEASE'
 interfaces=[p for p in Path('/sys/class/net').glob('*/address') if p.read_text().strip().lower()==mac]
-assert len(interfaces)==1
+assert len(interfaces)==1, 'IACP_GUEST_IDENTITY_STAGE=MAC_INTERFACE'
 ifindex=int((interfaces[0].parent/'ifindex').read_text())
 lock=Path('/run/lock/iacp-guest-identity.lock')
 lock.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
@@ -70,58 +99,77 @@ with lock.open('a') as stream:
             if os.path.exists(temporary):os.unlink(temporary)
     if marker.exists():
         evidence=json.loads(marker.read_text())
-        assert evidence.get('instance_id')==identifier and evidence.get('mac_address')==mac
-        assert evidence.get('mode')=='ubuntu-2404-mng-dhcp-mac-v1' and evidence.get('program_sha256')==program_sha
-        assert hashlib.sha256(Path('/etc/machine-id').read_bytes()).hexdigest()==evidence.get('machine_id_sha256')
-        assert hashlib.sha256(network.read_bytes()).hexdigest()==evidence.get('network_sha256')
+        assert evidence.get('instance_id')==identifier and evidence.get('mac_address')==mac, 'IACP_GUEST_IDENTITY_STAGE=MARKER_BINDING'
+        assert evidence.get('mode')=='ubuntu-2404-mng-dhcp-mac-v1' and evidence.get('program_sha256')==program_sha, 'IACP_GUEST_IDENTITY_STAGE=MARKER_VERSION'
+        assert hashlib.sha256(Path('/etc/machine-id').read_bytes()).hexdigest()==evidence.get('machine_id_sha256'), 'IACP_GUEST_IDENTITY_STAGE=MACHINE_ID_HASH'
+        assert hashlib.sha256(network.read_bytes()).hexdigest()==evidence.get('network_sha256'), 'IACP_GUEST_IDENTITY_STAGE=NETWORK_HASH'
         if evidence.get('ifindex')!=ifindex:
             evidence['ifindex']=ifindex
             write(marker,json.dumps(evidence,sort_keys=True)+'\n')
         sys.exit(0)
-    cloud_init = subprocess.run(
-        ['/usr/bin/cloud-init', 'status', '--wait', '--long'],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
-    assert cloud_init_completed(
-        cloud_init.returncode,
-        cloud_init.stdout or '',
-        Path('/var/lib/cloud/instance/boot-finished').is_file(),
-    )
+    cloud_init_deadline=time.monotonic()+90
+    while time.monotonic()<cloud_init_deadline:
+        remaining=cloud_init_deadline-time.monotonic()
+        try:
+            cloud_init=subprocess.run(
+                ['/usr/bin/cloud-init','status','--long'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=min(15,remaining),
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except OSError:
+            raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
+        cloud_init_output=cloud_init.stdout or ''
+        boot_finished=Path('/var/lib/cloud/instance/boot-finished').is_file()
+        if cloud_init_completed(cloud_init.returncode,cloud_init_output,boot_finished):
+            break
+        if cloud_init_pending(cloud_init_output,boot_finished):
+            time.sleep(min(2,max(0,cloud_init_deadline-time.monotonic())))
+            continue
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
+    else:
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=CLOUD_INIT')
     config=yaml.safe_load(Path('/etc/netplan/50-cloud-init.yaml').read_text())['network']
-    assert config['version']==2 and set(config)<= {'version','renderer','ethernets'}
-    assert config.get('renderer','networkd')=='networkd' and len(config['ethernets'])==1
+    assert config['version']==2 and set(config)<= {'version','renderer','ethernets'}, 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_STRUCTURE'
+    assert config.get('renderer','networkd')=='networkd' and len(config['ethernets'])==1, 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_RENDERER'
     name,ethernet=next(iter(config['ethernets'].items()))
-    assert re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',name)
-    assert ethernet['match']['macaddress'].lower()==mac and ethernet.get('dhcp4') is True
-    assert not any(ethernet.get(key) for key in ('addresses','gateway4','gateway6','routes'))
+    assert re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',name), 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_INTERFACE_NAME'
+    assert ethernet['match']['macaddress'].lower()==mac and ethernet.get('dhcp4') is True, 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_MAC_DHCP'
+    assert not any(ethernet.get(key) for key in ('addresses','gateway4','gateway6','routes')), 'IACP_GUEST_IDENTITY_STAGE=NETPLAN_STATIC_CONFIG'
     desired=json.dumps({'network':{'version':2,'ethernets':{name:{'dhcp-identifier':'mac'}}}},sort_keys=True)+'\n'
     if pending.exists():
         state=json.loads(pending.read_text())
-        assert state.get('instance_id')==identifier and state.get('mac_address')==mac
-        assert state.get('mode')=='ubuntu-2404-mng-dhcp-mac-v1' and state.get('program_sha256')==program_sha
-        assert state.get('network_content')==desired and state.get('ifindex')==ifindex
+        assert state.get('instance_id')==identifier and state.get('mac_address')==mac, 'IACP_GUEST_IDENTITY_STAGE=PENDING_BINDING'
+        assert state.get('mode')=='ubuntu-2404-mng-dhcp-mac-v1' and state.get('program_sha256')==program_sha, 'IACP_GUEST_IDENTITY_STAGE=PENDING_VERSION'
+        assert state.get('network_content')==desired and state.get('ifindex')==ifindex, 'IACP_GUEST_IDENTITY_STAGE=PENDING_NETWORK'
         machine=state['machine_id']
-        assert re.fullmatch(r'[0-9a-f]{32}\n',machine)
+        assert re.fullmatch(r'[0-9a-f]{32}\n',machine), 'IACP_GUEST_IDENTITY_STAGE=PENDING_MACHINE_ID'
     else:
         machine=uuid.uuid4().hex+'\n'
         state={'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-mng-dhcp-mac-v1',
                'program_sha256':program_sha,'network_content':desired,'machine_id':machine,'ifindex':ifindex}
         write(pending,json.dumps(state,sort_keys=True)+'\n')
     if network.exists():
-        assert network.read_text()==desired
+        assert network.read_text()==desired, 'IACP_GUEST_IDENTITY_STAGE=NETWORK_FILE'
     else:
         write(network,desired)
     write(Path('/etc/machine-id'),machine,0o444)
     dbus=Path('/var/lib/dbus/machine-id')
     if dbus.is_symlink():
-        assert dbus.resolve()==Path('/etc/machine-id')
+        assert dbus.resolve()==Path('/etc/machine-id'), 'IACP_GUEST_IDENTITY_STAGE=DBUS_MACHINE_ID'
     elif dbus.exists():
         write(dbus,machine,0o444)
-    subprocess.run(['/usr/sbin/netplan','generate'],check=True,capture_output=True,timeout=30)
-    subprocess.run(['/usr/sbin/netplan','apply'],check=True,capture_output=True,timeout=60)
+    try:
+        subprocess.run(['/usr/sbin/netplan','generate'],check=True,capture_output=True,timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=NETPLAN_GENERATE')
+    try:
+        subprocess.run(['/usr/sbin/netplan','apply'],check=True,capture_output=True,timeout=60)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=NETPLAN_APPLY')
     evidence={'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-mng-dhcp-mac-v1',
               'program_sha256':program_sha,'machine_id_sha256':hashlib.sha256(machine.encode()).hexdigest(),
               'network_sha256':hashlib.sha256(desired.encode()).hexdigest(),'ifindex':ifindex}
@@ -129,6 +177,44 @@ with lock.open('a') as stream:
     pending.unlink(missing_ok=True)
 '''
 PROGRAM_SHA256 = hashlib.sha256(PROGRAM.encode()).hexdigest()
+
+
+def _guest_program_failure_stage(process: dict) -> str:
+    """Extract only a fixed diagnostic code; never persist guest output."""
+
+    encoded = process.get("err-data")
+    if not isinstance(encoded, str) or not encoded:
+        return "UNKNOWN"
+    try:
+        output = base64.b64decode(encoded[-16_384:], validate=False).decode("utf-8", errors="replace")
+    except (ValueError, UnicodeError):
+        return "UNKNOWN"
+    match = re.search(r"IACP_GUEST_IDENTITY_STAGE=([A-Z0-9_]{1,64})", output)
+    return match.group(1) if match else "UNKNOWN"
+
+
+def _guest_failure_marker_stage(
+    client: ProxmoxClient,
+    node: str,
+    vmid: int,
+    instance_id: str,
+    mac: str,
+) -> str:
+    """Leer solo el código acotado escrito por el programa guest autenticado."""
+
+    try:
+        marker = json.loads(_guest_file(client, node, vmid, FAILURE_MARKER))
+    except (GuestIdentityError, ProxmoxError, ValueError, TypeError):
+        return "UNKNOWN"
+    if not isinstance(marker, dict) or (
+        marker.get("instance_id") != instance_id
+        or marker.get("mac_address") != mac
+        or marker.get("mode") != MODE
+        or marker.get("program_sha256") != PROGRAM_SHA256
+    ):
+        return "UNKNOWN"
+    stage = marker.get("stage")
+    return stage if isinstance(stage, str) and re.fullmatch(r"[A-Z0-9_]{1,64}", stage) else "UNKNOWN"
 
 
 class GuestIdentityError(ProxmoxError):
@@ -243,6 +329,81 @@ def _observe(client: ProxmoxClient, node: str, vmid: int, instance_id: str, mac:
     return {"mac_address": mac, "ipv4": lease_address, "mode": MODE}
 
 
+def _wait_for_pool_membership(
+    client: ProxmoxClient,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    pool_id: str,
+    heartbeat=None,
+    timeout: float | None = None,
+    poll_interval: float | None = None,
+) -> None:
+    """Confirmar por inventario y miembros del pool antes de usar Guest Agent."""
+
+    wait_seconds = max(
+        0.01,
+        float(
+            timeout
+            if timeout is not None
+            else os.getenv("IACP_GUEST_POOL_TIMEOUT", "30")
+        ),
+    )
+    delay = max(
+        0.01,
+        float(
+            poll_interval
+            if poll_interval is not None
+            else os.getenv("IACP_GUEST_IDENTITY_POLL_SECONDS", "2")
+        ),
+    )
+    deadline = time.monotonic() + wait_seconds
+    observed = False
+    pool_path = f"/pools/{quote(pool_id, safe='')}"
+
+    while time.monotonic() < deadline:
+        if heartbeat is not None:
+            heartbeat()
+        try:
+            inventory = client.inventory()
+            pool = client.get(pool_path)
+            observed = True
+        except ProxmoxError as error:
+            if error.status in {401, 403}:
+                raise GuestIdentityError("GUEST_IDENTITY_PERMISSION_REQUIRED") from error
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            continue
+
+        physical = [
+            item for item in inventory
+            if isinstance(item, dict) and str(item.get("vmid", "")) == str(vmid)
+        ]
+        members = pool.get("members") if isinstance(pool, dict) else None
+        members = members if isinstance(members, list) else []
+        pooled = [
+            item for item in members
+            if isinstance(item, dict)
+            and str(item.get("vmid", "")) == str(vmid)
+            and item.get("type") == "qemu"
+        ]
+        if (
+            isinstance(pool, dict)
+            and pool.get("poolid") == pool_id
+            and len(physical) == 1
+            and physical[0].get("name") == name
+            and physical[0].get("node") == node
+            and len(pooled) == 1
+            and pooled[0].get("name") == name
+            and pooled[0].get("node") == node
+        ):
+            return
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+
+    code = "GUEST_IDENTITY_POOL_MISMATCH" if observed else "GUEST_IDENTITY_POOL_OBSERVATION_FAILED"
+    raise GuestIdentityError(code)
+
+
 def _ensure(
     client: ProxmoxClient,
     *,
@@ -267,18 +428,16 @@ def _ensure(
     config = client.vm_config(node, vmid)
     mac = _mac_from_config(config, name)
     pool_id = configured_pool_id()
-    matches = [
-        item
-        for item in client.inventory()
-        if isinstance(item, dict) and str(item.get("vmid", "")) == str(vmid)
-    ]
-    if (
-        len(matches) != 1
-        or matches[0].get("name") != name
-        or matches[0].get("node") != node
-        or matches[0].get("pool") != pool_id
-    ):
-        raise GuestIdentityError("GUEST_IDENTITY_POOL_MISMATCH")
+    _wait_for_pool_membership(
+        client,
+        node=node,
+        vmid=vmid,
+        name=name,
+        pool_id=pool_id,
+        heartbeat=heartbeat,
+        timeout=timeout,
+        poll_interval=poll_interval,
+    )
 
     # Proxmox reports ACLs inherited from the VM's resource pool at the pool
     # path. Querying /vms/{vmid} alone returns zeroes for these inherited
@@ -333,7 +492,10 @@ def _ensure(
                     time.sleep(delay)
                     continue
                 if process.get("exitcode") != 0:
-                    raise GuestIdentityError("GUEST_IDENTITY_PROGRAM_FAILED")
+                    stage = _guest_program_failure_stage(process)
+                    if stage == "UNKNOWN":
+                        stage = _guest_failure_marker_stage(client, node, vmid, instance_id, mac)
+                    raise GuestIdentityError(f"GUEST_IDENTITY_PROGRAM_FAILED_{stage}")
                 pid = None
         observed = _observe(client, node, vmid, instance_id, mac)
         if observed is not None:

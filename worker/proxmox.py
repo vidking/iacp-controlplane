@@ -123,7 +123,13 @@ class ProxmoxClient:
                     time.sleep(min(8.0, backoff * (2**attempt)))
                     continue
                 code = "POWER_PERMISSION_DENIED" if error.code in {401, 403} else "POWER_PROXMOX_UNAVAILABLE"
-                raise ProxmoxError(code, error.code, uncertain=uncertain and method != "GET") from error
+                # A 4xx response is an explicit rejection: Proxmox did not
+                # accept the operation. Only server errors may have happened
+                # after a mutation was applied and therefore remain uncertain.
+                request_uncertain = uncertain and method != "GET" and (
+                    error.code >= 500 or error.code == 408
+                )
+                raise ProxmoxError(code, error.code, uncertain=request_uncertain) from error
             except (URLError, TimeoutError, ValueError) as error:
                 reason = getattr(error, "reason", None)
                 message = str(error).lower()
