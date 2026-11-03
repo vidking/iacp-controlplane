@@ -43,9 +43,9 @@ Control Plane (VM 104) y el certificado instalado no contiene ese nombre.
 
 La revisión `365e3a2` solo cambia documentación estática dentro de la imagen.
 `api/main.py`, los demás módulos de API, `worker`, `terraform`, el `Dockerfile`
-y las dependencias no difieren respecto a `2dc2629`. Por eso las pruebas físicas
-del release `2dc2629` se reutilizan explícitamente; no se presenta como si esos
-canarios se hubieran vuelto a crear para una modificación de HTML.
+y las dependencias no difieren respecto a `2dc2629`. Las pruebas físicas de ese
+release se reutilizaron para el código sin cambios; después de rotar el token
+MNG se ejecutó además un ciclo físico completo sobre `365e3a2`.
 
 ## Verificaciones
 
@@ -53,11 +53,14 @@ canarios se hubieran vuelto a crear para una modificación de HTML.
 | --- | --- | --- |
 | Suite completa | **PASS**, 83 pruebas; 3 avisos deprecados de dependencias | Ejecutada con el commit `365e3a2` y PostgreSQL temporal local |
 | Configuración y preflight productivo | **PASS**; Wasabi autorizó lectura del prefijo esperado | `/opt/iacp/evidence/controlplane-365e3a2-config-check/`, `...-preflight-2/` |
+| Rotación y recarga de token en producción | **PASS**; preflight, deploy precargado y verify posteriores a la edición de `prod.env` | `/opt/iacp/evidence/prod-token-preflight/`, `...-deploy/`, `...-verify/` |
+| Preflight de configuración develop | **PASS**; la ruta y el stack siguen inactivos | `/opt/iacp/evidence/prod-token-dev-preflight/` |
 | Despliegue con imágenes precargadas | **PASS**; SHA del archivo comprobado antes de `docker load` | `/opt/iacp/evidence/controlplane-365e3a2-deploy/` |
 | Verificación del stack | **PASS**; API 1.0.0, `/v1/instances`, PostgreSQL y API saludables | `/opt/iacp/evidence/controlplane-365e3a2-verify/` |
 | Activación | **PASS**; upstream ya apuntaba al alias nuevo y la revisión externa coincidió | `/opt/iacp/evidence/controlplane-365e3a2-activation/` |
 | Smoke público | **PASS**; readiness 200, OpenAPI y `/docs` 200, `/v1/instances` sin token 401 | `/opt/iacp/evidence/controlplane-365e3a2-public-smoke.json` |
-| Producción en reposo | **PASS**; 7 operaciones `succeeded`, 0 activas, 2 workers `idle`, 2 registros de canaria `deleted` | PostgreSQL del proyecto `iacp-controlplane-prod-v1` |
+| Token MNG rotado | **PASS**; ciclo público, lectura de config/tags Proxmox y VM física ausente tras destroy | `/opt/iacp/evidence/prod-token-rotation-canary/result.corrected.json` |
+| Producción en reposo | **PASS**; 10 operaciones `succeeded`, 0 activas, 2 workers `idle`, 3 registros de canaria `deleted` | PostgreSQL del proyecto `iacp-controlplane-prod-v1` |
 
 La API pública anuncia `X-IACP-Build-Revision: 365e3a2ec0187810bfcb0377c544152ed0bdc8da`.
 Swagger/OpenAPI mantiene versión `1.0.0` y las rutas `/v1`; no se publicó un
@@ -78,6 +81,14 @@ después de retirar la canaria anterior:
 2. **Canaria pública:** `canary-public-2dc2629`; se creó desde
    `iac.cyberfuel.com`, se apagó y se eliminó por API. El inventario MNG confirmó
    la VM ausente.
+3. **Canaria tras la rotación del token MNG:** `canary-token-365e3a2-627a00a7`,
+   plan `kvm-1`, Ubuntu 24.04, VMID `30000`, tags físicos exactos
+   `cl-test;kvm-token-rotated;run-627a00a7`. Se aprovisionó y encendió desde la
+   API pública; el worker leyó su configuración Proxmox con el token nuevo.
+   Luego la API confirmó `running`, ejecutó apagado ordenado, confirmó
+   `stopped` y completó el destroy. La consulta directa al inventario Proxmox
+   confirmó que VMID `30000` ya no estaba presente. El objeto state quedó y no
+   quedó lock S3.
 
 Evidencia física detallada:
 
@@ -85,11 +96,19 @@ Evidencia física detallada:
 - Reconciliación: `/opt/iacp/evidence/controlplane-d3e57f6-prod-physical-reconcile.json`
 - Eliminación: `/opt/iacp/evidence/controlplane-d3e57f6-prod-physical-delete.json`
 - Ciclo público: `/opt/iacp/evidence/controlplane-2dc2629-prod-public-cycle/result.json`
+- Prueba del token rotado: `/opt/iacp/evidence/prod-token-rotation-canary/result.corrected.json`
 
 Los objetos Terraform state se conservaron después de eliminar las canarias; los
 locks se liberaron. No se purgó el bucket, no se borraron objetos versionados ni
 se forzó ningún unlock. La base nueva conserva los registros de auditoría de
-las dos canarias como `deleted`; no importó instancias del runtime anterior.
+las tres canarias como `deleted`; no importó instancias del runtime anterior.
+
+El evaluador inicial de la prueba del token guardó `FAIL` porque comparó todos
+los checks como booleanos; `preflight_api_and_queue` se representa como la
+cadena `PASS`. Se preservó el archivo original como
+`result.initial-evaluator.json` y se añadió `result.corrected.json`, donde la
+regla distingue correctamente ese check textual de los nueve booleanos. Los
+diez checks individuales pasaron.
 
 ## Rangos, entornos y protecciones
 
@@ -99,7 +118,9 @@ las dos canarias como `deleted`; no importó instancias del runtime anterior.
 | Desarrollo | `dev-cyberfuel.com` | MNG | `40000–49999` | Sin ruta pública |
 
 Los manifiestos privados de desarrollo se actualizaron a `dev-cyberfuel.com` y
-al rango `40000–49999`. `getent` en VM 104 no devolvió dirección para ese host;
+al rango `40000–49999`. El preflight de desarrollo pasó configuración tras la
+rotación; su token no se probó aprovisionando porque ese runtime sigue inactivo.
+`getent` en VM 104 no devolvió dirección para ese host;
 el certificado solo contiene `*.cyberfuel.com` y `cyberfuel.com`, no el SAN
 exacto `dev-cyberfuel.com`. La plantilla de ruta está revisada, pero no se copió
 al directorio dinámico ni se activó el stack de desarrollo.
