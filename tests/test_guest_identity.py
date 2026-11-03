@@ -10,9 +10,11 @@ import pytest
 from worker.guest_identity import (
     MODE,
     NETWORK_FILE,
+    FAILURE_MARKER,
     PROGRAM,
     PROGRAM_SHA256,
     GuestIdentityError,
+    _guest_failure_marker_stage,
     _guest_program_failure_stage,
     ensure,
     required,
@@ -260,6 +262,24 @@ def test_guest_program_failure_diagnostic_returns_only_fixed_stage_code():
     assert _guest_program_failure_stage({"err-data": "not-base64"}) == "UNKNOWN"
 
 
+def test_guest_program_failure_marker_is_bound_to_instance_and_program():
+    marker = {
+        "instance_id": INSTANCE_ID,
+        "mac_address": MAC,
+        "mode": MODE,
+        "program_sha256": PROGRAM_SHA256,
+        "stage": "NETPLAN_APPLY",
+    }
+
+    class FailedGuest:
+        def guest_agent_file_read(self, node, vmid, path):
+            assert path == FAILURE_MARKER
+            return {"content": json.dumps(marker)}
+
+    assert _guest_failure_marker_stage(FailedGuest(), "mng01", 30000, INSTANCE_ID, MAC) == "NETPLAN_APPLY"
+    assert _guest_failure_marker_stage(FailedGuest(), "mng01", 30000, "00000000-0000-4000-8000-000000000002", MAC) == "UNKNOWN"
+
+
 def test_worker_only_dispatches_identity_for_running_supported_guest(monkeypatch):
     events = []
     calls = []
@@ -310,4 +330,4 @@ def test_proxmox_guest_exec_encodes_repeated_command_parameters(monkeypatch):
     assert client.guest_agent_exec("mng01", 30000, command) == {"pid": 7}
     parameters = parse_qsl(captured["request"].data.decode())
     assert [value for key, value in parameters if key == "command"] == command
-    assert ("capture-output", "1") in parameters
+    assert ("capture-output", "1") not in parameters

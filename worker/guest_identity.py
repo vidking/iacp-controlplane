@@ -21,6 +21,7 @@ MODE = "ubuntu-2404-mng-dhcp-mac-v1"
 MARKER = "/var/lib/iacp/guest-identity.json"
 PENDING_MARKER = "/var/lib/iacp/guest-identity.pending.json"
 NETWORK_FILE = "/etc/netplan/99-iacp-identity.yaml"
+FAILURE_MARKER = "/var/lib/iacp/guest-identity.failure.json"
 
 
 PROGRAM = r'''
@@ -28,6 +29,30 @@ import fcntl,hashlib,json,os,re,subprocess,sys,tempfile,uuid
 from pathlib import Path
 import yaml
 identifier,mac,program_sha=sys.argv[1:]
+failure=Path('/var/lib/iacp/guest-identity.failure.json')
+def failure_hook(exc_type,exc,tb):
+    match=re.search(r'IACP_GUEST_IDENTITY_STAGE=([A-Z0-9_]{1,64})',str(exc))
+    stage=match.group(1) if match else 'UNEXPECTED'
+    try:
+        failure.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+        if failure.is_symlink(): return
+        fd,temporary=tempfile.mkstemp(prefix='.iacp-failure-',dir=failure.parent)
+        try:
+            with os.fdopen(fd,'w') as output:
+                os.fchmod(output.fileno(),0o600)
+                json.dump({'instance_id':identifier,'mac_address':mac,'mode':'ubuntu-2404-mng-dhcp-mac-v1',
+                           'program_sha256':program_sha,'stage':stage},output,sort_keys=True)
+                output.write('\n');output.flush();os.fsync(output.fileno())
+            os.replace(temporary,failure)
+        finally:
+            if os.path.exists(temporary): os.unlink(temporary)
+    except OSError:
+        pass
+sys.excepthook=failure_hook
+try:
+    failure.unlink(missing_ok=True)
+except OSError:
+    raise RuntimeError('IACP_GUEST_IDENTITY_STAGE=FAILURE_MARKER_RESET')
 assert str(uuid.UUID(identifier))==identifier and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}',mac), 'IACP_GUEST_IDENTITY_STAGE=INPUT'
 assert re.fullmatch(r'[0-9a-f]{64}',program_sha), 'IACP_GUEST_IDENTITY_STAGE=PROGRAM_HASH'
 def cloud_init_completed(returncode,output,boot_finished):
@@ -150,6 +175,30 @@ def _guest_program_failure_stage(process: dict) -> str:
         return "UNKNOWN"
     match = re.search(r"IACP_GUEST_IDENTITY_STAGE=([A-Z0-9_]{1,64})", output)
     return match.group(1) if match else "UNKNOWN"
+
+
+def _guest_failure_marker_stage(
+    client: ProxmoxClient,
+    node: str,
+    vmid: int,
+    instance_id: str,
+    mac: str,
+) -> str:
+    """Leer solo el código acotado escrito por el programa guest autenticado."""
+
+    try:
+        marker = json.loads(_guest_file(client, node, vmid, FAILURE_MARKER))
+    except (GuestIdentityError, ProxmoxError, ValueError, TypeError):
+        return "UNKNOWN"
+    if not isinstance(marker, dict) or (
+        marker.get("instance_id") != instance_id
+        or marker.get("mac_address") != mac
+        or marker.get("mode") != MODE
+        or marker.get("program_sha256") != PROGRAM_SHA256
+    ):
+        return "UNKNOWN"
+    stage = marker.get("stage")
+    return stage if isinstance(stage, str) and re.fullmatch(r"[A-Z0-9_]{1,64}", stage) else "UNKNOWN"
 
 
 class GuestIdentityError(ProxmoxError):
@@ -428,6 +477,8 @@ def _ensure(
                     continue
                 if process.get("exitcode") != 0:
                     stage = _guest_program_failure_stage(process)
+                    if stage == "UNKNOWN":
+                        stage = _guest_failure_marker_stage(client, node, vmid, instance_id, mac)
                     raise GuestIdentityError(f"GUEST_IDENTITY_PROGRAM_FAILED_{stage}")
                 pid = None
         observed = _observe(client, node, vmid, instance_id, mac)

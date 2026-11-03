@@ -624,6 +624,22 @@ def test_proxmox_does_not_retry_mutation_after_http_5xx(monkeypatch):
     assert len(attempts) == 1
 
 
+def test_proxmox_classifies_http_4xx_mutation_as_definite_rejection(monkeypatch):
+    client = ProxmoxClient.__new__(ProxmoxClient)
+    client.base = "https://mng01.example/api2/json"
+    client.token = "user@pve!token"
+
+    def fake_open(request, timeout):
+        raise HTTPError(request.full_url, 400, "parameter verification failed", {}, None)
+
+    client.opener = SimpleNamespace(open=fake_open)
+
+    with pytest.raises(ProxmoxError) as error:
+        client._request("POST", "/nodes/mng01/qemu/30000/agent/exec", {"command": "/usr/bin/true"}, uncertain=True)
+    assert error.value.uncertain is False
+    assert error.value.status == 400
+
+
 def test_wait_task_retries_transient_dns_poll(monkeypatch):
     client = ProxmoxClient.__new__(ProxmoxClient)
     responses = iter(
