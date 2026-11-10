@@ -38,14 +38,14 @@ IACP_ENABLED_ENVIRONMENTS=lab
 El entorno lógico `lab` se resuelve al clúster MNG. El catálogo del runtime solo
 habilita `mng01`; `mng02` no se ofrecerá hasta validar su storage e imágenes.
 El request no contiene nombres de clúster o nodo. `iac.cyberfuel.com` puede admitir PRX
-cuando se configure y certifique; `dev-cyberfuel.com` queda limitado a
+cuando se configure y certifique; `dev-iac.cyberfuel.com` queda limitado a
 MNG.
 
 Los rangos VMID son disjuntos y se fijan por manifiesto y archivo de entorno:
 
 | Stack | Host configurado | Rango VMID |
 | --- | --- | --- |
-| `develop` | `dev-cyberfuel.com` | `40000–49999` |
+| `develop` | `dev-iac.cyberfuel.com` | `40000–49999` |
 | `production` | `iac.cyberfuel.com` | `30000–39999` |
 
 Configura ambos límites explícitamente en cada archivo privado. El Compose de
@@ -137,11 +137,10 @@ forzar un resultado. El informe de producción vigente está en
 ## Ruta de desarrollo
 
 `deploy/portainer/traefik-dev.yml` define una ruta dinámica separada para
-`dev-cyberfuel.com`. La activación requiere que el certificado TLS incluya
-`dev-cyberfuel.com` como SAN exacto. El certificado actual contiene
-`*.cyberfuel.com` y `cyberfuel.com`, que no cubren ese dominio; tampoco se
-resuelve DNS para `dev-cyberfuel.com` desde el entorno de despliegue. La ruta
-permanece desactivada hasta configurar ambos. Cuando se active, reutiliza
+`dev-iac.cyberfuel.com`. La activación requiere que el certificado TLS incluya
+`dev-iac.cyberfuel.com` como SAN exacto o `*.cyberfuel.com`. La ruta solo debe
+activarse cuando DNS resuelva al proxy y se verifique el certificado instalado.
+Cuando se active, reutiliza
 la lista de IPs internas, sanitización de headers, rate limit y límite de
 solicitudes; publica solo el alias `iacp-controlplane-api-dev`. La plantilla
 permite el origen web de dev y mantiene el endpoint limitado a MNG por la

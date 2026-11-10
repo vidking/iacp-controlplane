@@ -74,7 +74,7 @@ def test_purge_run_names_cover_the_16_unique_image_plan_pairs():
 
 
 def test_physical_matrix_refuses_the_development_api(monkeypatch):
-    monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://dev-cyberfuel.com")
+    monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://dev-iac.cyberfuel.com")
 
     with pytest.raises(e2e_matrix.E2EError, match="iac.cyberfuel.com"):
         e2e_matrix.validate_execution_config()

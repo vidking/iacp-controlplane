@@ -34,8 +34,12 @@ SQLite ni elimina filas históricas.
 
 | Runtime | URL y estado | Entornos publicados | State Terraform |
 | --- | --- | --- | --- |
-| `develop` | `https://dev-cyberfuel.com` · pendiente de DNS y certificado TLS | `lab` → clúster MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
+| `develop` | `https://dev-iac.cyberfuel.com` · pendiente de DNS y certificado TLS | `lab` → clúster MNG; solo `mng01`; VMID `40000–49999` | Local en volumen persistente de desarrollo |
 | `production` | `https://iac.cyberfuel.com` · activa | `lab` → clúster MNG; el servidor resuelve el nodo; VMID `30000–39999`; PRX deshabilitado | Local persistido; `IACP_WASABI_ENABLED=false` |
+
+En SCM, `main` corresponde a producción (`iac.cyberfuel.com`) y `develop` a
+desarrollo (`dev-iac.cyberfuel.com`). Los manifiestos separan configuración,
+dominio, volúmenes y rango VMID de cada frente.
 
 El registro de promoción, las pruebas físicas y las limitaciones vigentes están
 en [`docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md`](docs/auditorias/PRODUCCION_CONTROLPLANE_V1_20261102.md).
