@@ -50,3 +50,39 @@ def test_connection_reuse_can_be_disabled(monkeypatch):
         first = _backend_pid(db)
     with database() as db:
         assert _backend_pid(db) != first
+
+
+def test_transaction_groups_writes_and_rolls_back_on_error():
+    from api.db import initialize, transaction
+
+    initialize()
+    with pytest.raises(RuntimeError):
+        with transaction():
+            with database() as db:
+                db.execute(
+                    "INSERT INTO events(operation_id, kind, status, occurred_at) VALUES ('tx-op', 'a', 'ok', 'now')"
+                )
+            raise RuntimeError("fallo a mitad del cierre")
+    with database() as db:
+        assert db.execute("SELECT COUNT(*) AS n FROM events WHERE operation_id='tx-op'").fetchone()["n"] == 0
+
+    with transaction():
+        with database() as db:
+            db.execute(
+                "INSERT INTO events(operation_id, kind, status, occurred_at) VALUES ('tx-op', 'b', 'ok', 'now')"
+            )
+        with database() as db:
+            db.execute(
+                "INSERT INTO events(operation_id, kind, status, occurred_at) VALUES ('tx-op', 'c', 'ok', 'now')"
+            )
+    with database() as db:
+        assert db.execute("SELECT COUNT(*) AS n FROM events WHERE operation_id='tx-op'").fetchone()["n"] == 2
+
+
+def test_transaction_rejects_nested_transaction_control():
+    from api.db import transaction
+
+    with pytest.raises(RuntimeError):
+        with transaction():
+            with database() as db:
+                db.execute("BEGIN IMMEDIATE")

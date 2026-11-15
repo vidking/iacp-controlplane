@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from api.catalog import cluster_nodes, load_catalog
-from api.db import database, initialize
+from api.db import database, initialize, transaction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
@@ -1037,55 +1037,58 @@ def settle_physical_operation(
     output: str = "",
     recovered: bool = False,
 ) -> bool:
+    # NetBox (red) queda fuera de la transacción; el cierre en la base es
+    # atómico y los secretos se borran solo después del COMMIT.
     if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
+        with transaction():
+            update_operation(
+                operation_id,
+                status="uncertain",
+                phase="recovery_required",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=1,
+                output=operation_output(output),
+                error="IPAM_RELEASE_PENDING",
+            )
+            update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=node)
+            if vmid is not None:
+                release(int(vmid), instance_id=instance_id)
+            emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
+        delete_secret(source_operation.get("secret_path"))
+        return False
+    with transaction():
         update_operation(
             operation_id,
-            status="uncertain",
-            phase="recovery_required",
+            status="succeeded",
+            phase="completed",
             finished_at=now(),
             last_heartbeat=now(),
-            exit_code=1,
+            exit_code=0,
             output=operation_output(output),
-            error="IPAM_RELEASE_PENDING",
+            error=operation_output(""),
         )
-        update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=node)
-        if vmid is not None:
-            release(int(vmid), instance_id=instance_id)
-        delete_secret(source_operation.get("secret_path"))
-        emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
-        return False
-    update_operation(
-        operation_id,
-        status="succeeded",
-        phase="completed",
-        finished_at=now(),
-        last_heartbeat=now(),
-        exit_code=0,
-        output=operation_output(output),
-        error=operation_output(""),
-    )
-    if command == "destroy":
-        update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
-        if vmid is not None:
-            release(int(vmid), instance_id=instance_id)
-        delete_secret(source_operation.get("secret_path"))
-    elif command in {"apply", "provision"}:
-        started = bool(source_payload.get("spec", {}).get("started", True))
-        update_instance(
-            instance_id,
-            "ready",
-            vmid=vmid,
-            power_state="running" if started else "stopped",
-            node=node,
+        if command == "destroy":
+            update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
+            if vmid is not None:
+                release(int(vmid), instance_id=instance_id)
+        elif command in {"apply", "provision"}:
+            started = bool(source_payload.get("spec", {}).get("started", True))
+            update_instance(
+                instance_id,
+                "ready",
+                vmid=vmid,
+                power_state="running" if started else "stopped",
+                node=node,
+            )
+        emit(
+            operation_id,
+            f"terraform.{command}.completed",
+            "succeeded",
+            "physical state reconciled" if recovered else "",
         )
-        if command == "provision":
-            delete_secret(source_operation.get("secret_path"))
-    emit(
-        operation_id,
-        f"terraform.{command}.completed",
-        "succeeded",
-        "physical state reconciled" if recovered else "",
-    )
+    if command == "destroy" or command == "provision":
+        delete_secret(source_operation.get("secret_path"))
     return True
 
 
@@ -1754,36 +1757,40 @@ def execute(worker_id: str, operation: dict) -> None:
             emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
             return
 
-        update_operation(
-            operation_id,
-            status="succeeded",
-            phase="completed",
-            finished_at=now(),
-            last_heartbeat=now(),
-            exit_code=0,
-            output=operation_output(output),
-            error=operation_output(error),
-        )
-        if command == "plan":
-            update_instance(instance_id, "planned", vmid=vmid, node=target_node)
-        elif command in {"apply", "provision"}:
-            started = requested_started if requested_started is not None else bool(source_payload.get("spec", {}).get("started", True))
-            update_instance(
-                instance_id,
-                "ready",
-                vmid=vmid,
-                power_state="running" if started else "stopped",
-                node=target_node,
+        # Cierre atómico en la base; archivos (secreto, plan) después del COMMIT.
+        with transaction():
+            update_operation(
+                operation_id,
+                status="succeeded",
+                phase="completed",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=0,
+                output=operation_output(output),
+                error=operation_output(error),
             )
-            if command == "provision":
-                delete_secret(secret_path)
+            if command == "plan":
+                update_instance(instance_id, "planned", vmid=vmid, node=target_node)
+            elif command in {"apply", "provision"}:
+                started = requested_started if requested_started is not None else bool(source_payload.get("spec", {}).get("started", True))
+                update_instance(
+                    instance_id,
+                    "ready",
+                    vmid=vmid,
+                    power_state="running" if started else "stopped",
+                    node=target_node,
+                )
+            else:
+                update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
+                if vmid is not None:
+                    release(int(vmid), instance_id=instance_id)
+            emit(operation_id, f"terraform.{command}.completed", "succeeded")
+        if command == "provision":
+            delete_secret(secret_path)
+        if command in {"apply", "provision"}:
             _discard_applied_plan(plan_path)
-        else:
-            update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
-            if vmid is not None:
-                release(int(vmid), instance_id=instance_id)
+        elif command == "destroy":
             delete_secret(source_operation.get("secret_path"))
-        emit(operation_id, f"terraform.{command}.completed", "succeeded")
     except Exception as error:
         if isinstance(error, GuestIdentityError):
             current = instance_identity(instance_id)

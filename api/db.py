@@ -135,6 +135,13 @@ def database():
     recibe una conexión propia, igual que el comportamiento anterior.
     """
 
+    active = getattr(_local, "transaction", None)
+    if active is not None:
+        # Dentro de transaction() todas las escrituras del hilo comparten la
+        # misma transacción; el cierre lo controla transaction().
+        yield active
+        return
+
     if not _reuse_enabled() or getattr(_local, "depth", 0) > 0:
         connection = connect()
         try:
@@ -173,6 +180,55 @@ def database():
             or raw.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
         ):
             _discard_cached()
+
+
+class _TransactionConnection:
+    """Conexión compartida por transaction(); rechaza control transaccional anidado."""
+
+    def __init__(self, connection: DatabaseConnection):
+        self._inner = connection
+
+    def execute(self, statement: str, parameters: Any = ()):
+        if statement.strip().upper() in {"BEGIN", "BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"}:
+            raise RuntimeError("control transaccional anidado dentro de transaction()")
+        return self._inner.execute(statement, parameters)
+
+    def executemany(self, statement: str, parameters: Any):
+        return self._inner.executemany(statement, parameters)
+
+    def close(self) -> None:
+        # transaction() es dueña del ciclo de vida.
+        pass
+
+
+@contextmanager
+def transaction():
+    """Agrupa en una sola transacción las escrituras del hilo.
+
+    Las funciones que abren ``database()`` dentro del bloque reutilizan esta
+    conexión, de modo que un cierre de operación (operación, instancia,
+    lease y evento) se confirma completo o no se confirma. Un fallo hace
+    rollback y descarta la conexión.
+    """
+
+    if getattr(_local, "transaction", None) is not None:
+        yield _local.transaction
+        return
+    with database() as db:
+        db.execute("BEGIN")
+        _local.transaction = _TransactionConnection(db)
+        try:
+            yield _local.transaction
+        except BaseException:
+            _local.transaction = None
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        else:
+            _local.transaction = None
+            db.execute("COMMIT")
 
 
 _SCHEMA = (
