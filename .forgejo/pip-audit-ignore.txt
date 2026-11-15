@@ -1,0 +1,18 @@
+# Vulnerabilidades conocidas aceptadas temporalmente por pip-audit en CI.
+#
+# Todas pertenecen a starlette 0.46.2, fijada por fastapi==0.115.12
+# (FastAPI 0.115 exige starlette<0.47). Corregirlas requiere actualizar
+# FastAPI y Starlette, lo que es un cambio de dependencia que debe validarse
+# con la suite completa y en el clúster LAB antes de promoverse.
+#
+# Riesgo más relevante: GHSA-7f5h-v6xp-fcq8 (Range header, DoS sin
+# autenticación en FileResponse/StaticFiles; /docs y sus assets son públicos).
+# Estado: PENDIENTE. Revisar a más tardar el 2026-12-15.
+# Cualquier vulnerabilidad nueva que no esté en esta lista hace fallar el CI.
+PYSEC-2026-1941  # GHSA-2c2j-9gv5-cj73 / CVE-2025-54121, multipart con archivos grandes (corrige 0.47.2)
+PYSEC-2026-1942  # GHSA-7f5h-v6xp-fcq8 / CVE-2025-62727, Range header cuadrático (corrige 0.49.1)
+PYSEC-2026-161   # GHSA-86qp-5c8j-p5mr / CVE-2026-48710, Host header no validado (corrige 1.0.1)
+PYSEC-2026-2280  # GHSA-x746-7m8f-x49c / CVE-2026-48817, despacho de métodos HTTPEndpoint (corrige 1.1.0)
+PYSEC-2026-2281  # GHSA-wqp7-x3pw-xc5r / CVE-2026-48818, StaticFiles en Windows (corrige 1.1.0)
+PYSEC-2026-248   # GHSA-jp82-jpqv-5vv3 / CVE-2026-54282, path no validado (corrige 1.3.0)
+PYSEC-2026-249   # GHSA-82w8-qh3p-5jfq / CVE-2026-54283, límites de request.form() (corrige 1.3.1)

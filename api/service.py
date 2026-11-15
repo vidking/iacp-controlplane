@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -9,7 +8,6 @@ from typing import Callable
 from fastapi import HTTPException
 
 from api.catalog import (
-    cluster_nodes,
     image_by_id,
     image_catalog as catalog_images,
     network_profile_by_id,

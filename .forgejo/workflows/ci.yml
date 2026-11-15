@@ -1,0 +1,141 @@
+# CI de IACP Control Plane (Forgejo Actions).
+#
+# - No despliega, no publica imágenes y no accede a Proxmox, NetBox,
+#   Wasabi ni a ningún servicio del entorno empresarial.
+# - Usa servicios aislados (PostgreSQL 17.6 efímero) y valores ficticios.
+# - Requiere un runner Linux con la etiqueta "docker"; el job "container"
+#   necesita además acceso a un daemon Docker (socket o DinD).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.13.6"
+  TERRAFORM_VERSION: "1.16.6"
+
+jobs:
+  lint:
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    env:
+      UV_INSTALL_DIR: /usr/local/bin
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Instalar uv y Python
+        run: curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+      - name: Sincronizar dependencias bloqueadas
+        run: |
+          uv python install "${PYTHON_VERSION}"
+          uv sync --locked --extra dev --python "${PYTHON_VERSION}"
+      - name: Compilación de bytecode
+        run: uv run python -m compileall -q api worker scripts tests
+      - name: Linting (errores, nombres indefinidos e imports sin uso)
+        run: uvx ruff@0.14.0 check --select E9,F63,F7,F82,F401,F841 api worker scripts tests
+      - name: Análisis estático de seguridad (Bandit)
+        # B608: las consultas dinámicas solo componen placeholders "?" o
+        # nombres de columna definidos en el código; los valores siempre
+        # viajan parametrizados.
+        run: uvx bandit@1.8.6 -q -r api worker -ll -s B608
+      - name: Vulnerabilidades conocidas en dependencias bloqueadas
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirements.txt
+          ignores=$(grep -Ev '^\s*(#|$)' .forgejo/pip-audit-ignore.txt | awk '{print "--ignore-vuln " $1}' | xargs)
+          uvx pip-audit@2.9.0 -r /tmp/requirements.txt --progress-spinner off $ignores
+
+  tests:
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_DB: iacp_test
+          POSTGRES_USER: iacp
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        options: >-
+          --health-cmd "pg_isready -U iacp -d iacp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      IACP_TEST_DATABASE_URL: "host=postgres port=5432 user=iacp password=ci-only-not-a-secret dbname=iacp_test"
+      # Rutas compartidas para que el usuario sin privilegios use el mismo
+      # Python y entorno virtual que instala root.
+      UV_INSTALL_DIR: /usr/local/bin
+      UV_PYTHON_INSTALL_DIR: /opt/uv-python
+      UV_CACHE_DIR: /opt/uv-cache
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Instalar uv y Python
+        run: curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+      - name: Sincronizar dependencias bloqueadas
+        run: |
+          uv python install "${PYTHON_VERSION}"
+          uv sync --locked --extra dev --python "${PYTHON_VERSION}"
+          chmod -R a+rX /opt/uv-python
+      - name: Pruebas unitarias, de integración, concurrencia y fault injection
+        # Como usuario sin privilegios: las pruebas de go_live verifican
+        # permisos POSIX (600) y el uid efectivo.
+        run: |
+          useradd --create-home ci || true
+          chown -R ci "$PWD"
+          su ci -c "cd '$PWD' && IACP_TEST_DATABASE_URL='${IACP_TEST_DATABASE_URL}' .venv/bin/python -m pytest -q -p no:cacheprovider"
+
+  terraform:
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Instalar Terraform
+        run: |
+          apt-get update -qq && apt-get install -y -qq unzip > /dev/null
+          curl -fsSLo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          unzip -q /tmp/terraform.zip -d /usr/local/bin
+          terraform version
+      - name: Formato
+        run: terraform fmt -check -recursive -diff terraform
+      - name: Validación sin backend ni credenciales
+        run: |
+          for stack in terraform/environments/mng01 terraform/environments/prx terraform/fixtures/local; do
+            echo "::group::${stack}"
+            terraform -chdir="${stack}" init -input=false -no-color -backend=false
+            terraform -chdir="${stack}" validate -no-color
+            echo "::endgroup::"
+          done
+
+  container:
+    runs-on: docker
+    container:
+      image: docker:27-cli
+    steps:
+      - name: Herramientas
+        run: apk add --no-cache git nodejs
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Validar Compose de desarrollo y de Portainer
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          IACP_PROXMOX_MNG_ENDPOINT: https://proxmox.invalid:8006/
+          IACP_PROXMOX_MNG_API_TOKEN: ci@pve!ci=00000000-0000-0000-0000-000000000000
+          IACP_PROXMOX_MNG_HOST_IP: 192.0.2.10
+          IACP_API_TOKEN: ci-only-token-not-a-secret
+          IACP_IMAGE_REPOSITORY: scm.cyberfuel.com/cyberfuel/iacp-controlplane
+          IACP_IMAGE_TAG: 0000000000000000000000000000000000000000
+          IACP_VMID_MIN: "40000"
+          IACP_VMID_MAX: "49999"
+          IACP_POSTGRES_VOLUME: iacp_ci_postgres
+          IACP_WORKDATA_VOLUME: iacp_ci_workdata
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f deploy/portainer/docker-compose.yml config --quiet
+      - name: Construir la imagen (sin publicar)
+        run: docker build --pull --tag iacp-controlplane:ci-${GITHUB_SHA} .
+      - name: Smoke test de la imagen
+        run: |
+          docker run --rm --entrypoint terraform iacp-controlplane:ci-${GITHUB_SHA} version
+          docker run --rm --entrypoint python iacp-controlplane:ci-${GITHUB_SHA} -c "import api.main, worker.main, worker.healthcheck"

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
 
 
@@ -118,7 +118,7 @@ def _context(config: NetBoxSettings) -> ssl.SSLContext:
     if not config.verify_tls:
         # Explicitly opt-in only for local diagnostics. Production examples
         # keep verification enabled and should provide IACP_NETBOX_CA_FILE.
-        return ssl._create_unverified_context()
+        return ssl._create_unverified_context()  # nosec B323 - opt-in explícito IACP_NETBOX_VERIFY_TLS=0 solo para diagnóstico
     return ssl.create_default_context(cafile=config.ca_file)
 
 

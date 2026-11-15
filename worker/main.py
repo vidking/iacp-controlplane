@@ -1572,7 +1572,6 @@ def _execute(worker_id: str, operation: dict) -> None:
     source_payload: dict = {}
     secret_path: str | None = operation.get("secret_path")
     requested_started: bool | None = None
-    network_model: str | None = None
     plan_path: str | None = None
     try:
         payload = json.loads(operation["payload_json"])
@@ -1641,7 +1640,6 @@ def _execute(worker_id: str, operation: dict) -> None:
                 emit(operation_id, "proxmox.pool.validated", "ok", pool_id)
                 golden = observe(spec["image"], client)
                 emit(operation_id, "golden.observed", "ok", spec["image"])
-                network_model = golden.get("network_model") or "virtio"
                 requested_started = bool(spec.get("started", True))
                 target_node = target_node or select_target_node(client)
                 vmid = allocate(operation_id, client, node=target_node)
