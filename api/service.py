@@ -737,8 +737,17 @@ def _insert_operation(
 
 
 def create_operation(request: OperationRequest) -> dict:
+    # Misma sección crítica que _idempotent_mutation: los inserts de
+    # operación, instancia y evento quedan atómicos y el chequeo de nombre
+    # duplicado ya no compite con otra petición concurrente.
     with database() as db:
-        response, _ = _insert_operation(db, request)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            response, _ = _insert_operation(db, request)
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        db.execute("COMMIT")
     return response
 
 
