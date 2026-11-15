@@ -1185,3 +1185,24 @@ def test_operation_output_is_bounded_and_redacts_secret(monkeypatch):
     assert "root-secret" not in value
     assert "output truncated" in value
     assert len(value) <= 4096
+
+
+def test_run_commands_does_not_block_on_output_larger_than_pipe_buffer(tmp_path, monkeypatch):
+    import sys
+
+    from worker.main import run_commands
+
+    initialize()
+    monkeypatch.setenv("IACP_TERRAFORM_TIMEOUT", "60")
+    beats = []
+    monkeypatch.setattr("worker.main.heartbeat", lambda *args, **kwargs: beats.append(args))
+    script = "import sys; sys.stdout.write('x' * 300000); sys.stderr.write('e' * 300000)"
+    code, output, error = run_commands(
+        "worker-1",
+        "op-large-output",
+        str(tmp_path),
+        [[sys.executable, "-c", script]],
+    )
+    assert code == 0
+    assert "x" in output and "e" in error
+    assert "[output truncated]" in output

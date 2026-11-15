@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -52,6 +53,20 @@ def operation_output(value: object, secret: str | None = None) -> str:
 
 def stale_operation_seconds() -> float:
     return max(30.0, float(os.getenv("IACP_OPERATION_STALE_SECONDS", "900")))
+
+
+def _command_heartbeat_seconds() -> float:
+    """Intervalo de heartbeat mientras corre Terraform.
+
+    Antes era 1 s (una conexión y dos escrituras por segundo por worker).
+    Se mantiene muy por debajo del umbral de stale.
+    """
+
+    try:
+        value = float(os.getenv("IACP_COMMAND_HEARTBEAT_SECONDS", "5"))
+    except ValueError:
+        value = 5.0
+    return min(max(1.0, value), stale_operation_seconds() / 4)
 
 
 def _recovery_operation_exists(db, source_operation_id: str) -> bool:
@@ -685,24 +700,37 @@ def run_commands(
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
         while True:
-            process = subprocess.Popen(
-                args,
-                cwd=workspace,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=environment,
-            )
-            while process.poll() is None:
-                if time.monotonic() > deadline:
-                    process.kill()
-                    process.wait(timeout=10)
-                    raise TimeoutError("Terraform excedió el tiempo configurado")
-                heartbeat(worker_id, "running", operation_id, phase=phase)
-                time.sleep(1)
-            stdout, stderr = process.communicate()
-            stdout = stdout or ""
-            stderr = stderr or ""
+            # La salida va a archivos temporales del workspace y no a PIPE:
+            # con PIPE nadie lee mientras el proceso corre, y una salida mayor
+            # que el buffer del pipe (~64 KiB) bloquea a Terraform hasta el
+            # timeout, dejando la operación incierta a mitad de un apply.
+            with tempfile.TemporaryFile(
+                mode="w+", encoding="utf-8", errors="replace", dir=workspace
+            ) as stdout_file, tempfile.TemporaryFile(
+                mode="w+", encoding="utf-8", errors="replace", dir=workspace
+            ) as stderr_file:
+                process = subprocess.Popen(
+                    args,
+                    cwd=workspace,
+                    text=True,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    env=environment,
+                )
+                last_heartbeat = 0.0
+                while process.poll() is None:
+                    if time.monotonic() > deadline:
+                        process.kill()
+                        process.wait(timeout=10)
+                        raise TimeoutError("Terraform excedió el tiempo configurado")
+                    if time.monotonic() - last_heartbeat >= _command_heartbeat_seconds():
+                        heartbeat(worker_id, "running", operation_id, phase=phase)
+                        last_heartbeat = time.monotonic()
+                    time.sleep(1)
+                stdout_file.seek(0)
+                stderr_file.seek(0)
+                stdout = stdout_file.read()
+                stderr = stderr_file.read()
             output.append(operation_output(stdout, password))
             errors.append(operation_output(stderr, password))
             if process.returncode == 0:
