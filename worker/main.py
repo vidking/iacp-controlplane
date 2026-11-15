@@ -2,14 +2,18 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
+import threading
 import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import psycopg
+
 from api.catalog import cluster_nodes, load_catalog
-from api.db import database, initialize, transaction
+from api.db import close_thread_connection, database, initialize, transaction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
@@ -33,6 +37,24 @@ ACTIVE_WORK_OPERATION_STATUSES = (
 )
 
 DESTROY_PLACEHOLDER_PASSWORD = "IacpDestroyOnly!2026A"
+
+
+class OperationFencedError(RuntimeError):
+    """La operación ya no pertenece a este worker.
+
+    recover_stale_operations() puede cerrar como ``uncertain`` una operación
+    cuyo worker dejó de enviar heartbeat (por ejemplo, durante una caída de
+    PostgreSQL) y encolar una reconciliación. Si el worker original revive,
+    sus escrituras tardías no deben sobrescribir el resultado de la
+    reconciliación ni el estado de la instancia.
+    """
+
+
+_fence = threading.local()
+
+
+def _current_fence() -> tuple[str, str] | None:
+    return getattr(_fence, "claim", None)
 
 
 def operation_output(value: object, secret: str | None = None) -> str:
@@ -320,7 +342,22 @@ def update_operation(operation_id: str, **values) -> None:
     if not values:
         return
     assignments = ", ".join(f"{name}=?" for name in values)
+    fence = _current_fence()
     with database() as db:
+        if fence is not None and fence[0] == operation_id:
+            # Compare-and-set: solo el worker que reclamó la operación, y
+            # mientras siga activa, puede escribir sobre ella.
+            placeholders = ",".join("?" for _ in ACTIVE_WORK_OPERATION_STATUSES)
+            result = db.execute(
+                f"""
+                UPDATE operations SET {assignments}
+                WHERE operation_id=? AND worker_id=? AND status IN ({placeholders})
+                """,
+                (*values.values(), operation_id, fence[1], *ACTIVE_WORK_OPERATION_STATUSES),
+            )
+            if result.rowcount == 0:
+                raise OperationFencedError(operation_id)
+            return
         db.execute(
             f"UPDATE operations SET {assignments} WHERE operation_id=?",
             (*values.values(), operation_id),
@@ -690,6 +727,116 @@ def local_variables(spec: dict) -> dict:
     }
 
 
+# Variables del worker que Terraform no necesita y que no deben heredar sus
+# procesos (Terraform, provider, posibles hooks). Terraform solo requiere
+# PROXMOX_VE_* (provider bpg/proxmox), TF_VAR_* y la configuración TLS/PATH.
+_TERRAFORM_ENV_DENYLIST_PREFIXES = (
+    "PG",
+    "POSTGRES_",
+    "IACP_WASABI_",
+    "IACP_NETBOX_",
+)
+_TERRAFORM_ENV_DENYLIST = {
+    "IACP_DATABASE_URL",
+    "IACP_TEST_DATABASE_URL",
+    "IACP_API_TOKEN",
+    "IACP_PROXMOX_API_TOKEN",
+    "IACP_PROXMOX_MNG_API_TOKEN",
+    "IACP_PROXMOX_PRX_API_TOKEN",
+}
+
+
+def terraform_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Entorno mínimo para Terraform, sin credenciales ajenas a Proxmox."""
+
+    source = dict(os.environ if base is None else base)
+    return {
+        key: value
+        for key, value in source.items()
+        if key not in _TERRAFORM_ENV_DENYLIST
+        and not key.startswith(_TERRAFORM_ENV_DENYLIST_PREFIXES)
+    }
+
+
+def _secrets_to_redact(environment: dict[str, str], password: str | None) -> list[str]:
+    values = [password] if password else []
+    token = environment.get("PROXMOX_VE_API_TOKEN") or ""
+    if token:
+        values.append(token)
+        # PVEAPIToken=user@realm!name=<uuid>: redactar también la parte secreta.
+        if "=" in token:
+            values.append(token.rsplit("=", 1)[-1])
+    return [value for value in values if value and len(value) >= 8]
+
+
+def _redact(text: str, secrets: list[str]) -> str:
+    for value in secrets:
+        text = text.replace(value, "<redacted>")
+    return text
+
+
+def _bounded_read(handle, limit: int) -> str:
+    """Lee como máximo ``limit`` caracteres (cabeza y cola) de un archivo.
+
+    La salida completa de Terraform queda en un archivo temporal sin nombre
+    que se borra al cerrarse; en memoria y en PostgreSQL solo se conserva un
+    resumen acotado, igual que operation_output().
+    """
+
+    handle.flush()
+    handle.seek(0, os.SEEK_END)
+    size = handle.tell()
+    handle.seek(0)
+    if size <= limit * 4:
+        return handle.read()
+    head = handle.read(limit)
+    handle.seek(max(0, size - limit * 4))
+    tail = handle.read()[-limit:]
+    return f"{head}\n...[output truncated]...\n{tail}"
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    """Termina Terraform y sus providers (grupo de procesos propio).
+
+    Primero SIGTERM al grupo (Terraform intenta liberar el lock del state y
+    detener providers), luego SIGKILL si no termina en el periodo de gracia.
+    """
+
+    grace = max(1.0, float(os.getenv("IACP_TERRAFORM_KILL_GRACE_SECONDS", "20")))
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    else:
+        process.terminate()
+        try:
+            process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _safe_heartbeat(worker_id: str, operation_id: str, phase: str | None) -> None:
+    # Una caída breve de PostgreSQL no debe abandonar un Terraform en curso:
+    # se omite el heartbeat y se reintenta en el siguiente intervalo.
+    try:
+        heartbeat(worker_id, "running", operation_id, phase=phase)
+    except psycopg.Error:
+        pass
+
+
 def run_commands(
     worker_id: str,
     operation_id: str,
@@ -702,7 +849,7 @@ def run_commands(
     deadline = time.monotonic() + int(os.getenv("IACP_TERRAFORM_TIMEOUT", "1800"))
     output: list[str] = []
     errors: list[str] = []
-    environment = os.environ.copy()
+    environment = terraform_environment()
     plugin_cache = os.getenv("IACP_TERRAFORM_PLUGIN_CACHE_DIR", "").strip()
     if plugin_cache:
         environment["TF_PLUGIN_CACHE_DIR"] = plugin_cache
@@ -716,14 +863,20 @@ def run_commands(
         # persisted or applied to a guest. The existing resource identity and
         # state are what determine the objects removed by this command.
         environment["TF_VAR_root_password"] = DESTROY_PLACEHOLDER_PASSWORD
+    secrets = _secrets_to_redact(environment, password)
+    limit = max(4096, int(os.getenv("IACP_OPERATION_OUTPUT_MAX_CHARS", "65536")))
+
+    def summary(parts: list[str]) -> str:
+        return operation_output(_redact("".join(parts), secrets), password)
+
     for args in commands:
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
         while True:
-            # La salida va a archivos temporales del workspace y no a PIPE:
-            # con PIPE nadie lee mientras el proceso corre, y una salida mayor
-            # que el buffer del pipe (~64 KiB) bloquea a Terraform hasta el
-            # timeout, dejando la operación incierta a mitad de un apply.
+            # La salida va a archivos temporales sin nombre del workspace y no
+            # a PIPE: con PIPE nadie lee mientras el proceso corre, y una
+            # salida mayor que el buffer (~64 KiB) bloquea a Terraform hasta
+            # el timeout. Los archivos se borran al cerrarse.
             with tempfile.TemporaryFile(
                 mode="w+", encoding="utf-8", errors="replace", dir=workspace
             ) as stdout_file, tempfile.TemporaryFile(
@@ -733,26 +886,33 @@ def run_commands(
                     args,
                     cwd=workspace,
                     text=True,
+                    stdin=subprocess.DEVNULL,
                     stdout=stdout_file,
                     stderr=stderr_file,
                     env=environment,
+                    # Grupo de procesos propio: el timeout termina también los
+                    # providers y una señal al worker no interrumpe a
+                    # Terraform a mitad de un apply.
+                    start_new_session=os.name == "posix",
                 )
                 last_heartbeat = 0.0
-                while process.poll() is None:
-                    if time.monotonic() > deadline:
-                        process.kill()
-                        process.wait(timeout=10)
-                        raise TimeoutError("Terraform excedió el tiempo configurado")
-                    if time.monotonic() - last_heartbeat >= _command_heartbeat_seconds():
-                        heartbeat(worker_id, "running", operation_id, phase=phase)
-                        last_heartbeat = time.monotonic()
-                    time.sleep(1)
-                stdout_file.seek(0)
-                stderr_file.seek(0)
-                stdout = stdout_file.read()
-                stderr = stderr_file.read()
-            output.append(operation_output(stdout, password))
-            errors.append(operation_output(stderr, password))
+                try:
+                    while process.poll() is None:
+                        if time.monotonic() > deadline:
+                            _terminate_process_tree(process)
+                            raise TimeoutError("Terraform excedió el tiempo configurado")
+                        if time.monotonic() - last_heartbeat >= _command_heartbeat_seconds():
+                            _safe_heartbeat(worker_id, operation_id, phase)
+                            last_heartbeat = time.monotonic()
+                        time.sleep(1)
+                except BaseException:
+                    if process.poll() is None:
+                        _terminate_process_tree(process)
+                    raise
+                stdout = _bounded_read(stdout_file, limit)
+                stderr = _bounded_read(stderr_file, limit)
+            output.append(_redact(operation_output(stdout, password), secrets))
+            errors.append(_redact(operation_output(stderr, password), secrets))
             if process.returncode == 0:
                 break
             text = f"{stdout}\n{stderr}".lower()
@@ -761,11 +921,11 @@ def run_commands(
             # execute() handles those commands through physical reconciliation.
             safe_to_retry = len(args) > 1 and args[1] in {"init", "plan"}
             if command_attempt + 1 >= max_attempts or not safe_to_retry or not retryable_command_error(text):
-                return process.returncode, operation_output("".join(output), password), operation_output("".join(errors), password)
+                return process.returncode, summary(output), summary(errors)
             command_attempt += 1
-            heartbeat(worker_id, "running", operation_id, phase=phase)
+            _safe_heartbeat(worker_id, operation_id, phase)
             time.sleep(min(15.0, 2 * (2**(command_attempt - 1))))
-    return 0, operation_output("".join(output), password), operation_output("".join(errors), password)
+    return 0, summary(output), summary(errors)
 
 
 def terraform_commands(command: str, plan_path: str) -> list[list[str]]:
@@ -1386,6 +1546,18 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
 
 
 def execute(worker_id: str, operation: dict) -> None:
+    # Solo una operación reclamada con claim() (que fija worker_id) queda
+    # protegida por el fencing; las ejecuciones directas mantienen el
+    # comportamiento anterior.
+    claimed_by = operation.get("worker_id")
+    _fence.claim = (operation["operation_id"], claimed_by) if claimed_by else None
+    try:
+        _execute(worker_id, operation)
+    finally:
+        _fence.claim = None
+
+
+def _execute(worker_id: str, operation: dict) -> None:
     operation_id = operation["operation_id"]
     command = "unknown"
     phase = "plan"
@@ -1401,6 +1573,7 @@ def execute(worker_id: str, operation: dict) -> None:
     secret_path: str | None = operation.get("secret_path")
     requested_started: bool | None = None
     network_model: str | None = None
+    plan_path: str | None = None
     try:
         payload = json.loads(operation["payload_json"])
         command = payload["command"]
@@ -1696,6 +1869,9 @@ def execute(worker_id: str, operation: dict) -> None:
                     release(int(vmid), instance_id=instance_id)
             if command == "provision":
                 delete_secret(secret_path)
+                # El plan interno de provision no se reutiliza: ningún apply
+                # posterior acepta una provision fallida o incierta como fuente.
+                _discard_applied_plan(plan_path)
             return
 
         if stack == "mng01" and vmid is not None and client is not None:
@@ -1792,6 +1968,8 @@ def execute(worker_id: str, operation: dict) -> None:
         elif command == "destroy":
             delete_secret(source_operation.get("secret_path"))
     except Exception as error:
+        if isinstance(error, OperationFencedError):
+            raise
         if isinstance(error, GuestIdentityError):
             current = instance_identity(instance_id)
             vmid = vmid or current.get("vmid")
@@ -1817,6 +1995,9 @@ def execute(worker_id: str, operation: dict) -> None:
             )
             if command == "provision":
                 delete_secret(secret_path)
+                # El plan interno de provision no se reutiliza: ningún apply
+                # posterior acepta una provision fallida o incierta como fuente.
+                _discard_applied_plan(plan_path)
             emit(operation_id, "guest.identity.reconciliation_required", status, str(error))
             return
         physical = stack == "mng01" and phase in {"apply", "destroy", "reconcile"}
@@ -1866,6 +2047,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 terminal_error = "IPAM_RELEASE_PENDING"
         if command == "provision":
             delete_secret(secret_path)
+            _discard_applied_plan(plan_path)
         update_operation(
             operation_id,
             status=status,
@@ -1892,10 +2074,61 @@ def execute(worker_id: str, operation: dict) -> None:
         heartbeat(worker_id, "idle")
 
 
-def run(worker_id: str) -> None:
-    initialize()
-    heartbeat(worker_id, "starting")
-    recover_stale_operations()
+class _ShutdownFlag:
+    def __init__(self) -> None:
+        self.requested = False
+
+    def request(self, *_args) -> None:
+        self.requested = True
+
+
+def _db_retry_delay(failures: int) -> float:
+    return min(30.0, 0.5 * (2 ** min(failures, 6)))
+
+
+def run(worker_id: str, *, shutdown: "_ShutdownFlag | None" = None, max_loops: int | None = None) -> None:
+    """Bucle del worker.
+
+    - SIGTERM/SIGINT: deja de reclamar operaciones nuevas; la operación en
+      curso termina normalmente (Terraform no se interrumpe a mitad de un
+      apply) y luego el proceso sale con el heartbeat ``stopped``.
+    - PostgreSQL no disponible: el worker no muere; reintenta con backoff
+      exponencial (máx. 30 s) y retoma al volver la base.
+    - OperationFencedError: la operación fue cerrada por recuperación; se
+      registra el evento y se continúa sin tocar su estado.
+    """
+
+    os.environ.setdefault("IACP_DB_APPLICATION_NAME", f"iacp-{worker_id}")
+    # Workspaces, states y planes nuevos quedan legibles solo por el usuario
+    # del contenedor (600/700): el state contiene la contraseña root.
+    os.umask(0o077)
+    shutdown = shutdown or _ShutdownFlag()
+    previous_handlers = {}
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[signum] = signal.signal(signum, shutdown.request)
+    try:
+        _run_loop(worker_id, shutdown, max_loops)
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
+def _run_loop(worker_id: str, shutdown: _ShutdownFlag, max_loops: int | None) -> None:
+    db_failures = 0
+    while True:
+        try:
+            initialize()
+            heartbeat(worker_id, "starting")
+            recover_stale_operations()
+            break
+        except psycopg.OperationalError:
+            close_thread_connection()
+            db_failures += 1
+            if shutdown.requested:
+                return
+            time.sleep(_db_retry_delay(db_failures))
+    db_failures = 0
     recovery_scan_interval = max(5.0, float(os.getenv("IACP_RECOVERY_SCAN_SECONDS", "15")))
     last_recovery_scan = time.monotonic()
     idle_heartbeat_interval = max(
@@ -1903,20 +2136,47 @@ def run(worker_id: str) -> None:
     )
     poll_interval = max(0.1, float(os.getenv("IACP_WORKER_POLL_SECONDS", "0.5")))
     last_idle_heartbeat = 0.0
-    while True:
-        if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
-            recover_stale_operations()
-            last_recovery_scan = time.monotonic()
-        operation = claim(worker_id)
-        if operation:
-            execute(worker_id, operation)
-            last_idle_heartbeat = time.monotonic()
-        else:
-            now_monotonic = time.monotonic()
-            if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
-                heartbeat(worker_id, "idle")
-                last_idle_heartbeat = now_monotonic
-            time.sleep(poll_interval)
+    loops = 0
+    while not shutdown.requested and (max_loops is None or loops < max_loops):
+        loops += 1
+        try:
+            if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
+                recover_stale_operations()
+                last_recovery_scan = time.monotonic()
+            operation = claim(worker_id)
+            if operation:
+                try:
+                    execute(worker_id, operation)
+                except OperationFencedError as fenced:
+                    try:
+                        emit(
+                            str(fenced),
+                            "operation.fenced",
+                            "uncertain",
+                            f"{worker_id} perdió la propiedad; se conserva el resultado de la recuperación",
+                        )
+                    except psycopg.Error:
+                        pass
+                last_idle_heartbeat = time.monotonic()
+            else:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
+                    heartbeat(worker_id, "idle")
+                    last_idle_heartbeat = now_monotonic
+                time.sleep(poll_interval)
+            db_failures = 0
+        except psycopg.OperationalError:
+            # La base no está disponible. Si había una operación en curso
+            # queda con su último heartbeat y recover_stale_operations() la
+            # convertirá en reconciliación auditable.
+            close_thread_connection()
+            db_failures += 1
+            time.sleep(_db_retry_delay(db_failures))
+    try:
+        heartbeat(worker_id, "stopped")
+    except psycopg.Error:
+        pass
+    close_thread_connection()
 
 
 if __name__ == "__main__":
