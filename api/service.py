@@ -993,7 +993,32 @@ def create_reconcile(
     )
 
 
-def operation_row(row):
+_UNSET = object()
+
+
+def _latest_events_by_operation(db, operation_ids) -> dict:
+    """Último evento de cada operación en una sola consulta (evita N+1)."""
+
+    ids = [value for value in dict.fromkeys(operation_ids) if value]
+    if not ids:
+        return {}
+    rows = db.execute(
+        """
+        SELECT DISTINCT ON (e.operation_id)
+               e.*, o.command, o.action, o.instance_id, o.worker_id,
+               i.name AS instance_name
+        FROM events e
+        LEFT JOIN operations o ON o.operation_id = e.operation_id
+        LEFT JOIN instances i ON i.instance_id = o.instance_id
+        WHERE e.operation_id = ANY(?)
+        ORDER BY e.operation_id, e.event_id DESC
+        """,
+        (ids,),
+    ).fetchall()
+    return {row["operation_id"]: event_row(db, row) for row in rows}
+
+
+def operation_row(row, *, latest=_UNSET):
     if row is None:
         raise HTTPException(status_code=404, detail="operation not found")
     result = dict(row)
@@ -1011,8 +1036,11 @@ def operation_row(row):
     result.pop("secret_path", None)
     result.pop("workspace_path", None)
     result.pop("plan_path", None)
-    with database() as db:
-        result["latest_event"] = latest_event(db, result["operation_id"])
+    if latest is _UNSET:
+        with database() as db:
+            result["latest_event"] = latest_event(db, result["operation_id"])
+    else:
+        result["latest_event"] = latest
     return result
 
 
@@ -1023,7 +1051,73 @@ def _latest_operation(db, instance_id: str):
     ).fetchone()
 
 
-def instance_row(row):
+def _instance_prefetch(db, rows) -> dict:
+    """Datos relacionados de varias instancias en tres consultas (evita N+1)."""
+
+    instance_ids = [row["instance_id"] for row in rows]
+    operation_ids = [row["operation_id"] for row in rows if row["operation_id"]]
+    if not instance_ids:
+        return {}
+    allocations = {
+        row["instance_id"]: {key: row[key] for key in (
+            "provider", "profile", "address", "gateway", "status", "created_at", "released_at"
+        )}
+        for row in db.execute(
+            """
+            SELECT DISTINCT ON (instance_id)
+                   instance_id, provider, profile, address, gateway, status, created_at, released_at
+            FROM ip_allocations
+            WHERE instance_id = ANY(?)
+            ORDER BY instance_id, created_at DESC
+            """,
+            (instance_ids,),
+        ).fetchall()
+    }
+    latest_operations = {
+        row["instance_id"]: row
+        for row in db.execute(
+            """
+            SELECT DISTINCT ON (instance_id) *
+            FROM operations
+            WHERE instance_id = ANY(?)
+            ORDER BY instance_id, created_at DESC, operation_id DESC
+            """,
+            (instance_ids,),
+        ).fetchall()
+    }
+    stacks = {
+        row["operation_id"]: row["stack"]
+        for row in db.execute(
+            "SELECT operation_id, stack FROM operations WHERE operation_id = ANY(?)",
+            (operation_ids,),
+        ).fetchall()
+    } if operation_ids else {}
+    return {
+        row["instance_id"]: {
+            "allocation": allocations.get(row["instance_id"], _UNSET),
+            "latest": latest_operations.get(row["instance_id"]),
+            "stack": stacks.get(row["operation_id"]),
+            "stack_found": row["operation_id"] in stacks,
+        }
+        for row in rows
+    }
+
+
+def _network_allocation_from_prefetch(allocation, spec: dict) -> dict | None:
+    if allocation is not _UNSET:
+        return allocation
+    if spec.get("network_profile") == "prod_static":
+        return {
+            "provider": "netbox",
+            "profile": "prod_static",
+            "address": spec.get("ipv4_cidr"),
+            "gateway": spec.get("ipv4_gateway"),
+            "status": "pending",
+        }
+    return None
+
+
+def instance_row(row, *, prefetched: dict | None = None):
     if row is None:
         raise HTTPException(status_code=404, detail="instance not found")
     result = dict(row)
@@ -1031,13 +1125,18 @@ def instance_row(row):
     result["image_id"] = result.get("image")
     result["commercial_context"] = _commercial_dict(result.pop("commercial_context_json", "{}"))
     result["status"] = public_instance_status(result)
-    with database() as db:
-        result["network_allocation"] = _network_allocation_public(db, result["instance_id"], result["spec"])
-        latest = _latest_operation(db, result["instance_id"])
-        stack = db.execute(
-            "SELECT stack FROM operations WHERE operation_id = ?",
-            (result["operation_id"],),
-        ).fetchone()
+    if prefetched is not None:
+        result["network_allocation"] = _network_allocation_from_prefetch(prefetched["allocation"], result["spec"])
+        latest = prefetched["latest"]
+        stack = {"stack": prefetched["stack"]} if prefetched["stack_found"] else None
+    else:
+        with database() as db:
+            result["network_allocation"] = _network_allocation_public(db, result["instance_id"], result["spec"])
+            latest = _latest_operation(db, result["instance_id"])
+            stack = db.execute(
+                "SELECT stack FROM operations WHERE operation_id = ?",
+                (result["operation_id"],),
+            ).fetchone()
     result["cluster"] = "mng"
     result["stack"] = stack["stack"] if stack else "mng01"
     if latest:
@@ -1102,12 +1201,18 @@ def list_instances(
             f"""
             SELECT i.* FROM instances i
             WHERE {where}
-            ORDER BY i.created_at DESC
+            ORDER BY i.created_at DESC, i.instance_id DESC
             LIMIT ? OFFSET ?
             """,
             (*values, limit, offset),
         ).fetchall()
-    return {"instances": [instance_row(row) for row in rows], "total": total, "limit": limit, "offset": offset}
+        prefetch = _instance_prefetch(db, rows)
+    return {
+        "instances": [instance_row(row, prefetched=prefetch[row["instance_id"]]) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def list_operations(
@@ -1135,12 +1240,18 @@ def list_operations(
             f"""
             SELECT * FROM operations
             WHERE {where}
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, operation_id DESC
             LIMIT ? OFFSET ?
             """,
             (*values, limit, offset),
         ).fetchall()
-    return {"operations": [operation_row(row) for row in rows], "total": total, "limit": limit, "offset": offset}
+        events = _latest_events_by_operation(db, [row["operation_id"] for row in rows])
+    return {
+        "operations": [operation_row(row, latest=events.get(row["operation_id"])) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def plan_catalog_response() -> list[dict]:
