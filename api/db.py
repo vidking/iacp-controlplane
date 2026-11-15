@@ -264,14 +264,35 @@ _SCHEMA = (
 )
 
 
+SCHEMA_VERSION = 2
+
+
 def initialize() -> None:
     with database() as db:
         for statement in _SCHEMA:
             db.execute(statement)
         db.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?) ON CONFLICT(version) DO NOTHING",
-            (2, datetime.now(timezone.utc).isoformat()),
+            (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
         )
+
+
+def schema_ready() -> bool:
+    """Comprueba conexión y esquema sin ejecutar DDL.
+
+    ``initialize()`` toma locks exclusivos en las tablas aunque no cambie
+    nada; por eso la readiness solo lee ``schema_migrations``.
+    """
+
+    with database() as db:
+        table = db.execute("SELECT to_regclass('schema_migrations') AS name").fetchone()
+        if table is None or table["name"] is None:
+            return False
+        row = db.execute(
+            "SELECT 1 AS ok FROM schema_migrations WHERE version >= ? LIMIT 1",
+            (SCHEMA_VERSION,),
+        ).fetchone()
+    return row is not None
 
 
 def prune_history() -> dict[str, int]:

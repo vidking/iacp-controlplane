@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from api.db import database, initialize, prune_history
+from api.db import database, initialize, prune_history, schema_ready
 from api.catalog import network_profile_catalog
 from api.environments import EnvironmentConfigurationError, public_environment_catalog
 from api.models import InstanceCreateRequest, OperationRequest, PowerAction, ProvisionRequest
@@ -206,7 +206,14 @@ def live():
 
 @app.get("/health/ready", tags=["health"])
 def ready():
-    initialize()
+    # Sin DDL: initialize() se ejecuta en startup. Ejecutarlo en cada
+    # healthcheck tomaba locks exclusivos sobre las tablas cada 10 s.
+    try:
+        ok = schema_ready()
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="database unavailable") from error
+    if not ok:
+        raise HTTPException(status_code=503, detail="schema not initialized")
     return {"status": "ready"}
 
 

@@ -87,6 +87,28 @@ def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatc
     assert response.headers["X-IACP-Build-Revision"] == revision
 
 
+def test_health_ready_does_not_run_schema_ddl(monkeypatch):
+    import api.main as api_main
+
+    with TestClient(app) as client:
+        def fail_initialize():
+            raise AssertionError("la readiness no debe ejecutar DDL")
+
+        monkeypatch.setattr(api_main, "initialize", fail_initialize)
+        response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_health_ready_reports_uninitialized_schema(monkeypatch):
+    import api.main as api_main
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(api_main, "schema_ready", lambda: False)
+        response = client.get("/health/ready")
+    assert response.status_code == 503
+
+
 def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
