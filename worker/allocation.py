@@ -37,7 +37,10 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
         if candidate is None:
             db.execute("ROLLBACK")
             raise RuntimeError("VMID_RANGE_EXHAUSTED")
-        db.execute(
+        # Compare-and-set en la base, además del advisory lock: un lease
+        # 'held' nunca se sobrescribe, aunque otro proceso no respete la
+        # sección crítica (por ejemplo, un script operativo).
+        claimed = db.execute(
             """
             INSERT INTO vmid_leases(vmid, operation_id, status, created_at, released_at)
             VALUES (?, ?, 'held', ?, NULL)
@@ -46,9 +49,14 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
               status='held',
               created_at=excluded.created_at,
               released_at=NULL
+            WHERE vmid_leases.status <> 'held'
+            RETURNING vmid
             """,
             (candidate, operation_id, now()),
-        )
+        ).fetchone()
+        if claimed is None:
+            db.execute("ROLLBACK")
+            raise RuntimeError("VMID_LEASE_CONFLICT")
         db.execute("UPDATE operations SET vmid=? WHERE operation_id=?", (candidate, operation_id))
         db.execute(
             "UPDATE instances SET vmid=?, node=?, updated_at=? WHERE operation_id=?",
