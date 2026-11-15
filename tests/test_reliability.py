@@ -206,3 +206,67 @@ def test_worker_healthcheck_reflects_heartbeat_age(monkeypatch):
             (datetime.now(timezone.utc).isoformat(),),
         )
     assert healthcheck.check("worker-health") == (False, "worker stopped")
+
+
+def test_failed_destroy_with_vm_still_present_keeps_vmid_held(tmp_path, monkeypatch):
+    """Fallo durante destroy: sin certeza física no se libera el VMID ni se marca deleted."""
+
+    import json as _json
+
+    import worker.main as worker_main
+
+    initialize()
+    workspace = tmp_path / "plan" / "terraform"
+    (workspace / "environments" / "mng01").mkdir(parents=True)
+    created = datetime.now(timezone.utc).isoformat()
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, stack, vmid, target_node,
+                                   workspace_path, plan_path, created_at)
+            VALUES ('plan-op', 'provision', 'succeeded', ?, 'inst-destroy', 'mng01', 40077, 'mng01', ?, ?, ?)
+            """,
+            (_json.dumps({"command": "provision", "spec": {"name": "vm-destroy"}}), str(workspace), str(tmp_path / "plan.tfplan"), created),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, spec_json, created_at, updated_at)
+            VALUES ('inst-destroy', 'plan-op', 'vm-destroy', 'ubuntu-2404', 40077, 'mng01', 'ready', '{}', ?, ?)
+            """,
+            (created, created),
+        )
+        db.execute(
+            "INSERT INTO vmid_leases(vmid, operation_id, status, created_at) VALUES (40077, 'plan-op', 'held', ?)",
+            (created,),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, stack, worker_id, created_at)
+            VALUES ('destroy-op', 'destroy', 'running', ?, 'inst-destroy', 'mng01', 'worker-1', ?)
+            """,
+            (_json.dumps({"command": "destroy", "instance_id": "inst-destroy", "plan_operation_id": "plan-op"}), created),
+        )
+
+    class StillThere:
+        def inventory(self, *, uncertain=False):
+            return [{"vmid": 40077, "name": "vm-destroy", "node": "mng01"}]
+
+    monkeypatch.setenv("IACP_TERRAFORM_DIR", "environments/mng01")
+    monkeypatch.setattr(worker_main, "load_environment", lambda: None)
+    monkeypatch.setattr(worker_main, "ProxmoxClient", lambda: StillThere())
+    monkeypatch.setattr(worker_main, "run_commands", lambda *_a, **_k: (1, "", "Error: connection reset by peer"))
+    monkeypatch.setattr(worker_main, "reconcile_physical", lambda *_a, **_k: False)
+    monkeypatch.setattr(worker_main.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(worker_main, "_release_static_allocation", lambda *_a: True)
+
+    with database() as db:
+        operation = dict(db.execute("SELECT * FROM operations WHERE operation_id='destroy-op'").fetchone())
+    worker_main.execute("worker-1", operation)
+
+    with database() as db:
+        destroy = db.execute("SELECT status FROM operations WHERE operation_id='destroy-op'").fetchone()
+        instance = db.execute("SELECT status FROM instances WHERE instance_id='inst-destroy'").fetchone()
+        lease = db.execute("SELECT status FROM vmid_leases WHERE vmid=40077").fetchone()
+    assert destroy["status"] == "uncertain"
+    assert instance["status"] == "uncertain"
+    assert lease["status"] == "held"
