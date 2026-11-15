@@ -7,6 +7,8 @@ históricos de SQLite ni datos del runtime anterior.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -95,13 +97,82 @@ def connect() -> DatabaseConnection:
     return DatabaseConnection(connection)
 
 
+_local = threading.local()
+
+
+def _reuse_enabled() -> bool:
+    return os.getenv("IACP_DB_REUSE_CONNECTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _max_connection_age() -> float:
+    try:
+        return max(1.0, float(os.getenv("IACP_DB_CONNECTION_MAX_AGE_SECONDS", "300")))
+    except ValueError:
+        return 300.0
+
+
+def _discard_cached() -> None:
+    cached = getattr(_local, "connection", None)
+    _local.connection = None
+    if cached is not None:
+        try:
+            cached.close()
+        except Exception:
+            pass
+
+
 @contextmanager
 def database():
-    connection = connect()
+    """Entrega una conexión PostgreSQL en autocommit.
+
+    Cada hilo reutiliza una conexión mientras siga sana, apunte al mismo
+    destino y no supere IACP_DB_CONNECTION_MAX_AGE_SECONDS. Antes se abría
+    una conexión TCP nueva (más ``SET TIME ZONE``) por cada sentencia.
+
+    La conexión se descarta (como antes, con ``close()``) si el bloque
+    lanza una excepción o deja una transacción abierta, de modo que un
+    ``BEGIN`` sin ``COMMIT`` sigue terminando en rollback. Un uso anidado
+    recibe una conexión propia, igual que el comportamiento anterior.
+    """
+
+    if not _reuse_enabled() or getattr(_local, "depth", 0) > 0:
+        connection = connect()
+        try:
+            yield connection
+        finally:
+            connection.close()
+        return
+
+    key = repr(_connection_options())
+    cached = getattr(_local, "connection", None)
+    raw = cached._connection if cached is not None else None
+    if (
+        cached is None
+        or raw.closed
+        or raw.broken
+        or getattr(_local, "key", None) != key
+        or time.monotonic() - getattr(_local, "opened_at", 0.0) > _max_connection_age()
+    ):
+        _discard_cached()
+        cached = connect()
+        _local.connection = cached
+        _local.key = key
+        _local.opened_at = time.monotonic()
+
+    _local.depth = 1
+    clean = False
     try:
-        yield connection
+        yield cached
+        clean = True
     finally:
-        connection.close()
+        _local.depth = 0
+        raw = cached._connection
+        if (
+            not clean
+            or raw.closed
+            or raw.info.transaction_status != psycopg.pq.TransactionStatus.IDLE
+        ):
+            _discard_cached()
 
 
 _SCHEMA = (
@@ -255,6 +326,12 @@ _SCHEMA = (
     WHERE status IN ('allocating', 'allocated', 'release_pending')
     """,
     "CREATE INDEX IF NOT EXISTS idx_ip_allocations_operation ON ip_allocations(operation_id, status)",
+    # Índices aditivos para listados sin filtro, el chequeo de nombre
+    # duplicado y la búsqueda de reconciliaciones existentes.
+    "CREATE INDEX IF NOT EXISTS idx_operations_created_at ON operations(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_created_at ON instances(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_active_name ON instances(name) WHERE status <> 'deleted'",
+    "CREATE INDEX IF NOT EXISTS idx_operations_reconcile ON operations(created_at) WHERE command = 'reconcile'",
     """
     CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -264,6 +341,8 @@ _SCHEMA = (
 )
 
 
+# scripts/go_live.py exige schema_version == 2 como contrato V1; los índices
+# aditivos con IF NOT EXISTS no cambian esa versión.
 SCHEMA_VERSION = 2
 
 
@@ -289,7 +368,7 @@ def schema_ready() -> bool:
         if table is None or table["name"] is None:
             return False
         row = db.execute(
-            "SELECT 1 AS ok FROM schema_migrations WHERE version >= ? LIMIT 1",
+            "SELECT 1 AS ok FROM schema_migrations WHERE version = ? LIMIT 1",
             (SCHEMA_VERSION,),
         ).fetchone()
     return row is not None
