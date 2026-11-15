@@ -464,6 +464,7 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS idx_instances_created_at ON instances(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_instances_active_name ON instances(name) WHERE status <> 'deleted'",
     "CREATE INDEX IF NOT EXISTS idx_operations_reconcile ON operations(created_at) WHERE command = 'reconcile'",
+    "CREATE INDEX IF NOT EXISTS idx_operations_worker_created ON operations(worker_id, created_at)",
     """
     CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,

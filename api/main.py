@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from api.db import database, initialize, prune_history, schema_ready
+from api.drift import drift_report
 from api.catalog import network_profile_catalog
 from api.environments import EnvironmentConfigurationError, public_environment_catalog
 from api.models import InstanceCreateRequest, OperationRequest, PowerAction, ProvisionRequest
@@ -817,6 +818,30 @@ def list_workers():
     operation_id="getObservability",
 )
 def observability():
+    return _observability()
+
+
+@app.get(
+    "/v1/observability/drift",
+    dependencies=[Depends(authorize)],
+    tags=["observability"],
+    summary="Detectar drift entre IACP y Proxmox",
+    description=(
+        "Compara en modo solo lectura el inventario de IACP con Proxmox: VMs huérfanas en el rango "
+        "administrado, instancias sin VM física, identidad distinta y leases de VMID retenidos sin dueño. "
+        "No ejecuta ninguna acción automática."
+    ),
+    operation_id="getDrift",
+)
+def drift():
+    try:
+        inventory = ProxmoxClient().inventory(uncertain=True)
+    except ProxmoxError as error:
+        raise HTTPException(status_code=503, detail="PROXMOX_UNAVAILABLE") from error
+    return drift_report(inventory)
+
+
+def _observability():
     with database() as db:
         workers = [_worker_summary(db, row) for row in db.execute("SELECT * FROM workers ORDER BY worker_id")]
         active = db.execute(
@@ -862,6 +887,15 @@ def observability():
             """
         ).fetchall()
         performance = _performance_summary(performance_rows)
+        oldest_pending = db.execute(
+            "SELECT MIN(created_at) AS created_at FROM operations WHERE status='pending'"
+        ).fetchone()["created_at"]
+        retried = db.execute(
+            "SELECT COUNT(*) AS count FROM operations WHERE attempt_count > 1"
+        ).fetchone()["count"]
+        held_leases = db.execute(
+            "SELECT COUNT(*) AS count FROM vmid_leases WHERE status='held'"
+        ).fetchone()["count"]
     liveness = [worker.get("liveness") for worker in workers]
     if not liveness:
         worker_liveness = "unknown"
@@ -880,6 +914,11 @@ def observability():
         "max_concurrent": _max_concurrent(),
         "active_operations": active,
         "queue_depth": queue_depth,
+        # Campos aditivos: latencia de cola, reintentos y leases retenidos.
+        "queue_oldest_pending_seconds": _heartbeat_age(oldest_pending),
+        "retried_operations": retried,
+        "held_vmid_leases": held_leases,
+        "database": "ok",
         "uncertain_operations": uncertain,
         "performance": performance,
         "managed_instances": instances,
