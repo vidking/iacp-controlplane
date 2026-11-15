@@ -55,6 +55,12 @@ def isolated_postgres_schema(monkeypatch, tmp_path):
     monkeypatch.delenv("IACP_WASABI_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("IACP_WASABI_SECRET_ACCESS_KEY", raising=False)
 
+    # El throttle de heartbeat es por proceso; cada prueba usa un esquema
+    # nuevo y debe partir sin heartbeats recordados de pruebas anteriores.
+    from worker import heartbeat as heartbeat_module
+
+    heartbeat_module._last_sent.clear()
+
     try:
         yield
     finally:

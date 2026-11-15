@@ -1252,3 +1252,24 @@ def test_release_with_instance_does_not_free_lease_reassigned_to_other_instance(
     with database() as db:
         lease = db.execute("SELECT status FROM vmid_leases WHERE vmid=40000").fetchone()
     assert lease["status"] == "released"
+
+
+def test_identical_heartbeats_are_throttled_but_changes_are_written(monkeypatch):
+    monkeypatch.setenv("IACP_HEARTBEAT_MIN_INTERVAL_SECONDS", "60")
+    initialize()
+    heartbeat("worker-throttle", "running", "op-throttle", phase="apply")
+    heartbeat("worker-throttle", "running", "op-throttle", phase="apply")
+    heartbeat("worker-throttle", "running", "op-throttle", phase="apply")
+    with database() as db:
+        count = db.execute(
+            "SELECT heartbeat_count FROM workers WHERE worker_id='worker-throttle'"
+        ).fetchone()["heartbeat_count"]
+    assert count == 1
+
+    heartbeat("worker-throttle", "running", "op-throttle", phase="recovery")
+    heartbeat("worker-throttle", "idle")
+    with database() as db:
+        worker = db.execute(
+            "SELECT status, heartbeat_count FROM workers WHERE worker_id='worker-throttle'"
+        ).fetchone()
+    assert dict(worker) == {"status": "idle", "heartbeat_count": 3}
