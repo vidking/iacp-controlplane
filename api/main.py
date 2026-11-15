@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from api.db import database, initialize, prune_history, schema_ready
+from api.db import close_thread_connection, database, initialize, prune_history, schema_ready
 from api.drift import drift_report
 from api.catalog import network_profile_catalog
 from api.environments import EnvironmentConfigurationError, public_environment_catalog
@@ -143,8 +143,16 @@ def authorize(
         raise HTTPException(status_code=401, detail="invalid token")
 
 
+@app.on_event("shutdown")
+def shutdown() -> None:
+    # Apagado ordenado: cierra la conexión reutilizable del hilo principal.
+    # Las de los hilos del threadpool se cierran al terminar el proceso.
+    close_thread_connection()
+
+
 @app.on_event("startup")
 def startup() -> None:
+    os.environ.setdefault("IACP_DB_APPLICATION_NAME", "iacp-api")
     initialize()
     prune_history()
     if _require_api_token() and not os.getenv("IACP_API_TOKEN", "").strip():

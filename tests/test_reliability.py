@@ -183,3 +183,26 @@ def test_run_loop_records_fenced_operation_and_continues(monkeypatch):
             "SELECT kind, status FROM events WHERE operation_id='fenced-run-op'"
         ).fetchone()
     assert dict(event) == {"kind": "operation.fenced", "status": "uncertain"}
+
+
+def test_worker_healthcheck_reflects_heartbeat_age(monkeypatch):
+    from worker import healthcheck
+    from worker.heartbeat import heartbeat
+
+    initialize()
+    assert healthcheck.check("worker-health")[0] is False
+    heartbeat("worker-health", "running", "op-health", phase="apply")
+    healthy, detail = healthcheck.check("worker-health")
+    assert healthy, detail
+    with database() as db:
+        db.execute(
+            "UPDATE workers SET last_heartbeat='2020-01-01T00:00:00+00:00' WHERE worker_id='worker-health'"
+        )
+    healthy, detail = healthcheck.check("worker-health")
+    assert not healthy and "stale" in detail
+    with database() as db:
+        db.execute(
+            "UPDATE workers SET status='stopped', last_heartbeat=? WHERE worker_id='worker-health'",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+    assert healthcheck.check("worker-health") == (False, "worker stopped")

@@ -70,6 +70,23 @@ x-worker-environment: &worker-environment
   IACP_WASABI_ACCESS_KEY_ID: ${IACP_WASABI_ACCESS_KEY_ID:-}
   IACP_WASABI_SECRET_ACCESS_KEY: ${IACP_WASABI_SECRET_ACCESS_KEY:-}
 
+x-logging: &default-logging
+  # Rotación de logs del daemon Docker: evita que los logs de contenedores
+  # llenen el disco del IACP Control Plane (VM 104).
+  driver: json-file
+  options:
+    max-size: ${IACP_LOG_MAX_SIZE:-20m}
+    max-file: ${IACP_LOG_MAX_FILE:-5}
+
+x-worker-healthcheck: &worker-healthcheck
+  # Lectura del último heartbeat del worker en PostgreSQL. Un worker ocupado
+  # con Terraform sigue enviando heartbeat cada pocos segundos; no se
+  # ejecutan migraciones ni escrituras.
+  interval: 30s
+  timeout: 10s
+  start_period: 60s
+  retries: 3
+
 x-worker-common: &worker-common
   image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
   restart: unless-stopped
@@ -82,6 +99,12 @@ x-worker-common: &worker-common
   cap_drop:
     - ALL
   environment: *worker-environment
+  logging: *default-logging
+  # SIGTERM deja de reclamar operaciones nuevas y espera a que termine la
+  # operación en curso; si se supera el periodo, Docker envía SIGKILL y la
+  # recuperación por heartbeat convierte la operación en reconciliación.
+  stop_signal: SIGTERM
+  stop_grace_period: ${IACP_WORKER_STOP_GRACE_PERIOD:-120s}
   extra_hosts:
     - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
   volumes:
@@ -97,6 +120,9 @@ services:
   postgres:
     image: postgres:17.6
     restart: unless-stopped
+    logging: *default-logging
+    # Apagado limpio de PostgreSQL (checkpoint) antes de SIGKILL.
+    stop_grace_period: 60s
     networks:
       - internal
     environment:
@@ -123,6 +149,8 @@ services:
     cap_drop:
       - ALL
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    logging: *default-logging
+    stop_grace_period: 30s
     environment:
       <<: *runtime-environment
       IACP_API_TOKEN: ${IACP_API_TOKEN:?Definir IACP_API_TOKEN}
@@ -156,26 +184,44 @@ services:
   worker-1:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-1"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-1"]
 
   worker-2:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-2"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-2"]
 
   worker-3:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-3"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-3"]
 
   worker-4:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-4"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-4"]
 
   worker-5:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-5"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-5"]
 
   worker-6:
     <<: *worker-common
     command: ["python", "-m", "worker.main", "--worker-id", "worker-6"]
+    healthcheck:
+      <<: *worker-healthcheck
+      test: ["CMD", "python", "-m", "worker.healthcheck", "worker-6"]
 
 networks:
   internal:
