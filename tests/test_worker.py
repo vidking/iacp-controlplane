@@ -1206,3 +1206,17 @@ def test_run_commands_does_not_block_on_output_larger_than_pipe_buffer(tmp_path,
     assert code == 0
     assert "x" in output and "e" in error
     assert "[output truncated]" in output
+
+
+def test_discard_applied_plan_removes_only_plan_file(tmp_path):
+    from worker.main import _discard_applied_plan
+
+    plan = tmp_path / "plan.tfplan"
+    state = tmp_path / "terraform.tfstate"
+    plan.write_text("plan", encoding="utf-8")
+    state.write_text("{}", encoding="utf-8")
+    _discard_applied_plan(str(plan))
+    _discard_applied_plan(str(plan))
+    _discard_applied_plan(str(state))
+    assert not plan.exists()
+    assert state.exists()

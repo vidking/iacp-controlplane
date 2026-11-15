@@ -646,6 +646,26 @@ def create_workspace(operation_id: str, source_path: str, stack: str) -> tuple[s
     return root, workspace
 
 
+def _discard_applied_plan(plan_path: str | None) -> None:
+    """Elimina el plan binario ya aplicado.
+
+    ``plan.tfplan`` contiene en claro las variables sensibles (incluida la
+    contraseña root) y no sirve después de un apply exitoso, porque Terraform
+    rechaza aplicar un plan obsoleto. El state y el workspace se conservan
+    para destroy y auditoría.
+    """
+
+    if not plan_path or os.path.basename(plan_path) != "plan.tfplan":
+        return
+    try:
+        os.remove(plan_path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # No convertir una operación exitosa en fallo por la limpieza.
+        pass
+
+
 def write_variables(workspace: str, values: dict) -> str:
     path = os.path.join(workspace, "generated.auto.tfvars.json")
     with open(path, "w", encoding="utf-8") as handle:
@@ -1757,6 +1777,7 @@ def execute(worker_id: str, operation: dict) -> None:
             )
             if command == "provision":
                 delete_secret(secret_path)
+            _discard_applied_plan(plan_path)
         else:
             update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
             if vmid is not None:
