@@ -87,12 +87,54 @@ class DatabaseConnection:
         self._connection.close()
 
 
+def _int_env(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _session_parameters() -> dict[str, Any]:
+    """Parámetros de sesión y de transporte aplicados a cada conexión.
+
+    - ``idle_in_transaction_session_timeout``: PostgreSQL termina una sesión
+      que deja una transacción abierta sin actividad (por ejemplo, un worker
+      colgado dentro de ``BEGIN``), liberando locks y el advisory lock global.
+    - TCP keepalives: detectan una conexión muerta tras un reinicio de red o
+      de PostgreSQL en lugar de esperar indefinidamente.
+    - ``application_name``: identifica API y workers en ``pg_stat_activity``.
+    """
+
+    idle_tx_ms = _int_env("IACP_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", 60000)
+    options = f"-c idle_in_transaction_session_timeout={idle_tx_ms}"
+    statement_ms = _int_env("IACP_DB_STATEMENT_TIMEOUT_MS", 0)
+    if statement_ms:
+        options += f" -c statement_timeout={statement_ms}"
+    return {
+        "application_name": (os.getenv("IACP_DB_APPLICATION_NAME") or "iacp-controlplane")[:63],
+        "keepalives": 1,
+        "keepalives_idle": _int_env("IACP_DB_KEEPALIVES_IDLE", 30, 1),
+        "keepalives_interval": _int_env("IACP_DB_KEEPALIVES_INTERVAL", 10, 1),
+        "keepalives_count": _int_env("IACP_DB_KEEPALIVES_COUNT", 3, 1),
+        "options": options,
+    }
+
+
 def connect() -> DatabaseConnection:
     options = _connection_options()
+    session = _session_parameters()
     if isinstance(options, dict):
-        connection = psycopg.connect(**options, autocommit=True, row_factory=dict_row)
+        connection = psycopg.connect(**options, **session, autocommit=True, row_factory=dict_row)
     else:
-        connection = psycopg.connect(options, autocommit=True, row_factory=dict_row)
+        # Los parámetros explícitos se combinan con la URL; si la URL ya
+        # define "options" (por ejemplo search_path en tests), se conservan
+        # ambos.
+        from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+        existing = conninfo_to_dict(options).get("options")
+        if existing:
+            session["options"] = f"{existing} {session['options']}"
+        connection = psycopg.connect(make_conninfo(options, **session), autocommit=True, row_factory=dict_row)
     connection.execute("SET TIME ZONE 'UTC'")
     return DatabaseConnection(connection)
 
@@ -109,6 +151,27 @@ def _max_connection_age() -> float:
         return max(1.0, float(os.getenv("IACP_DB_CONNECTION_MAX_AGE_SECONDS", "300")))
     except ValueError:
         return 300.0
+
+
+def _ping_idle_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("IACP_DB_PING_IDLE_SECONDS", "30")))
+    except ValueError:
+        return 30.0
+
+
+def _ping(connection: DatabaseConnection) -> bool:
+    try:
+        connection._connection.execute("SELECT 1")
+        return True
+    except psycopg.Error:
+        return False
+
+
+def close_thread_connection() -> None:
+    """Cierra la conexión reutilizable del hilo actual (apagado ordenado)."""
+
+    _discard_cached()
 
 
 def _discard_cached() -> None:
@@ -154,6 +217,18 @@ def database():
     cached = getattr(_local, "connection", None)
     raw = cached._connection if cached is not None else None
     if (
+        cached is not None
+        and not raw.closed
+        and not raw.broken
+        and time.monotonic() - getattr(_local, "last_used", 0.0) > _ping_idle_seconds()
+        and not _ping(cached)
+    ):
+        # Tras un reinicio de PostgreSQL la conexión cacheada parece abierta
+        # hasta el primer uso; un ping barato tras un periodo inactivo evita
+        # entregar al llamador una conexión muerta.
+        _discard_cached()
+        cached = None
+    if (
         cached is None
         or raw.closed
         or raw.broken
@@ -173,6 +248,7 @@ def database():
         clean = True
     finally:
         _local.depth = 0
+        _local.last_used = time.monotonic()
         raw = cached._connection
         if (
             not clean
