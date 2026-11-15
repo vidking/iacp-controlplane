@@ -1050,7 +1050,7 @@ def settle_physical_operation(
         )
         update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=node)
         if vmid is not None:
-            release(int(vmid))
+            release(int(vmid), instance_id=instance_id)
         delete_secret(source_operation.get("secret_path"))
         emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
         return False
@@ -1067,7 +1067,7 @@ def settle_physical_operation(
     if command == "destroy":
         update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
         if vmid is not None:
-            release(int(vmid))
+            release(int(vmid), instance_id=instance_id)
         delete_secret(source_operation.get("secret_path"))
     elif command in {"apply", "provision"}:
         started = bool(source_payload.get("spec", {}).get("started", True))
@@ -1131,7 +1131,7 @@ def close_source_after_reconciliation(
         if vmid is not None and source_operation["command"] in {"apply", "provision"}:
             # Reconciliation proved that the physical VM is absent. Release
             # the lease so a later request can reuse the lowest free VMID.
-            release(int(vmid))
+            release(int(vmid), instance_id=instance_id)
         emit(source_id, "operation.reconciled", terminal_status, terminal_error)
 
 
@@ -1690,7 +1690,7 @@ def execute(worker_id: str, operation: dict) -> None:
             emit(operation_id, f"terraform.{command}.completed", status, str(terminal_error)[-2000:])
             if command in {"plan", "provision", "apply"} and (phase == "plan" or status == "failed"):
                 if vmid is not None and allocated_here:
-                    release(int(vmid))
+                    release(int(vmid), instance_id=instance_id)
             if command == "provision":
                 delete_secret(secret_path)
             return
@@ -1749,7 +1749,7 @@ def execute(worker_id: str, operation: dict) -> None:
             )
             update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=target_node)
             if vmid is not None:
-                release(int(vmid))
+                release(int(vmid), instance_id=instance_id)
             delete_secret(source_operation.get("secret_path"))
             emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
             return
@@ -1781,7 +1781,7 @@ def execute(worker_id: str, operation: dict) -> None:
         else:
             update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
             if vmid is not None:
-                release(int(vmid))
+                release(int(vmid), instance_id=instance_id)
             delete_secret(source_operation.get("secret_path"))
         emit(operation_id, f"terraform.{command}.completed", "succeeded")
     except Exception as error:
@@ -1851,7 +1851,7 @@ def execute(worker_id: str, operation: dict) -> None:
 
         status = "uncertain" if (physical or power_uncertain) and not deterministic_error(error) else "failed"
         if command in {"plan", "provision"} and phase == "plan" and allocated_here and vmid is not None:
-            release(int(vmid))
+            release(int(vmid), instance_id=instance_id)
         terminal_error = str(error)
         if command in {"plan", "provision"} and (phase == "plan" or status == "failed"):
             if not _release_static_allocation(instance_id, operation_id):

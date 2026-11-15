@@ -1220,3 +1220,35 @@ def test_discard_applied_plan_removes_only_plan_file(tmp_path):
     _discard_applied_plan(str(state))
     assert not plan.exists()
     assert state.exists()
+
+
+def test_release_with_instance_does_not_free_lease_reassigned_to_other_instance(monkeypatch):
+    monkeypatch.setenv("IACP_VMID_MIN", "40000")
+    monkeypatch.setenv("IACP_VMID_MAX", "40000")
+    initialize()
+    created = datetime.now(timezone.utc).isoformat()
+    with database() as db:
+        for operation_id, instance_id in (("op-old", "instance-old"), ("op-new", "instance-new")):
+            db.execute(
+                """
+                INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+                VALUES (?, 'provision', 'running', '{}', ?, ?)
+                """,
+                (operation_id, instance_id, created),
+            )
+    client = FakeProxmox()
+    first = allocate("op-old", client)
+    release(first, instance_id="instance-old")
+    second = allocate("op-new", client)
+    assert first == second == 40000
+
+    # Una operación tardía de la instancia vieja no libera el lease nuevo.
+    release(second, instance_id="instance-old")
+    with database() as db:
+        lease = db.execute("SELECT operation_id, status FROM vmid_leases WHERE vmid=40000").fetchone()
+    assert dict(lease) == {"operation_id": "op-new", "status": "held"}
+
+    release(second, instance_id="instance-new")
+    with database() as db:
+        lease = db.execute("SELECT status FROM vmid_leases WHERE vmid=40000").fetchone()
+    assert lease["status"] == "released"

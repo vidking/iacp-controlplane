@@ -58,9 +58,27 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
     return candidate
 
 
-def release(vmid: int) -> None:
+def release(vmid: int, *, instance_id: str | None = None) -> None:
+    """Libera el lease de un VMID.
+
+    Con ``instance_id``, solo se libera si el lease pertenece a una operación
+    de esa instancia. Con ``IACP_VMID_REUSE=1`` el mismo VMID puede haber sido
+    reasignado a otra instancia, y una operación vieja no debe liberar el
+    lease que ya retiene una operación nueva.
+    """
+
     with database() as db:
-        db.execute(
-            "UPDATE vmid_leases SET status='released', released_at=? WHERE vmid=?",
-            (now(), vmid),
-        )
+        if instance_id:
+            db.execute(
+                """
+                UPDATE vmid_leases SET status='released', released_at=?
+                WHERE vmid=?
+                  AND operation_id IN (SELECT operation_id FROM operations WHERE instance_id=?)
+                """,
+                (now(), vmid, instance_id),
+            )
+        else:
+            db.execute(
+                "UPDATE vmid_leases SET status='released', released_at=? WHERE vmid=?",
+                (now(), vmid),
+            )
