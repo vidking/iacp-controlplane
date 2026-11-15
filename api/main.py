@@ -1,3 +1,4 @@
+import hmac
 import os
 import json
 from datetime import datetime, timezone
@@ -134,7 +135,10 @@ def authorize(
     configured = os.getenv("IACP_API_TOKEN", "").strip()
     if _require_api_token() and not configured:
         raise HTTPException(status_code=503, detail="API token no configurado")
-    if configured and (credentials is None or credentials.credentials != configured):
+    if configured and (
+        credentials is None
+        or not hmac.compare_digest(credentials.credentials.encode("utf-8"), configured.encode("utf-8"))
+    ):
         raise HTTPException(status_code=401, detail="invalid token")
 
 

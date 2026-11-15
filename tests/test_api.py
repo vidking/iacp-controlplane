@@ -87,6 +87,17 @@ def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatc
     assert response.headers["X-IACP-Build-Revision"] == revision
 
 
+def test_bearer_token_is_required_and_compared(monkeypatch):
+    monkeypatch.setenv("IACP_API_TOKEN", "token-de-prueba-123")
+    monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "1")
+    with TestClient(app) as client:
+        assert client.get("/v1/plans").status_code == 401
+        wrong = client.get("/v1/plans", headers={"Authorization": "Bearer token-de-prueba-124"})
+        assert wrong.status_code == 401
+        ok = client.get("/v1/plans", headers={"Authorization": "Bearer token-de-prueba-123"})
+        assert ok.status_code == 200
+
+
 def test_health_ready_does_not_run_schema_ddl(monkeypatch):
     import api.main as api_main
 
