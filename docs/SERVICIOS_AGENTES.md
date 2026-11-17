@@ -37,7 +37,7 @@ Contenido requerido del directorio (no incorporar secretos a Git):
 2. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
    PostgreSQL, después de verificar identidad y pertenencia al pool de la VM.
    `bindings/<instance_id>.json` se conserva únicamente como alternativa operativa
-   verificada por Jarvis; no se acepta automáticamente una salida de ssh-keyscan.
+   verificada por el administrador; no se acepta automáticamente una salida de ssh-keyscan.
 3. Las releases probadas se incluyen en `/app/services/releases.json`. Un archivo
    externo es opcional y se selecciona con `IACP_SERVICE_RELEASES_FILE`.
    La primera instalación fija la huella; no se actualizan instancias por cambiar etiquetas.
@@ -165,14 +165,14 @@ Las etiquetas operativas `ocupada` y `reservada` deben existir previamente.
 
 La selección de candidatos se serializa entre aprovisionadores IACP por prefijo.
 La recuperación busca una IP cuyo marcador identifica la instancia antes de reservar
-otra. Esa exclusión no coordina otros asignadores externos: Jarvis debe comprobar
+otra. Esa exclusión no coordina otros asignadores externos: el equipo de operaciones debe comprobar
 las restricciones de unicidad y política de escrituras de la instalación NetBox.
 
 El perfil mantiene `IACP_PROD_STATIC_ENABLED=0` hasta verificar prefijo, gateway,
 bridge/VLAN, enrutamiento WAN, firewall y token. Registrar una IP en NetBox no
 configura esos elementos de red. No modificar la Golden Image protegida 29000.
 
-## Recuperación y entrega operativa a Jarvis
+## Recuperación y entrega al equipo de operaciones
 
 Se mantiene una exclusión durable por trabajo y un directorio lock en el invitado
 `/var/lib/iacp-service-install.lock`. Una caída de heartbeat lleva a `uncertain`;
@@ -232,7 +232,7 @@ y una clave Fernet propia. Se ejecuta como root para asignar el secreto al UID/G
 999 de la imagen, conservando permisos mínimos. No se deben pasar secretos por
 argumentos de shell: el token se recibe desde un archivo privado con modo 600.
 
-Ejemplo para Jarvis, después de contar con una revisión inmutable autorizada:
+Ejemplo para el equipo de operaciones, después de contar con una revisión inmutable autorizada:
 
 ```bash
 sudo /ruta/al/release/.venv/bin/python scripts/prepare_develop.py \
@@ -283,7 +283,7 @@ La comprobación directa con `curl --resolve dev-iac.cyberfuel.com:443:192.168.1
 dio 404. Es una observación fechada de esta revisión, no el estado esperado tras
 el despliegue. No se cambiaron esos archivos ni se activó la ruta.
 
-Jarvis debe ejecutar preflight, despliegue y verificación con el manifiesto
+El equipo de operaciones debe ejecutar preflight, despliegue y verificación con el manifiesto
 candidato y la imagen autorizada; luego `activate-develop`, comprobar HTTPS y la
 revisión con resolución directa y repetir mediante DNS normal. El despliegue no
 requiere reiniciar otros stacks ni aplicar las actualizaciones de Ubuntu.
@@ -467,7 +467,7 @@ y eliminaron mediante API. Sus tres reservas WAN quedaron `released`. Evidencia
 operativa: `/opt/iacp/evidence/dev-b7947f6-recovery-20261117/cleanup.json`.
 La evidencia original de aprovisionamiento y las operaciones se conservaron.
 
-**Pendiente de Jarvis / redes:** verificar que el gateway `190.0.231.1/24` esté
+**Pendiente del equipo de redes:** verificar que el gateway `190.0.231.1/24` esté
 activo en VLAN 211, y comprobar el paso de dicha VLAN entre `vmbr0`, `bond1` y el
 puerto/trunk del clúster MNG. No cambiar a LAN ni retirar el tag para aprobar WAN.
 No se modificaron switches, firewalls, gateway, Ceph ni producción.

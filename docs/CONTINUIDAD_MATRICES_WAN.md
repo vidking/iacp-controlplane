@@ -2,7 +2,7 @@
 
 Estado: **BLOCKED**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
 
-1. Jarvis debe resolver la falta de ARP hacia `190.0.231.1` en VLAN 211 desde las
+1. El equipo de operaciones debe resolver la falta de ARP hacia `190.0.231.1` en VLAN 211 desde las
    VMs del nodo `mng01`, sin alterar el perfil ni utilizar LAN para certificar WAN.
 2. Confirmar la imagen ejecutada y el manifiesto canónico
    `/etc/iacp/stacks/manifest-dev.json`. El archivo de entorno es
