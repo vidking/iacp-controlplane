@@ -266,12 +266,17 @@ _SCHEMA = (
 
 def initialize() -> None:
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
         for statement in _SCHEMA:
+            db.execute(statement)
+        from api.service_schema import SCHEMA
+        for statement in SCHEMA:
             db.execute(statement)
         db.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?) ON CONFLICT(version) DO NOTHING",
-            (2, datetime.now(timezone.utc).isoformat()),
+            (3, datetime.now(timezone.utc).isoformat()),
         )
+        db.execute("COMMIT")
 
 
 def prune_history() -> dict[str, int]:

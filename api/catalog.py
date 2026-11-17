@@ -54,7 +54,7 @@ def network_profile_catalog() -> list[dict]:
     # the worker validates the token when it performs an allocation.
     try:
         prefix_id = int((os.getenv("IACP_NETBOX_PREFIX_ID") or "").strip())
-        prefix_valid = prefix_id > 0
+        prefix_valid = prefix_id == 52
         prefix_valid = prefix_valid and int(os.getenv("IACP_NETBOX_PREFIX_LENGTH", "24")) == 24
         prefix_valid = prefix_valid and int(os.getenv("IACP_NETBOX_GATEWAY_HOST", "1")) == 1
     except ValueError:
@@ -70,14 +70,18 @@ def network_profile_catalog() -> list[dict]:
             "label": "Lab_DHCP",
             "network_mode": "dhcp",
             "ipam": None,
-            "enabled": True,
+            "enabled": os.getenv("IACP_ENFORCE_WAN_ONLY", "0").lower() not in {"1", "true", "yes"},
         },
         {
             "profile_id": "prod_static",
             "label": "Prod_Static",
             "network_mode": "static",
             "ipam": "netbox",
+            "prefix": "190.0.231.0/24",
             "prefix_length": 24,
+            "vlan_id": 211,
+            "gateway": "190.0.231.1",
+            "dns_servers": ["1.1.1.1", "8.8.8.8"],
             "gateway_policy": "first-usable-x.x.x.1",
             "enabled": prod_enabled,
         },

@@ -610,3 +610,82 @@ def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
     monkeypatch.setattr(go_live, "_run", missing)
     with pytest.raises(go_live.GateError, match="imagen local no existe"):
         go_live._verify_preloaded_images(config)
+
+
+def _service_configuration(tmp_path):
+    config = _configuration(stage="develop", include_aws=False)
+    config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
+    for number in (1,2):
+        config['services'][f'service-worker-{number}']={
+            'image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}',
+            'environment':{key:value for key,value in config['services']['api']['environment'].items()
+                           if key in {'PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD'}} | {
+                'IACP_SERVICES_ENABLED':'1','IACP_SERVICE_EXECUTION_ENABLED':'0'}}
+    dev=_private_env(tmp_path)
+    dev.write_text(''.join(f'{key}={value}\n' for key,value in {
+        'POSTGRES_PASSWORD':config['services']['postgres']['environment']['POSTGRES_PASSWORD'],
+        'IACP_API_TOKEN':config['services']['api']['environment']['IACP_API_TOKEN'],
+        'IACP_PROXMOX_MNG_API_TOKEN':config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']}.items()))
+    reference=tmp_path/'prod.env'
+    reference.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=prod-api-token\nIACP_PROXMOX_MNG_API_TOKEN=prod-proxmox-token\n')
+    reference.chmod(0o600)
+    manifest=_manifest('develop',schema_version=3,services_enabled=True,service_execution_enabled=False,
+                       isolation_reference_environment_file=str(reference))
+    return config,dev,manifest
+
+
+def test_service_development_policy_and_profile(tmp_path):
+    config,env,manifest=_service_configuration(tmp_path)
+    result=go_live._check_policy(manifest,config,env)
+    assert result['schema_version']==3
+    assert result['service_workers']==['service-worker-1','service-worker-2']
+    assert go_live._compose_args(manifest,Path('compose.yml'),env)[-2:]==['--profile','services']
+
+
+def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
+    config,env,manifest=_service_configuration(tmp_path)
+    env.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=dev-api-token\nIACP_PROXMOX_MNG_API_TOKEN=dev-proxmox-token\n')
+    config['services']['postgres']['environment']['POSTGRES_PASSWORD']='prod-password'
+    config['services']['api']['environment']['IACP_API_TOKEN']='dev-api-token'
+    config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']='dev-proxmox-token'
+    with pytest.raises(go_live.GateError,match='credencial exclusiva'):
+        go_live._check_policy(manifest,config,env)
+    config['services'].pop('service-worker-2')
+    with pytest.raises(go_live.GateError,match='inventario'):
+        go_live._check_policy(manifest,config,env)
+
+
+def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
+    import ast
+    manifest=_manifest('develop',schema_version=3,services_enabled=True)
+    statuses=[{'service':name,'state':'running','health':'healthy','image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}'}
+              for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],'service-worker-1','service-worker-2']]
+    monkeypatch.setattr(go_live,'_inventory',lambda *_:{'containers':statuses})
+    payload={'health':'ready','api_version':'1.0.0','provision_path':True,'build_revision':IMAGE_TAG,
+             'schema_version':3,'ip_allocations_table':True,'worker_ids':[f'worker-{i}' for i in range(1,7)],
+             'service_worker_ids':['service-worker-1','service-worker-2'],'service_tables':True,
+             'service_key_ready':True,'service_api':True,'infrastructure_workers_fresh':True}
+    def run(command,**kwargs):
+        ast.parse(command[-1])
+        return json.dumps(payload)
+    monkeypatch.setattr(go_live,'_run',run)
+    assert go_live._verify(manifest,Path('compose.yml'),Path('private.env'))['api']['schema_version']==3
+    payload['service_worker_ids']=[]
+    with pytest.raises(go_live.GateError,match='pools'):
+        go_live._verify(manifest,Path('compose.yml'),Path('private.env'))
+
+
+def test_service_policy_allows_only_authorized_shared_mng(tmp_path):
+    config, env, manifest = _service_configuration(tmp_path)
+    shared = 'prod-proxmox-token'
+    previous = config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']
+    for name, service in config['services'].items():
+        if name == 'api' or name.startswith('worker-'):
+            service['environment']['IACP_PROXMOX_MNG_API_TOKEN'] = shared
+            service['environment']['IACP_PROXMOX_API_TOKEN'] = shared
+    env.write_text(env.read_text().replace(previous, shared))
+    manifest['mng_credentials_shared'] = True
+    assert go_live._check_policy(manifest, config, env)['schema_version'] == 3
+    manifest['mng_credentials_shared'] = False
+    with pytest.raises(go_live.GateError, match='credencial exclusiva'):
+        go_live._check_policy(manifest, config, env)

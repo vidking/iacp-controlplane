@@ -72,6 +72,7 @@ variable "instance" {
     ipv4_cidr              = optional(string, null)
     ipv4_gateway           = optional(string, null)
     cloudinit_datastore_id = string
+    dns_servers            = optional(list(string), [])
     cloudinit_username     = string
     ssh_public_keys        = list(string)
     guest_agent_enabled    = optional(bool, false)

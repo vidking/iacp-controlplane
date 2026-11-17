@@ -1,0 +1,43 @@
+{
+  "nextcloud": {
+    "approved": true,
+    "recipe_version": "1",
+    "validation_scope": "local-docker",
+    "version": "35.0.3",
+    "images": {
+      "app": "nextcloud@sha256:8041f24690c5631da46d2391e1fd7efcde95c6cf08695047f3dd7ce7783934b4",
+      "postgres": "postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929",
+      "redis": "redis@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+      "caddy": "caddy@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b"
+    },
+    "verification_argv": ["php", "-r", "require '/var/www/html/version.php'; if (!isset($OC_VersionString)) exit(1);"]
+  },
+  "n8n": {
+    "approved": true,
+    "recipe_version": "1",
+    "validation_scope": "local-docker",
+    "version": "2.47.7",
+    "images": {
+      "app": "docker.n8n.io/n8nio/n8n@sha256:b4b90747b81fcda7e76550c0d3aa7f0f64917a1e9573cff40d6834eaf2e0f8ea",
+      "postgres": "postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929",
+      "caddy": "caddy@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b"
+    },
+    "verification_argv": ["n8n", "--version"]
+  },
+  "hermes": {
+    "approved": true,
+    "recipe_version": "1",
+    "validation_scope": "local-docker-without-external-provider",
+    "version": "0.23.2",
+    "images": {"app": "nousresearch/hermes-agent@sha256:d6746a084e9341baada483e3d6210444d3c1aeb7c130f0915150065fb2851459"},
+    "verification_argv": ["hermes", "config", "check"]
+  },
+  "openclaw": {
+    "approved": true,
+    "recipe_version": "1",
+    "validation_scope": "local-docker-without-external-provider",
+    "version": "2026.11.4",
+    "images": {"app": "ghcr.io/openclaw/openclaw@sha256:f019ffc78c8866dc38c5e965e748a474989c0bdd132ed307a87ae606d829bd26"},
+    "verification_argv": ["node", "openclaw.mjs", "health"]
+  }
+}

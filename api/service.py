@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -9,7 +8,6 @@ from typing import Callable
 from fastapi import HTTPException
 
 from api.catalog import (
-    cluster_nodes,
     image_by_id,
     image_catalog as catalog_images,
     network_profile_by_id,
@@ -21,6 +19,7 @@ from api.environments import EnvironmentConfigurationError, resolve_environment
 from api.models import Action, Command, CommercialContext, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, write_secret
+from api.network_policy import selected_profile
 
 
 def now() -> str:
@@ -156,6 +155,8 @@ def public_instance_status(row) -> str:
 
 
 def _active_instance_operation(db, instance_id: str):
+    from api.applications import guard_instance
+    guard_instance(db, instance_id)
     placeholders = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
     return db.execute(
         f"""
@@ -414,7 +415,7 @@ def _request_plain_payload(request: InstanceCreateRequest) -> dict:
             if request.commercial_context is not None
             else None
         ),
-        "network_profile": request.network_profile,
+        "network_profile": selected_profile(request.network_profile),
         "tags": list(request.tags),
         "start_on_create": request.start_on_create,
     }
@@ -507,7 +508,8 @@ def _resolve_public_request(
         raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de memoria de la imagen")
     if plan["disk_gb"] < image.get("minimum_disk_gb", 0):
         raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de disco de la imagen")
-    profile = network_profile_by_id(request.network_profile)
+    resolved_profile = selected_profile(request.network_profile)
+    profile = network_profile_by_id(resolved_profile)
     if profile is None:
         raise HTTPException(status_code=422, detail="network_profile no disponible")
     if not profile["enabled"]:
@@ -520,8 +522,10 @@ def _resolve_public_request(
         vcpus=plan["vcpus"],
         memory_mb=plan["memory_mb"],
         disk_gb=plan["disk_gb"],
-        network_profile=request.network_profile,
-        network_mode="static" if request.network_profile == "prod_static" else "dhcp",
+        network_profile=resolved_profile,
+        network_mode="static" if resolved_profile == "prod_static" else "dhcp",
+        vlan_id=211 if resolved_profile == "prod_static" else None,
+        dns_servers=["1.1.1.1", "8.8.8.8"] if resolved_profile == "prod_static" else [],
         ssh_public_keys=request.access.ssh_public_keys,
         started=request.start_on_create,
         tags=tags,
@@ -551,6 +555,9 @@ def _insert_operation(
         raise HTTPException(status_code=error.status_code, detail=error.code) from error
     effective_stack = "mng01"
     created = now()
+    if request.command in {Command.plan, Command.provision} and request.spec is not None:
+        from api.network_policy import apply_to_spec
+        apply_to_spec(request.spec)
     payload = request.model_dump(mode="json")
 
     if request.command in {Command.apply, Command.destroy, Command.power, Command.reconcile} and instance_id:
@@ -804,6 +811,8 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
     body = {"instance_id": instance_id, "action": "destroy"}
 
     def builder(db):
+        from api.applications import guard_instance
+        guard_instance(db, instance_id)
         instance = db.execute(
             "SELECT status, power_state, vmid FROM instances WHERE instance_id=?",
             (instance_id,),
@@ -929,6 +938,8 @@ def create_reconcile(
     }
 
     def builder(db):
+        from api.applications import guard_instance
+        guard_instance(db, instance_id)
         instance = db.execute(
             "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
         ).fetchone()

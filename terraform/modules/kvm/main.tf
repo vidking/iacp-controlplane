@@ -67,6 +67,13 @@ resource "proxmox_virtual_environment_vm" "this" {
       }
     }
 
+    dynamic "dns" {
+      for_each = length(var.dns_servers) == 0 ? [] : [var.dns_servers]
+      content {
+        servers = dns.value
+      }
+    }
+
     user_account {
       username = var.cloudinit_username
       keys     = var.ssh_public_keys

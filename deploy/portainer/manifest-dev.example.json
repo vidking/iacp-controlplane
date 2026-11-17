@@ -17,5 +17,9 @@
   "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
   "dynamic_config": "/etc/iacp/tls/dynamic/dev-iac.yml",
   "tls_certificate_file": "/etc/iacp/tls/certs/fullchain.pem",
-  "route_template": "deploy/portainer/traefik-dev.yml"
+  "route_template": "deploy/portainer/traefik-dev.yml",
+  "schema_version": 3,
+  "services_enabled": true,
+  "service_execution_enabled": false,
+  "isolation_reference_environment_file": "/etc/iacp/stacks/prod.env"
 }

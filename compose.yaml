@@ -20,6 +20,7 @@ x-app-environment: &app-environment
   IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
   IACP_VMID_REUSE: ${IACP_VMID_REUSE:-1}
   IACP_ADDITIONAL_PROTECTED_VMIDS: ${IACP_ADDITIONAL_PROTECTED_VMIDS:-}
+  IACP_ENFORCE_WAN_ONLY: ${IACP_ENFORCE_WAN_ONLY:-0}
   IACP_MAX_CONCURRENT: ${IACP_MAX_CONCURRENT:-6}
   IACP_TERRAFORM_TIMEOUT: ${IACP_TERRAFORM_TIMEOUT:-1800}
   IACP_POWER_TIMEOUT: ${IACP_POWER_TIMEOUT:-180}
@@ -35,6 +36,12 @@ x-app-environment: &app-environment
   IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
   IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
   IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+
+  IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
+  IACP_NETBOX_URL: ${IACP_NETBOX_URL:-}
+  IACP_NETBOX_TOKEN: ${IACP_NETBOX_TOKEN:-}
+  IACP_NETBOX_PREFIX_ID: ${IACP_NETBOX_PREFIX_ID:-}
+  IACP_NETBOX_VERIFY_TLS: ${IACP_NETBOX_VERIFY_TLS:-1}
 
 services:
   postgres:
@@ -72,6 +79,8 @@ services:
       IACP_REQUIRE_API_TOKEN: ${IACP_REQUIRE_API_TOKEN:-0}
       IACP_ROOT_PASSWORD_MIN_LENGTH: ${IACP_ROOT_PASSWORD_MIN_LENGTH:-12}
       IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
+      IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
+      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
       IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-0}
       IACP_WORKER_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
     extra_hosts:
@@ -79,6 +88,7 @@ services:
     ports:
       - "${IACP_API_PORT:-8080}:8080"
     volumes:
+      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       postgres:
@@ -230,6 +240,62 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  service-worker-1:
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    profiles: [services]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [python, -m, worker.services, --worker-id, service-worker-1]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-iacp_controlplane}
+      PGUSER: ${POSTGRES_USER:-iacp}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
+      IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
+      IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
+      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
+      IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
+      IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
+    volumes:
+      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  service-worker-2:
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    profiles: [services]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [python, -m, worker.services, --worker-id, service-worker-2]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-iacp_controlplane}
+      PGUSER: ${POSTGRES_USER:-iacp}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
+      IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
+      IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
+      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
+      IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
+      IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
+    volumes:
+      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
     depends_on:
       api:
         condition: service_healthy

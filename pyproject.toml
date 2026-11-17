@@ -8,6 +8,8 @@ dependencies = [
   "uvicorn[standard]==0.34.2",
   "pydantic==2.11.3",
   "psycopg[binary]==3.2.9",
+  "cryptography>=44,<47",
+  "ansible-core>=2.18,<2.20",
 ]
 
 [build-system]

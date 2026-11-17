@@ -12,6 +12,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from api.db import database, initialize, prune_history
+from api import applications
+from api.service_catalog import catalog as application_catalog
+from api.service_models import ApplicationConnectionRequest, RecoveryRequest, ServiceCreateRequest
 from api.catalog import network_profile_catalog
 from api.environments import EnvironmentConfigurationError, public_environment_catalog
 from api.models import InstanceCreateRequest, OperationRequest, PowerAction, ProvisionRequest
@@ -253,13 +256,18 @@ def plans():
     tags=["instances"],
     summary="Consultar perfiles de red disponibles",
     description=(
-        "Devuelve los perfiles de red certificados. El consumidor elige el perfil, "
-        "pero no envía el prefijo, la IP ni el gateway."
+        "Permite elegir LAN o WAN durante el piloto. La plataforma asigna IP, "
+        "gateway y VLAN; la promoción definitiva puede exigir exclusivamente WAN."
     ),
     operation_id="listNetworkProfiles",
 )
 def network_profiles():
-    return {"network_profiles": network_profile_catalog()}
+    from api.network_policy import selected_profile, wan_only
+    return {
+        "network_profiles": network_profile_catalog(),
+        "active_profile": selected_profile(),
+        "selection": "server-managed" if wan_only() else "lab-only",
+    }
 
 
 @app.post(
@@ -881,3 +889,66 @@ def observability():
         "events_total": events_total,
     }
 
+
+
+# Contrato aditivo: mantiene /v1/instances sin cambios.
+
+
+@app.get("/v1/applications", dependencies=[Depends(authorize)], tags=["applications"])
+def applications_catalog():
+    return application_catalog()
+
+
+@app.post("/v1/service-instances", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def create_service_instance(request: ServiceCreateRequest, idempotency_key: str | None = Header(default=None)):
+    return applications.create(request, idempotency_key)
+
+
+@app.get("/v1/service-instances/{service_id}", dependencies=[Depends(authorize)], tags=["applications"])
+def get_service_instance(service_id: str):
+    return applications.get_service(service_id)
+
+
+@app.get("/v1/service-jobs/{job_id}", dependencies=[Depends(authorize)], tags=["applications"])
+def get_service_job(job_id: str):
+    return applications.get_job(job_id)
+
+
+@app.post("/v1/service-jobs/{job_id}/retry", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def retry_service_job(job_id: str, request: RecoveryRequest, idempotency_key: str | None = Header(default=None)):
+    return applications.retry(job_id, idempotency_key, request.previous_execution_stopped)
+
+
+@app.post("/v1/service-instances/{service_id}/deliver", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def deliver_service(service_id: str, idempotency_key: str | None = Header(default=None)):
+    return applications.delivery(service_id, idempotency_key)
+
+
+@app.post("/v1/service-instances/{service_id}/credentials", dependencies=[Depends(authorize)], tags=["applications"])
+def retrieve_service_credentials(service_id: str):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(applications.credentials(service_id), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/v1/service-workers", dependencies=[Depends(authorize)], tags=["applications"])
+def service_workers():
+    with database() as db:
+        return {"max_concurrent": 2, "workers": [dict(row) for row in db.execute("SELECT * FROM service_workers ORDER BY worker_id").fetchall()]}
+
+
+@app.post("/v1/service-jobs/{job_id}/cancel", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def cancel_service_job(job_id: str, idempotency_key: str | None = Header(default=None)):
+    return applications.cancel(job_id, idempotency_key)
+
+
+
+
+@app.post("/v1/service-instances/{service_id}/connections", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def configure_service_connections(service_id: str, request: ApplicationConnectionRequest, idempotency_key: str | None = Header(default=None)):
+    return applications.connections(service_id, request, idempotency_key)
+
+
+@app.delete("/v1/service-instances/{service_id}", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
+def delete_service_instance(service_id: str, idempotency_key: str | None = Header(default=None)):
+    service = applications.get_service(service_id)
+    return create_destroy(service["instance_id"], idempotency_key=idempotency_key)

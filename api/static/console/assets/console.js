@@ -90,11 +90,12 @@
     (profilesBody.network_profiles || []).forEach((profile) => {
       const option = document.createElement("option");
       option.value = profile.profile_id;
+      option.textContent = profile.profile_id === "prod_static" ? "WAN estática · VLAN 211" : "LAN de pruebas · DHCP";
       option.disabled = profile.enabled === false;
-      option.textContent = `${profile.label} · ${profile.enabled === false ? "no configurado" : profile.network_mode}`;
       profileSelect.append(option);
     });
-    profileSelect.value = "lab_dhcp";
+    profileSelect.value = profilesBody.active_profile;
+    profileSelect.disabled = profilesBody.selection === "server-managed";
     updateNetworkProfileHelp();
   }
 
@@ -229,8 +230,8 @@
       name: $("name").value.trim(),
       plan_id: $("plan").value,
       image_id: $("image").value,
-      environment: "lab",
       network_profile: $("network-profile").value,
+      environment: "lab",
       tags,
       access: { ssh_public_keys: ssh ? [ssh] : [] },
       start_on_create: $("started").checked,

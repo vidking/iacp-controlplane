@@ -36,3 +36,17 @@ no reducirla a dos o cuatro.
 Registrar PASS, FAIL o BLOCKED con alcance, versión, fecha y evidencia. Distinguir recuperación automática, manual y contención fail-closed. Separar el dictamen de integración piloto del dictamen de certificación integral. No declarar GO integral con escenarios críticos pendientes.
 
 No imprimir ni incorporar tokens, contraseñas, valores de secretos o copias sensibles de Terraform State a Git. La revisión y eventual rotación de credenciales se rigen por el alcance autorizado; una observación pendiente no equivale a seguridad aprobada.
+
+## Flujo local, desarrollo y producción
+
+Desarrollar y probar primero en local. Desplegar los candidatos después en
+`dev-iac.cyberfuel.com`, manteniendo `iac.cyberfuel.com` con su revisión estable.
+Promover a producción únicamente la misma imagen inmutable que haya pasado las
+pruebas de desarrollo y los controles operativos, con evidencia y reversión.
+No actualizar producción como parte de un ensayo de desarrollo.
+
+El usuario autorizó compartir el token y el pool Proxmox de MNG entre dev e iac.
+Registrar esa decisión mediante `mng_credentials_shared=true`; no exigir otra
+credencial Proxmox como condición del piloto. Mantener aislamiento por procesos,
+colas, bases, volúmenes y rangos VMID; no compartir contraseñas PostgreSQL ni
+tokens de API entre stacks. Conservar las VMs existentes ajenas a cada ensayo.

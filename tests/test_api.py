@@ -164,7 +164,7 @@ def test_prod_static_request_persists_profile_without_accepting_an_ip_from_consu
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.cyberfuel.com/api")
-    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "123")
+    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     body = public_body("static-profile")
     body["network_profile"] = "prod_static"
     with TestClient(app) as client:
@@ -637,7 +637,7 @@ def test_network_profile_is_part_of_public_idempotency_fingerprint(tmp_path, mon
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example.invalid/api")
-    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "123")
+    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     body = public_body("idempotency-network-profile")
 
     with TestClient(app) as client:
@@ -1039,4 +1039,27 @@ def test_initialize_migrates_existing_postgresql_schema():
         assert {"plan_id", "commercial_context_json"} <= instance_columns
         assert db.execute("SELECT to_regclass('idempotency_keys') AS table_name").fetchone()["table_name"]
         assert db.execute("SELECT to_regclass('ip_allocations') AS table_name").fetchone()["table_name"]
-        assert db.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()["version"] == 2
+        assert db.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()["version"] == 3
+
+
+def test_both_network_profiles_in_pilot_and_wan_only_after_promotion(monkeypatch):
+    monkeypatch.setenv('IACP_RUNTIME_STAGE','production')
+    monkeypatch.setenv('IACP_ENFORCE_WAN_ONLY','0')
+    monkeypatch.setenv('IACP_PROD_STATIC_ENABLED','1')
+    monkeypatch.setenv('IACP_NETBOX_URL','https://netbox.test.invalid/api')
+    monkeypatch.setenv('IACP_NETBOX_PREFIX_ID','52')
+    with TestClient(app) as client:
+        for profile in ['lab_dhcp','prod_static']:
+            body=public_body('pilot-'+profile.replace('_','-'));body['network_profile']=profile
+            result=client.post('/v1/instances',json=body,headers={'Idempotency-Key':profile})
+            assert result.status_code==202,result.text
+            detail=client.get('/v1/instances/'+result.json()['instance_id']).json()
+            assert detail['spec']['vlan_id']==(211 if profile=='prod_static' else None)
+        monkeypatch.setenv('IACP_ENFORCE_WAN_ONLY','1')
+        body=public_body('final-lan');body['network_profile']='lab_dhcp'
+        assert client.post('/v1/instances',json=body,headers={'Idempotency-Key':'final-lan'}).status_code==422
+        body=public_body('final-wan')
+        result=client.post('/v1/instances',json=body,headers={'Idempotency-Key':'final-wan'})
+        assert result.status_code==202,result.text
+        detail=client.get('/v1/instances/'+result.json()['instance_id']).json()
+        assert detail['spec']['network_profile']=='prod_static' and detail['spec']['vlan_id']==211

@@ -211,6 +211,7 @@ DETERMINISTIC_ERROR_MARKERS = (
     "ipam_identity_mismatch",
     "ipam_instance_required",
     "protected_instance",
+    "network_policy_mismatch",
 )
 
 RETRYABLE_COMMAND_MARKERS = (
@@ -495,6 +496,7 @@ def _ensure_static_allocation(
                 vmid=vmid,
                 name=str(spec.get("name") or instance_id),
                 customer_tag=context.get("customer_tag"),
+                tags=spec.get("tags", []),
             )
             _complete_ip_allocation(allocation["allocation_id"], reserved)
             allocation.update(
@@ -515,6 +517,8 @@ def _ensure_static_allocation(
         {
             "network_profile": "prod_static",
             "network_mode": "static",
+            "vlan_id": 211,
+            "dns_servers": ["1.1.1.1", "8.8.8.8"],
             "ipv4_cidr": allocation["address"],
             "ipv4_gateway": allocation["gateway"],
         }
@@ -530,10 +534,14 @@ def _release_static_allocation(instance_id: str | None, operation_id: str) -> bo
     if allocation is None:
         return True
     try:
+        instance = instance_identity(instance_id)
+        if instance.get("vmid") is not None:
+            if not physical_presence(ProxmoxClient(), int(instance["vmid"]), False):
+                raise NetBoxError("IPAM_VM_STILL_PRESENT", uncertain=True)
         client = NetBoxClient()
         client.release(allocation, marker=allocation["marker"])
-    except NetBoxError as error:
-        _mark_ip_allocation(allocation["allocation_id"], "release_pending", error=error.code)
+    except (NetBoxError, ProxmoxError) as error:
+        _mark_ip_allocation(allocation["allocation_id"], "release_pending", error=getattr(error,"code","IPAM_ABSENCE_UNCONFIRMED"))
         emit(operation_id, "ipam.release.pending", "uncertain", "IPAM_RELEASE_PENDING")
         return False
     _mark_ip_allocation(allocation["allocation_id"], "released")
@@ -901,6 +909,17 @@ def ensure_guest_identity_for_operation(
     spec: dict,
     started: bool = True,
 ) -> dict | None:
+    if stack == "mng01" and spec.get("network_profile") == "prod_static":
+        if not started:
+            return None
+        from worker.service_bootstrap import prepare
+        try:
+            return prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id, spec=spec,
+                           heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="static_guest_validation"))
+        except GuestIdentityError:
+            raise
+        except Exception as error:
+            raise GuestIdentityError("STATIC_GUEST_VALIDATION_UNCERTAIN") from error
     if not guest_identity_required(spec, stack, vmid):
         return None
     if not started:
@@ -916,6 +935,11 @@ def ensure_guest_identity_for_operation(
             instance_id=instance_id,
             heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="guest_identity"),
         )
+        from worker.service_bootstrap import prepare
+        binding = prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id,
+                          heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="service_bootstrap")) if spec.get("dns_servers") else None
+        if binding:
+            emit(operation_id, "service.binding.prepared", "succeeded", "Identidad SSH y resolvers verificados por QEMU Guest Agent")
         detail = {"ipv4": result.get("ipv4"), "mode": result.get("mode")}
         emit(operation_id, "guest.identity.verified", "succeeded", json.dumps(detail, sort_keys=True))
         return result
@@ -1349,7 +1373,6 @@ def execute(worker_id: str, operation: dict) -> None:
     source_payload: dict = {}
     secret_path: str | None = operation.get("secret_path")
     requested_started: bool | None = None
-    network_model: str | None = None
     try:
         payload = json.loads(operation["payload_json"])
         command = payload["command"]
@@ -1409,6 +1432,9 @@ def execute(worker_id: str, operation: dict) -> None:
         secret_path = secret_path_for_command(command, source_operation, operation)
 
         if command in {"plan", "provision"}:
+            from api.network_policy import selected_profile, wan_only
+            if wan_only() and (payload.get("spec") or {}).get("network_profile", "lab_dhcp") != selected_profile():
+                raise RuntimeError("NETWORK_POLICY_MISMATCH")
             spec = payload.get("spec")
             if not spec:
                 raise RuntimeError(f"{command} requiere spec")
@@ -1417,7 +1443,6 @@ def execute(worker_id: str, operation: dict) -> None:
                 emit(operation_id, "proxmox.pool.validated", "ok", pool_id)
                 golden = observe(spec["image"], client)
                 emit(operation_id, "golden.observed", "ok", spec["image"])
-                network_model = golden.get("network_model") or "virtio"
                 requested_started = bool(spec.get("started", True))
                 target_node = target_node or select_target_node(client)
                 vmid = allocate(operation_id, client, node=target_node)

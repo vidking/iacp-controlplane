@@ -321,3 +321,13 @@ variable "boot_disk" {
     error_message = "boot_disk requiere interfaz y datastore válidos, tamaños enteros positivos sin reducción y opciones de disco compatibles."
   }
 }
+
+variable "dns_servers" {
+  description = "Resolvers explícitos; vacío conserva la configuración anterior."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for server in var.dns_servers : contains(["1.1.1.1", "8.8.8.8"], server)])
+    error_message = "Los resolvers autorizados son 1.1.1.1 y 8.8.8.8."
+  }
+}

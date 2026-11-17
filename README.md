@@ -106,3 +106,15 @@ migración se conserva en [`docs/MIGRACION_CONTROLPLANE.md`](docs/MIGRACION_CONT
 
 Consulta [`docs/API_MANUAL_DESARROLLO.md`](docs/API_MANUAL_DESARROLLO.md) para
 consumir el contrato `/v1`.
+
+## Servicios y agentes (piloto deshabilitado)
+
+El catálogo aditivo `/v1/applications` y los pedidos `/v1/service-instances`
+coordinan VM + aplicación. Dos workers del perfil Compose `services` usan una cola
+PostgreSQL propia; las seis plazas Terraform permanecen independientes.
+Consulta [configuración, contratos y requisitos operativos](docs/SERVICIOS_AGENTES.md).
+No habilitar la ejecución sin releases y bindings SSH verificados.
+
+Para reconstruir la imagen y repetir las pruebas con PostgreSQL y los pools 6+2
+en Docker local: `.venv/bin/python scripts/test_local_docker.py`. El comando
+produce evidencias y no se conecta al clúster MNG.

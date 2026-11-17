@@ -102,6 +102,7 @@ class InstanceSpec(BaseModel):
     memory_mb: int = Field(default=2048, ge=512, le=16384)
     disk_gb: int = Field(default=20, ge=20, le=400)
     network_profile: NetworkProfile = "lab_dhcp"
+    dns_servers: list[Literal["1.1.1.1", "8.8.8.8"]] = Field(default_factory=list)
     network_mode: Literal["dhcp", "static"] = "dhcp"
     vlan_id: int | None = Field(default=None, ge=1, le=4094)
     ipv4_cidr: str | None = None
@@ -160,7 +161,6 @@ class InstanceCreateRequest(BaseModel):
                         "order_id": "ORD-1001",
                         "product_id": "KVM-2",
                     },
-                    "network_profile": "lab_dhcp",
                     "tags": ["kvm-001", "postal", "smtp-relay"],
                     "start_on_create": True,
                 }
@@ -203,10 +203,7 @@ class InstanceCreateRequest(BaseModel):
         default=None,
         description="Trazabilidad opcional. Si se envía, debe contener los cuatro campos comerciales.",
     )
-    network_profile: NetworkProfile = Field(
-        default="lab_dhcp",
-        description="Perfil publicado por GET /v1/network-profiles. No se envían IP ni gateway.",
-    )
+    network_profile: NetworkProfile | None = Field(default=None, description="Solo seleccionable en develop/lab. Producción exige prod_static.")
     tags: list[TagValue] = Field(
         default_factory=list,
         description=(

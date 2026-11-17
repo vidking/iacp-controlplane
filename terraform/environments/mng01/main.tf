@@ -28,6 +28,7 @@ module "kvm" {
   ipv4_gateway           = var.instance.ipv4_gateway
   cloudinit_datastore_id = var.instance.cloudinit_datastore_id
   cloudinit_username     = var.instance.cloudinit_username
+  dns_servers            = var.instance.dns_servers
   ssh_public_keys        = var.instance.ssh_public_keys
   root_password          = var.root_password
   guest_agent_enabled    = var.instance.guest_agent_enabled

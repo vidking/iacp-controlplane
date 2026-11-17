@@ -72,7 +72,7 @@ def _compose_args(data: dict, compose: Path, env_file: Path) -> list[str]:
     return [
         "docker", "compose", "--project-name", data["project"],
         "--env-file", str(env_file), "-f", str(compose),
-    ]
+    ] + (["--profile", "services"] if data.get("services_enabled", False) else [])
 
 
 def _compose_config(data: dict, compose: Path, env_file: Path) -> dict:
@@ -105,6 +105,34 @@ def _extra_host_map(service: dict) -> dict[str, str]:
             host, address = value.split(separator, 1)
             result[host.strip()] = address.strip()
     return result
+
+
+def _private_environment(path: Path) -> dict:
+    from dotenv import dotenv_values
+    if not path.is_file() or (path.stat().st_mode & 0o777) != 0o600:
+        raise GateError("El entorno de referencia debe existir y tener permisos 600")
+    return dict(dotenv_values(path, interpolate=False))
+
+
+def _check_development_credentials(data: dict, env_file: Path, config: dict) -> None:
+    if data.get("stage") != "develop":
+        return
+    reference = data.get("isolation_reference_environment_file")
+    if not reference:
+        raise GateError("Falta el entorno productivo de referencia para verificar aislamiento")
+    production = _private_environment(Path(reference))
+    development = _private_environment(env_file)
+    actual = {"POSTGRES_PASSWORD": _service_env(config, "postgres").get("POSTGRES_PASSWORD"),
+              "IACP_API_TOKEN": _service_env(config, "api").get("IACP_API_TOKEN"),
+              "IACP_PROXMOX_MNG_API_TOKEN": _service_env(config, "api").get("IACP_PROXMOX_MNG_API_TOKEN")}
+    shared_mng = data.get("mng_credentials_shared", False)
+    if not isinstance(shared_mng, bool):
+        raise GateError("mng_credentials_shared debe ser booleano")
+    for key in ("POSTGRES_PASSWORD", "IACP_API_TOKEN", "IACP_PROXMOX_MNG_API_TOKEN"):
+        if actual.get(key) != development.get(key):
+            raise GateError(f"El entorno efectivo no coincide con el archivo privado: {key}")
+        if not development.get(key) or not production.get(key) or (development[key] == production[key] and not (shared_mng and key == "IACP_PROXMOX_MNG_API_TOKEN")):
+            raise GateError(f"Desarrollo requiere una credencial exclusiva: {key}")
 
 
 def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
@@ -144,6 +172,38 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("La red compartida debe ser proxy_network")
     api_env = _service_env(config, "api")
     worker_names = tuple(f"worker-{number}" for number in range(1, 7))
+    services_enabled = data.get("services_enabled", False)
+    if not isinstance(services_enabled, bool):
+        raise GateError("services_enabled debe ser booleano")
+    schema_version = data.get("schema_version", 2)
+    if type(schema_version) is not int or schema_version not in {2, 3}:
+        raise GateError("schema_version debe ser 2 o 3")
+    if services_enabled and schema_version != 3:
+        raise GateError("Los servicios requieren esquema 3")
+    service_worker_names = ("service-worker-1", "service-worker-2") if services_enabled else ()
+    app_names = ("api", *worker_names, *service_worker_names)
+    actual_names = set(config.get("services", {}))
+    if actual_names != {"postgres", *app_names}:
+        raise GateError("El inventario Compose no coincide con los pools declarados")
+    flag = str(api_env.get("IACP_SERVICES_ENABLED", "0")).lower() in {"1", "true", "yes"}
+    if flag != services_enabled:
+        raise GateError("IACP_SERVICES_ENABLED no coincide con el manifiesto")
+    if services_enabled and stage == "production" and str(api_env.get("IACP_ENFORCE_WAN_ONLY", "0")) != "1":
+        raise GateError("La promoción definitiva requiere IACP_ENFORCE_WAN_ONLY=1")
+    if services_enabled:
+        execution = data.get("service_execution_enabled", False)
+        if not isinstance(execution, bool):
+            raise GateError("service_execution_enabled debe ser booleano")
+        for name in service_worker_names:
+            env = _service_env(config, name)
+            if str(env.get("IACP_SERVICES_ENABLED", "0")) != "1":
+                raise GateError("Ambos workers de servicios deben estar habilitados")
+            if (str(env.get("IACP_SERVICE_EXECUTION_ENABLED", "0")) == "1") != execution:
+                raise GateError("El permiso de ejecución de servicios no coincide")
+            if any(env.get(key) for key in ("IACP_PROXMOX_MNG_API_TOKEN", "IACP_PROXMOX_API_TOKEN")):
+                raise GateError("Los workers de servicios no deben recibir credenciales Proxmox")
+        _check_development_credentials(data, env_file, config)
+
     worker_envs = [_service_env(config, name) for name in worker_names]
     postgres_env = _service_env(config, "postgres")
     api_service = config["services"]["api"]
@@ -224,7 +284,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("La base PostgreSQL no coincide con el entorno")
     if postgres_env.get("POSTGRES_USER") != api_env.get("PGUSER"):
         raise GateError("El usuario PostgreSQL no coincide entre API y base")
-    for environment in (api_env, *worker_envs):
+    for environment in (api_env, *worker_envs, *[_service_env(config, name) for name in service_worker_names]):
         if (
             environment.get("PGHOST") != "postgres"
             or environment.get("PGPORT") != "5432"
@@ -280,7 +340,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     if repository != "scm.cyberfuel.com/cyberfuel/iacp-controlplane":
         raise GateError("El repositorio de imagen no coincide con el artefacto aprobado")
     image_tags = set()
-    for service in ("api", *worker_names):
+    for service in app_names:
         image = config["services"][service].get("image", "")
         if not image.startswith(repository + ":"):
             raise GateError(f"La imagen de {service} no usa el repositorio aprobado")
@@ -311,6 +371,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "backend": data["backend"],
         "state_prefix": data["state_prefix"],
         "max_concurrent_per_stack": 6,
+        "service_workers": list(service_worker_names),
+        "schema_version": schema_version,
         "vmid_range": {"min": expected_vmid_range[0], "max": expected_vmid_range[1]},
         "enabled_environments": ["lab"],
         "prx_enabled": False,
@@ -686,6 +748,8 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     prefix = _compose_args(data, compose, env_file)
     statuses = _inventory(data, compose, env_file)["containers"]
     expected = {"postgres", "api", *(f"worker-{number}" for number in range(1, 7))}
+    if data.get("services_enabled", False):
+        expected.update({"service-worker-1", "service-worker-2"})
     if {item["service"] for item in statuses} != expected:
         raise GateError("No están activos PostgreSQL, API y los seis workers esperados")
     if any(item["state"] != "running" for item in statuses):
@@ -696,6 +760,7 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
         raise GateError("PostgreSQL o la API no está healthy")
     script = """
 import json, time, urllib.request
+from datetime import datetime, timezone
 from api.db import database
 health_response = urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=5)
 health = json.load(health_response)
@@ -727,22 +792,51 @@ print(json.dumps({
     'worker_ids': worker_ids,
 }))
 """
+    if data.get("services_enabled", False):
+        script = script.replace("print(json.dumps({", "payload = {").replace("\n}))", "\n}")
+        script += """
+service_worker_ids = []
+service_deadline = time.monotonic()+60
+while time.monotonic()<service_deadline:
+    with database() as db:
+        rows = db.execute('SELECT worker_id, status, last_heartbeat FROM service_workers ORDER BY worker_id').fetchall()
+        service_worker_ids = [row['worker_id'] for row in rows if row['status'] in {'idle','running'} and
+            0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(row['last_heartbeat'])).total_seconds() < 60]
+    if service_worker_ids == ['service-worker-1','service-worker-2']:
+        break
+    time.sleep(1)
+from api.service_secrets import cipher
+cipher()
+payload['service_key_ready'] = True
+payload['service_api'] = all(path in spec.get('paths', {}) for path in ['/v1/applications','/v1/service-instances','/v1/service-workers'])
+with database() as db:
+    rows = db.execute('SELECT worker_id, status, last_heartbeat FROM workers ORDER BY worker_id').fetchall()
+    fresh_ids = [row['worker_id'] for row in rows if row['status'] in {'idle','running'} and
+        0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(row['last_heartbeat'])).total_seconds() < 60]
+payload['infrastructure_workers_fresh'] = fresh_ids == expected_workers
+payload['service_worker_ids'] = service_worker_ids
+payload['service_tables'] = all(name in core_tables for name in ['service_instances','service_jobs','service_events','service_workers','service_releases','service_bindings'])
+print(json.dumps(payload))
+"""
     result = _run(prefix + ["exec", "-T", "api", "python", "-c", script], label="Verificación API")
     try:
         payload = json.loads(result.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError) as error:
         raise GateError("La verificación API no devolvió JSON válido") from error
     expected_revision = str(data.get("image_tag", ""))
-    if payload != {
+    expected_payload = {
         "health": "ready",
         "api_version": "1.0.0",
         "provision_path": True,
         "build_revision": expected_revision,
-        "schema_version": 2,
+        "schema_version": data.get("schema_version", 2),
         "ip_allocations_table": True,
         "worker_ids": [f"worker-{number}" for number in range(1, 7)],
-    }:
-        raise GateError("API, PostgreSQL, migración de esquema y seis workers no cumplen el contrato V1")
+    }
+    if data.get("services_enabled", False):
+        expected_payload.update(service_worker_ids=["service-worker-1", "service-worker-2"], service_tables=True, service_key_ready=True, service_api=True, infrastructure_workers_fresh=True)
+    if payload != expected_payload:
+        raise GateError("API, PostgreSQL, migración y pools de workers no cumplen el contrato declarado")
     return {"services": statuses, "api": payload}
 
 

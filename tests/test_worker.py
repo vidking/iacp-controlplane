@@ -1185,3 +1185,20 @@ def test_operation_output_is_bounded_and_redacts_secret(monkeypatch):
     assert "root-secret" not in value
     assert "output truncated" in value
     assert len(value) <= 4096
+
+
+def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
+    import worker.main as main
+    allocation = {"allocation_id": "allocation-test", "marker": "iacp-instance=test"}
+    updates, events = [], []
+    monkeypatch.setattr(main, "_ip_allocation", lambda _: allocation)
+    monkeypatch.setattr(main, "instance_identity", lambda _: {"vmid": 40003})
+    monkeypatch.setattr(main, "ProxmoxClient", lambda: object())
+    monkeypatch.setattr(main, "physical_presence", lambda *_: False)
+    monkeypatch.setattr(main, "NetBoxClient", lambda: pytest.fail("No debe liberar una IP con VM presente"))
+    monkeypatch.setattr(main, "_mark_ip_allocation", lambda *args, **kwargs: updates.append((args, kwargs)))
+    monkeypatch.setattr(main, "emit", lambda *args: events.append(args))
+    assert main._release_static_allocation("instance-test", "operation-test") is False
+    assert updates[0][0] == ("allocation-test", "release_pending")
+    assert updates[0][1]["error"] == "IPAM_VM_STILL_PRESENT"
+    assert events[0][1] == "ipam.release.pending"

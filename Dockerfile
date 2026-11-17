@@ -15,13 +15,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IACP_WORKDATA_DIR=/var/lib/iacp-controlplane \
     IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog.json
 
-RUN groupadd --system iacp && useradd --system --gid iacp --home-dir /app iacp
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system --gid 999 iacp && useradd --system --uid 999 --gid iacp --home-dir /app iacp
 COPY --from=terraform /bin/terraform /usr/local/bin/terraform
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY api ./api
 COPY worker ./worker
+COPY services ./services
 COPY terraform ./terraform
 RUN mkdir -p /opt/terraform-plugin-cache /var/lib/iacp-controlplane && \
     cd /app/terraform/environments/mng01 && \

@@ -258,18 +258,18 @@
       imageSelect.append(option);
     });
     const profileSelect = $("network-profile");
-    const currentProfile = profileSelect.value;
     profileSelect.innerHTML = "";
-    state.networkProfiles.forEach((profile) => {
+    (profilesBody.network_profiles || []).forEach((profile) => {
       const option = document.createElement("option");
       option.value = profile.profile_id;
+      option.textContent = profile.profile_id === "prod_static" ? "WAN estática · VLAN 211" : "LAN de pruebas · DHCP";
       option.disabled = profile.enabled === false;
-      option.textContent = `${profile.label} · ${profile.enabled === false ? "no configurado" : profile.network_mode}`;
       profileSelect.append(option);
     });
+    profileSelect.value = profilesBody.active_profile;
+    profileSelect.disabled = profilesBody.selection === "server-managed";
     planSelect.value = planById(currentPlan) ? currentPlan : (planById("kvm-2") ? "kvm-2" : "");
     imageSelect.value = imageById(currentImage) ? currentImage : (imageById("ubuntu-2404") ? "ubuntu-2404" : "");
-    profileSelect.value = networkProfileById(currentProfile)?.enabled !== false ? currentProfile : "lab_dhcp";
     updateCatalogHelp();
     $("catalog-summary").textContent = `${state.plans.length} planes · ${state.images.length} Golden Images · ${state.networkProfiles.length} perfiles de red`;
   }
