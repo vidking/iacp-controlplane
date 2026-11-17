@@ -230,3 +230,15 @@ def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
             spec=spec,
             heartbeat=lambda: None,
         )
+
+
+def test_static_guest_readiness_requires_gateway_neighbor():
+    # Ejecuta el predicado real del programa remoto con observaciones de iproute2.
+    tree = ast.parse(bootstrap.PROGRAM)
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == 'gateway_ready')
+    namespace = {}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<gateway-probe>', 'exec'), namespace)
+    ready = namespace['gateway_ready']
+    assert not ready([{'dst':'190.0.231.1','dev':'eth0','state':['INCOMPLETE']}], '190.0.231.1','eth0')
+    assert ready([{'dst':'190.0.231.1','dev':'eth0','state':['STALE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')
+    assert not ready([{'dst':'190.0.231.1','dev':'eth1','state':['REACHABLE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')

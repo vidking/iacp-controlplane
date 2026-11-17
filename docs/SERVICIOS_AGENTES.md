@@ -438,3 +438,52 @@ Las recetas Docker y TLS se apoyan en la documentación oficial de
 [certificados explícitos de Caddy](https://caddyserver.com/docs/caddyfile/directives/tls).
 La compatibilidad concreta con las Golden Images de AlmaLinux se determina con
 la matriz física; la prueba de sintaxis de Ansible por sí sola no la certifica.
+
+### Resultado de implementación en dev — 2026-11-17
+
+**PASS integración piloto:** revisión `b7947f613661db368c85bea44aa2b78b7e78ab79`,
+publicada en `devops/features`, desplegada exclusivamente en el IACP Control Plane
+(VM 104) mediante el Compose canónico e `iacpctl`. Preflight y verificación PASS.
+Configuración canónica unificada; autenticación real devolvió HTTP 200. Prueba
+local Docker: 173 tests PASS, esquema 3 y pools 6+2. Caddy real validó ambas
+configuraciones TLS por IP con código 0.
+
+**PASS recuperación controlada:** las VMs WAN 40007, 40008 y 40010 se reconciliaron
+por API después de corregir el payload de identidad. No se reclonaron ni cambiaron
+sus IP durante la recuperación. La tanda histórica alcanzó seis operaciones
+simultáneas; esto no constituye una matriz WAN aprobada.
+
+**BLOCKED conectividad WAN:** en la VM 40008 de `mng01`, se observó por QEMU Guest
+Agent la dirección `190.0.231.3/24`, ruta por `190.0.231.1`, interfaz `eth0` y SSH
+escuchando en 22. La tabla de vecinos mostró `190.0.231.1 INCOMPLETE`, sin MAC;
+`ping` devolvió Destination Host Unreachable y DNS agotó el tiempo. Desde el
+Control Plane y la estación local no se obtuvo conexión SSH WAN. La API Proxmox
+mostró `vmbr0` activo sobre `bond1`, VLAN aware y `bridge_vids=2-4094`.
+Estos datos acotan el bloqueo al acceso de capa 2 al gateway; no prueban en qué
+tramo concreto del bridge, uplink, trunk o gateway está la interrupción.
+
+**PASS eliminación y liberación:** las seis VMs del segundo ensayo se apagaron
+y eliminaron mediante API. Sus tres reservas WAN quedaron `released`. Evidencia
+operativa: `/opt/iacp/evidence/dev-b7947f6-recovery-20261117/cleanup.json`.
+La evidencia original de aprovisionamiento y las operaciones se conservaron.
+
+**Pendiente de Jarvis / redes:** verificar que el gateway `190.0.231.1/24` esté
+activo en VLAN 211, y comprobar el paso de dicha VLAN entre `vmbr0`, `bond1` y el
+puerto/trunk del clúster MNG. No cambiar a LAN ni retirar el tag para aprobar WAN.
+No se modificaron switches, firewalls, gateway, Ceph ni producción.
+
+Se añade una comprobación de vecino del gateway antes de declarar preparada una
+VM estática. Una dirección y una ruta configuradas no bastan: si no hay vecino
+resuelto, el worker conserva la VM y la reserva en estado incierto con
+`STATIC_GATEWAY_UNREACHABLE` para recuperación. No libera una IP con VM presente.
+
+**Certificación integral: BLOCKED.** Las matrices de 16 casos por categoría y sus
+dos ciclos no se ejecutaron mientras faltaba conectividad WAN. Ansible permanece
+deshabilitado. No hay GO integral ni promoción hacia `main`.
+
+Validación final de la protección del gateway: **174 tests PASS** mediante
+`.venv/bin/python scripts/test_local_docker.py --evidence-dir /tmp/iacp-devops-local-gateway-final-20261117`,
+con tres advertencias de deprecación. Ruff F, compilación Python, sintaxis JavaScript
+y `git diff --check` también dieron PASS. Las direcciones `.2`, `.3` y `.4` volvieron
+a aparecer disponibles en NetBox, el gateway siguió reservado y no quedaron VMs
+de los ensayos. No había operaciones activas ni inciertas; seis workers idle.

@@ -41,6 +41,15 @@ if mode=='static':
  assert any(entry.get('local')==expected_address and entry.get('prefixlen')==int(expected_prefix) for entry in interface.get('addr_info',[]))
  routes=json.loads(subprocess.run([ip,'-j','route','show','default'],check=True,capture_output=True,text=True).stdout)
  assert any(route.get('gateway')==expected_gateway and route.get('dev')==interface['ifname'] for route in routes)
+ import socket
+ try:
+  with socket.create_connection(('1.1.1.1',443),timeout=5):pass
+ except OSError:pass
+ neighbors=json.loads(subprocess.run([ip,'-j','neigh','show','to',expected_gateway],check=True,capture_output=True,text=True).stdout)
+ def gateway_ready(records,gateway,device):
+  return any(record.get('dst')==gateway and record.get('dev')==device and record.get('lladdr') and set(record.get('state',[])).intersection({'REACHABLE','STALE','DELAY','PROBE','PERMANENT'}) for record in records)
+ assert gateway_ready(neighbors,expected_gateway,interface['ifname']), 'IACP_GATEWAY_UNREACHABLE'
+
  resolver=shutil.which('resolvectl')
  if resolver:
   dns=subprocess.run([resolver,'dns',interface['ifname']],check=True,capture_output=True,text=True).stdout
@@ -183,6 +192,8 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         status = client.guest_agent_exec_status(node, vmid, pid)
         if status.get("exited"):
             if status.get("exitcode") != 0:
+                if "IACP_GATEWAY_UNREACHABLE" in str(status.get("err-data", "")):
+                    raise GuestIdentityError("STATIC_GATEWAY_UNREACHABLE")
                 raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
             observed = json.loads(status.get("out-data", "{}"))
             break
