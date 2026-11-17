@@ -213,42 +213,6 @@ def execute(service, job, heartbeat):
                     "no_log": True,
                 }
             )
-        if service["application_id"] == "n8n":
-            tasks += [
-                {
-                    "name": "Hash de acceso inicial",
-                    "ansible.builtin.command": {
-                        "argv": [
-                            "docker",
-                            "run",
-                            "--rm",
-                            "-i",
-                            compose["services"]["caddy"]["image"],
-                            "caddy",
-                            "hash-password",
-                        ],
-                        "stdin": secrets["admin_password"],
-                    },
-                    "register": "password_hash",
-                    "no_log": True,
-                },
-                {
-                    "name": "Proteger acceso inicial",
-                    "ansible.builtin.replace": {
-                        "path": root + "/Caddyfile",
-                        "regexp": "IACP_BCRYPT_PLACEHOLDER",
-                        "replace": "{{ password_hash.stdout | trim }}",
-                    },
-                    "no_log": True,
-                },
-                {
-                    "name": "Eliminar archivo temporal",
-                    "ansible.builtin.file": {
-                        "path": root + "/onboarding_password",
-                        "state": "absent",
-                    },
-                },
-            ]
         base = ["docker", "compose", "--project-directory", root]
         if service["application_id"] == "openclaw":
             tasks.append(
@@ -400,13 +364,6 @@ def execute(service, job, heartbeat):
                         "url": f"https://{configuration['domain']}/",
                         "validate_certs": True,
                         **({"ca_path": root + "/pilot-ca.crt"} if configuration.get("access_mode") == "ip" else {}),
-                        "url_username": "installer"
-                        if service["application_id"] == "n8n"
-                        else None,
-                        "url_password": secrets["admin_password"]
-                        if service["application_id"] == "n8n"
-                        else None,
-                        "force_basic_auth": service["application_id"] == "n8n",
                         "status_code": [200],
                     },
                     "no_log": True,

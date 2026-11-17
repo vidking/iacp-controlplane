@@ -397,13 +397,49 @@ def test_n8n_recipe_waits_for_database_and_migrations():
     compose, _ = render('n8n', {'domain':'n8n.example.invalid','access_mode':'domain'}, {
         'database_password':'ficticia-base-de-datos',
         'encryption_key':'ficticia-clave-de-cifrado',
-        'admin_user':'installer',
-        'admin_password':'clave-ficticia-de-instalacion',
     }, release)
     healthcheck = compose['services']['app']['healthcheck']
     assert '/healthz/readiness' in ' '.join(healthcheck['test'])
     assert healthcheck['start_period'] == '30s'
     assert compose['services']['app']['depends_on']['postgres']['condition'] == 'service_healthy'
+
+
+def test_n8n_recipe_leaves_authentication_to_n8n():
+    from pathlib import Path
+    release = json.loads((Path(__file__).parents[1] / 'services/releases.json').read_text())['n8n']
+    compose, files = render('n8n', {'domain':'n8n.example.invalid','access_mode':'domain'}, {
+        'database_password':'ficticia-base-de-datos',
+        'encryption_key':'ficticia-clave-de-cifrado',
+    }, release)
+    caddyfile = files['Caddyfile']
+    assert 'reverse_proxy app:5678' in caddyfile
+    assert 'basic_auth' not in caddyfile
+    assert 'onboarding_password' not in files
+    assert compose['services']['app']['environment']['N8N_PROTOCOL'] == 'https'
+
+
+def test_n8n_access_instructions_do_not_return_proxy_credentials(client, monkeypatch):
+    request = body('prueba-service-n8n-instrucciones')
+    request['application_id'] = 'n8n'
+    request['configuration'] = {'access_mode': 'ip'}
+    order = client.post(
+        '/v1/service-instances',
+        json=request,
+        headers={'Idempotency-Key': 'n8n-access-instructions'},
+    ).json()
+    with database() as db:
+        stored = db.execute('SELECT secrets_encrypted FROM service_instances').fetchone()
+        assert 'admin_password' not in decrypt(stored['secrets_encrypted'])
+    ready(order['instance_id'])
+    monkeypatch.setattr(services, 'execute', lambda *_: None)
+    services.process('service-worker-test', services.claim('service-worker-test'))
+    response = client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials"
+    )
+    assert response.status_code == 200
+    assert response.json()['owner_setup_required'] is True
+    assert 'crear la cuenta propietaria' in response.json()['access_instructions']
+    assert 'onboarding_password' not in response.json()
 
 
 def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):

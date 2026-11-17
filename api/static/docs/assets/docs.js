@@ -716,7 +716,7 @@
   }
 
   function clearServiceCredentials() {
-    $("service-credentials-output").textContent = "Las credenciales no se muestran.";
+    $("service-credentials-output").textContent = "La información de acceso está oculta.";
   }
 
   async function refreshServices() {
@@ -752,6 +752,9 @@
     } else url.removeAttribute("href");
     $("service-ca").disabled = !ready || service.configuration.access_mode !== "ip";
     $("service-credentials").disabled = !service.credentials_available || state.credentialsBusy;
+    $("service-credentials").textContent = service.application_id === "n8n"
+      ? "Ver instrucciones de acceso"
+      : "Mostrar credenciales una vez";
     $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
     $("service-power-start").disabled = !kvmReady || service.power_state !== "stopped";
     $("service-power-shutdown").disabled = !kvmReady || service.power_state !== "running";

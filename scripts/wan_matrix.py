@@ -330,15 +330,21 @@ class Matrix:
         item = dict(case, **result, name=name, password=password)
         return item
 
-    def web(self, item, path, method="GET", data=None, extra_headers=None):
+    def web(
+        self, item, path, method="GET", data=None, extra_headers=None, basic_auth=True
+    ):
         context = ssl.create_default_context(cafile=str(item["ca"]))
         credentials = item["credentials"]
-        user = credentials.get("admin_user", credentials.get("onboarding_username"))
-        password = credentials.get(
-            "admin_password", credentials.get("onboarding_password")
-        )
-        authorization = base64.b64encode((user + ":" + password).encode()).decode()
-        headers = {"Authorization": "Basic " + authorization}
+        headers = {}
+        if basic_auth:
+            user = credentials.get("admin_user")
+            password = credentials.get("admin_password")
+            if not user or not password:
+                raise RuntimeError("WEB_CREDENTIALS_UNAVAILABLE")
+            authorization = base64.b64encode(
+                (user + ":" + password).encode()
+            ).decode()
+            headers["Authorization"] = "Basic " + authorization
         if data is not None:
             headers["Content-Type"] = "application/json"
         headers.update(extra_headers or {})
@@ -371,6 +377,7 @@ class Matrix:
                     "lastName": "Servicio",
                     "password": password,
                 }).encode(),
+                basic_auth=False,
             )
             result = json.loads(body)
             assert status == 200 and (result.get("data") or result).get("email") == email, "N8N_OWNER_SETUP_FAILED"
@@ -379,6 +386,7 @@ class Matrix:
             "/rest/login",
             "POST",
             json.dumps({"emailOrLdapLoginId": email, "password": password}).encode(),
+            basic_auth=False,
         )
         result = json.loads(body)
         assert status == 200 and (result.get("data") or result).get("email") == email, "N8N_OWNER_LOGIN_FAILED"
@@ -391,12 +399,14 @@ class Matrix:
                 "/rest/login",
                 "POST",
                 json.dumps({"emailOrLdapLoginId": email, "password": password + "X"}).encode(),
+                basic_auth=False,
             )
             assert status == 401, "N8N_INVALID_PASSWORD_ACCEPTED"
         status, body, _ = self.web(
             item,
             "/rest/workflows?skip=0&take=10",
             extra_headers={"Cookie": cookie},
+            basic_auth=False,
         )
         assert status == 200 and any(
             workflow.get("id") == "iacpValidation"
@@ -413,9 +423,11 @@ class Matrix:
                 self.web(item, path, "PUT", b"iacp-persistence")
             assert self.web(item, path)[1] == b"iacp-persistence"
         elif product == "n8n":
-            readiness, body, _ = self.web(item, "/healthz/readiness")
+            readiness, body, _ = self.web(
+                item, "/healthz/readiness", basic_auth=False
+            )
             assert readiness == 200 and json.loads(body).get("status") == "ok", "N8N_NOT_READY"
-            assert self.web(item, "/")[0] == 200
+            assert self.web(item, "/", basic_auth=False)[0] == 200
             if not after_reboot:
                 workflow = {
                     "id": "iacpValidation",

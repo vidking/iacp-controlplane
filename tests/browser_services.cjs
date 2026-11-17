@@ -38,7 +38,7 @@ const server = http.createServer((request, response) => {
       else if (pathname === '/v1/service-instances/service-test' && request.method() === 'DELETE') { deleted=true; deletePosts+=1; body={operation_id:'operation-delete-test'}; }
       else if (pathname === '/v1/service-instances') body = {services:created && !deleted ? [service()] : [],total:created && !deleted ? 1 : 0};
       else if (pathname === '/v1/service-instances/service-test') body = service();
-      else if (pathname.endsWith('/credentials')) { assert.equal(request.method(),'POST'); retrieved=true; credentialPosts+=1; body={onboarding_username:'installer',onboarding_password:'clave-ficticia'}; }
+      else if (pathname.endsWith('/credentials')) { assert.equal(request.method(),'POST'); retrieved=true; credentialPosts+=1; body={owner_setup_required:true,access_instructions:'Crea la cuenta propietaria de n8n en el primer acceso.'}; }
       else if (pathname.endsWith('/deliver')) { deliveryKey=request.headers()['idempotency-key']; delivered=true; body={job_id:'delivery-test'}; }
       else if (pathname.startsWith('/v1/instances/instance-test/power/')) { const action=pathname.split('/').at(-1); powerState=action==='shutdown'?'stopped':'running'; body={operation_id:`operation-${action}-test`}; }
       else if (pathname.startsWith('/v1/operations/')) body = {operation_id:pathname.split('/').at(-1),instance_id:'instance-test',status:'completed'};
@@ -80,15 +80,16 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('#service-url').getAttribute('href'),'https://192.0.2.10/');
     await page.locator('[data-service-select="service-test"]').click();
     assert.equal(await page.locator('#service-detail').isVisible(),true);
+    assert.match(await page.locator('#service-credentials').textContent(),/instrucciones de acceso/);
     assert.equal(await page.locator('#service-reboot').isEnabled(),true);
     assert.equal(await page.locator('#service-power-shutdown').isEnabled(),true);
     assert.equal(await page.locator('#delete-service').isEnabled(),false);
     assert.equal(credentialPosts,0);
     await page.locator('#service-credentials').click();
-    await page.waitForFunction(() => document.querySelector('#service-credentials-output').textContent.includes('clave-ficticia'));
+    await page.waitForFunction(() => document.querySelector('#service-credentials-output').textContent.includes('cuenta propietaria'));
     assert.equal(credentialPosts,1);
     await page.locator('#clear-service-credentials').click();
-    assert.equal((await page.locator('#service-credentials-output').textContent()).includes('clave-ficticia'),false);
+    assert.equal((await page.locator('#service-credentials-output').textContent()).includes('cuenta propietaria'),false);
     await page.locator('#deliver-service').click();
     await page.waitForFunction(() => document.querySelector('#service-status').textContent.includes('delivered'));
     assert.ok(deliveryKey); assert.equal(credentialPosts,1);

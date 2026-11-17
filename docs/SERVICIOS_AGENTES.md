@@ -147,11 +147,12 @@ Los errores de aplicación no destruyen la VM ni liberan su dirección.
 
 - **Nextcloud:** PostgreSQL, Redis, cron, Caddy y administrador inicial. Se comprueba
   instalación mediante `occ status` además de HTTPS y la comprobación revisada.
-- **n8n:** PostgreSQL y clave de cifrado estable. Se protege el alta de propietario
-  con Basic Auth en Caddy: usuario `installer` y contraseña recuperada por API.
-  El cliente crea su propietario en la interfaz, configura sus integraciones y
-  decide cuándo retirar esa protección del proxy. La contraseña inicial es para
-  el proxy, no una cuenta precreada de n8n. Confirmar licencia del modelo comercial.
+- **n8n:** PostgreSQL y clave de cifrado estable. Caddy solo termina TLS y reenvía
+  el tráfico a n8n; no agrega Basic Auth, para que el navegador no presente un
+  diálogo ajeno a la aplicación. En el primer acceso n8n solicita crear la cuenta
+  propietaria. El cliente define y conserva esas credenciales; después usa el
+  login de n8n. La API informa ese paso y no entrega una contraseña ficticia de
+  proxy. Confirmar licencia del modelo comercial.
 - **Hermes:** configuración persistente y proveedor OpenRouter en esta receta v1.
   `configuration.model` y `secrets.provider_api_key` son obligatorios. Telegram es
   opcional y requiere token y `telegram_allowed_users` explícitos.

@@ -133,11 +133,10 @@ def render(application, configuration, secrets, release):
                 "N8N_PROXY_HOPS": "1",
             }
         )
-        # Proteger el alta de propietario hasta que el cliente administre Caddy.
-        # Caddy requiere bcrypt; el hash se obtiene con `caddy hash-password` en la receta remota.
-        files["onboarding_password"] = secrets["admin_password"]
+        # La autenticación pertenece a n8n. Un Basic Auth en Caddy presenta un
+        # diálogo del navegador y oculta la pantalla de alta/login de la aplicación.
         files["Caddyfile"] = (
-            f"https://{configuration['domain']} {{\n{tls} basic_auth {{\n  installer IACP_BCRYPT_PLACEHOLDER\n }}\n reverse_proxy app:5678\n}}\n"
+            f"https://{configuration['domain']} {{\n{tls} reverse_proxy app:5678\n}}\n"
         )
     elif application == "hermes":
         app["volumes"] = ["./data:/opt/data:Z"]

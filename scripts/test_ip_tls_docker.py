@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Validar TLS por IP detrás de Docker NAT con una CA temporal y sin MNG."""
 
-import base64
 import json
 import os
 from pathlib import Path
@@ -50,13 +49,6 @@ def validate():
                 .replace("reverse_proxy app:5678", 'respond "validado"')
             )
             image = releases[application]["images"]["caddy"]
-            if application == "n8n":
-                # Reproduce también el salto de línea que añade command.stdin en Ansible.
-                hashed = run(
-                    ["docker", "run", "--rm", "-i", image, "caddy", "hash-password"],
-                    input=credentials["admin_password"] + "\n",
-                )
-                config = config.replace("IACP_BCRYPT_PLACEHOLDER", hashed)
             (root / "Caddyfile").write_text(config)
             container = run(
                 [
@@ -77,13 +69,6 @@ def validate():
                 ]["Ports"]["443/tcp"][0]["HostPort"]
                 url = "https://127.0.0.1:" + port
                 headers = {}
-                if application == "n8n":
-                    headers["Authorization"] = (
-                        "Basic "
-                        + base64.b64encode(
-                            ("installer:" + credentials["admin_password"]).encode()
-                        ).decode()
-                    )
                 for attempt in range(30):
                     try:
                         with urlopen(
@@ -100,22 +85,12 @@ def validate():
                         if attempt == 29:
                             raise
                         time.sleep(0.2)
-                if application == "n8n":
-                    try:
-                        urlopen(url, context=context, timeout=5)
-                        raise AssertionError(
-                            "El alta de propietario debe permanecer protegida"
-                        )
-                    except HTTPError as error:
-                        assert error.code == 401
                 print(
                     json.dumps(
                         {
                             "application": application,
                             "tls_ip_verified": "PASS",
-                            "basic_auth": "PASS"
-                            if application == "n8n"
-                            else "no aplica",
+                            "proxy_auth": "none",
                         }
                     )
                 )

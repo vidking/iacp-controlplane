@@ -290,9 +290,10 @@ curl --fail-with-body --silent --show-error \
 
 Espera a que el trabajo indique `succeeded` y la aplicación llegue a
 `awaiting_customer`. n8n debe responder su readiness cuando PostgreSQL está
-conectado y migrado. Recupera las credenciales iniciales una sola vez y guarda
-la CA pública del piloto para TLS por IP; no publiques esos archivos ni su
-contenido en terminales compartidas o tickets:
+conectado y migrado. Consulta una sola vez las credenciales de Nextcloud o las
+instrucciones de acceso inicial de n8n; la cuenta propietaria de n8n se crea en
+su propia interfaz. Guarda también la CA pública del piloto para TLS por IP; no
+publiques esos archivos ni su contenido en terminales compartidas o tickets:
 
 ```bash
 umask 077
@@ -308,8 +309,9 @@ chmod 600 service-credentials.json iacp-pilot-ca.crt
 ```
 
 Verifica HTTPS y acceso SSH, inicia sesión en Nextcloud o crea el propietario
-de n8n detrás de la protección inicial y valida la aplicación. Después de
-guardar de forma segura las credenciales, completa la entrega:
+de n8n en su pantalla de primer acceso y valida la aplicación. El proxy no
+solicita usuario y contraseña HTTP Basic. Después de guardar de forma segura
+las credenciales de Nextcloud o definir las propias de n8n, completa la entrega:
 
 ```bash
 curl --fail-with-body --silent --show-error \

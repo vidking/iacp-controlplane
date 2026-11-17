@@ -107,8 +107,9 @@ La evidencia identifica también la huella SHA-256 del runner utilizado.
 La prueba local de TLS debe incluir un handshake por IP detrás de Docker NAT,
 no solo `caddy validate`. `scripts/test_ip_tls_docker.py` genera una CA temporal,
 comprueba Nextcloud/n8n con la dirección loopback, valida el certificado sin SNI y
-verifica el acceso inicial de n8n, incluido el rechazo sin credencial. No utiliza
-MNG. Las recetas IP fijan `default_sni` para seleccionar el certificado correcto.
+verifica que el proxy no agrega autenticación HTTP Basic; las credenciales y el
+alta de propietario se gestionan en las pantallas nativas de cada aplicación. No
+utiliza MNG. Las recetas IP fijan `default_sni` para seleccionar el certificado correcto.
 Los sockets SSH de Ansible se mantienen en el directorio temporal privado del
 trabajo, compatible con el filesystem de solo lectura de los workers.
 

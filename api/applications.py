@@ -53,6 +53,10 @@ def create(request: ServiceCreateRequest, key: str | None):
         service_id, job_id, operation_id = (str(uuid.uuid4()) for _ in range(3))
         credentials = installation_credentials()
         credentials.update(body["secrets"])
+        if request.application_id == "n8n":
+            # n8n inicializa su propio propietario en la interfaz; no se crea ni
+            # se entrega una contraseña de proxy que el usuario no puede usar ahí.
+            credentials.pop("admin_password", None)
         try:
             envelope = encrypt(credentials)
         except (OSError, ValueError, RuntimeError):
@@ -279,9 +283,12 @@ def credentials(service_id):
             }
         elif row["application_id"] == "n8n":
             result = {
-                "onboarding_username": "installer",
-                "onboarding_password": secrets["admin_password"],
                 "owner_setup_required": True,
+                "access_instructions": (
+                    "Abre la URL del servicio. En el primer acceso, n8n solicita "
+                    "crear la cuenta propietaria; después podrás iniciar sesión "
+                    "con las credenciales que definas allí."
+                ),
             }
         elif row["application_id"] == "openclaw":
             result = {"gateway_token": secrets["gateway_token"], "access": "ssh"}

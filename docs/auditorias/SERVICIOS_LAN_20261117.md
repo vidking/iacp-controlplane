@@ -78,3 +78,14 @@ Los agentes se abordarán después de estabilizar ambos servicios. No hay
 certificación integral ni autorización de promoción a producción derivada de
 estas evidencias parciales. Los archivos privados de evidencia permanecen en el
 host; no copiar secretos, claves privadas ni Terraform State a Git.
+
+La tabla anterior conserva el estado de aquella ejecución. El ciclo posterior
+registrado a continuación actualiza únicamente el dictamen del ciclo LAN 1.
+
+## Resultado del ciclo LAN de servicios — 2026-11-17
+
+| Comprobación | Resultado | Evidencia y límite |
+| --- | --- | --- |
+| Nextcloud y n8n, ciclo 1, revisión `7d65755acd25dfe01bace70191b7753d45c19bb9` | PASS | `/opt/iacp/evidence/lan-services-ciclo1-20261117163430/results.jsonl`; 16 combinaciones y 2 controles, cuatro planes por Ubuntu 24.04 y AlmaLinux 9; seis operaciones simultáneas; SSH por llave y contraseña, TLS por IP con CA, validación de aplicación, reinicio, persistencia y eliminación física. |
+| Limpieza y capacidad al terminar el ciclo 1 | PASS | El runner registró `COMPLETE PASS`; las VMs propias quedaron ausentes de Proxmox; cero operaciones activas, en cola o inciertas; seis workers de infraestructura y dos workers de servicios sanos e idle. Este ciclo no valida la revisión posterior de acceso n8n ni la capacidad de cuatro workers. |
+| Diálogo HTTP Basic de n8n | Causa identificada; corrección pendiente de despliegue | La receta de la revisión ejecutada envolvía la aplicación con `basic_auth` de Caddy. La candidata elimina esa capa para que n8n presente su alta/login nativos. La advertencia de confianza TLS de la CA del piloto es independiente. |
