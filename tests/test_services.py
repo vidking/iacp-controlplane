@@ -252,6 +252,22 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             assert control.parent == Path(kwargs["env"]["ANSIBLE_LOCAL_TEMP"]).parent
             assert control.parent.is_dir()
             playbook = json.loads((control.parent / "playbook.json").read_text())
+            assert playbook[0]["gather_facts"] is False
+            assert playbook[0]["pre_tasks"] == [
+                {
+                    "name": "Esperar conectividad SSH",
+                    "ansible.builtin.wait_for_connection": {
+                        "connect_timeout": 15,
+                        "delay": 5,
+                        "sleep": 5,
+                        "timeout": 600,
+                    },
+                },
+                {
+                    "name": "Recopilar facts del invitado",
+                    "ansible.builtin.setup": {"gather_subset": ["min"]},
+                },
+            ]
             service_tasks = playbook[0]["tasks"][1]["block"]
             trusted_domain_tasks = [
                 task

@@ -429,7 +429,26 @@ def execute(service, job, heartbeat):
         playbook = [
             {
                 "hosts": "all",
-                "gather_facts": True,
+                # La KVM puede haber terminado Terraform antes de que SSH
+                # termine de arrancar. Esperar conectividad antes de recopilar
+                # facts evita convertir esa ventana normal en una instalación
+                # incierta sin haber ejecutado cambios en el invitado.
+                "gather_facts": False,
+                "pre_tasks": [
+                    {
+                        "name": "Esperar conectividad SSH",
+                        "ansible.builtin.wait_for_connection": {
+                            "connect_timeout": 15,
+                            "delay": 5,
+                            "sleep": 5,
+                            "timeout": 600,
+                        },
+                    },
+                    {
+                        "name": "Recopilar facts del invitado",
+                        "ansible.builtin.setup": {"gather_subset": ["min"]},
+                    },
+                ],
                 "tasks": lock_tasks + [{"block": tasks, "always": cleanup}],
             }
         ]
