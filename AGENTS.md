@@ -50,3 +50,11 @@ Registrar esa decisión mediante `mng_credentials_shared=true`; no exigir otra
 credencial Proxmox como condición del piloto. Mantener aislamiento por procesos,
 colas, bases, volúmenes y rangos VMID; no compartir contraseñas PostgreSQL ni
 tokens de API entre stacks. Conservar las VMs existentes ajenas a cada ensayo.
+
+## Redacción institucional
+
+La documentación, los procedimientos y las interfaces del orquestador deben usar
+roles institucionales: equipo de operaciones, equipo de redes o administrador.
+No incorporar nombres ni identidades de asistentes personales en el producto,
+sus runbooks o sus evidencias. Esta regla no altera los nombres comerciales del
+catálogo de aplicaciones solicitado por la empresa.
