@@ -102,8 +102,8 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
         assert [(item["image_id"], item["template_vm_id"]) for item in images] == [
             ("ubuntu-2404", 29000),
             ("ubuntu-2604", 29001),
-            ("almalinux-9", 29012),
-            ("almalinux-10", 29013),
+            ("almalinux-9", 29014),
+            ("almalinux-10", 29015),
         ]
 
 

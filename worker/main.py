@@ -1118,7 +1118,15 @@ def close_source_after_reconciliation(
             output="",
             error=terminal_error,
         )
-        update_instance(instance_id, terminal_status, vmid=vmid, node=node)
+        # Cerrar una intención anterior no revierte una eliminación posterior.
+        # Si queda IPAM pendiente, la incertidumbre sigue siendo visible.
+        with database() as db:
+            db.execute(
+                """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
+                node=COALESCE(?,node), updated_at=? WHERE instance_id=?
+                AND (status!='deleted' OR ?='uncertain')""",
+                (terminal_status, vmid, node, now(), instance_id, terminal_status),
+            )
         if vmid is not None and source_operation["command"] in {"apply", "provision"}:
             # Reconciliation proved that the physical VM is absent. Release
             # the lease so a later request can reuse the lowest free VMID.

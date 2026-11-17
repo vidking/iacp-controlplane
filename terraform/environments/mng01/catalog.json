@@ -33,7 +33,7 @@
     },
     {
       "image_id": "almalinux-9",
-      "template_vm_id": 29012,
+      "template_vm_id": 29014,
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "almalinux-9",
@@ -45,7 +45,7 @@
     },
     {
       "image_id": "almalinux-10",
-      "template_vm_id": 29013,
+      "template_vm_id": 29015,
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "almalinux-10",

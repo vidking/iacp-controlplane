@@ -91,3 +91,16 @@ no autoriza repetir una ejecución.
 
 Las matrices completas con AlmaLinux permanecen pendientes de ejecución sobre
 estas nuevas copias. No se ha actualizado producción.
+
+## Revisión de arranque v2 — 2026-11-17
+
+La tanda de clones descubrió que `cloud-init status --wait` escribe puntos de
+progreso sin salto de línea en su formato tabular. La preparación inicial
+posterior al login no reproducía esa carrera. El bootstrap v2 consume JSON y
+comprueba estado `done`, ausencia de errores y únicamente deprecaciones conocidas,
+incluso cuando cloud-init devuelve código cero. Las revisiones anteriores
+29012/29013 se conservan como historial; el catálogo dev utiliza nuevas copias
+29014 (AlmaLinux 9) y 29015 (AlmaLinux 10), ambas preparadas desde las originales
+29010/29011 y verificadas con SELinux Enforcing. Evidencia privada en
+`/opt/iacp/evidence/alma9-golden-v2-20261117/` y
+`/opt/iacp/evidence/alma10-golden-v2-20261117/`. La matriz se repetirá con v2.

@@ -72,7 +72,7 @@
 
           <div class="step-strip" aria-label="Pasos de aprovisionamiento">
             <button data-step-link="access">1. Acceso</button>
-            <button data-step-link="configure">2. Configurar máquina virtual</button>
+            <button data-step-link="configure">2. Configurar instancia o servicio</button>
             <button data-step-link="json">3. JSON</button>
             <button data-step-link="curl">4. cURL</button>
             <button data-step-link="response">5. Respuesta</button>
@@ -112,13 +112,18 @@
           </article>
 
           <details class="step-card" id="step-configure" data-step="configure" open>
-            <summary><span class="step-number">2.</span> Configurar máquina virtual <span class="summary-status" id="catalog-summary">Consulta el catálogo</span></summary>
+            <summary><span class="step-number">2.</span> Configurar instancia o servicio <span class="summary-status" id="catalog-summary">Consulta el catálogo</span></summary>
             <div class="step-body">
               <div class="catalog-toolbar">
                 <p><a href="#access" data-step-link="access">Authorize</a>: introduce tu Bearer una vez y pulsa consultar catálogo.</p>
                 <button class="button secondary" id="load-catalog" type="button">Consultar catálogo técnico</button>
               </div>
               <form id="create-form" class="create-form">
+                <label>Producto<select id="application"><option value="kvm">Máquina virtual KVM</option><option value="nextcloud" disabled>Nextcloud · consulta el catálogo</option><option value="n8n" disabled>n8n · consulta el catálogo</option></select><small>Los servicios incluyen su propia KVM y la instalación de la aplicación.</small></label>
+                <div id="service-configuration" class="form-grid two-columns hidden">
+                  <label>Acceso web<select id="service-access-mode"><option value="ip">Por IP · certificado de la CA del piloto</option><option value="domain">Por dominio · certificado público</option></select><small>Por IP, instala la CA del piloto en tu equipo para validar HTTPS.</small></label>
+                  <label id="service-domain-field" class="hidden">Dominio del servicio<input id="service-domain" placeholder="nube.ejemplo.com" autocomplete="off"><small>El dominio debe apuntar a la IP de la instancia antes de emitir el certificado público.</small></label>
+                </div>
                 <div class="form-grid three-columns">
                   <label>Plan obligatorio<select id="plan" required><option value="">Consulta el catálogo</option></select><small id="plan-help">Los vCPU, memoria y disco provienen del plan certificado.</small></label>
                   <label>Sistema operativo obligatorio<select id="image" required><option value="">Consulta el catálogo</option></select><small id="image-help">La Golden Image se conserva sin mutaciones.</small></label>
@@ -130,7 +135,7 @@
                 </div>
                 <div class="form-grid two-columns access-form-grid">
                   <label>Contraseña root obligatoria<input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small>Se entrega por bootstrap seguro, nunca se devuelve y debe tener al menos 12 caracteres en producción.</small></label>
-                  <label>Llave pública SSH opcional<textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small>El worker puede usar la clave pública por defecto de Portainer.</small></label>
+                  <label><span id="ssh-key-label">Llave pública SSH opcional</span><textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small id="ssh-key-help">Los servicios requieren tu llave pública para conservar acceso después de la entrega.</small></label>
                 </div>
                 <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
                 <label class="vm-tags-field">Tags Proxmox adicionales (opcional)
@@ -152,19 +157,31 @@
             </div>
           </details>
 
+          <article class="panel" id="services-panel">
+            <div class="panel-heading"><div><p class="eyebrow">APLICACIONES</p><h2>Servicios Nextcloud y n8n</h2></div><button class="button secondary" id="refresh-services" type="button">Actualizar servicios</button></div>
+            <div id="services-table" class="table-wrap"><div class="empty-state">Autoriza la API para consultar los servicios.</div></div>
+            <div id="service-detail" class="hidden">
+              <h3 id="service-title"></h3><p id="service-status" role="status"></p>
+              <p><a id="service-url" class="hidden" target="_blank" rel="noopener noreferrer">Abrir servicio ↗</a></p>
+              <div class="action-row"><button class="button secondary" id="service-ca" type="button" disabled>Descargar CA del piloto</button><button class="button secondary" id="service-credentials" type="button" disabled>Mostrar credenciales una vez</button><button class="button secondary" id="clear-service-credentials" type="button">Ocultar credenciales</button><button class="button primary" id="deliver-service" type="button" disabled>Completar entrega</button></div>
+              <p>Guarda las credenciales antes de completar la entrega. La entrega retira el acceso SSH temporal de instalación y conserva tu llave pública.</p>
+              <pre id="service-credentials-output" aria-live="polite">Las credenciales no se han consultado.</pre>
+            </div>
+          </article>
+
           <details class="step-card" id="step-json" data-step="json">
             <summary><span class="step-number">3.</span> JSON de ejemplo <span class="summary-status">Cuerpo del contrato v1</span></summary>
-            <div class="step-body code-panel"><p>Este es el cuerpo JSON que se enviará a <code>POST /v1/instances</code>. La contraseña se redacta en la vista y solo se entrega dentro de la solicitud real.</p><div class="code-toolbar"><button class="button secondary" id="copy-json" type="button">Copiar JSON</button></div><pre id="json-preview">Completa el formulario para generar el JSON de ejemplo.</pre></div>
+            <div class="step-body code-panel"><p>Este es el cuerpo JSON del producto seleccionado. La contraseña se redacta en la vista y solo se entrega dentro de la solicitud real.</p><div class="code-toolbar"><button class="button secondary" id="copy-json" type="button">Copiar JSON</button></div><pre id="json-preview">Completa el formulario para generar el JSON de ejemplo.</pre></div>
           </details>
 
           <details class="step-card" id="step-curl" data-step="curl">
             <summary><span class="step-number">4.</span> cURL generado <span class="summary-status">Secretos redactados</span></summary>
-            <div class="step-body code-panel"><p>La solicitud real usa el contrato estable <code>POST /v1/instances</code>. El token y la contraseña se ocultan en esta vista.</p><div class="code-toolbar"><button class="button secondary" id="copy-curl" type="button">Copiar cURL</button></div><pre id="curl-preview">Completa el formulario para generar el ejemplo.</pre></div>
+            <div class="step-body code-panel"><p>KVM usa <code>POST /v1/instances</code>; Nextcloud y n8n usan <code>POST /v1/service-instances</code>. El token y la contraseña se ocultan en esta vista.</p><div class="code-toolbar"><button class="button secondary" id="copy-curl" type="button">Copiar cURL</button></div><pre id="curl-preview">Completa el formulario para generar el ejemplo.</pre></div>
           </details>
 
           <details class="step-card" id="step-response" data-step="response">
             <summary><span class="step-number">5.</span> Respuesta <span class="summary-status" id="response-summary">Sin operación</span></summary>
-            <div class="step-body code-panel"><p>La creación devuelve `202 Accepted`; <code>job_id</code> es el alias estable de <code>operation_id</code>.</p><pre id="create-response">Aún no se ha creado una máquina.</pre></div>
+            <div class="step-body code-panel"><p>La creación devuelve <code>202 Accepted</code>. En KVM, <code>job_id</code> es alias de <code>operation_id</code>. En servicios, <code>operation_id</code> sigue la KVM y <code>job_id</code> sigue la instalación de la aplicación.</p><pre id="create-response">Aún no se ha creado una máquina.</pre></div>
           </details>
 
           <details class="step-card" id="step-progress" data-step="progress">
@@ -281,6 +298,6 @@ DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
-    <script src="/docs/assets/docs.js?v=20261117-lan-auth1"></script>
+    <script src="/docs/assets/docs.js?v=20261117-servicios2"></script>
   </body>
 </html>

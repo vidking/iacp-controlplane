@@ -382,3 +382,22 @@ def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):
     assert client.post(path,headers={'Idempotency-Key':'cancel-unconfirmed'}).status_code==409
     assert client.post(path,json={'previous_execution_stopped':True},headers={'Idempotency-Key':'cancel-reviewed'}).status_code==202
     with database() as db:assert db.execute('SELECT status FROM service_jobs WHERE job_id=?',(order['job_id'],)).fetchone()['status']=='cancelled'
+
+
+def test_service_inventory_paginates_without_exposing_secrets(client, monkeypatch):
+    first = create(client, name='prueba-service-nextcloud-uno', key='inventory-1')
+    second = create(client, name='prueba-service-nextcloud-dos', key='inventory-2')
+    response = client.get('/v1/service-instances?limit=1&offset=0')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['total'] == 2 and len(data['services']) == 1
+    assert data['services'][0]['service_id'] == second['service_id']
+    assert 'secrets_encrypted' not in response.text
+    assert 'admin_password' not in response.text
+    assert client.get('/v1/service-instances?limit=0').status_code == 422
+    detail = client.get('/v1/service-instances/'+first['service_id']).json()
+    assert detail['name'] == 'prueba-service-nextcloud-uno'
+    assert detail['credentials_available'] is False
+    monkeypatch.setenv('IACP_REQUIRE_API_TOKEN', '1')
+    monkeypatch.setenv('IACP_API_TOKEN', 'token-ficticio-inventario')
+    assert client.get('/v1/service-instances').status_code == 401

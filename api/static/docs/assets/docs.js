@@ -5,6 +5,9 @@
     guide: null,
     plans: [],
     images: [],
+    applications: [],
+    selectedServiceId: null,
+    credentialsBusy: false,
     networkProfiles: [],
     instances: [],
     operations: [],
@@ -231,13 +234,21 @@
   }
 
   async function loadCatalog() {
-    const [plansBody, imagesBody, profilesBody] = await Promise.all([
+    const [plansBody, imagesBody, profilesBody, applicationsBody] = await Promise.all([
       api("/v1/plans"),
       api("/v1/images"),
       api("/v1/network-profiles"),
+      api("/v1/applications"),
     ]);
     state.plans = plansBody.plans || [];
     state.images = imagesBody.images || [];
+    state.applications = applicationsBody;
+    for (const option of $("application").options) {
+      if (option.value === "kvm") continue;
+      const application = state.applications.find((item) => item.application_id === option.value);
+      option.disabled = !application?.enabled;
+      option.textContent = application ? `${application.label} · ${application.version}` : option.value;
+    }
     state.networkProfiles = profilesBody.network_profiles || [];
     const planSelect = $("plan");
     const imageSelect = $("image");
@@ -272,6 +283,28 @@
     imageSelect.value = imageById(currentImage) ? currentImage : (imageById("ubuntu-2404") ? "ubuntu-2404" : "");
     updateCatalogHelp();
     $("catalog-summary").textContent = `${state.plans.length} planes · ${state.images.length} Golden Images · ${state.networkProfiles.length} perfiles de red`;
+    updateApplicationForm();
+  }
+
+  function updateApplicationForm() {
+    const product = $("application").value;
+    const service = product !== "kvm";
+    const application = state.applications.find((item) => item.application_id === product);
+    const currentImage = $("image").value;
+    const images = state.images.filter((image) => !service || application?.supported_image_ids.includes(image.image_id));
+    $("image").innerHTML = images.map((image) => `<option value="${escapeHtml(image.image_id)}">${escapeHtml(image.image_id)} · Golden ${image.template_vm_id}</option>`).join("");
+    $("image").value = images.some((image) => image.image_id === currentImage) ? currentImage : images[0]?.image_id || "";
+    $("service-configuration").classList.toggle("hidden", !service);
+    const domain = service && $("service-access-mode").value === "domain";
+    $("service-domain-field").classList.toggle("hidden", !domain);
+    $("service-domain").required = domain;
+    $("ssh-key").required = service;
+    $("ssh-key-label").textContent = `Llave pública SSH ${service ? "obligatoria" : "opcional"}`;
+    $("started").disabled = service;
+    if (service) $("started").checked = true;
+    $("create-button").textContent = service ? `Crear ${application?.label || product}` : "Crear máquina virtual";
+    updateCatalogHelp();
+    previewCreateJson();
   }
 
   function updateCatalogHelp() {
@@ -301,6 +334,7 @@
   }
 
   function setRoute(route) {
+    if (route !== "create") clearServiceCredentials();
     const allowed = ["create", "console", "instances", "operations", "lifecycle", "delete", "observability", "workers", "guides"];
     state.route = allowed.includes(route) ? route : "create";
     document.querySelectorAll("[data-view]").forEach((view) => view.classList.toggle("hidden", view.dataset.view !== state.route));
@@ -550,7 +584,7 @@
   }
 
   async function refreshAll() {
-    await Promise.all([refreshInstances(), refreshOperations(), refreshObservability(), refreshWorkers(), refreshEvents()]);
+    await Promise.all([refreshInstances(), refreshServices(), refreshOperations(), refreshObservability(), refreshWorkers(), refreshEvents()]);
   }
 
   async function refreshSelectedOperation() {
@@ -669,6 +703,96 @@
     await refreshDetail();
   }
 
+  function clearServiceCredentials() {
+    $("service-credentials-output").textContent = "Las credenciales no se muestran.";
+  }
+
+  async function refreshServices() {
+    if (!state.token) return;
+    const result = await api("/v1/service-instances?limit=100");
+    const services = result.services.filter((item) => ["nextcloud", "n8n"].includes(item.application_id));
+    $("services-table").innerHTML = services.length ? `<table><thead><tr><th>Nombre</th><th>Servicio</th><th>Instalación</th><th>KVM</th></tr></thead><tbody>${services.map((item) => `<tr data-service-id="${escapeHtml(item.service_id)}"><td><button type="button" class="icon-button">${escapeHtml(item.name)}</button></td><td>${escapeHtml(item.application_id)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.infrastructure_status)}</td></tr>`).join("")}</tbody></table><p>${result.total} servicios registrados.</p>` : '<div class="empty-state">No hay servicios Nextcloud o n8n aprovisionados.</div>';
+    $("services-table").querySelectorAll("[data-service-id]").forEach((row) => row.addEventListener("click", () => {
+      if (state.credentialsBusy) return showToast("Espera a que termine la consulta de credenciales.");
+      if (state.selectedServiceId !== row.dataset.serviceId) clearServiceCredentials();
+      state.selectedServiceId = row.dataset.serviceId;
+      refreshService().catch(showError);
+    }));
+    if (state.selectedServiceId) await refreshService();
+  }
+
+  async function refreshService() {
+    if (!state.selectedServiceId || !state.token) return;
+    const identifier = state.selectedServiceId;
+    const service = await api(`/v1/service-instances/${identifier}`);
+    if (state.selectedServiceId !== identifier) return;
+    $("service-detail").classList.remove("hidden");
+    $("service-title").textContent = `${service.name} · ${service.application_id}`;
+    const job = service.jobs.at(-1);
+    $("service-status").textContent = `Instalación: ${service.status} · KVM: ${service.infrastructure_status}${job ? ` · ${job.phase} (${job.status})` : ""}`;
+    const ready = ["awaiting_customer", "delivered"].includes(service.status);
+    const url = $("service-url");
+    url.classList.toggle("hidden", !ready || !service.access_url);
+    if (ready && service.access_url?.startsWith("https://")) {
+      url.href = service.access_url;
+      url.textContent = `Abrir ${service.access_url} ↗`;
+    } else url.removeAttribute("href");
+    $("service-ca").disabled = !ready || service.configuration.access_mode !== "ip";
+    $("service-credentials").disabled = !service.credentials_available || state.credentialsBusy;
+    $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
+    return service;
+  }
+
+  async function pollService(identifier, delivery = false) {
+    for (let attempt = 0; attempt < 900; attempt += 1) {
+      const service = await api(`/v1/service-instances/${identifier}`);
+      if (state.selectedServiceId === identifier) await refreshService();
+      const job = service.jobs.at(-1);
+      if (["failed", "blocked", "uncertain", "cancelled"].includes(job?.status)) throw new Error(`Instalación ${job.status}: ${job.error || "requiere revisión"}`);
+      if (delivery ? service.status === "delivered" : ["awaiting_customer", "delivered"].includes(service.status)) {
+        $("create-message").textContent = delivery ? "Entrega completada; acceso temporal de instalación retirado." : `${service.application_id} instalado. Consulta el acceso y las credenciales en Servicios.`;
+        await refreshServices();
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 3000));
+    }
+    throw new Error("La instalación continúa. Usa Actualizar servicios para consultar su estado.");
+  }
+
+  async function retrieveServiceCredentials() {
+    const identifier = state.selectedServiceId;
+    if (!identifier || state.credentialsBusy) return;
+    state.credentialsBusy = true;
+    $("service-credentials").disabled = true;
+    try {
+      const credentials = await api(`/v1/service-instances/${identifier}/credentials`, { method: "POST" });
+      if (state.selectedServiceId === identifier && state.route === "create") $("service-credentials-output").textContent = JSON.stringify(credentials, null, 2);
+    } catch (error) { showError(error); }
+    finally { state.credentialsBusy = false; await refreshService().catch(showError); }
+  }
+
+  async function downloadServiceCa() {
+    if (!state.selectedServiceId) return;
+    try {
+      const response = await fetch(`/v1/service-instances/${state.selectedServiceId}/tls-ca`, { headers: { Authorization: `Bearer ${state.token}` } });
+      if (!response.ok) throw new Error(`No se pudo descargar la CA (${response.status}).`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = "iacp-pilot-ca.crt"; link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { showError(error); }
+  }
+
+  async function deliverService() {
+    const identifier = state.selectedServiceId;
+    if (!identifier) return;
+    $("deliver-service").disabled = true;
+    try {
+      await api(`/v1/service-instances/${identifier}/deliver`, { method: "POST", idempotencyKey: newIdempotencyKey("portal-delivery") });
+      await pollService(identifier, true);
+    } catch (error) { showError(error); }
+  }
+
   function buildCreateBody() {
     const ssh = $("ssh-key").value.trim();
     const password = $("root-password").value;
@@ -687,13 +811,18 @@
       if (values.some((value) => !value)) throw new Error("Completa los cuatro campos de trazabilidad o déjalos vacíos.");
       body.commercial_context = { customer_id: values[0], customer_tag: values[1], order_id: values[2], product_id: values[3] };
     }
-    return body;
+    if ($("application").value === "kvm") return body;
+    if (!ssh) throw new Error("Los servicios requieren tu llave pública SSH para la entrega.");
+    const configuration = { access_mode: $("service-access-mode").value };
+    if (configuration.access_mode === "domain") configuration.domain = $("service-domain").value.trim().toLowerCase();
+    return { application_id: $("application").value, instance: { ...body, start_on_create: true }, configuration };
   }
 
   function redactCreateBody(body) {
     const printable = JSON.parse(JSON.stringify(body));
-    if (printable.access && Object.prototype.hasOwnProperty.call(printable.access, "root_password")) {
-      printable.access.root_password = "<REDACTED>";
+    const instance = printable.instance || printable;
+    if (instance.access && Object.prototype.hasOwnProperty.call(instance.access, "root_password")) {
+      instance.access.root_password = "<REDACTED>";
     }
     return printable;
   }
@@ -706,7 +835,7 @@
   function renderCurl(body, idempotencyKey) {
     const printable = redactCreateBody(body);
     renderJson(body);
-    state.lastCurl = `curl -X POST ${window.location.origin}/v1/instances \\\n  -H 'Authorization: Bearer <TOKEN>' \\\n  -H 'Idempotency-Key: ${idempotencyKey}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${JSON.stringify(printable)}'`;
+    state.lastCurl = `curl -X POST ${window.location.origin}${body.application_id ? "/v1/service-instances" : "/v1/instances"} \\\n  -H 'Authorization: Bearer <TOKEN>' \\\n  -H 'Idempotency-Key: ${idempotencyKey}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${JSON.stringify(printable)}'`;
     $("curl-preview").textContent = state.lastCurl;
     openStep("curl");
   }
@@ -732,7 +861,6 @@
     for (let attempt = 0; attempt < 180; attempt += 1) {
       const operation = await api(`/v1/operations/${operationId}`);
       updateProgress(operation);
-      $("create-response").textContent = JSON.stringify({ operation_id: operation.operation_id, job_id: operation.job_id, instance_id: operation.instance_id, status: operation.status, command: operation.command, action: operation.action }, null, 2);
       if (instanceId && attempt % 3 === 0) {
         const network = await loadNetwork(instanceId);
         $("create-network-text").textContent = networkText(network);
@@ -756,7 +884,9 @@
     renderCurl(body, idempotencyKey);
     try {
       $("create-button").disabled = true;
-      const response = await api("/v1/instances", { method: "POST", body: JSON.stringify(body), idempotencyKey });
+      const response = await api(body.application_id ? "/v1/service-instances" : "/v1/instances", { method: "POST", body: JSON.stringify(body), idempotencyKey });
+      clearServiceCredentials();
+      state.selectedServiceId = response.service_id || null;
       state.selectedInstanceId = response.instance_id;
       $("response-summary").textContent = response.status;
       $("create-response").textContent = JSON.stringify(response, null, 2);
@@ -764,6 +894,7 @@
       openStep("response");
       const operation = await pollOperation(response.operation_id, response.instance_id);
       $("create-message").textContent = `Aprovisionamiento terminó en ${operation.status}.`;
+      if (response.service_id && operation.status === "completed") await pollService(response.service_id);
       $("ssh-summary").textContent = operation.status === "completed" ? "La instancia está lista para el acceso inicial configurado." : `La operación terminó en ${operation.status}.`;
     } catch (error) {
       showError(error);
@@ -814,6 +945,7 @@
 
   async function authorize(event) {
     event.preventDefault();
+    clearServiceCredentials();
     let token;
     try { token = normalizeToken($("api-token").value); }
     catch (error) { return showError(error); }
@@ -858,6 +990,13 @@
   $("create-form").addEventListener("submit", createInstance);
   $("create-form").addEventListener("input", previewCreateJson);
   $("create-form").addEventListener("change", previewCreateJson);
+  $("application").addEventListener("change", updateApplicationForm);
+  $("service-access-mode").addEventListener("change", updateApplicationForm);
+  $("refresh-services").addEventListener("click", () => refreshServices().catch(showError));
+  $("service-credentials").addEventListener("click", retrieveServiceCredentials);
+  $("clear-service-credentials").addEventListener("click", clearServiceCredentials);
+  $("service-ca").addEventListener("click", downloadServiceCa);
+  $("deliver-service").addEventListener("click", deliverService);
   $("copy-json").addEventListener("click", copyJson);
   $("copy-curl").addEventListener("click", copyCurl);
   $("plan").addEventListener("change", () => { updateCatalogHelp(); renderPlanCatalog(); });

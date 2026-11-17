@@ -140,7 +140,7 @@ def test_allocation_keeps_scheduler_target_node(tmp_path, monkeypatch):
     assert row["node"] == "mng02"
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
 def test_allocation_never_reserves_a_protected_vmid(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", str(protected_vmid))
@@ -162,7 +162,7 @@ def test_allocation_honors_additional_protected_vmids(tmp_path, monkeypatch):
         allocate("operation-additional-protected", FakeProxmox())
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
 def test_worker_power_rejects_protected_vmid_before_proxmox_mutation(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -213,7 +213,7 @@ def test_worker_power_rejects_protected_vmid_before_proxmox_mutation(tmp_path, m
     )
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
 def test_worker_reconcile_rejects_protected_vmid_before_proxmox_observation(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -279,7 +279,7 @@ def test_worker_reconcile_rejects_protected_vmid_before_proxmox_observation(tmp_
 
 
 @pytest.mark.parametrize("command", ["apply", "destroy"])
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
 def test_worker_apply_destroy_fail_closed_for_protected_vms(tmp_path, monkeypatch, command, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -1229,3 +1229,22 @@ def test_reboot_recovery_requires_unique_matching_task_and_time(monkeypatch):
     assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:01:40+00:00','1970-01-01T00:01:45+00:00') is None
     records[:]=[row]
     assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:02:00+00:00','1970-01-01T00:02:05+00:00') is None
+
+
+@pytest.mark.parametrize('released,expected', [(True, 'deleted'), (False, 'uncertain')])
+def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, expected):
+    from worker import main
+    initialize()
+    with database() as db:
+        db.execute("INSERT INTO operations(operation_id,command,status,payload_json,created_at) VALUES ('old-source','provision','uncertain','{}','now')")
+        db.execute("""INSERT INTO instances(instance_id,operation_id,name,image,vmid,node,status,power_state,spec_json,created_at,updated_at)
+            VALUES ('deleted-instance','old-source','prueba-service-nextcloud','almalinux-9',40001,'mng01','deleted','unknown','{}','now','now')""")
+    monkeypatch.setattr(main, '_release_static_allocation', lambda *_: released)
+    monkeypatch.setattr(main, 'release', lambda *_: None)
+    main.close_source_after_reconciliation(
+        {'operation_id': 'old-source', 'command': 'provision'},
+        'deleted-instance', 40001, 'mng01', {}, succeeded=False, detail='VM_ABSENT',
+    )
+    with database() as db:
+        assert db.execute("SELECT status FROM instances WHERE instance_id='deleted-instance'").fetchone()['status'] == expected
+        assert db.execute("SELECT status FROM operations WHERE operation_id='old-source'").fetchone()['status'] == ('failed' if released else 'uncertain')

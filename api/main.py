@@ -904,6 +904,11 @@ def create_service_instance(request: ServiceCreateRequest, idempotency_key: str 
     return applications.create(request, idempotency_key)
 
 
+@app.get("/v1/service-instances", dependencies=[Depends(authorize)], tags=["applications"])
+def list_service_instances(limit: int = Query(default=20, ge=1, le=100), offset: int = Query(default=0, ge=0)):
+    return applications.list_services(limit, offset)
+
+
 @app.get("/v1/service-instances/{service_id}", dependencies=[Depends(authorize)], tags=["applications"])
 def get_service_instance(service_id: str):
     return applications.get_service(service_id)

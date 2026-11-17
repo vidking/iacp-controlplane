@@ -275,9 +275,10 @@ class Matrix:
         return result.stdout
 
     def create(self, index, case):
-        name = (
-            f"w{self.args.cycle}-{self.args.category[:3]}-{self.args.run}-{index:02d}"
+        label = "kvm-" + case["image"] if case["product"] == "kvm" else (
+            ("service-" if self.args.category == "services" else "agent-") + case["product"]
         )
+        name = f"prueba-{label}-c{self.args.cycle}-{self.args.run}-{index:02d}"
         password = secrets.token_urlsafe(32)
         body = {
             "name": name,

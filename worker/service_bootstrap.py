@@ -23,12 +23,15 @@ identifier,mac,mode,expected_ip,expected_gateway=sys.argv[1:]
 assert mode in {'dhcp','static'}
 def run(argv,timeout=60):
  return subprocess.run(argv,check=True,capture_output=True,text=True,timeout=timeout).stdout
-cloud=subprocess.run(['/usr/bin/cloud-init','status','--wait','--long'],capture_output=True,text=True,timeout=120)
-assert cloud.returncode in (0,2) and re.search(r'(?m)^status:\s*done\s*$',cloud.stdout)
-assert re.search(r'(?m)^errors:\s*\[\]\s*$',cloud.stdout)
-if cloud.returncode==2:
- lines=[line.strip() for line in cloud.stdout.split('recoverable_errors:',1)[1].splitlines() if line.strip()]
- assert len(lines)>1 and lines[0]=='DEPRECATED:' and all(line.startswith('- ') and 'deprecated' in line.lower() for line in lines[1:])
+def cloud_ready(result):
+ assert result.returncode in (0,2)
+ status=json.loads(result.stdout)
+ assert status.get('status')=='done' and status.get('errors')==[]
+ recoverable=status.get('recoverable_errors') or {}
+ assert isinstance(recoverable,dict) and set(recoverable)<= {'DEPRECATED'}
+ assert all(isinstance(messages,list) and all(isinstance(message,str) and 'deprecated' in message.lower() for message in messages) for messages in recoverable.values())
+cloud=subprocess.run(['/usr/bin/cloud-init','status','--wait','--long','--format','json'],capture_output=True,text=True,timeout=120)
+cloud_ready(cloud)
 ip=shutil.which('ip');assert ip
 interfaces=json.loads(run([ip,'-j','address']))
 matches=[entry for entry in interfaces if entry.get('address','').lower()==mac]

@@ -490,3 +490,32 @@ con tres advertencias de deprecación. Ruff F, compilación Python, sintaxis Jav
 y `git diff --check` también dieron PASS. Las direcciones `.2`, `.3` y `.4` volvieron
 a aparecer disponibles en NetBox, el gateway siguió reservado y no quedaron VMs
 de los ensayos. No había operaciones activas ni inciertas; seis workers idle.
+
+## Formulario de servicios en desarrollo
+
+En `/docs#create`, el selector **Producto** permite KVM, Nextcloud y n8n. Para
+servicios solo muestra Ubuntu 24.04 y AlmaLinux 9, exige una llave pública del
+cliente y enciende la KVM para instalar la aplicación. El acceso por IP utiliza
+la CA del piloto; el modo dominio requiere un FQDN que apunte a la instancia.
+
+El panel de servicios consulta `GET /v1/service-instances?limit=20&offset=0`,
+con paginación y autenticación Bearer. Permite seguir la instalación, abrir HTTPS,
+descargar únicamente el certificado público de la CA, consultar explícitamente
+las credenciales una sola vez y completar la entrega. Las credenciales no se
+guardan en almacenamiento del navegador y pueden ocultarse; la entrega exige
+su consulta previa y retira el acceso SSH temporal de instalación.
+
+La interfaz de agentes se abordará después de estabilizar Nextcloud y n8n.
+Las pruebas actuales usan LAN DHCP; no certifican WAN ni autorizan promoción a
+producción. Los nombres nuevos de ensayo siguen `prueba-service-nextcloud-...`,
+`prueba-service-n8n-...`, `prueba-kvm-...` y `prueba-agent-...`.
+
+Prueba del formulario con API simulada, sin infraestructura:
+
+```bash
+NODE_PATH=/ruta/de/playwright/node_modules node tests/browser_services.cjs
+```
+
+Esta prueba comprueba el contrato, los filtros de imágenes, la redacción de
+contraseña, la consulta única explícita de credenciales y la entrega. La matriz
+física se ejecuta por separado y conserva sus evidencias.

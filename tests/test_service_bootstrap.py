@@ -321,3 +321,19 @@ def test_dns_falls_back_to_networkmanager_when_resolved_is_inactive():
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<dns-proof>', 'exec'), namespace)
     assert namespace['observed_dns']('eth0') == '1.1.1.1\n8.8.8.8\n'
     assert calls == [['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0']]
+
+
+def test_cloud_init_json_handles_wait_output_and_rejects_real_errors():
+    tree = ast.parse(bootstrap.PROGRAM)
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == 'cloud_ready')
+    namespace = {'json': json}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<cloud-init-proof>', 'exec'), namespace)
+    status = {'status': 'done', 'errors': [], 'recoverable_errors': {'DEPRECATED': ["'user' of type string is deprecated"]}}
+    assert namespace['cloud_ready'](SimpleNamespace(returncode=2, stdout=json.dumps(status))) is None
+    status['recoverable_errors'] = {'WARNING': ['No se pudo ejecutar un módulo']}
+    with pytest.raises(AssertionError):
+        namespace['cloud_ready'](SimpleNamespace(returncode=0, stdout=json.dumps(status)))
+    status['recoverable_errors'] = {}
+    status['errors'] = ['Fallo de configuración']
+    with pytest.raises(AssertionError):
+        namespace['cloud_ready'](SimpleNamespace(returncode=1, stdout=json.dumps(status)))

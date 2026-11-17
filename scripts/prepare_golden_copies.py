@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 from worker.proxmox import ProxmoxClient
 from scripts.prepare_almalinux_bootstrap import prepare
 
-COPIES = {9: (29010, 29012), 10: (29011, 29013)}
+COPIES = {9: (29010, 29014), 10: (29011, 29015)}
 
 
 class Factory:
@@ -241,7 +241,7 @@ class Factory:
         item = {
             "vmid": vmid,
             "source": source,
-            "name": f"iacp-almalinux-{version}-bootstrap-20261117",
+            "name": f"iacp-almalinux-{version}-bootstrap-v2-20261117",
             "phase": "clone_requested",
             "source_public": public,
         }
