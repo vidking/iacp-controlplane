@@ -308,7 +308,7 @@ class NetBoxClient:
         status_value = status.get("value") if isinstance(status, dict) else status
         if self.config.gateway_tag not in tag_slugs and status_value != "reserved":
             raise NetBoxError("IPAM_GATEWAY_NOT_RESERVED")
-        return address
+        return str(gateway)
 
     def ensure_identity_tag(self, slug: str) -> int:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", slug):

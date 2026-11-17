@@ -30,7 +30,7 @@ def test_netbox_allocation_uses_server_atomic_allocator(monkeypatch):
     monkeypatch.setattr(client, "get_prefix", lambda: (prefix, {"is_pool": False}))
     monkeypatch.setattr(client, "owned_allocation", lambda *_: None)
     monkeypatch.setattr(client, "ensure_identity_tag", lambda _: 8)
-    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1/24")
+    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
 
     def request(method, path, payload=None, **_kwargs):
@@ -103,7 +103,7 @@ def test_lost_post_reuses_owned_address_and_preserves_external_tags(monkeypatch)
     client = fake_client()
     prefix = ip_network("198.51.100.0/24")
     monkeypatch.setattr(client, "get_prefix", lambda: (prefix, {}))
-    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1/24")
+    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
     monkeypatch.setattr(client, "ensure_identity_tag", lambda _: 8)
     monkeypatch.setattr(
@@ -176,7 +176,7 @@ def test_atomic_post_timeout_does_not_allocate_again(monkeypatch):
     calls = []
     prefix = ip_network("198.51.100.0/24")
     monkeypatch.setattr(client, "get_prefix", lambda: (prefix, {}))
-    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1/24")
+    monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
     record = {"id": 90, "address": "198.51.100.8/24", "comments": "iacp-instance=lost"}
     results = iter([None, record])
@@ -191,3 +191,14 @@ def test_atomic_post_timeout_does_not_allocate_again(monkeypatch):
         instance_id="lost", operation_id="op", vmid=40003, name="lost-test"
     )
     assert allocation.ip_id == 90 and calls == ["POST"]
+
+
+def test_gateway_contract_returns_ip_without_prefix(monkeypatch):
+    client = fake_client()
+    observed = []
+    def get_ip(address):
+        observed.append(address)
+        return {"status": {"value": "reserved"}, "tags": []}
+    monkeypatch.setattr(client, "get_ip", get_ip)
+    assert client.validate_gateway(ip_network("198.51.100.0/24")) == "198.51.100.1"
+    assert observed == ["198.51.100.1/24"]

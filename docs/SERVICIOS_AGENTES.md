@@ -367,3 +367,20 @@ el alcance y revisión registrados.
 - **Pendiente:** matriz física de seis aprovisionamientos simultáneos en MNG,
   instalación SSH de aplicaciones y validación funcional con proveedores reales
   de agentes. No se declara certificación integral ni GO de producción.
+
+### Primer ensayo dev físico — 2026-11-17
+
+El commit `1a2b0afc5d654d33914b860b9f09c0950d9bbcef` se desplegó exclusivamente
+en el IACP Control Plane (VM 104) con `iacpctl deploy --preloaded-images`.
+Preflight, verificación y `activate-develop` dieron PASS; HTTPS respondió readiness
+por resolución directa y DNS normal en `dev-iac.cyberfuel.com`. Esquema 3,
+seis workers de infraestructura y dos de servicios. Ansible seguía deshabilitado.
+
+El primer ensayo de seis solicitudes mezcló tres LAN y tres WAN. **FAIL WAN:**
+el gateway devuelto por NetBox incluía `/24`, rechazado por la validación de
+Terraform antes de crear las tres VMs WAN. Las tres reservas se liberaron
+automáticamente y quedaron `released`, sin error en el ledger. Se conserva la
+evidencia en `/opt/iacp/evidence/dev-1a2b0af-fisica-20261117/provision.jsonl`.
+La corrección devuelve una dirección de gateway sin prefijo y añade una regresión
+que verifica tanto la consulta CIDR a NetBox como el contrato entregado a Terraform.
+No se interpreta este ensayo como aprobación de concurrencia física ni GO integral.
