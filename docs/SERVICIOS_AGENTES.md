@@ -493,17 +493,19 @@ de los ensayos. No había operaciones activas ni inciertas; seis workers idle.
 
 ## Formulario de servicios en desarrollo
 
-En `/docs#create`, el selector **Producto** permite KVM, Nextcloud y n8n. Para
+En `/docs#create`, las tarjetas de producto permiten elegir KVM, Nextcloud y n8n. Para
 servicios solo muestra Ubuntu 24.04 y AlmaLinux 9, exige una llave pública del
 cliente y enciende la KVM para instalar la aplicación. El acceso por IP utiliza
 la CA del piloto; el modo dominio requiere un FQDN que apunte a la instancia.
 
-El panel de servicios consulta `GET /v1/service-instances?limit=20&offset=0`,
-con paginación y autenticación Bearer. Permite seguir la instalación, abrir HTTPS,
-descargar únicamente el certificado público de la CA, consultar explícitamente
-las credenciales una sola vez y completar la entrega. Las credenciales no se
-guardan en almacenamiento del navegador y pueden ocultarse; la entrega exige
-su consulta previa y retira el acceso SSH temporal de instalación.
+El panel de servicios es un acordeón que inicia cerrado. Consulta
+`GET /v1/service-instances` con paginación y autenticación Bearer, oculta
+instancias eliminadas y ofrece administración para seguir la instalación, abrir
+HTTPS, descargar únicamente el certificado público de la CA, consultar
+explícitamente las credenciales una sola vez, controlar energía y eliminar la
+KVM. Las credenciales no se guardan en almacenamiento del navegador y pueden
+ocultarse; la entrega exige su consulta previa y retira el acceso SSH temporal de
+instalación.
 
 La interfaz de agentes se abordará después de estabilizar Nextcloud y n8n.
 Las pruebas actuales usan LAN DHCP; no certifican WAN ni autorizan promoción a

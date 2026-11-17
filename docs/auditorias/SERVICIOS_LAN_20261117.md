@@ -9,6 +9,8 @@ nodo `mng01`. Rama `devops/features`. Producción permanece sin actualizar en
 | Runtime local con seis workers de infraestructura y dos de servicios | PASS | `/tmp/iacp-servicios-ui-admin-readiness-20261117/`, 211 pruebas; infraestructura simulada |
 | Formulario Nextcloud/n8n en Chromium | PASS | `tests/browser_services.cjs`, contrato n8n, imágenes compatibles, contraseña redactada, consulta explícita única de credenciales y entrega; API simulada |
 | Alta de propietario, login n8n, rechazo de clave inválida, workflow y reinicio | PASS | `scripts/test_n8n_owner_docker.py`; Docker aislado sin red externa, no certifica MNG |
+| Nextcloud real, PostgreSQL, Redis, Caddy/TLS por IP, WebDAV y persistencia | PASS | `scripts/test_nextcloud_docker.py`; imagen fijada, Docker local, no certifica MNG ni Golden Images |
+| Handshake TLS por IP y protección inicial de n8n | PASS | `.venv/bin/python scripts/test_ip_tls_docker.py`; Caddy local y CA temporal |
 | Autorización del dominio dev | PASS | Chromium contra dev: valor, comillas, Bearer y asignación; token leído privadamente en el host |
 | Bootstrap AlmaLinux v2 | PASS | Nuevas copias 29014/29015 desde 29010/29011; SELinux Enforcing y protocolo 1; no certifica aplicaciones |
 | Tanda física LAN de servicios anterior | FAIL | `/opt/iacp/evidence/lan-services-ciclo1-202611170901/`; cuatro Ubuntu llegaron a ready y tres Nextcloud finalizaron instalación; AlmaLinux falló durante arranque |
@@ -50,11 +52,19 @@ del propietario, login real, rechazo de una contraseña incorrecta, acceso al
 workflow y persistencia después del reinicio. El contenedor local pasó esas
 comprobaciones sin acceso de red externa.
 
+La primera ejecución del smoke test de Nextcloud detectó un defecto en el
+propio test: consultar `occ status` como root mientras la instalación seguía
+inicializando creaba un `config.php` vacío propiedad de root. Se corrigió el
+test para esperar `/status.php` por HTTPS y ejecutar `occ` como `www-data`; la
+repetición terminó PASS y comprobó WebDAV y persistencia tras reiniciar la app.
+
 La interfaz de servicios quedó plegable por defecto, permite elegir Nextcloud o
 n8n tras consultar el catálogo y presenta acciones de administración. El
-inventario excluye registros eliminados sin borrar su historial. Este código
-local aún requiere revisión, publicación y despliegue controlado en desarrollo;
-las pruebas Docker y del navegador no equivalen a una prueba física en MNG.
+inventario excluye registros eliminados sin borrar su historial. El código se
+publicó en `devops/features` como revisión
+`5566266c7b52eed0a8376b05ef56e61db77f9d53`; su despliegue en desarrollo sigue
+pendiente. Las pruebas Docker y del navegador no equivalen a una prueba física
+en MNG.
 
 ## Continuidad
 
