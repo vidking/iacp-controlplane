@@ -268,3 +268,17 @@ def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
     with pytest.raises(ProxmoxError,match='RESULT_UNKNOWN'):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='wait-test',instance_id='wait-test',spec={'network_profile':'prod_static','ipv4_cidr':'190.0.231.8/24','ipv4_gateway':'190.0.231.1'},heartbeat=lambda:None)
     assert calls=={'reads':2,'exec':1}
+
+
+def test_binding_waits_for_dhcp_address_after_network_apply(monkeypatch):
+    initialize()
+    monkeypatch.setattr(bootstrap,'_wait_for_pool_membership',lambda *args,**kwargs:None)
+    sleeps=[]
+    monkeypatch.setattr(bootstrap.time,'sleep',sleeps.append)
+    interface={'hardware-address':MAC,'ip-addresses':[{'ip-address':'192.0.2.20'}]}
+    observations=iter([[interface],[],[interface]])
+    response={'instance_id':'lease-test','mac_address':MAC,'host_key':'ssh-ed25519 AAAAexample','dns_servers':['1.1.1.1','8.8.8.8']}
+    fake=SimpleNamespace(vm_config=lambda *_:{'name':'lease-test','net0':'virtio='+MAC+',bridge=vmbr0','ipconfig0':'ip=dhcp'},guest_agent_interfaces=lambda *_:next(observations),guest_agent_exec=lambda *_:{'pid':10},guest_agent_exec_status=lambda *_:{'exited':True,'exitcode':0,'out-data':json.dumps(response)})
+    binding=bootstrap.prepare(fake,node='mng01',vmid=40012,name='lease-test',instance_id='lease-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
+    assert binding['address']=='192.0.2.20'
+    assert sleeps==[2]

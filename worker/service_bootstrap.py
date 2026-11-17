@@ -204,28 +204,27 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         )
     ):
         raise GuestIdentityError("SERVICE_BOOTSTRAP_IDENTITY_MISMATCH")
-    addresses = []
-    for interface in client.guest_agent_interfaces(node, vmid):
-        if str(interface.get("hardware-address", "")).lower() != mac:
-            continue
-        for entry in interface.get("ip-addresses", []):
-            try:
-                address = ip_address(entry["ip-address"])
-            except (KeyError, ValueError):
+    deadline = time.monotonic() + 120
+    while True:
+        heartbeat()
+        addresses = []
+        for interface in client.guest_agent_interfaces(node, vmid):
+            if str(interface.get("hardware-address", "")).lower() != mac:
                 continue
-            if address.version == 4 and not (
-                address.is_loopback
-                or address.is_link_local
-                or address.is_multicast
-                or address.is_unspecified
-            ):
-                addresses.append(str(address))
-    if static and (
-        len(set(addresses)) != 1 or addresses[0] != spec["ipv4_cidr"].split("/")[0]
-    ):
-        raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_MISMATCH")
-    if len(set(addresses)) != 1:
-        raise GuestIdentityError("SERVICE_BOOTSTRAP_ADDRESS_AMBIGUOUS")
+            for entry in interface.get("ip-addresses", []):
+                try:
+                    address = ip_address(entry["ip-address"])
+                except (KeyError, ValueError):
+                    continue
+                if address.version == 4 and not (address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified):
+                    addresses.append(str(address))
+        if len(set(addresses)) == 1:
+            if static and addresses[0] != spec["ipv4_cidr"].split("/")[0]:
+                raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_MISMATCH")
+            break
+        if time.monotonic() >= deadline:
+            raise GuestIdentityError("SERVICE_BOOTSTRAP_ADDRESS_AMBIGUOUS")
+        time.sleep(2)
     binding = {
         "instance_id": instance_id,
         "vmid": vmid,
