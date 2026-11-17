@@ -96,3 +96,9 @@ y espera que esa dirección aparezca en QEMU Guest Agent antes de aceptarla.
 Al cambiar la configuración Netplan se reinicia networkd dentro de la VM aislada;
 no se modifica la red del hipervisor. NetworkManager reactiva su conexión con
 client-id MAC. No se certifica una dirección anterior mientras converge DHCP.
+
+En la prueba local de ejecución real de n8n se detectó que `n8n execute` intenta
+abrir el mismo puerto interno del broker que el proceso principal. El runner
+asigna `N8N_RUNNERS_BROKER_PORT=5681` únicamente al proceso CLI de validación;
+no publica ese puerto ni cambia el servicio. La importación y ejecución del
+workflow de código se comprobaron en Docker con la imagen fijada por digest.

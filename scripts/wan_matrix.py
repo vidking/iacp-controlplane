@@ -386,7 +386,7 @@ class Matrix:
                 )
             output = self.ssh(
                 item,
-                base + ["exec", "-T", "app", "n8n", "execute", "--id=iacpValidation"],
+                base + ["exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5681", "app", "n8n", "execute", "--id=iacpValidation"],
             )
             assert "iacpValidation" in output and "true" in output, (
                 "N8N_WORKFLOW_FAILED"
