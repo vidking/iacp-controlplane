@@ -17,7 +17,7 @@ from worker.proxmox import ProxmoxError
 
 # Solo datos públicos salen del invitado. La identidad la acredita el paso previo.
 PROGRAM = r"""
-import json,os,re,shutil,socket,subprocess,sys,tempfile
+import json,os,re,shutil,socket,subprocess,sys,tempfile,time
 from pathlib import Path
 identifier,mac,mode,expected_ip,expected_gateway=sys.argv[1:]
 assert mode in {'dhcp','static'}
@@ -62,6 +62,18 @@ if mode=='dhcp':
    with os.fdopen(fd,'w') as output:
     os.fchmod(output.fileno(),0o600);output.write(desired)
    os.replace(temporary,path);run(['/usr/sbin/netplan','apply'])
+   run([shutil.which('systemctl'),'restart','systemd-networkd'])
+  def mac_lease(text,mac):
+   lease=dict(line.split('=',1) for line in text.splitlines() if '=' in line)
+   client=lease.get('CLIENTID','').lower().replace(':','').replace('-','')
+   return lease.get('ADDRESS','').split('/')[0] if client=='01'+mac.replace(':','') else None
+  lease_file=Path('/run/systemd/netif/leases')/str(interface['ifindex'])
+  deadline=time.monotonic()+90
+  while True:
+   lease_ip=mac_lease(lease_file.read_text(),mac) if lease_file.exists() else None
+   if lease_ip:break
+   assert time.monotonic()<deadline, 'IACP_DHCP_MAC_LEASE_UNAVAILABLE'
+   time.sleep(1)
 else:
  expected_address,expected_prefix=expected_ip.split('/')
  assert any(entry.get('local')==expected_address and entry.get('prefixlen')==int(expected_prefix) for entry in interface.get('addr_info',[]))
@@ -86,7 +98,7 @@ if not marker.exists():
  with os.fdopen(descriptor,'w') as output:json.dump(value,output,sort_keys=True)
 key=Path('/etc/ssh/ssh_host_ed25519_key.pub').read_text().split()
 assert len(key)>=2 and key[0]=='ssh-ed25519'
-print(json.dumps({'instance_id':identifier,'mac_address':mac,'host_key':' '.join(key[:2]),'dns_servers':['1.1.1.1','8.8.8.8']}))
+print(json.dumps({'instance_id':identifier,'mac_address':mac,'host_key':' '.join(key[:2]),'dns_servers':['1.1.1.1','8.8.8.8'],'ipv4':locals().get('lease_ip')}))
 
 """
 
@@ -218,7 +230,10 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
                     continue
                 if address.version == 4 and not (address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified):
                     addresses.append(str(address))
-        if len(set(addresses)) == 1:
+        lease_ip = observed.get("ipv4")
+        if lease_ip and lease_ip in addresses:
+            addresses = [lease_ip]
+        if len(set(addresses)) == 1 and (not lease_ip or lease_ip in addresses):
             if static and addresses[0] != spec["ipv4_cidr"].split("/")[0]:
                 raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_MISMATCH")
             break

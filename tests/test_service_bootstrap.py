@@ -276,9 +276,21 @@ def test_binding_waits_for_dhcp_address_after_network_apply(monkeypatch):
     sleeps=[]
     monkeypatch.setattr(bootstrap.time,'sleep',sleeps.append)
     interface={'hardware-address':MAC,'ip-addresses':[{'ip-address':'192.0.2.20'}]}
-    observations=iter([[interface],[],[interface]])
-    response={'instance_id':'lease-test','mac_address':MAC,'host_key':'ssh-ed25519 AAAAexample','dns_servers':['1.1.1.1','8.8.8.8']}
+    previous={'hardware-address':MAC,'ip-addresses':[{'ip-address':'192.0.2.19'}]}
+    observations=iter([[interface],[],[previous],[interface]])
+    response={'instance_id':'lease-test','mac_address':MAC,'host_key':'ssh-ed25519 AAAAexample','dns_servers':['1.1.1.1','8.8.8.8'],'ipv4':'192.0.2.20'}
     fake=SimpleNamespace(vm_config=lambda *_:{'name':'lease-test','net0':'virtio='+MAC+',bridge=vmbr0','ipconfig0':'ip=dhcp'},guest_agent_interfaces=lambda *_:next(observations),guest_agent_exec=lambda *_:{'pid':10},guest_agent_exec_status=lambda *_:{'exited':True,'exitcode':0,'out-data':json.dumps(response)})
     binding=bootstrap.prepare(fake,node='mng01',vmid=40012,name='lease-test',instance_id='lease-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
     assert binding['address']=='192.0.2.20'
-    assert sleeps==[2]
+    assert sleeps==[2,2]
+
+
+def test_dhcp_lease_must_identify_actual_mac_before_certificate_binding():
+    tree=ast.parse(bootstrap.PROGRAM)
+    function=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='mac_lease')
+    namespace={}
+    exec(compile(ast.Module(body=[function],type_ignores=[]),'<lease-proof>','exec'),namespace)
+    proof=namespace['mac_lease']
+    assert proof('CLIENTID=01:aa:bb:cc:dd:ee:ff\nADDRESS=192.0.2.20\n',MAC)=='192.0.2.20'
+    assert proof('CLIENTID=ff:aa:bb:cc:dd:ee:ff\nADDRESS=192.0.2.20\n',MAC) is None
+    assert proof('CLIENTID=01:11:22:33:44:55:66\nADDRESS=192.0.2.20\n',MAC) is None

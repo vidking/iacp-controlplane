@@ -81,3 +81,18 @@ hilos, manteniendo el mismo límite de infraestructura. El cliente limita su
 frecuencia de consultas y reintenta HTTP 429 solo en lecturas o solicitudes con
 clave de idempotencia. Ante un fallo activa contención para nuevas mutaciones.
 La evidencia identifica también la huella SHA-256 del runner utilizado.
+
+La prueba local de TLS debe incluir un handshake por IP detrás de Docker NAT,
+no solo `caddy validate`. `scripts/test_ip_tls_docker.py` genera una CA temporal,
+comprueba Nextcloud/n8n con la dirección loopback, valida el certificado sin SNI y
+verifica el acceso inicial de n8n, incluido el rechazo sin credencial. No utiliza
+MNG. Las recetas IP fijan `default_sni` para seleccionar el certificado correcto.
+Los sockets SSH de Ansible se mantienen en el directorio temporal privado del
+trabajo, compatible con el filesystem de solo lectura de los workers.
+
+En Ubuntu 26.04 se observó que la dirección inicial del ensayo cambió tras reboot.
+El binding genérico ahora comprueba `CLIENTID=01+MAC` en la concesión de networkd
+y espera que esa dirección aparezca en QEMU Guest Agent antes de aceptarla.
+Al cambiar la configuración Netplan se reinicia networkd dentro de la VM aislada;
+no se modifica la red del hipervisor. NetworkManager reactiva su conexión con
+client-id MAC. No se certifica una dirección anterior mientras converge DHCP.

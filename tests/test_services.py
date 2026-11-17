@@ -246,6 +246,10 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
         returncode = 0
 
         def __init__(self, args, **kwargs):
+            from pathlib import Path
+            control = Path(kwargs["env"]["ANSIBLE_SSH_CONTROL_PATH_DIR"])
+            assert control.parent == Path(kwargs["env"]["ANSIBLE_LOCAL_TEMP"]).parent
+            assert control.parent.is_dir()
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(

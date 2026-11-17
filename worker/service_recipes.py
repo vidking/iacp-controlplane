@@ -166,5 +166,8 @@ def render(application, configuration, secrets, release):
             }
         )
         app["command"] = ["node", "openclaw.mjs", "gateway", "--bind", "loopback"]
+    if application in {"nextcloud", "n8n"} and configuration.get("access_mode") == "ip":
+        # Los clientes que usan una IP omiten SNI; Docker presenta otra IP local a Caddy.
+        files["Caddyfile"] = "{\n default_sni " + configuration["domain"] + "\n}\n" + files["Caddyfile"]
     # Sin puertos publicados en agentes: acceso SSH hasta configurar un frontend autenticado.
     return result, files

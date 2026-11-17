@@ -465,6 +465,7 @@ def execute(service, job, heartbeat):
         }
         environment.update(
             ANSIBLE_LOCAL_TEMP=str(folder / "ansible"),
+            ANSIBLE_SSH_CONTROL_PATH_DIR=str(folder / "ssh"),
             ANSIBLE_HOST_KEY_CHECKING="True",
             ANSIBLE_NOCOLOR="1",
         )
