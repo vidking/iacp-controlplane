@@ -671,6 +671,8 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
              'service_key_ready':True,'service_api':True,'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
         ast.parse(command[-1])
+        assert "EXPECTED_SERVICE_WORKERS" not in command[-1]
+        assert repr(['service-worker-1','service-worker-2']) in command[-1]
         return json.dumps(payload)
     monkeypatch.setattr(go_live,'_run',run)
     assert go_live._verify(manifest,Path('compose.yml'),Path('private.env'))['api']['schema_version']==3

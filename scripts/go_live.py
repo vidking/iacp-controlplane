@@ -844,6 +844,9 @@ service_capacity = json.load(service_response)
 payload['service_max_concurrent'] = service_capacity.get('max_concurrent')
 print(json.dumps(payload))
 """
+        script = script.replace(
+            "EXPECTED_SERVICE_WORKERS", repr(expected_service_workers)
+        )
     result = _run(prefix + ["exec", "-T", "api", "python", "-c", script], label="Verificación API")
     try:
         payload = json.loads(result.strip().splitlines()[-1])
