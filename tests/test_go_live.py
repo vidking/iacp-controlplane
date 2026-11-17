@@ -38,6 +38,7 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_PRX_ENABLED": "0",
         "IACP_MAX_CONCURRENT": "6",
+        "IACP_SERVICE_MAX_CONCURRENT": "2",
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
         "IACP_REQUIRE_API_TOKEN": "1",
@@ -612,15 +613,17 @@ def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
         go_live._verify_preloaded_images(config)
 
 
-def _service_configuration(tmp_path):
+def _service_configuration(tmp_path, worker_count=2):
     config = _configuration(stage="develop", include_aws=False)
     config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
-    for number in (1,2):
+    config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
+    for number in range(1, worker_count + 1):
         config['services'][f'service-worker-{number}']={
             'image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}',
             'environment':{key:value for key,value in config['services']['api']['environment'].items()
                            if key in {'PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD'}} | {
-                'IACP_SERVICES_ENABLED':'1','IACP_SERVICE_EXECUTION_ENABLED':'0'}}
+                'IACP_SERVICES_ENABLED':'1','IACP_SERVICE_EXECUTION_ENABLED':'0',
+                'IACP_SERVICE_MAX_CONCURRENT':str(worker_count)}}
     dev=_private_env(tmp_path)
     dev.write_text(''.join(f'{key}={value}\n' for key,value in {
         'POSTGRES_PASSWORD':config['services']['postgres']['environment']['POSTGRES_PASSWORD'],
@@ -630,6 +633,7 @@ def _service_configuration(tmp_path):
     reference.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=prod-api-token\nIACP_PROXMOX_MNG_API_TOKEN=prod-proxmox-token\n')
     reference.chmod(0o600)
     manifest=_manifest('develop',schema_version=3,services_enabled=True,service_execution_enabled=False,
+                       service_worker_count=worker_count,
                        isolation_reference_environment_file=str(reference))
     return config,dev,manifest
 
@@ -689,3 +693,13 @@ def test_service_policy_allows_only_authorized_shared_mng(tmp_path):
     manifest['mng_credentials_shared'] = False
     with pytest.raises(go_live.GateError, match='credencial exclusiva'):
         go_live._check_policy(manifest, config, env)
+
+
+def test_service_policy_supports_four_workers_without_changing_infra_pool(tmp_path):
+    config, env, manifest = _service_configuration(tmp_path, worker_count=4)
+    result = go_live._check_policy(manifest, config, env)
+    assert result["service_workers"] == [f"service-worker-{number}" for number in range(1, 5)]
+    assert go_live._compose_args(manifest, Path("compose.yml"), env)[-4:] == [
+        "--profile", "services", "--profile", "service-workers-3-4"
+    ]
+    assert len([name for name in config["services"] if name.startswith("worker-")]) == 6

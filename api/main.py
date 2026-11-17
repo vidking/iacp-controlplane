@@ -93,6 +93,13 @@ def _max_concurrent() -> int:
         return 6
 
 
+def _service_max_concurrent() -> int:
+    try:
+        return max(1, int(os.getenv("IACP_SERVICE_MAX_CONCURRENT", "2")))
+    except ValueError:
+        return 2
+
+
 def _heartbeat_age(value: str | None) -> float | None:
     if not value:
         return None
@@ -938,7 +945,10 @@ def retrieve_service_credentials(service_id: str):
 @app.get("/v1/service-workers", dependencies=[Depends(authorize)], tags=["applications"])
 def service_workers():
     with database() as db:
-        return {"max_concurrent": 2, "workers": [dict(row) for row in db.execute("SELECT * FROM service_workers ORDER BY worker_id").fetchall()]}
+        return {
+            "max_concurrent": _service_max_concurrent(),
+            "workers": [dict(row) for row in db.execute("SELECT * FROM service_workers ORDER BY worker_id").fetchall()],
+        }
 
 
 @app.post("/v1/service-jobs/{job_id}/cancel", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])

@@ -20,6 +20,7 @@
   "route_template": "deploy/portainer/traefik-dev.yml",
   "schema_version": 3,
   "services_enabled": true,
+  "service_worker_count": 4,
   "service_execution_enabled": false,
   "isolation_reference_environment_file": "/etc/iacp/stacks/prod.env"
 }

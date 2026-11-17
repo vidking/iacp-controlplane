@@ -29,6 +29,7 @@ def client(monkeypatch, tmp_path):
     key.write_bytes(Fernet.generate_key())
     monkeypatch.setenv("IACP_SERVICE_KEY_FILE", str(key))
     monkeypatch.setenv("IACP_SERVICES_ENABLED", "1")
+    monkeypatch.setenv("IACP_SERVICE_MAX_CONCURRENT", "2")
     with TestClient(app) as c:
         yield c
 
@@ -325,6 +326,21 @@ def test_six_infrastructure_slots_and_two_services_are_independent(client):
     assert services.claim("service-a")
     assert services.claim("service-b")
     assert services.claim("service-extra") is None
+
+
+def test_service_pool_capacity_can_expand_to_four(client, monkeypatch):
+    monkeypatch.setenv("IACP_SERVICE_MAX_CONCURRENT", "4")
+    orders = [
+        create(client, f"service-capacity-{index}", f"capacity-{index}")
+        for index in range(5)
+    ]
+    for order in orders:
+        ready(order["instance_id"])
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        claims = list(pool.map(services.claim, [f"service-{index}" for index in range(5)]))
+    assert sum(claim is not None for claim in claims) == 4
+    assert services.claim("service-extra") is None
+    assert client.get("/v1/service-workers").json()["max_concurrent"] == 4
 
 
 def test_order_validation_rolls_back_everything(client):

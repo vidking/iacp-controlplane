@@ -7,7 +7,7 @@ Estado: **BLOCKED**, 2026-11-17. Rama: `devops/features`. Producción sin cambio
 2. Confirmar la imagen ejecutada y el manifiesto canónico
    `/etc/iacp/stacks/manifest-dev.json`. El archivo de entorno es
    `/etc/iacp/stacks/dev.env`; el Bearer dev se obtiene allí privadamente.
-3. Comprobar seis workers de infraestructura sanos e idle, dos de servicios y
+3. Comprobar seis workers de infraestructura sanos e idle, cuatro de servicios y
    ausencia de operaciones activas o inciertas. Conservar los datos históricos.
 4. Ejecutar primero KVM ciclo 1 y ciclo 2 con `scripts/wan_matrix.py`; después
    habilitar Ansible mediante `IACP_SERVICE_EXECUTION_ENABLED=1` y

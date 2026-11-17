@@ -3,13 +3,16 @@
 ## Alcance y estado
 
 Esta ampliación añade pedidos de VM + aplicación, una cola PostgreSQL independiente,
-dos workers de servicios, sobres cifrados, recetas Ansible/Compose e identificación
+un pool configurable de workers de servicios, sobres cifrados, recetas Ansible/Compose e identificación
 IPAM. El entorno sigue siendo `lab` en el clúster MNG. `prod_static` es un perfil de
 red, no habilita Platinum/PRX. No se han ejecutado despliegues físicos ni certificado
 imágenes de aplicación. La disponibilidad comercial no se deduce de las pruebas de código.
 
-Las seis plazas de infraestructura permanecen independientes de las dos plazas de
-servicios. La API guarda pedido y dependencia en una transacción; el pool consulta
+Las seis plazas de infraestructura permanecen independientes de las plazas de
+servicios. `IACP_SERVICE_MAX_CONCURRENT` define la capacidad del pool y el manifiesto
+declara cuántos contenedores deben estar activos. El stack dev se prepara con cuatro;
+el valor predeterminado y el manifiesto productivo conservan dos hasta una promoción.
+La API guarda pedido y dependencia en una transacción; el pool consulta
 la VM y no consume un trabajo antes de `ready` + `running`. No se introducen brokers.
 
 Los endpoints conservan la autenticación del API existente. El contexto comercial
@@ -23,7 +26,8 @@ Las instalaciones están deshabilitadas por defecto:
 
 - `IACP_SERVICES_ENABLED=0`: no aceptar pedidos de aplicación.
 - `IACP_SERVICE_EXECUTION_ENABLED=0`: bloquear ejecución Ansible incluso si hay pedidos.
-- Perfil Compose `services`: los dos contenedores adicionales se incluyen solo al activarlo.
+- Perfil Compose `services`: los dos workers base se incluyen solo al activarlo.
+- Perfil Compose `service-workers-3-4`: agrega los workers 3 y 4 solo cuando el manifiesto declara cuatro.
 - `IACP_SERVICE_CONFIG_DIR`: directorio del operador, preferiblemente absoluto,
   montado en API y workers como `/run/iacp-services`, solo lectura. No montar el socket Docker.
 
@@ -249,7 +253,7 @@ sudo /ruta/al/release/.venv/bin/python scripts/prepare_develop.py \
 ```
 
 El resultado fija dominio `dev-iac.cyberfuel.com`, esquema 3, seis operaciones KVM,
-dos workers de servicios, rango 40000–49999, Wasabi apagado y ejecución Ansible
+cuatro workers de servicios, rango 40000–49999, Wasabi apagado y ejecución Ansible
 deshabilitada inicialmente. El archivo productivo solo se lee. El token y pool
 deben existir y tener los permisos verificados por el operador antes del preflight.
 
@@ -257,7 +261,8 @@ deben existir y tener los permisos verificados por el operador antes del preflig
 manifiesto. El preflight rechaza credenciales dev compartidas o heredadas desde
 variables externas que no coincidan con el archivo privado; comprueba imágenes,
 base y cantidad de servicios. El verificador exige esquema 3, tablas nuevas,
-clave Fernet legible, endpoints y heartbeats recientes de los pools 6+2. Los
+clave Fernet legible, endpoints y heartbeats recientes de los seis workers de
+infraestructura y la cantidad declarada de workers de servicios. Los
 manifiestos históricos sin estas opciones mantienen el contrato de esquema 2.
 
 Para repetir la verificación aislada completa en la máquina de desarrollo:

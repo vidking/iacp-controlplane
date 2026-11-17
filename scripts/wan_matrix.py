@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+from datetime import datetime, timezone
 import json
 import hashlib
 import re
@@ -176,6 +177,19 @@ class Matrix:
             and not w["current_operation_id"]
             for w in state["workers"]
         ), "SIX_WORKERS_REQUIRED"
+        service_state = self.api("GET", "/v1/service-workers")
+        expected_services = int(self.env.get("IACP_SERVICE_MAX_CONCURRENT", "2"))
+        service_workers = service_state.get("workers", [])
+        assert service_state.get("max_concurrent") == expected_services, "SERVICE_CAPACITY_MISMATCH"
+        assert len(service_workers) == expected_services and all(
+            worker.get("status") == "idle"
+            and not worker.get("job_id")
+            and 0 <= (
+                datetime.now(timezone.utc)
+                - datetime.fromisoformat(worker["last_heartbeat"])
+            ).total_seconds() < 60
+            for worker in service_workers
+        ), "SERVICE_WORKERS_NOT_IDLE"
         return state
 
     def wait_operation(self, job):

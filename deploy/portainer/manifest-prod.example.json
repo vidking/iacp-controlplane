@@ -11,6 +11,7 @@
   "state_bucket": "",
   "state_prefix": "",
   "max_concurrent": 6,
+  "service_worker_count": 2,
   "vmid_min": 30000,
   "vmid_max": 39999,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",

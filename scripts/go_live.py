@@ -69,10 +69,24 @@ def _manifest(path: Path, *, require_runtime: bool = True) -> tuple[dict, Path, 
 
 
 def _compose_args(data: dict, compose: Path, env_file: Path) -> list[str]:
+    profiles = []
+    if data.get("services_enabled", False):
+        profiles.extend(["--profile", "services"])
+        if len(_service_worker_names(data)) > 2:
+            profiles.extend(["--profile", "service-workers-3-4"])
     return [
         "docker", "compose", "--project-name", data["project"],
         "--env-file", str(env_file), "-f", str(compose),
-    ] + (["--profile", "services"] if data.get("services_enabled", False) else [])
+    ] + profiles
+
+
+def _service_worker_names(data: dict) -> tuple[str, ...]:
+    if not data.get("services_enabled", False):
+        return ()
+    count = data.get("service_worker_count", 2)
+    if type(count) is not int or count not in {2, 4}:
+        raise GateError("service_worker_count debe ser 2 o 4")
+    return tuple(f"service-worker-{number}" for number in range(1, count + 1))
 
 
 def _compose_config(data: dict, compose: Path, env_file: Path) -> dict:
@@ -180,7 +194,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         raise GateError("schema_version debe ser 2 o 3")
     if services_enabled and schema_version != 3:
         raise GateError("Los servicios requieren esquema 3")
-    service_worker_names = ("service-worker-1", "service-worker-2") if services_enabled else ()
+    service_worker_names = _service_worker_names(data)
     app_names = ("api", *worker_names, *service_worker_names)
     actual_names = set(config.get("services", {}))
     if actual_names != {"postgres", *app_names}:
@@ -197,11 +211,15 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         for name in service_worker_names:
             env = _service_env(config, name)
             if str(env.get("IACP_SERVICES_ENABLED", "0")) != "1":
-                raise GateError("Ambos workers de servicios deben estar habilitados")
+                raise GateError("Todos los workers de servicios deben estar habilitados")
             if (str(env.get("IACP_SERVICE_EXECUTION_ENABLED", "0")) == "1") != execution:
                 raise GateError("El permiso de ejecución de servicios no coincide")
+            if str(env.get("IACP_SERVICE_MAX_CONCURRENT", "2")) != str(len(service_worker_names)):
+                raise GateError("La concurrencia configurada no coincide con el pool de servicios")
             if any(env.get(key) for key in ("IACP_PROXMOX_MNG_API_TOKEN", "IACP_PROXMOX_API_TOKEN")):
                 raise GateError("Los workers de servicios no deben recibir credenciales Proxmox")
+        if str(api_env.get("IACP_SERVICE_MAX_CONCURRENT", "2")) != str(len(service_worker_names)):
+            raise GateError("La API debe anunciar la misma concurrencia del pool de servicios")
         _check_development_credentials(data, env_file, config)
 
     worker_envs = [_service_env(config, name) for name in worker_names]
@@ -372,6 +390,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "state_prefix": data["state_prefix"],
         "max_concurrent_per_stack": 6,
         "service_workers": list(service_worker_names),
+        "service_max_concurrent": len(service_worker_names),
         "schema_version": schema_version,
         "vmid_range": {"min": expected_vmid_range[0], "max": expected_vmid_range[1]},
         "enabled_environments": ["lab"],
@@ -749,7 +768,7 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     statuses = _inventory(data, compose, env_file)["containers"]
     expected = {"postgres", "api", *(f"worker-{number}" for number in range(1, 7))}
     if data.get("services_enabled", False):
-        expected.update({"service-worker-1", "service-worker-2"})
+        expected.update(_service_worker_names(data))
     if {item["service"] for item in statuses} != expected:
         raise GateError("No están activos PostgreSQL, API y los seis workers esperados")
     if any(item["state"] != "running" for item in statuses):
@@ -759,7 +778,7 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     if postgres["health"] != "healthy" or api["health"] != "healthy":
         raise GateError("PostgreSQL o la API no está healthy")
     script = """
-import json, time, urllib.request
+import json, os, time, urllib.request
 from datetime import datetime, timezone
 from api.db import database
 health_response = urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=5)
@@ -792,6 +811,7 @@ print(json.dumps({
     'worker_ids': worker_ids,
 }))
 """
+    expected_service_workers = list(_service_worker_names(data))
     if data.get("services_enabled", False):
         script = script.replace("print(json.dumps({", "payload = {").replace("\n}))", "\n}")
         script += """
@@ -802,7 +822,7 @@ while time.monotonic()<service_deadline:
         rows = db.execute('SELECT worker_id, status, last_heartbeat FROM service_workers ORDER BY worker_id').fetchall()
         service_worker_ids = [row['worker_id'] for row in rows if row['status'] in {'idle','running'} and
             0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(row['last_heartbeat'])).total_seconds() < 60]
-    if service_worker_ids == ['service-worker-1','service-worker-2']:
+    if service_worker_ids == EXPECTED_SERVICE_WORKERS:
         break
     time.sleep(1)
 from api.service_secrets import cipher
@@ -816,6 +836,12 @@ with database() as db:
 payload['infrastructure_workers_fresh'] = fresh_ids == expected_workers
 payload['service_worker_ids'] = service_worker_ids
 payload['service_tables'] = all(name in core_tables for name in ['service_instances','service_jobs','service_events','service_workers','service_releases','service_bindings'])
+service_response = urllib.request.urlopen(urllib.request.Request(
+    'http://127.0.0.1:8080/v1/service-workers',
+    headers={'Authorization': 'Bearer ' + os.environ['IACP_API_TOKEN']},
+    ), timeout=5)
+service_capacity = json.load(service_response)
+payload['service_max_concurrent'] = service_capacity.get('max_concurrent')
 print(json.dumps(payload))
 """
     result = _run(prefix + ["exec", "-T", "api", "python", "-c", script], label="Verificación API")
@@ -834,7 +860,7 @@ print(json.dumps(payload))
         "worker_ids": [f"worker-{number}" for number in range(1, 7)],
     }
     if data.get("services_enabled", False):
-        expected_payload.update(service_worker_ids=["service-worker-1", "service-worker-2"], service_tables=True, service_key_ready=True, service_api=True, infrastructure_workers_fresh=True)
+        expected_payload.update(service_worker_ids=expected_service_workers, service_max_concurrent=len(expected_service_workers), service_tables=True, service_key_ready=True, service_api=True, infrastructure_workers_fresh=True)
     if payload != expected_payload:
         raise GateError("API, PostgreSQL, migración y pools de workers no cumplen el contrato declarado")
     return {"services": statuses, "api": payload}

@@ -1,6 +1,7 @@
-"""Pool de servicios: PostgreSQL, dos slots y recuperación conservadora."""
+"""Pool configurable de servicios con recuperación conservadora."""
 
 import argparse
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from api.db import database, initialize
@@ -73,12 +74,16 @@ def recover():
 def claim(worker_id):
     if not enabled("IACP_SERVICES_ENABLED"):
         return None
+    try:
+        max_concurrent = max(1, int(os.getenv("IACP_SERVICE_MAX_CONCURRENT", "2")))
+    except ValueError:
+        max_concurrent = 2
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         active = db.execute(
             "SELECT COUNT(*) AS n FROM service_jobs WHERE status='running'"
         ).fetchone()["n"]
-        if active >= 2:
+        if active >= max_concurrent:
             db.execute("COMMIT")
             return None
         row = db.execute("""SELECT j.* FROM service_jobs j
