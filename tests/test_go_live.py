@@ -668,7 +668,8 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
     payload={'health':'ready','api_version':'1.0.0','provision_path':True,'build_revision':IMAGE_TAG,
              'schema_version':3,'ip_allocations_table':True,'worker_ids':[f'worker-{i}' for i in range(1,7)],
              'service_worker_ids':['service-worker-1','service-worker-2'],'service_tables':True,
-             'service_key_ready':True,'service_api':True,'infrastructure_workers_fresh':True}
+             'service_max_concurrent':2,'service_key_ready':True,'service_api':True,
+             'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
         ast.parse(command[-1])
         assert "EXPECTED_SERVICE_WORKERS" not in command[-1]

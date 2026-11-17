@@ -292,6 +292,27 @@ def execute(service, job, heartbeat):
             tasks.extend(
                 [
                     {
+                        "name": "Autorizar dominio de Nextcloud",
+                        **command(
+                            base
+                            + [
+                                "exec",
+                                "-T",
+                                "--user",
+                                "www-data",
+                                "app",
+                                "php",
+                                "occ",
+                                "config:system:set",
+                                "trusted_domains",
+                                "1",
+                                "--value",
+                                configuration["domain"],
+                            ]
+                        ),
+                        "no_log": True,
+                    },
+                    {
                         "name": "Resolver proxy",
                         **command(
                             base + ["exec", "-T", "app", "getent", "ahostsv4", "caddy"]

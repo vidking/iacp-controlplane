@@ -251,6 +251,24 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             control = Path(kwargs["env"]["ANSIBLE_SSH_CONTROL_PATH_DIR"])
             assert control.parent == Path(kwargs["env"]["ANSIBLE_LOCAL_TEMP"]).parent
             assert control.parent.is_dir()
+            playbook = json.loads((control.parent / "playbook.json").read_text())
+            service_tasks = playbook[0]["tasks"][1]["block"]
+            trusted_domain_tasks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Autorizar dominio de Nextcloud"
+            ]
+            if application == "nextcloud" and expected_action == "install":
+                assert len(trusted_domain_tasks) == 1
+                assert trusted_domain_tasks[0]["no_log"] is True
+                assert trusted_domain_tasks[0]["ansible.builtin.command"]["argv"][-4:] == [
+                    "trusted_domains",
+                    "1",
+                    "--value",
+                    "cloud.example.org",
+                ]
+            else:
+                assert trusted_domain_tasks == []
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(
@@ -305,7 +323,9 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             ),
             "secrets_encrypted": encrypt(secrets),
         }
+        expected_action = "install"
         service_executor.execute(service, {"action": "install"}, lambda: None)
+        expected_action = "handoff"
         service_executor.execute(service, {"action": "handoff"}, lambda: None)
 
 
