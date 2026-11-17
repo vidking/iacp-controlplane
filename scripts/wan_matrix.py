@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Matriz WAN del piloto dev: seis inyecciones y contención ante incertidumbre.
+"""Matriz de red del piloto dev: seis inyecciones y contención ante incertidumbre.
 
 Ejecutar en el Control Plane con su entorno privado, nunca contra producción.
 La evidencia no contiene credenciales ni salidas de aplicación sin filtrar.
@@ -54,6 +54,7 @@ def cases(category):
 class Matrix:
     def __init__(self, args):
         self.args = args
+        self.profile = args.network_profile
         self.env = dotenv_values(args.env, interpolate=False)
         assert self.env["IACP_RUNTIME_STAGE"] == "develop"
         assert (
@@ -162,15 +163,15 @@ class Matrix:
     def binding(self, item):
         vmid = item["vmid"]
         config = self.proxmox.vm_config("mng01", vmid)
-        assert (
-            config["name"] == item["name"]
-            and "tag=211" in config["net0"]
-            and "bridge=vmbr0" in config["net0"]
-        )
-        assert config["ipconfig0"] in [
-            f"ip={item['address']}/24,gw=190.0.231.1",
-            f"gw=190.0.231.1,ip={item['address']}/24",
-        ]
+        assert config["name"] == item["name"] and "bridge=vmbr0" in config["net0"]
+        if self.profile == "prod_static":
+            assert "tag=211" in config["net0"]
+            assert config["ipconfig0"] in [
+                f"ip={item['address']}/24,gw=190.0.231.1",
+                f"gw=190.0.231.1,ip={item['address']}/24",
+            ]
+        else:
+            assert "tag=" not in config["net0"] and config["ipconfig0"] == "ip=dhcp"
         known = self.folder / ("known-" + str(vmid))
         hostkey = " ".join(
             self.qga(vmid, ["/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"]).split()[
@@ -238,7 +239,7 @@ class Matrix:
             "plan_id": case["plan"],
             "image_id": case["image"],
             "environment": "lab",
-            "network_profile": "prod_static",
+            "network_profile": self.profile,
             "access": {"ssh_public_keys": [self.public], "root_password": password},
             "tags": ["wan-matrix-" + self.args.run],
             "start_on_create": True,
@@ -376,12 +377,28 @@ class Matrix:
         item["vmid"] = instance["vmid"]
         assert 40000 <= item["vmid"] <= 49999
         allocation = instance["network_allocation"]
-        assert (
-            allocation["status"] == "allocated"
-            and allocation["gateway"] == "190.0.231.1"
-        )
-        item["address"] = allocation["address"].split("/")[0]
-        assert item["address"].startswith("190.0.231.")
+        if self.profile == "prod_static":
+            assert (
+                allocation["status"] == "allocated"
+                and allocation["gateway"] == "190.0.231.1"
+            )
+            item["address"] = allocation["address"].split("/")[0]
+            assert item["address"].startswith("190.0.231.")
+        else:
+            assert allocation is None
+            config = self.proxmox.vm_config("mng01", item["vmid"])
+            mac = config["net0"].split(",")[0].split("=")[1].lower()
+            addresses = [
+                entry["ip-address"]
+                for interface in self.proxmox.guest_agent_interfaces(
+                    "mng01", item["vmid"]
+                )
+                if interface.get("hardware-address", "").lower() == mac
+                for entry in interface.get("ip-addresses", [])
+                if entry.get("ip-address-type") == "ipv4"
+            ]
+            assert len(addresses) == 1, "DHCP_ADDRESS_AMBIGUOUS"
+            item["address"] = addresses[0]
         self.binding(item)
         assert self.ssh(item, ["hostname"]).strip() == item["name"]
         assert (
@@ -393,7 +410,7 @@ class Matrix:
             [
                 "sh",
                 "-c",
-                'ip route show default | grep -F "via 190.0.231.1"; getent hosts example.com >/dev/null; curl --fail --silent --show-error --max-time 30 https://example.com/ >/dev/null',
+                "set -e; ip route show default | grep -q default; getent hosts example.com >/dev/null; curl --fail --silent --show-error --max-time 30 https://example.com/ >/dev/null",
             ],
         )
         self.ssh(
@@ -482,10 +499,21 @@ class Matrix:
             int(v.get("vmid", 0)) == item["vmid"] for v in self.proxmox.inventory()
         )
         state = self.api("GET", "/v1/instances/" + item["instance_id"])
-        assert (
-            state["status"] == "deleted"
-            and state["network_allocation"]["status"] == "released"
-        )
+        assert state["status"] == "deleted"
+        if self.profile == "lab_dhcp":
+            assert state["network_allocation"] is None
+            self.record(
+                "PASS",
+                name=item["name"],
+                product=item["product"],
+                image=item["image"],
+                plan=item["plan"],
+                control=item["control"],
+                vmid=item["vmid"],
+                network_profile=self.profile,
+            )
+            return
+        assert state["network_allocation"]["status"] == "released"
         # La misma dirección debe quedar ausente de NetBox, sin tocar registros ajenos.
         headers = {"Authorization": "Bearer " + self.env["IACP_NETBOX_TOKEN"]}
         req = Request(
@@ -512,6 +540,7 @@ class Matrix:
         self.record(
             "start",
             category=self.args.category,
+            network_profile=self.profile,
             cycle=self.args.cycle,
             revision=self.env["IACP_IMAGE_TAG"],
             cases=16,
@@ -567,6 +596,9 @@ if __name__ == "__main__":
         "--category", choices=["kvm", "services", "agents"], required=True
     )
     parser.add_argument("--cycle", type=int, choices=[1, 2], required=True)
+    parser.add_argument(
+        "--network-profile", choices=["lab_dhcp", "prod_static"], default="prod_static"
+    )
     parser.add_argument("--run", required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     args = parser.parse_args()

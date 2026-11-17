@@ -242,3 +242,10 @@ def test_static_guest_readiness_requires_gateway_neighbor():
     assert not ready([{'dst':'190.0.231.1','dev':'eth0','state':['INCOMPLETE']}], '190.0.231.1','eth0')
     assert ready([{'dst':'190.0.231.1','dev':'eth0','state':['STALE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')
     assert not ready([{'dst':'190.0.231.1','dev':'eth1','state':['REACHABLE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')
+
+
+def test_dhcp_bootstrap_refuses_vlan(monkeypatch):
+    initialize()
+    fake=SimpleNamespace(vm_config=lambda *_:{'name':'dhcp-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=211','ipconfig0':'ip=dhcp'})
+    with pytest.raises(GuestIdentityError,match='DHCP_UNEXPECTED_VLAN'):
+        bootstrap.prepare(fake,node='mng01',vmid=40012,name='dhcp-test',instance_id='dhcp-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)

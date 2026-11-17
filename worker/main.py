@@ -925,6 +925,11 @@ def ensure_guest_identity_for_operation(
         except Exception as error:
             raise GuestIdentityError("STATIC_GUEST_VALIDATION_UNCERTAIN") from error
     if not guest_identity_required(spec, stack, vmid):
+        if stack == "mng01" and started and spec.get("image") in {"ubuntu-2604", "almalinux-9", "almalinux-10"} and spec.get("network_profile", "lab_dhcp") == "lab_dhcp":
+            from worker.service_bootstrap import prepare
+            return prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id,
+                           spec=dict(spec, prepare_identity=True),
+                           heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="dhcp_guest_validation"))
         return None
     if not started:
         emit(operation_id, "guest.identity.deferred", "pending", "se ejecutará al encender la VM")

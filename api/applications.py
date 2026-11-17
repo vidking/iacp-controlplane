@@ -144,6 +144,9 @@ def get_service(service_id):
             if result["configuration"].get("access_mode") == "ip" and spec:
                 cidr = json.loads(spec["spec_json"]).get("ipv4_cidr")
                 host = str(ip_interface(cidr).ip) if cidr else None
+                if not host:
+                    binding = db.execute("SELECT binding_json FROM service_bindings WHERE service_id=?", (service_id,)).fetchone()
+                    host = json.loads(binding["binding_json"]).get("address") if binding else None
             result["access_url"] = "https://" + host + "/" if host else None
         return result
 

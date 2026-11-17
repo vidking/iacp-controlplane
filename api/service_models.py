@@ -76,11 +76,8 @@ class ServiceCreateRequest(BaseModel):
         ):
             raise ValueError("la aplicación requiere domain")
         if self.configuration.access_mode == "ip":
-            if (
-                self.configuration.domain
-                or self.instance.network_profile != "prod_static"
-            ):
-                raise ValueError("access_mode=ip requiere WAN sin domain")
+            if self.configuration.domain:
+                raise ValueError("access_mode=ip no admite domain")
         if (
             self.application_id in {"hermes", "openclaw"}
             and self.configuration.agent_mode == "connected"

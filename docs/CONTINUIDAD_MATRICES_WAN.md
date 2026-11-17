@@ -42,3 +42,23 @@ Solo preparar promoción a `main` al aprobar ambos ciclos de cada categoría,
 recuperación y limpieza. Reutilizar la imagen inmutable certificada y ajustar
 únicamente la configuración productiva, incluida WAN exclusiva. No fusionar ni
 actualizar producción como parte de esta continuidad.
+
+## Ensayo LAN autorizado — 2026-11-17
+
+Mientras se confirma la VLAN 211, se autoriza ejecutar las mismas combinaciones
+con `--network-profile lab_dhcp`, sin tag y sin reservas NetBox. Las aplicaciones
+web usan `access_mode=ip` y la misma CA privada del piloto para la IP observada
+mediante QEMU Guest Agent. Estos resultados certifican únicamente LAN y no
+sustituyen las matrices WAN pendientes.
+
+El runner conserva WAN como valor predeterminado. Para LAN se debe indicar el
+perfil explícitamente. La identidad DHCP se configura por MAC en Netplan o
+NetworkManager según la imagen, y el certificado se emite para la dirección
+observada. La suite comprueba SSH por clave y contraseña, TLS validado, persistencia,
+entrega y eliminación. Durante estos ensayos se habilita la ejecución de servicios
+en el manifiesto dev, conservando producción sin cambios.
+
+El formulario de autorización acepta el token como valor, entre comillas, con
+prefijo Bearer o como una única asignación `IACP_API_TOKEN=...`. No registra ni
+persiste el secreto en el navegador. El recurso JavaScript cambia su versión
+para evitar que una copia anterior del formulario permanezca en caché.

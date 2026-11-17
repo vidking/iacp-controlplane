@@ -362,6 +362,8 @@ def test_services_allow_standard_images_and_ip_mode():
         body = {'application_id':'nextcloud','instance':{'name':'ip-service','plan_id':'kvm-1','image_id':image,'network_profile':'prod_static','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'access_mode':'ip'}}
         assert ServiceCreateRequest.model_validate(body).configuration.domain is None
         body['instance']['network_profile']='lab_dhcp'
+        assert ServiceCreateRequest.model_validate(body).instance.network_profile == 'lab_dhcp'
+        body['configuration']['domain']='cloud.example.org'
         with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(body)
     agent={'application_id':'hermes','instance':{'name':'local-agent','plan_id':'kvm-1','image_id':'almalinux-9','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'agent_mode':'local'}}
     assert ServiceCreateRequest.model_validate(agent).secrets.provider_api_key is None

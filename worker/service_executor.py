@@ -112,8 +112,6 @@ def execute(service, job, heartbeat):
     ):
         raise ServiceBlocked("SERVICE_VERIFICATION_REQUIRED")
     if configuration.get("access_mode") == "ip":
-        if spec.get("network_profile") != "prod_static":
-            raise ServiceBlocked("SERVICE_IP_REQUIRES_WAN")
         configuration["domain"] = address
     if configuration.get("agent_mode") == "local":
         configuration["model"] = configuration.get("model") or "openrouter/local-validation"

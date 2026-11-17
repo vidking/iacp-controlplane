@@ -801,9 +801,22 @@
     $("delete-submit").disabled = !instance;
   }
 
+  function normalizeToken(value) {
+    let token = String(value || "").trim();
+    token = token.replace(/^IACP_API_TOKEN\s*=\s*/i, "").replace(/^Authorization\s*:\s*/i, "");
+    for (let i = 0; i < 2; i += 1) {
+      if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) token = token.slice(1, -1).trim();
+      token = token.replace(/^Bearer\s+/i, "").trim();
+    }
+    if (/\s/.test(token)) throw new Error("Introduce un único token de este entorno.");
+    return token;
+  }
+
   async function authorize(event) {
     event.preventDefault();
-    const token = $("api-token").value.trim();
+    let token;
+    try { token = normalizeToken($("api-token").value); }
+    catch (error) { return showError(error); }
     if (!token) return showError(new Error("Introduce un Bearer token."));
     state.token = token;
     try {
@@ -813,8 +826,9 @@
       startLiveUpdates();
     } catch (error) {
       state.token = "";
-      setAuth(false, error.message);
-      showError(error);
+      const message = error.message.startsWith("401:") ? "401: el token no corresponde a este entorno. Usa el token de desarrollo vigente." : error.message;
+      setAuth(false, message);
+      showError(new Error(message));
     }
   }
 
