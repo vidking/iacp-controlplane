@@ -11,6 +11,14 @@ def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
         if category!='kvm':assert {case['image'] for case in main}=={'ubuntu-2404','almalinux-9'}
 
 
+def test_service_controls_cover_password_only_access():
+    matrix = cases('services')
+    controls = [case for case in matrix if case['control']]
+    assert len(controls) == 2
+    assert {case['product'] for case in controls} == {'nextcloud', 'n8n'}
+    assert all(case['client_ssh_key'] is False for case in controls)
+
+
 def test_parallel_failure_contains_future_mutations():
     import threading
     import pytest

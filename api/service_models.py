@@ -67,8 +67,13 @@ class ServiceCreateRequest(BaseModel):
             raise ValueError(
                 "las recetas requieren ubuntu-2404 o almalinux-9 y start_on_create=true"
             )
-        if not self.instance.access.ssh_public_keys:
-            raise ValueError("se requiere una clave SSH del cliente para la entrega")
+        if (
+            not self.instance.access.ssh_public_keys
+            and not self.instance.access.root_password
+        ):
+            raise ValueError(
+                "se requiere root_password o una clave SSH del cliente para conservar acceso al sistema"
+            )
         if (
             self.application_id in {"nextcloud", "n8n"}
             and self.configuration.access_mode == "domain"

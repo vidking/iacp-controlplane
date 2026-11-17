@@ -144,7 +144,7 @@
                 </div>
                 <div class="form-grid two-columns access-form-grid">
                   <label>Contraseña root obligatoria<input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small>Se entrega por bootstrap seguro, nunca se devuelve y debe tener al menos 12 caracteres en producción.</small></label>
-                  <label><span id="ssh-key-label">Llave pública SSH opcional</span><textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small id="ssh-key-help">Los servicios requieren tu llave pública para conservar acceso después de la entrega.</small></label>
+                  <label><span id="ssh-key-label">Llave pública SSH opcional</span><textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small id="ssh-key-help">Opcional. Si no agregas una llave, la contraseña root permite conservar acceso SSH al sistema.</small></label>
                 </div>
                 <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
                 <label class="vm-tags-field">Tags Proxmox adicionales (opcional)

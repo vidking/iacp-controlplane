@@ -100,8 +100,10 @@ idempotencia para evitar persistir una respuesta con secretos en texto claro.
 
 1. `GET /v1/applications`: catálogo separado de `/v1/images`.
 2. `POST /v1/service-instances`: `application_id`, `instance` con el contrato KVM
-   actual, `configuration` y `secrets`. Requiere Ubuntu 24.04, inicio automático y
-   una clave SSH del cliente. Añade una clave pública temporal y `app-<aplicación>`.
+   actual, `configuration` y `secrets`. Requiere Ubuntu 24.04 o AlmaLinux 9 e
+   inicio automático. Para el acceso del cliente, acepta una clave SSH pública,
+   una contraseña root o ambas; si se omite la clave, la contraseña root es
+   necesaria. Añade una clave pública temporal interna y `app-<aplicación>`.
 3. `GET /v1/service-instances/{id}`: infraestructura y aplicación por separado.
 4. `GET /v1/service-jobs/{id}`: trabajo, generación, error y eventos.
 5. `POST /v1/service-jobs/{id}/retry`: reintento; para `uncertain` requiere

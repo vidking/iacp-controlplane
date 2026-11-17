@@ -52,7 +52,12 @@ def cases(category):
         for product, image in items
         for plan in range(1, 5)
     ]
-    return result + [dict(result[0], control=True), dict(result[-1], control=True)]
+    controls = [dict(result[0], control=True), dict(result[-1], control=True)]
+    if category == "services":
+        # Controles explícitos para el contrato de acceso solo con contraseña.
+        for case in controls:
+            case["client_ssh_key"] = False
+    return result + controls
 
 
 class Matrix:
@@ -246,6 +251,8 @@ class Matrix:
     def ssh(self, item, argv, input=None, password=None):
         if self.abort.is_set():
             raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
+        if not item.get("client_ssh_key", True) and password is None:
+            password = item["password"]
         args = [
             "ssh",
             "-o",
@@ -305,7 +312,10 @@ class Matrix:
             "image_id": case["image"],
             "environment": "lab",
             "network_profile": self.profile,
-            "access": {"ssh_public_keys": [self.public], "root_password": password},
+            "access": {
+                "ssh_public_keys": [self.public] if case.get("client_ssh_key", True) else [],
+                "root_password": password,
+            },
             "tags": ["wan-matrix-" + self.args.run],
             "start_on_create": True,
         }

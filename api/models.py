@@ -60,11 +60,11 @@ class AccessRequest(BaseModel):
     root_password: SecretStr | None = Field(
         default=None,
         min_length=1,
-        description="Secreto temporal para el usuario root. Nunca se incluye en respuestas.",
+        description="Secreto de acceso SSH root al sistema operativo. En servicios es obligatorio si no se envía una llave SSH pública. Nunca se incluye en respuestas.",
     )
     ssh_public_keys: list[str] = Field(
         default_factory=list,
-        description="Claves públicas OpenSSH admitidas: ssh-ed25519, ssh-rsa o ecdsa-sha2-*.",
+        description="Opcional. Claves públicas OpenSSH admitidas: ssh-ed25519, ssh-rsa o ecdsa-sha2-*.",
     )
 
     @field_validator("root_password")

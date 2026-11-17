@@ -17,7 +17,10 @@ def body(name="service-demo"):
             "name": name,
             "plan_id": "kvm-2",
             "image_id": "ubuntu-2404",
-            "access": {"ssh_public_keys": ["ssh-ed25519 AAAAexample"]},
+            "access": {
+                "root_password": "password-ficticio-123",
+                "ssh_public_keys": ["ssh-ed25519 AAAAexample"],
+            },
         },
         "configuration": {"domain": "cloud.example.org"},
     }
@@ -89,6 +92,34 @@ def test_atomic_idempotent_order_and_encrypted_credentials(client):
         ).status_code
         == 409
     )
+
+
+def test_password_only_service_injects_only_an_internal_temporary_key(client):
+    request = body("service-password-only")
+    request["instance"]["access"]["ssh_public_keys"] = []
+    response = client.post(
+        "/v1/service-instances",
+        json=request,
+        headers={"Idempotency-Key": "password-only-service"},
+    )
+    assert response.status_code == 202, response.text
+    with database() as db:
+        operation = json.loads(
+            db.execute("SELECT payload_json FROM operations").fetchone()["payload_json"]
+        )
+        service = db.execute("SELECT * FROM service_instances").fetchone()
+        secrets = decrypt(service["secrets_encrypted"])
+    assert operation["spec"]["ssh_public_keys"] == [secrets["ssh_public_key"]]
+    assert "ssh-ed25519 AAAAexample" not in operation["spec"]["ssh_public_keys"]
+    assert secrets["ssh_private_key"] not in json.dumps(operation)
+
+
+def test_password_only_service_requires_a_root_password(client):
+    request = body("service-without-access")
+    request["instance"]["access"] = {"ssh_public_keys": []}
+    response = client.post("/v1/service-instances", json=request)
+    assert response.status_code == 422
+    assert "root_password" in response.text
 
 
 def test_pool_claims_and_blocked_execution(client):

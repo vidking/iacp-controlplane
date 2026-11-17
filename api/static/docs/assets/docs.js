@@ -310,8 +310,11 @@
     const domain = service && $("service-access-mode").value === "domain";
     $("service-domain-field").classList.toggle("hidden", !domain);
     $("service-domain").required = domain;
-    $("ssh-key").required = service;
-    $("ssh-key-label").textContent = `Llave pública SSH ${service ? "obligatoria" : "opcional"}`;
+    $("ssh-key").required = false;
+    $("ssh-key-label").textContent = "Llave pública SSH opcional";
+    $("ssh-key-help").textContent = service
+      ? "Opcional. Si no agregas una llave, la contraseña root permite conservar acceso SSH al sistema. La aplicación tiene su propio acceso web."
+      : "Opcional. Permite iniciar sesión SSH sin usar la contraseña root.";
     $("started").disabled = service;
     if (service) $("started").checked = true;
     $("create-button").textContent = service ? `Crear ${application?.label || product}` : "Crear máquina virtual";
@@ -882,7 +885,6 @@
       body.commercial_context = { customer_id: values[0], customer_tag: values[1], order_id: values[2], product_id: values[3] };
     }
     if ($("application").value === "kvm") return body;
-    if (!ssh) throw new Error("Los servicios requieren tu llave pública SSH para la entrega.");
     const configuration = { access_mode: $("service-access-mode").value };
     if (configuration.access_mode === "domain") configuration.domain = $("service-domain").value.trim().toLowerCase();
     return { application_id: $("application").value, instance: { ...body, start_on_create: true }, configuration };
