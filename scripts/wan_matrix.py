@@ -11,6 +11,7 @@ import base64
 import concurrent.futures
 import json
 import hashlib
+import re
 import threading
 import os
 from pathlib import Path
@@ -205,11 +206,21 @@ class Matrix:
         else:
             assert "tag=" not in config["net0"] and config["ipconfig0"] == "ip=dhcp"
         known = self.folder / ("known-" + str(vmid))
-        hostkey = " ".join(
-            self.qga(vmid, ["/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"]).split()[
-                :2
-            ]
-        )
+        if item["image"] in {"almalinux-9", "almalinux-10"}:
+            mac = config["net0"].split(",")[0].split("=", 1)[1].lower()
+            observed = json.loads(self.qga(vmid, [
+                "/usr/local/libexec/iacp-guest-bootstrap", item["instance_id"], mac,
+                "static" if self.profile == "prod_static" else "dhcp",
+                item["address"] + "/24" if self.profile == "prod_static" else "",
+                "190.0.231.1" if self.profile == "prod_static" else "",
+            ]))
+            assert observed.get("bootstrap_protocol") == 1
+            assert observed.get("instance_id") == item["instance_id"] and observed.get("mac_address") == mac
+            assert not observed.get("ipv4") or observed["ipv4"] == item["address"]
+            hostkey = observed.get("host_key", "")
+        else:
+            hostkey = " ".join(self.qga(vmid, ["/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"]).split()[:2])
+        assert re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+", hostkey), "SSH_HOST_KEY_INVALID"
         known.write_text(item["address"] + " " + hostkey + "\n")
         item["known"] = str(known)
 
