@@ -58,13 +58,25 @@ def render(application, configuration, secrets, release):
             "restart": "unless-stopped",
             "ports": ["80:80", "443:443"],
             "volumes": [
-                "./Caddyfile:/etc/caddy/Caddyfile:ro",
+                "./Caddyfile:/etc/caddy/Caddyfile:ro,Z",
                 "caddy_data:/data",
                 "caddy_config:/config",
             ],
         }
         result["volumes"].update(caddy_data={}, caddy_config={})
-        files["Caddyfile"] = f"{domain} {{\n reverse_proxy app:{port}\n}}\n"
+        tls = (
+            " tls /etc/caddy/pilot.crt /etc/caddy/pilot.key\n"
+            if configuration.get("access_mode") == "ip"
+            else ""
+        )
+        if tls:
+            result["services"]["caddy"]["volumes"] += [
+                "./pilot.crt:/etc/caddy/pilot.crt:ro,Z",
+                "./pilot.key:/etc/caddy/pilot.key:ro,Z",
+            ]
+        files["Caddyfile"] = (
+            f"https://{domain} {{\n{tls} reverse_proxy app:{port}\n}}\n"
+        )
     if application == "nextcloud":
         app["volumes"] = ["app_data:/var/www/html"]
         app["environment"] = env(
@@ -113,14 +125,25 @@ def render(application, configuration, secrets, release):
         # Caddy requiere bcrypt; el hash se obtiene con `caddy hash-password` en la receta remota.
         files["onboarding_password"] = secrets["admin_password"]
         files["Caddyfile"] = (
-            f"{configuration['domain']} {{\n basic_auth {{\n  installer IACP_BCRYPT_PLACEHOLDER\n }}\n reverse_proxy app:5678\n}}\n"
+            f"https://{configuration['domain']} {{\n{tls} basic_auth {{\n  installer IACP_BCRYPT_PLACEHOLDER\n }}\n reverse_proxy app:5678\n}}\n"
         )
     elif application == "hermes":
-        app["volumes"] = ["./data:/opt/data"]
+        app["volumes"] = ["./data:/opt/data:Z"]
         app["command"] = ["gateway", "run"]
-        app["environment"] = env({"OPENROUTER_API_KEY": secrets["provider_api_key"]})
+        app["environment"] = env(
+            {
+                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
+                or "local-validation-no-provider"
+            }
+        )
         files["data/config.yaml"] = json.dumps(
-            {"model": {"default": configuration["model"], "provider": "openrouter"}}
+            {
+                "model": {
+                    "default": configuration.get("model")
+                    or "openrouter/local-validation",
+                    "provider": "openrouter",
+                }
+            }
         )
         if secrets.get("telegram_bot_token"):
             app["environment"].update(
@@ -137,7 +160,8 @@ def render(application, configuration, secrets, release):
         app["volumes"] = ["app_data:/home/node/.openclaw"]
         app["environment"] = env(
             {
-                "OPENROUTER_API_KEY": secrets["provider_api_key"],
+                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
+                or "local-validation-no-provider",
                 "OPENCLAW_GATEWAY_TOKEN": secrets["gateway_token"],
             }
         )

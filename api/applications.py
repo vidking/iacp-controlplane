@@ -137,6 +137,14 @@ def get_service(service_id):
                 (service_id,),
             ).fetchall()
         ]
+        spec = db.execute("SELECT spec_json FROM instances WHERE instance_id=?", (result["instance_id"],)).fetchone()
+        if result["application_id"] in {"nextcloud", "n8n"}:
+            from ipaddress import ip_interface
+            host = result["configuration"].get("domain")
+            if result["configuration"].get("access_mode") == "ip" and spec:
+                cidr = json.loads(spec["spec_json"]).get("ipv4_cidr")
+                host = str(ip_interface(cidr).ip) if cidr else None
+            result["access_url"] = "https://" + host + "/" if host else None
         return result
 
 

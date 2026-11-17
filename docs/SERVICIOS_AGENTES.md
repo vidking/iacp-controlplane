@@ -384,3 +384,57 @@ evidencia en `/opt/iacp/evidence/dev-1a2b0af-fisica-20261117/provision.jsonl`.
 La corrección devuelve una dirección de gateway sin prefijo y añade una regresión
 que verifica tanto la consulta CIDR a NetBox como el contrato entregado a Terraform.
 No se interpreta este ensayo como aprobación de concurrencia física ni GO integral.
+
+### Rama de desarrollo y acceso por IP — 2026-11-17
+
+La siguiente versión vive en `devops/features`; `main` conserva la versión estable.
+Las diferencias de dominio, imagen y políticas son configuración de despliegue.
+No se debe cambiar el código de la API para alternar entre dominios.
+
+La configuración canónica del piloto es `/etc/iacp/stacks/dev.env`, y su manifiesto
+`/etc/iacp/stacks/manifest-dev.json`. El token dev es propio: copiar privadamente el
+valor de `IACP_API_TOKEN` desde ese archivo al formulario Authorize. El archivo
+histórico tenía otro token y no era el consumido por el stack candidato, lo que
+explica el 401. Se conservó un respaldo privado antes de unificarlo.
+
+El contrato incorpora `configuration.access_mode="ip"` para Nextcloud/n8n sin
+`domain`, únicamente con `instance.network_profile="prod_static"`. La dirección
+se obtiene del ledger IPAM. La respuesta del servicio incluye `access_url` y
+`GET /v1/service-instances/{service_id}/tls-ca` entrega solo el certificado público
+con autenticación. El modo por dominio conserva su comportamiento anterior.
+
+El operador prepara una sola CA del piloto con `scripts/prepare_pilot_ca.py` en el
+directorio privado de servicios. Los workers requieren
+`IACP_SERVICE_IP_TLS_ENABLED=1`, emiten certificados con SAN de la IP y duración de
+siete días, y copian solo el certificado de servidor, su clave y la CA pública al
+invitado. La clave privada de la CA permanece en el Control Plane. No existe aún
+renovación automática: este modo certifica el piloto y no equivale a un producto
+público con TLS confiable de forma predeterminada.
+
+Las recetas admiten Ubuntu 24.04 y AlmaLinux 9; los contenedores conservan los
+mismos digests. En AlmaLinux se instala Docker desde su repositorio firmado y se
+mantiene SELinux, etiquetando los bind mounts necesarios. La verificación WAN
+observa interfaces, rutas y DNS del sistema operativo sin imponer Netplan a AlmaLinux.
+
+`configuration.agent_mode="local"` permite validar Hermes/OpenClaw sin credencial
+real de proveedor. El modo predeterminado `connected` sigue exigiendo modelo y
+clave. La aprobación local excluye inferencia, Telegram y conexiones externas.
+
+`scripts/wan_matrix.py` ejecuta una categoría y ciclo con 16 combinaciones y dos
+controles adicionales, en tres tandas de seis. Requiere el runtime dev idle y
+sin operaciones inciertas. No admite URL productiva. Conserva evidencia fuera de
+workdata, valida identidad y SSH, reinicio/persistencia, entrega, eliminación e
+IPAM; interrumpe la inyección al fallar. Las credenciales de aplicación se consumen
+una sola vez y permanecen en memoria durante el caso, nunca en los resultados.
+La clave SSH exclusiva del ensayo se conserva en el directorio privado de evidencia.
+
+Matrices: cuatro imágenes × cuatro planes para KVM; dos aplicaciones × dos
+sistemas × cuatro planes para servicios y para agentes. Completar dos ciclos
+limpios de cada categoría antes de preparar una promoción; no confundir los
+controles adicionales ni los ensayos fallidos con los 16 casos de aceptación.
+
+Las recetas Docker y TLS se apoyan en la documentación oficial de
+[instalación RPM de Docker](https://docs.docker.com/engine/install/centos/) y
+[certificados explícitos de Caddy](https://caddyserver.com/docs/caddyfile/directives/tls).
+La compatibilidad concreta con las Golden Images de AlmaLinux se determina con
+la matriz física; la prueba de sintaxis de Ansible por sí sola no la certifica.

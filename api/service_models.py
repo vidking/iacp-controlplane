@@ -17,6 +17,8 @@ class ApplicationConfiguration(BaseModel):
     domain: str | None = Field(
         default=None, max_length=253, pattern=r"^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
     )
+    access_mode: Literal["domain", "ip"] = "domain"
+    agent_mode: Literal["connected", "local"] = "connected"
     admin_user: str = Field(default="admin", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     model: str | None = Field(
         default=None, max_length=128, pattern=r"^[a-zA-Z0-9_./:-]+$"
@@ -58,16 +60,31 @@ class ServiceCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def compatible(self):
-        if self.instance.image_id != "ubuntu-2404" or not self.instance.start_on_create:
-            raise ValueError("las recetas requieren ubuntu-2404 y start_on_create=true")
+        if (
+            self.instance.image_id not in {"ubuntu-2404", "almalinux-9"}
+            or not self.instance.start_on_create
+        ):
+            raise ValueError(
+                "las recetas requieren ubuntu-2404 o almalinux-9 y start_on_create=true"
+            )
         if not self.instance.access.ssh_public_keys:
             raise ValueError("se requiere una clave SSH del cliente para la entrega")
         if (
             self.application_id in {"nextcloud", "n8n"}
+            and self.configuration.access_mode == "domain"
             and not self.configuration.domain
         ):
             raise ValueError("la aplicación requiere domain")
-        if self.application_id in {"hermes", "openclaw"}:
+        if self.configuration.access_mode == "ip":
+            if (
+                self.configuration.domain
+                or self.instance.network_profile != "prod_static"
+            ):
+                raise ValueError("access_mode=ip requiere WAN sin domain")
+        if (
+            self.application_id in {"hermes", "openclaw"}
+            and self.configuration.agent_mode == "connected"
+        ):
             if not self.secrets.provider_api_key or not self.configuration.model:
                 raise ValueError(
                     "el agente requiere model y provider_api_key (OpenRouter en v1)"

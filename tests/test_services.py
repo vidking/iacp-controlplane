@@ -353,3 +353,17 @@ def test_release_manifest_cannot_change_on_retry(client):
     pin_release(order["service_id"], {"images": {"app": "first"}})
     with pytest.raises(ServiceBlocked, match="SERVICE_RELEASE_CHANGED"):
         pin_release(order["service_id"], {"images": {"app": "second"}})
+
+
+def test_services_allow_standard_images_and_ip_mode():
+    from api.service_models import ServiceCreateRequest
+    from pydantic import ValidationError
+    for image in ['ubuntu-2404', 'almalinux-9']:
+        body = {'application_id':'nextcloud','instance':{'name':'ip-service','plan_id':'kvm-1','image_id':image,'network_profile':'prod_static','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'access_mode':'ip'}}
+        assert ServiceCreateRequest.model_validate(body).configuration.domain is None
+        body['instance']['network_profile']='lab_dhcp'
+        with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(body)
+    agent={'application_id':'hermes','instance':{'name':'local-agent','plan_id':'kvm-1','image_id':'almalinux-9','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'agent_mode':'local'}}
+    assert ServiceCreateRequest.model_validate(agent).secrets.provider_api_key is None
+    agent['configuration']['agent_mode']='connected'
+    with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)

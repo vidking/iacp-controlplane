@@ -118,3 +118,7 @@ No habilitar la ejecución sin releases y bindings SSH verificados.
 Para reconstruir la imagen y repetir las pruebas con PostgreSQL y los pools 6+2
 en Docker local: `.venv/bin/python scripts/test_local_docker.py`. El comando
 produce evidencias y no se conecta al clúster MNG.
+
+La versión nueva de `dev-iac.cyberfuel.com` se desarrolla en `devops/features`;
+`main` conserva producción hasta completar las matrices y aprobar la promoción.
+El código de API es común; dominios y credenciales son configuración por entorno.

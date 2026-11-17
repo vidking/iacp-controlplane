@@ -952,3 +952,14 @@ def configure_service_connections(service_id: str, request: ApplicationConnectio
 def delete_service_instance(service_id: str, idempotency_key: str | None = Header(default=None)):
     service = applications.get_service(service_id)
     return create_destroy(service["instance_id"], idempotency_key=idempotency_key)
+
+
+@app.get("/v1/service-instances/{service_id}/tls-ca", dependencies=[Depends(authorize)], tags=["applications"])
+def service_tls_ca(service_id: str):
+    service = applications.get_service(service_id)
+    if service["configuration"].get("access_mode") != "ip":
+        raise HTTPException(409, "SERVICE_NOT_USING_PILOT_CA")
+    certificate = Path("/run/iacp-services/pilot-ca.crt")
+    if not certificate.is_file():
+        raise HTTPException(503, "SERVICE_CA_NOT_CONFIGURED")
+    return FileResponse(certificate, media_type="application/x-pem-file", filename="iacp-pilot-ca.crt", headers={"Cache-Control": "no-store"})

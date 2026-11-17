@@ -30,6 +30,9 @@ def catalog() -> list[dict]:
             version=releases[key]["version"],
             validation_scope=releases[key]["validation_scope"],
             image_id="ubuntu-2404",
+            supported_image_ids=["ubuntu-2404", "almalinux-9"],
+            access_modes=["domain", "ip"] if key in {"nextcloud", "n8n"} else ["ssh"],
+            agent_modes=["connected", "local"] if key in {"hermes", "openclaw"} else [],
             enabled=enabled("IACP_SERVICES_ENABLED"),
             **value,
         )

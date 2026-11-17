@@ -111,6 +111,12 @@ def execute(service, job, heartbeat):
         or not all(isinstance(arg, str) and arg for arg in verification)
     ):
         raise ServiceBlocked("SERVICE_VERIFICATION_REQUIRED")
+    if configuration.get("access_mode") == "ip":
+        if spec.get("network_profile") != "prod_static":
+            raise ServiceBlocked("SERVICE_IP_REQUIRES_WAN")
+        configuration["domain"] = address
+    if configuration.get("agent_mode") == "local":
+        configuration["model"] = configuration.get("model") or "openrouter/local-validation"
     secrets = decrypt(service["secrets_encrypted"])
     try:
         compose, files = render(
@@ -118,15 +124,20 @@ def execute(service, job, heartbeat):
         )
     except RecipeError as error:
         raise ServiceBlocked(str(error)) from None
+    if configuration.get("access_mode") == "ip":
+        from worker.service_tls import issue
+        try:
+            files.update(issue(address))
+        except (OSError, ValueError):
+            raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
     pin_release(service["service_id"], release)
     root = f"/opt/iacp-services/{service['service_id']}"
     command = lambda argv: {
         "ansible.builtin.command": {"argv": argv},
         "changed_when": False,
     }
-    tasks = [
-        {"name": "Esperar cloud-init", **command(["cloud-init", "status", "--wait"])}
-    ]
+    tasks = [{"name": "Esperar cloud-init", **command(["cloud-init", "status", "--wait", "--long"]),
+              "register": "cloud_init", "failed_when": "cloud_init.rc not in [0, 2] or 'status: done' not in cloud_init.stdout"}]
     if job["action"] == "handoff":
         tasks += [
             {
@@ -144,11 +155,27 @@ def execute(service, job, heartbeat):
         tasks += [
             {
                 "name": "Instalar dependencias de Ubuntu",
+                "when": "ansible_facts.os_family == 'Debian'",
                 "ansible.builtin.apt": {
                     "name": ["docker.io", "docker-compose-v2"],
                     "state": "present",
                     "update_cache": True,
                 },
+            },
+            {
+                "name": "Configurar repositorio Docker para AlmaLinux",
+                "when": "ansible_facts.os_family == 'RedHat'",
+                "ansible.builtin.yum_repository": {
+                    "name": "docker-ce-stable", "description": "Docker CE estable",
+                    "baseurl": "https://download.docker.com/linux/centos/9/$basearch/stable",
+                    "enabled": True, "gpgcheck": True,
+                    "gpgkey": "https://download.docker.com/linux/centos/gpg",
+                },
+            },
+            {
+                "name": "Instalar Docker en AlmaLinux",
+                "when": "ansible_facts.os_family == 'RedHat'",
+                "ansible.builtin.dnf": {"name": ["docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"], "state": "present"},
             },
             {
                 "name": "Iniciar Docker",
@@ -374,6 +401,7 @@ def execute(service, job, heartbeat):
                     "ansible.builtin.uri": {
                         "url": f"https://{configuration['domain']}/",
                         "validate_certs": True,
+                        **({"ca_path": root + "/pilot-ca.crt"} if configuration.get("access_mode") == "ip" else {}),
                         "url_username": "installer"
                         if service["application_id"] == "n8n"
                         else None,
@@ -425,7 +453,7 @@ def execute(service, job, heartbeat):
         playbook = [
             {
                 "hosts": "all",
-                "gather_facts": False,
+                "gather_facts": True,
                 "tasks": lock_tasks + [{"block": tasks, "always": cleanup}],
             }
         ]

@@ -203,7 +203,7 @@ class InstanceCreateRequest(BaseModel):
         default=None,
         description="Trazabilidad opcional. Si se envía, debe contener los cuatro campos comerciales.",
     )
-    network_profile: NetworkProfile | None = Field(default=None, description="Solo seleccionable en develop/lab. Producción exige prod_static.")
+    network_profile: NetworkProfile | None = Field(default=None, description="Seleccionable durante el piloto; la política WAN exclusiva se activa en la promoción definitiva.")
     tags: list[TagValue] = Field(
         default_factory=list,
         description=(

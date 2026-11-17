@@ -30,6 +30,36 @@ else:
  if cloud.returncode==2:
   lines=[line.strip() for line in cloud.stdout.split('recoverable_errors:',1)[1].splitlines() if line.strip()]
   assert len(lines)>1 and lines[0]=='DEPRECATED:' and all(line.startswith('- ') and 'deprecated' in line.lower() for line in lines[1:])
+if mode=='static':
+ import shutil
+ ip=shutil.which('ip');assert ip
+ interfaces=json.loads(subprocess.run([ip,'-j','address'],check=True,capture_output=True,text=True).stdout)
+ matches=[entry for entry in interfaces if entry.get('address','').lower()==mac]
+ assert len(matches)==1
+ interface=matches[0]
+ expected_address,expected_prefix=expected_ip.split('/')
+ assert any(entry.get('local')==expected_address and entry.get('prefixlen')==int(expected_prefix) for entry in interface.get('addr_info',[]))
+ routes=json.loads(subprocess.run([ip,'-j','route','show','default'],check=True,capture_output=True,text=True).stdout)
+ assert any(route.get('gateway')==expected_gateway and route.get('dev')==interface['ifname'] for route in routes)
+ resolver=shutil.which('resolvectl')
+ if resolver:
+  dns=subprocess.run([resolver,'dns',interface['ifname']],check=True,capture_output=True,text=True).stdout
+ else:
+  nmcli=shutil.which('nmcli');assert nmcli
+  dns=subprocess.run([nmcli,'-g','IP4.DNS','device','show',interface['ifname']],check=True,capture_output=True,text=True).stdout
+ assert all(value in dns for value in ['1.1.1.1','8.8.8.8'])
+ marker=Path('/var/lib/iacp/static-identity.json')
+ value={'instance_id':identifier,'mac_address':mac,'ipv4_cidr':expected_ip,'gateway':expected_gateway}
+ assert not marker.is_symlink()
+ if marker.exists():assert json.loads(marker.read_text())==value
+ else:
+  marker.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+  descriptor=os.open(marker,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+  with os.fdopen(descriptor,'w') as output:json.dump(value,output,sort_keys=True)
+ key=Path('/etc/ssh/ssh_host_ed25519_key.pub').read_text().split()
+ assert len(key)>=2 and key[0]=='ssh-ed25519'
+ print(json.dumps({'instance_id':identifier,'mac_address':mac,'host_key':' '.join(key[:2]),'dns_servers':['1.1.1.1','8.8.8.8']}))
+ sys.exit(0)
 import yaml
 network=yaml.safe_load(Path('/etc/netplan/50-cloud-init.yaml').read_text())['network']
 matching=[name for name,conf in network['ethernets'].items() if conf.get('match',{}).get('macaddress','').lower()==mac]

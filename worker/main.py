@@ -886,6 +886,10 @@ def instance_spec(instance_id: str | None) -> dict:
 
 
 def operation_spec(source_operation: dict, fallback_payload: dict | None = None) -> dict:
+    # El payload en memoria contiene la reserva IPAM creada durante provision.
+    # El snapshot source_operation todavía puede conservar el spec anterior.
+    if isinstance(fallback_payload, dict) and isinstance(fallback_payload.get("spec"), dict):
+        return fallback_payload["spec"]
     try:
         payload = json.loads(source_operation.get("payload_json") or "{}")
     except (TypeError, ValueError):

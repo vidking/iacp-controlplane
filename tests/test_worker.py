@@ -1202,3 +1202,10 @@ def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
     assert updates[0][0] == ("allocation-test", "release_pending")
     assert updates[0][1]["error"] == "IPAM_VM_STILL_PRESENT"
     assert events[0][1] == "ipam.release.pending"
+
+
+def test_operation_spec_preserves_ipam_resolved_payload():
+    from worker.main import operation_spec
+    old = {"payload_json": json.dumps({"spec": {"network_profile": "prod_static", "ipv4_cidr": None}})}
+    resolved = {"spec": {"network_profile": "prod_static", "ipv4_cidr": "190.0.231.2/24", "ipv4_gateway": "190.0.231.1"}}
+    assert operation_spec(old, resolved) == resolved["spec"]
