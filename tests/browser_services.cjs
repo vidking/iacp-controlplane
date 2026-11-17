@@ -22,10 +22,11 @@ const server = http.createServer((request, response) => {
   try {
     const page = await browser.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    let created = false, retrieved = false, delivered = false, credentialPosts = 0;
+    let created = false, retrieved = false, delivered = false, deleted = false, powerState = 'running', credentialPosts = 0, deletePosts = 0;
     let payload, deliveryKey;
-    const service = () => ({ service_id: 'service-test', instance_id: 'instance-test', name: 'prueba-service-n8n', application_id: 'n8n', status: delivered ? 'delivered' : 'awaiting_customer', infrastructure_status: 'ready', credentials_available: !retrieved, access_url: 'https://192.0.2.10/', configuration: {access_mode: 'ip'}, jobs: [{status:'succeeded',phase:'completed'}] });
+    const service = () => ({ service_id: 'service-test', instance_id: 'instance-test', name: 'prueba-service-n8n', application_id: 'n8n', status: deleted ? 'deleted' : delivered ? 'delivered' : 'awaiting_customer', infrastructure_status: deleted ? 'deleted' : 'ready', power_state: powerState, vmid: 40000, credentials_available: !retrieved, access_url: 'https://192.0.2.10/', configuration: {access_mode: 'ip'}, jobs: [{status:'succeeded',phase:'completed'}] });
     const instance = {instance_id:'instance-test',name:'prueba-service-n8n',status:'ready',vmid:40000,image_id:'ubuntu-2404',spec:{}};
+    page.on('dialog', dialog => dialog.accept());
     await page.route('**/v1/**', async route => {
       const request = route.request(), pathname = new URL(request.url()).pathname;
       let body = {};
@@ -34,11 +35,13 @@ const server = http.createServer((request, response) => {
       else if (pathname === '/v1/network-profiles') body = {network_profiles:[{profile_id:'lab_dhcp',enabled:true}],active_profile:'lab_dhcp'};
       else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404','almalinux-9']}));
       else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; payload = request.postDataJSON(); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }
-      else if (pathname === '/v1/service-instances') body = {services:created ? [service()] : [],total:created ? 1 : 0};
+      else if (pathname === '/v1/service-instances/service-test' && request.method() === 'DELETE') { deleted=true; deletePosts+=1; body={operation_id:'operation-delete-test'}; }
+      else if (pathname === '/v1/service-instances') body = {services:created && !deleted ? [service()] : [],total:created && !deleted ? 1 : 0};
       else if (pathname === '/v1/service-instances/service-test') body = service();
       else if (pathname.endsWith('/credentials')) { assert.equal(request.method(),'POST'); retrieved=true; credentialPosts+=1; body={onboarding_username:'installer',onboarding_password:'clave-ficticia'}; }
       else if (pathname.endsWith('/deliver')) { deliveryKey=request.headers()['idempotency-key']; delivered=true; body={job_id:'delivery-test'}; }
-      else if (pathname === '/v1/operations/operation-test') body = {operation_id:'operation-test',instance_id:'instance-test',status:'completed'};
+      else if (pathname.startsWith('/v1/instances/instance-test/power/')) { const action=pathname.split('/').at(-1); powerState=action==='shutdown'?'stopped':'running'; body={operation_id:`operation-${action}-test`}; }
+      else if (pathname.startsWith('/v1/operations/')) body = {operation_id:pathname.split('/').at(-1),instance_id:'instance-test',status:'completed'};
       else if (pathname === '/v1/instances/instance-test') body = instance;
       else if (pathname === '/v1/instances') body = {instances:created ? [instance] : [],total:created ? 1 : 0};
       else if (pathname === '/v1/observability') body = {workers:[],performance:{}};
@@ -49,8 +52,16 @@ const server = http.createServer((request, response) => {
     await page.locator('#api-token').fill('token-ficticio');
     await page.locator('#auth-form').evaluate(form => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector('#auth-message').textContent.includes('API autorizada'));
+    assert.equal(await page.locator('#services-panel').evaluate(element => element.open),false);
+    await page.locator('#services-panel > summary').click();
+    assert.equal(await page.locator('#services-panel').evaluate(element => element.open),true);
     assert.equal(await page.locator('#image option').count(),4);
-    await page.locator('#application').selectOption('n8n');
+    assert.equal(await page.locator('[data-application-id="nextcloud"]').isEnabled(),true);
+    assert.equal(await page.locator('[data-application-id="n8n"]').isEnabled(),true);
+    await page.locator('[data-application-id="nextcloud"]').click();
+    assert.equal(await page.locator('[data-application-id="nextcloud"]').getAttribute('aria-pressed'),'true');
+    await page.locator('[data-application-id="n8n"]').click();
+    assert.equal(await page.locator('[data-application-id="n8n"]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.locator('#image option').count(),2);
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),'');
     assert.equal(await page.locator('#started').isChecked(),true);
@@ -67,6 +78,11 @@ const server = http.createServer((request, response) => {
     assert.equal(payload.instance.start_on_create,true);
     assert.match(await page.locator('#curl-preview').textContent(),/\/v1\/service-instances/);
     assert.equal(await page.locator('#service-url').getAttribute('href'),'https://192.0.2.10/');
+    await page.locator('[data-service-select="service-test"]').click();
+    assert.equal(await page.locator('#service-detail').isVisible(),true);
+    assert.equal(await page.locator('#service-reboot').isEnabled(),true);
+    assert.equal(await page.locator('#service-power-shutdown').isEnabled(),true);
+    assert.equal(await page.locator('#delete-service').isEnabled(),false);
     assert.equal(credentialPosts,0);
     await page.locator('#service-credentials').click();
     await page.waitForFunction(() => document.querySelector('#service-credentials-output').textContent.includes('clave-ficticia'));
@@ -76,9 +92,23 @@ const server = http.createServer((request, response) => {
     await page.locator('#deliver-service').click();
     await page.waitForFunction(() => document.querySelector('#service-status').textContent.includes('delivered'));
     assert.ok(deliveryKey); assert.equal(credentialPosts,1);
-    await page.locator('#application').selectOption('kvm');
+    await page.locator('#service-power-shutdown').click();
+    await page.waitForFunction(() => document.querySelector('#service-power-start').disabled === false);
+    assert.equal(await page.locator('#delete-service').isEnabled(),true);
+    await page.locator('#service-power-start').click();
+    await page.waitForFunction(() => document.querySelector('#service-power-shutdown').disabled === false);
+    assert.equal(await page.locator('#delete-service').isEnabled(),false);
+    await page.locator('#service-power-shutdown').click();
+    await page.waitForFunction(() => document.querySelector('#delete-service').disabled === false);
+    await page.locator('#delete-service').click();
+    await page.waitForFunction(() => document.querySelector('#service-detail').classList.contains('hidden'));
+    assert.equal(deletePosts,1);
+    assert.equal(await page.locator('[data-service-row="service-test"]').count(),0);
+    await page.locator('#services-panel > summary').click();
+    assert.equal(await page.locator('#services-panel').evaluate(element => element.open),false);
+    await page.locator('[data-application-id="kvm"]').click();
     assert.equal(await page.locator('#image option').count(),4);
     assert.deepEqual(errors,[]);
-    console.log('PASS: catálogo KVM/servicios, contrato n8n, redacción, consulta explícita única de credenciales y entrega. API simulada; no certificación física.');
+    console.log('PASS: catálogo KVM/servicios, sección plegable, administración, contrato n8n, redacción y entrega. API simulada; no certificación física.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode=1; }).finally(() => server.close());

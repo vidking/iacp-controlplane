@@ -225,3 +225,112 @@ genera el JSON y el cURL con los mismos campos del contrato; la contraseña se
 redacta en la vista previa. El modelo Pydantic genera el ejemplo de
 `POST /v1/instances` que Swagger muestra en `/swagger`. Descarga el esquema
 completo en `/openapi.json` o léelo en `/redoc`.
+
+## 8. Crear y probar Nextcloud o n8n
+
+Consulta primero `GET /v1/applications` y usa solo una aplicación habilitada.
+Las pruebas actuales usan `lab_dhcp`, sin reserva NetBox ni IP pública. El
+servicio requiere Ubuntu 24.04 o AlmaLinux 9, una llave SSH del consumidor e
+inicio automático. Para TLS por IP, `configuration.access_mode` es `ip` y no se
+envía `domain`; para el modo dominio se requiere que el FQDN ya resuelva hacia
+la VM.
+
+Guarda el cuerpo en un archivo privado, modifica el nombre en cada ensayo y
+reemplaza la llave por una pública controlada por el operador:
+
+```bash
+umask 077
+cat > service-request.json <<'JSON'
+{
+  "application_id": "n8n",
+  "instance": {
+    "name": "prueba-service-n8n-manual-001",
+    "plan_id": "kvm-1",
+    "image_id": "ubuntu-2404",
+    "environment": "lab",
+    "network_profile": "lab_dhcp",
+    "access": {
+      "root_password": "REEMPLAZAR_POR_SECRETO_TEMPORAL",
+      "ssh_public_keys": ["ssh-ed25519 CLAVE_PUBLICA_DE_PRUEBA"]
+    },
+    "tags": ["prueba-servicio"],
+    "start_on_create": true
+  },
+  "configuration": {"access_mode": "ip"}
+}
+JSON
+chmod 600 service-request.json
+
+curl --fail-with-body --silent --show-error \
+  -X POST "${IACP_BASE_URL}/v1/service-instances" \
+  -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  -H 'Idempotency-Key: prueba-service-n8n-manual-001' \
+  -H 'Content-Type: application/json' \
+  --data-binary @service-request.json > service-response.json
+chmod 600 service-response.json
+```
+
+Para Nextcloud, cambia `application_id` a `nextcloud` y usa un nombre como
+`prueba-service-nextcloud-manual-001`. Conserva un nombre distinto y una
+`Idempotency-Key` nueva para cada ensayo. Si el `POST` devuelve `202`, extrae
+los identificadores y consulta el estado; una aceptación no significa que la
+instalación terminó:
+
+```bash
+SERVICE_ID=$(jq -r .service_id service-response.json)
+JOB_ID=$(jq -r .job_id service-response.json)
+INSTANCE_ID=$(jq -r .instance_id service-response.json)
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  "${IACP_BASE_URL}/v1/service-instances/${SERVICE_ID}"
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  "${IACP_BASE_URL}/v1/service-jobs/${JOB_ID}"
+```
+
+Espera a que el trabajo indique `succeeded` y la aplicación llegue a
+`awaiting_customer`. n8n debe responder su readiness cuando PostgreSQL está
+conectado y migrado. Recupera las credenciales iniciales una sola vez y guarda
+la CA pública del piloto para TLS por IP; no publiques esos archivos ni su
+contenido en terminales compartidas o tickets:
+
+```bash
+umask 077
+curl --fail-with-body --silent --show-error \
+  -X POST -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  "${IACP_BASE_URL}/v1/service-instances/${SERVICE_ID}/credentials" \
+  > service-credentials.json
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  "${IACP_BASE_URL}/v1/service-instances/${SERVICE_ID}/tls-ca" \
+  > iacp-pilot-ca.crt
+chmod 600 service-credentials.json iacp-pilot-ca.crt
+```
+
+Verifica HTTPS y acceso SSH, inicia sesión en Nextcloud o crea el propietario
+de n8n detrás de la protección inicial y valida la aplicación. Después de
+guardar de forma segura las credenciales, completa la entrega:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X POST -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  -H "Idempotency-Key: entrega-prueba-service-n8n-manual-001" \
+  "${IACP_BASE_URL}/v1/service-instances/${SERVICE_ID}/deliver"
+```
+
+La vista `/docs#create` genera el JSON y el cURL equivalentes, permite consultar
+el inventario y administrar cada servicio seleccionado. La sección de
+inventario se pliega para dejar libre el formulario. Para retirar un ensayo,
+apaga primero su KVM mediante `POST /v1/instances/{instance_id}/power/shutdown`,
+espera la operación y luego elimina el servicio:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X DELETE -H "Authorization: Bearer ${IACP_API_TOKEN}" \
+  -H 'Idempotency-Key: retirar-prueba-service-n8n-manual-001' \
+  "${IACP_BASE_URL}/v1/service-instances/${SERVICE_ID}"
+```
+
+No uses un resultado de LAN DHCP para declarar disponibilidad WAN. La IP,
+gateway, VLAN y reserva NetBox los decide el perfil del servidor; no se envían
+en el request.

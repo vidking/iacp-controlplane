@@ -106,6 +106,18 @@ def render(application, configuration, secrets, release):
         }
     elif application == "n8n":
         app["volumes"] = ["app_data:/home/node/.n8n"]
+        app["healthcheck"] = {
+            "test": [
+                "CMD",
+                "node",
+                "-e",
+                "fetch('http://127.0.0.1:5678/healthz/readiness').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))",
+            ],
+            "interval": "10s",
+            "timeout": "5s",
+            "retries": 30,
+            "start_period": "30s",
+        }
         app["environment"] = env(
             {
                 "DB_TYPE": "postgresdb",

@@ -375,6 +375,21 @@ def test_services_allow_standard_images_and_ip_mode():
     with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
 
 
+def test_n8n_recipe_waits_for_database_and_migrations():
+    from pathlib import Path
+    release = json.loads((Path(__file__).parents[1] / 'services/releases.json').read_text())['n8n']
+    compose, _ = render('n8n', {'domain':'n8n.example.invalid','access_mode':'domain'}, {
+        'database_password':'ficticia-base-de-datos',
+        'encryption_key':'ficticia-clave-de-cifrado',
+        'admin_user':'installer',
+        'admin_password':'clave-ficticia-de-instalacion',
+    }, release)
+    healthcheck = compose['services']['app']['healthcheck']
+    assert '/healthz/readiness' in ' '.join(healthcheck['test'])
+    assert healthcheck['start_period'] == '30s'
+    assert compose['services']['app']['depends_on']['postgres']['condition'] == 'service_healthy'
+
+
 def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):
     order=create(client)
     with database() as db:db.execute("UPDATE service_jobs SET status='uncertain' WHERE job_id=?",(order['job_id'],))
@@ -387,11 +402,17 @@ def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):
 def test_service_inventory_paginates_without_exposing_secrets(client, monkeypatch):
     first = create(client, name='prueba-service-nextcloud-uno', key='inventory-1')
     second = create(client, name='prueba-service-nextcloud-dos', key='inventory-2')
+    application_deleted = create(client, name='prueba-service-nextcloud-retirado', key='inventory-3')
+    infrastructure_deleted = create(client, name='prueba-service-nextcloud-kvm-retirada', key='inventory-4')
+    with database() as db:
+        db.execute("UPDATE service_instances SET status='deleted' WHERE service_id=?", (application_deleted['service_id'],))
+        db.execute("UPDATE instances SET status='deleted' WHERE instance_id=?", (infrastructure_deleted['instance_id'],))
     response = client.get('/v1/service-instances?limit=1&offset=0')
     assert response.status_code == 200
     data = response.json()
     assert data['total'] == 2 and len(data['services']) == 1
     assert data['services'][0]['service_id'] == second['service_id']
+    assert client.get('/v1/service-instances?limit=100').json()['total'] == 2
     assert 'secrets_encrypted' not in response.text
     assert 'admin_password' not in response.text
     assert client.get('/v1/service-instances?limit=0').status_code == 422

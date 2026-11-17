@@ -248,6 +248,9 @@
       const application = state.applications.find((item) => item.application_id === option.value);
       option.disabled = !application?.enabled;
       option.textContent = application ? `${application.label} · ${application.version}` : option.value;
+      const card = document.querySelector(`[data-application-id="${option.value}"]`);
+      card.disabled = !application?.enabled;
+      if (application) card.querySelector("strong").textContent = `${application.label} · ${application.version}`;
     }
     state.networkProfiles = profilesBody.network_profiles || [];
     const planSelect = $("plan");
@@ -283,11 +286,20 @@
     imageSelect.value = imageById(currentImage) ? currentImage : (imageById("ubuntu-2404") ? "ubuntu-2404" : "");
     updateCatalogHelp();
     $("catalog-summary").textContent = `${state.plans.length} planes · ${state.images.length} Golden Images · ${state.networkProfiles.length} perfiles de red`;
+    const enabledServices = state.applications.filter((item) => item.enabled).map((item) => item.label);
+    $("product-picker-help").textContent = enabledServices.length
+      ? `Selecciona KVM o un servicio. Los servicios habilitados son: ${enabledServices.join(" y ")}.`
+      : "El catálogo no tiene servicios habilitados en este entorno.";
     updateApplicationForm();
   }
 
   function updateApplicationForm() {
     const product = $("application").value;
+    document.querySelectorAll("[data-application-id]").forEach((button) => {
+      const selected = button.dataset.applicationId === product;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
     const service = product !== "kvm";
     const application = state.applications.find((item) => item.application_id === product);
     const currentImage = $("image").value;
@@ -710,12 +722,12 @@
   async function refreshServices() {
     if (!state.token) return;
     const result = await api("/v1/service-instances?limit=100");
-    const services = result.services.filter((item) => ["nextcloud", "n8n"].includes(item.application_id));
-    $("services-table").innerHTML = services.length ? `<table><thead><tr><th>Nombre</th><th>Servicio</th><th>Instalación</th><th>KVM</th></tr></thead><tbody>${services.map((item) => `<tr data-service-id="${escapeHtml(item.service_id)}"><td><button type="button" class="icon-button">${escapeHtml(item.name)}</button></td><td>${escapeHtml(item.application_id)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.infrastructure_status)}</td></tr>`).join("")}</tbody></table><p>${result.total} servicios registrados.</p>` : '<div class="empty-state">No hay servicios Nextcloud o n8n aprovisionados.</div>';
-    $("services-table").querySelectorAll("[data-service-id]").forEach((row) => row.addEventListener("click", () => {
+    const services = result.services.filter((item) => ["nextcloud", "n8n"].includes(item.application_id) && item.status !== "deleted" && item.infrastructure_status !== "deleted");
+    $("services-table").innerHTML = services.length ? `<table><thead><tr><th>Nombre</th><th>Servicio</th><th>Instalación</th><th>KVM</th><th>Administrar</th></tr></thead><tbody>${services.map((item) => `<tr data-service-row="${escapeHtml(item.service_id)}" class="${item.service_id === state.selectedServiceId ? "service-selected-row" : ""}"><td><strong>${escapeHtml(item.name)}</strong></td><td>${escapeHtml(item.application_id)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.infrastructure_status)}</td><td class="service-row-actions"><button type="button" class="button secondary" data-service-select="${escapeHtml(item.service_id)}">Administrar</button></td></tr>`).join("")}</tbody></table><p>${result.total} servicios activos o en proceso.</p>` : '<div class="empty-state">No hay servicios Nextcloud o n8n activos o en proceso.</div>';
+    $("services-table").querySelectorAll("[data-service-select]").forEach((button) => button.addEventListener("click", () => {
       if (state.credentialsBusy) return showToast("Espera a que termine la consulta de credenciales.");
-      if (state.selectedServiceId !== row.dataset.serviceId) clearServiceCredentials();
-      state.selectedServiceId = row.dataset.serviceId;
+      if (state.selectedServiceId !== button.dataset.serviceSelect) clearServiceCredentials();
+      state.selectedServiceId = button.dataset.serviceSelect;
       refreshService().catch(showError);
     }));
     if (state.selectedServiceId) await refreshService();
@@ -729,8 +741,9 @@
     $("service-detail").classList.remove("hidden");
     $("service-title").textContent = `${service.name} · ${service.application_id}`;
     const job = service.jobs.at(-1);
-    $("service-status").textContent = `Instalación: ${service.status} · KVM: ${service.infrastructure_status}${job ? ` · ${job.phase} (${job.status})` : ""}`;
+    $("service-status").textContent = `Instalación: ${service.status} · KVM: ${service.infrastructure_status} · Energía: ${service.power_state || "sin dato"}${job ? ` · ${job.phase} (${job.status})` : ""}`;
     const ready = ["awaiting_customer", "delivered"].includes(service.status);
+    const kvmReady = ["ready", "stopped"].includes(service.infrastructure_status) && service.vmid != null;
     const url = $("service-url");
     url.classList.toggle("hidden", !ready || !service.access_url);
     if (ready && service.access_url?.startsWith("https://")) {
@@ -740,7 +753,61 @@
     $("service-ca").disabled = !ready || service.configuration.access_mode !== "ip";
     $("service-credentials").disabled = !service.credentials_available || state.credentialsBusy;
     $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
+    $("service-power-start").disabled = !kvmReady || service.power_state !== "stopped";
+    $("service-power-shutdown").disabled = !kvmReady || service.power_state !== "running";
+    $("service-reboot").disabled = !kvmReady || service.power_state !== "running";
+    const noPhysicalVmToClean = service.vmid == null && ["failed", "uncertain"].includes(service.infrastructure_status);
+    $("delete-service").disabled = service.infrastructure_status === "deleted" || service.status === "deleted" || !(service.power_state === "stopped" || noPhysicalVmToClean);
     return service;
+  }
+
+  async function trackServiceOperation(operationId, service, label) {
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      const operation = await api(`/v1/operations/${operationId}`);
+      $("service-status").textContent = `${label}: ${operation.status} · operación ${operationId}`;
+      if (terminalStatuses.includes(operation.status)) {
+        if (operation.status !== "completed") throw new Error(`${label} terminó en ${operation.status}. Revisa la operación ${operationId}.`);
+        if (label === "Eliminación") {
+          state.selectedServiceId = null;
+          clearServiceCredentials();
+          $("service-detail").classList.add("hidden");
+        }
+        await refreshServices();
+        showToast(`${label} completada.`);
+        return operation;
+      }
+      if (attempt % 3 === 0 && state.selectedServiceId === service.service_id) await refreshService();
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error(`${label} sigue en curso. Actualiza el servicio para consultar su estado.`);
+  }
+
+  async function servicePowerAction(action) {
+    const identifier = state.selectedServiceId;
+    if (!identifier) return;
+    try {
+      const service = await api(`/v1/service-instances/${identifier}`);
+      const response = await api(`/v1/instances/${service.instance_id}/power/${action}`, {
+        method: "POST", idempotencyKey: newIdempotencyKey(`portal-service-${action}`),
+      });
+      await trackServiceOperation(response.operation_id, service, action === "shutdown" ? "Apagado" : action === "reboot" ? "Reinicio" : "Encendido");
+    } catch (error) { showError(error); }
+  }
+
+  async function deleteSelectedService() {
+    const identifier = state.selectedServiceId;
+    if (!identifier) return;
+    try {
+      const service = await api(`/v1/service-instances/${identifier}`);
+      if (!window.confirm(`¿Confirmas eliminar el servicio ${service.name} y su KVM ${service.vmid ?? "pendiente"}?`)) return;
+      if (service.power_state === "running") throw new Error("Apaga la KVM antes de eliminar el servicio.");
+      $("delete-service").disabled = true;
+      const response = await api(`/v1/service-instances/${identifier}`, {
+        method: "DELETE", idempotencyKey: newIdempotencyKey("portal-service-destroy"),
+      });
+      await trackServiceOperation(response.operation_id, service, "Eliminación");
+    } catch (error) { showError(error); }
+    finally { await refreshService().catch(() => {}); }
   }
 
   async function pollService(identifier, delivery = false) {
@@ -991,12 +1058,22 @@
   $("create-form").addEventListener("input", previewCreateJson);
   $("create-form").addEventListener("change", previewCreateJson);
   $("application").addEventListener("change", updateApplicationForm);
+  document.querySelectorAll("[data-application-id]").forEach((button) => button.addEventListener("click", () => {
+    if (button.disabled) return;
+    $("application").value = button.dataset.applicationId;
+    $("application").dispatchEvent(new Event("change", { bubbles: true }));
+  }));
   $("service-access-mode").addEventListener("change", updateApplicationForm);
   $("refresh-services").addEventListener("click", () => refreshServices().catch(showError));
   $("service-credentials").addEventListener("click", retrieveServiceCredentials);
   $("clear-service-credentials").addEventListener("click", clearServiceCredentials);
   $("service-ca").addEventListener("click", downloadServiceCa);
   $("deliver-service").addEventListener("click", deliverService);
+  $("refresh-service-detail").addEventListener("click", () => refreshService().catch(showError));
+  $("service-power-start").addEventListener("click", () => servicePowerAction("start"));
+  $("service-power-shutdown").addEventListener("click", () => servicePowerAction("shutdown"));
+  $("service-reboot").addEventListener("click", () => servicePowerAction("reboot"));
+  $("delete-service").addEventListener("click", deleteSelectedService);
   $("copy-json").addEventListener("click", copyJson);
   $("copy-curl").addEventListener("click", copyCurl);
   $("plan").addEventListener("change", () => { updateCatalogHelp(); renderPlanCatalog(); });

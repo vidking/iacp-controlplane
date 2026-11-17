@@ -107,7 +107,12 @@ class Matrix:
                 )
                 + "\n"
             )
-        print(json.dumps({"event": event, **data}), flush=True)
+        try:
+            print(json.dumps({"event": event, **data}), flush=True)
+        except BrokenPipeError:
+            # La evidencia persistente es autoritativa; perder SSH no debe detener
+            # pruebas ni dejar recursos físicos sin la fase de limpieza.
+            sys.stdout = open(os.devnull, "w")
 
     def api(self, method, path, body=None, key=None, raw=False):
         headers = {
@@ -311,7 +316,7 @@ class Matrix:
         item = dict(case, **result, name=name, password=password)
         return item
 
-    def web(self, item, path, method="GET", data=None):
+    def web(self, item, path, method="GET", data=None, extra_headers=None):
         context = ssl.create_default_context(cafile=str(item["ca"]))
         credentials = item["credentials"]
         user = credentials.get("admin_user", credentials.get("onboarding_username"))
@@ -319,14 +324,70 @@ class Matrix:
             "admin_password", credentials.get("onboarding_password")
         )
         authorization = base64.b64encode((user + ":" + password).encode()).decode()
+        headers = {"Authorization": "Basic " + authorization}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        headers.update(extra_headers or {})
         r = Request(
             "https://" + item["address"] + path,
             data=data,
             method=method,
-            headers={"Authorization": "Basic " + authorization},
+            headers=headers,
         )
-        with urlopen(r, context=context, timeout=60) as f:
-            return f.status, f.read()
+        try:
+            with urlopen(r, context=context, timeout=60) as f:
+                return f.status, f.read(), f.headers
+        except HTTPError as error:
+            return error.code, error.read(), error.headers
+
+    def n8n_owner_auth(self, item, setup_owner):
+        email = f"prueba-n8n-{item['vmid']}@example.invalid"
+        if setup_owner:
+            item["n8n_owner_password"] = secrets.token_urlsafe(32) + "Aa9!"
+        password = item.get("n8n_owner_password")
+        assert password, "N8N_OWNER_PASSWORD_NOT_PRESERVED"
+        if setup_owner:
+            status, body, _ = self.web(
+                item,
+                "/rest/owner/setup",
+                "POST",
+                json.dumps({
+                    "email": email,
+                    "firstName": "Prueba",
+                    "lastName": "Servicio",
+                    "password": password,
+                }).encode(),
+            )
+            result = json.loads(body)
+            assert status == 200 and (result.get("data") or result).get("email") == email, "N8N_OWNER_SETUP_FAILED"
+        status, body, response_headers = self.web(
+            item,
+            "/rest/login",
+            "POST",
+            json.dumps({"emailOrLdapLoginId": email, "password": password}).encode(),
+        )
+        result = json.loads(body)
+        assert status == 200 and (result.get("data") or result).get("email") == email, "N8N_OWNER_LOGIN_FAILED"
+        cookies = response_headers.get_all("Set-Cookie", [])
+        cookie = "; ".join(value.split(";", 1)[0] for value in cookies)
+        assert cookie, "N8N_OWNER_SESSION_MISSING"
+        if setup_owner:
+            status, _, _ = self.web(
+                item,
+                "/rest/login",
+                "POST",
+                json.dumps({"emailOrLdapLoginId": email, "password": password + "X"}).encode(),
+            )
+            assert status == 401, "N8N_INVALID_PASSWORD_ACCEPTED"
+        status, body, _ = self.web(
+            item,
+            "/rest/workflows?skip=0&take=10",
+            extra_headers={"Cookie": cookie},
+        )
+        assert status == 200 and any(
+            workflow.get("id") == "iacpValidation"
+            for workflow in json.loads(body).get("data", [])
+        ), "N8N_OWNER_WORKFLOW_ACCESS_FAILED"
 
     def application(self, item, after_reboot=False):
         product = item["product"]
@@ -338,6 +399,8 @@ class Matrix:
                 self.web(item, path, "PUT", b"iacp-persistence")
             assert self.web(item, path)[1] == b"iacp-persistence"
         elif product == "n8n":
+            readiness, body, _ = self.web(item, "/healthz/readiness")
+            assert readiness == 200 and json.loads(body).get("status") == "ok", "N8N_NOT_READY"
             assert self.web(item, "/")[0] == 200
             if not after_reboot:
                 workflow = {
@@ -403,6 +466,7 @@ class Matrix:
             assert "iacpValidation" in output and "true" in output, (
                 "N8N_WORKFLOW_FAILED"
             )
+            self.n8n_owner_auth(item, setup_owner=not after_reboot)
         elif product == "hermes":
             self.ssh(item, base + ["exec", "-T", "app", "hermes", "config", "check"])
         else:

@@ -6,8 +6,9 @@ nodo `mng01`. Rama `devops/features`. Producción permanece sin actualizar en
 
 | Comprobación | Resultado | Evidencia y límite |
 | --- | --- | --- |
-| Runtime local con seis workers de infraestructura y dos de servicios | PASS | `/tmp/iacp-servicios-ui-bootstrap-v2-20261117/`, 209 pruebas; infraestructura simulada |
+| Runtime local con seis workers de infraestructura y dos de servicios | PASS | `/tmp/iacp-servicios-ui-admin-readiness-20261117/`, 211 pruebas; infraestructura simulada |
 | Formulario Nextcloud/n8n en Chromium | PASS | `tests/browser_services.cjs`, contrato n8n, imágenes compatibles, contraseña redactada, consulta explícita única de credenciales y entrega; API simulada |
+| Alta de propietario, login n8n, rechazo de clave inválida, workflow y reinicio | PASS | `scripts/test_n8n_owner_docker.py`; Docker aislado sin red externa, no certifica MNG |
 | Autorización del dominio dev | PASS | Chromium contra dev: valor, comillas, Bearer y asignación; token leído privadamente en el host |
 | Bootstrap AlmaLinux v2 | PASS | Nuevas copias 29014/29015 desde 29010/29011; SELinux Enforcing y protocolo 1; no certifica aplicaciones |
 | Tanda física LAN de servicios anterior | FAIL | `/opt/iacp/evidence/lan-services-ciclo1-202611170901/`; cuatro Ubuntu llegaron a ready y tres Nextcloud finalizaron instalación; AlmaLinux falló durante arranque |
@@ -33,6 +34,27 @@ nodo `mng01`. Rama `devops/features`. Producción permanece sin actualizar en
 Las copias 29012/29013 se conservan como revisiones anteriores. No se modifican
 las originales ni las VMs 104, 106 y 29000. Las credenciales temporales de fábrica
 se retiraron de las nuevas copias antes de convertirlas en templates.
+
+## Actualización del ensayo — 2026-11-17
+
+| Comprobación | Resultado | Evidencia y límite |
+| --- | --- | --- |
+| Ciclo LAN de servicios `202611171525` | BLOCKED | `/opt/iacp/evidence/lan-services-ciclo1-202611171525/results.jsonl`; seis Nextcloud alcanzaron KVM lista y completaron instalación, pero el runner perdió su salida SSH (`BrokenPipeError`) con solo dos verificaciones de aplicación registradas; no es un ciclo aprobado |
+| Recuperación de los seis recursos propios | PASS | `/opt/iacp/evidence/lan-services-ciclo1-202611171525/recovery-attempt-02.json`; eliminación por API y ausencia física confirmada en Proxmox; no se tocaron VMs ajenas |
+| Matriz completa de Nextcloud y n8n en MNG | BLOCKED | No existe todavía un ciclo completo 16+2. La recuperación anterior no sustituye las verificaciones pendientes ni certifica n8n |
+
+El runner ahora conserva la evidencia y continúa hacia limpieza aunque se cierre
+su salida SSH. La receta de n8n espera `/healthz/readiness`, que comprueba la
+conexión y migraciones de la base de datos; la matriz también verifica el alta
+del propietario, login real, rechazo de una contraseña incorrecta, acceso al
+workflow y persistencia después del reinicio. El contenedor local pasó esas
+comprobaciones sin acceso de red externa.
+
+La interfaz de servicios quedó plegable por defecto, permite elegir Nextcloud o
+n8n tras consultar el catálogo y presenta acciones de administración. El
+inventario excluye registros eliminados sin borrar su historial. Este código
+local aún requiere revisión, publicación y despliegue controlado en desarrollo;
+las pruebas Docker y del navegador no equivalen a una prueba física en MNG.
 
 ## Continuidad
 

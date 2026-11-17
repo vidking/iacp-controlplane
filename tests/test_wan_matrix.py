@@ -22,6 +22,25 @@ def test_parallel_failure_contains_future_mutations():
     assert matrix.abort.is_set()
 
 
+def test_record_keeps_matrix_running_when_ssh_output_closes(tmp_path, monkeypatch):
+    import json
+    import sys
+    from scripts.wan_matrix import Matrix
+
+    class ClosedOutput:
+        def write(self, _):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+    matrix = object.__new__(Matrix)
+    matrix.log = tmp_path / 'results.jsonl'
+    monkeypatch.setattr(sys, 'stdout', ClosedOutput())
+    matrix.record('verified', name='prueba-service-n8n-c1-01')
+    assert json.loads(matrix.log.read_text())['event'] == 'verified'
+
+
 def test_almalinux_matrix_pins_key_through_validated_helper(tmp_path):
     import json
     import pytest

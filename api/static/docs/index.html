@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light">
     <meta name="description" content="Referencia y consola operativa de IACP Control Plane.">
     <link rel="icon" href="/docs/assets/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/docs/assets/docs.css?v=20261102-workers6">
+    <link rel="stylesheet" href="/docs/assets/docs.css?v=20261117-servicios4">
     <title>IACP Control Plane · Referencia de API</title>
   </head>
   <body>
@@ -119,7 +119,16 @@
                 <button class="button secondary" id="load-catalog" type="button">Consultar catálogo técnico</button>
               </div>
               <form id="create-form" class="create-form">
-                <label>Producto<select id="application"><option value="kvm">Máquina virtual KVM</option><option value="nextcloud" disabled>Nextcloud · consulta el catálogo</option><option value="n8n" disabled>n8n · consulta el catálogo</option></select><small>Los servicios incluyen su propia KVM y la instalación de la aplicación.</small></label>
+                <section class="product-picker" aria-labelledby="product-picker-title">
+                  <h3 id="product-picker-title">¿Qué quieres aprovisionar?</h3>
+                  <div class="product-options" role="group" aria-label="Tipo de producto">
+                    <button class="product-option selected" type="button" data-application-id="kvm" aria-pressed="true"><strong>Máquina virtual KVM</strong><span>Sistema operativo y recursos de cómputo.</span></button>
+                    <button class="product-option" type="button" data-application-id="nextcloud" aria-pressed="false" disabled><strong>Nextcloud</strong><span>Nube privada con su propia KVM.</span></button>
+                    <button class="product-option" type="button" data-application-id="n8n" aria-pressed="false" disabled><strong>n8n</strong><span>Automatización de flujos con su propia KVM.</span></button>
+                  </div>
+                  <p id="product-picker-help" class="form-hint">Consulta el catálogo para habilitar los servicios.</p>
+                  <select id="application" class="hidden" tabindex="-1" aria-hidden="true"><option value="kvm">Máquina virtual KVM</option><option value="nextcloud" disabled>Nextcloud</option><option value="n8n" disabled>n8n</option></select>
+                </section>
                 <div id="service-configuration" class="form-grid two-columns hidden">
                   <label>Acceso web<select id="service-access-mode"><option value="ip">Por IP · certificado de la CA del piloto</option><option value="domain">Por dominio · certificado público</option></select><small>Por IP, instala la CA del piloto en tu equipo para validar HTTPS.</small></label>
                   <label id="service-domain-field" class="hidden">Dominio del servicio<input id="service-domain" placeholder="nube.ejemplo.com" autocomplete="off"><small>El dominio debe apuntar a la IP de la instancia antes de emitir el certificado público.</small></label>
@@ -157,17 +166,22 @@
             </div>
           </details>
 
-          <article class="panel" id="services-panel">
-            <div class="panel-heading"><div><p class="eyebrow">APLICACIONES</p><h2>Servicios Nextcloud y n8n</h2></div><button class="button secondary" id="refresh-services" type="button">Actualizar servicios</button></div>
-            <div id="services-table" class="table-wrap"><div class="empty-state">Autoriza la API para consultar los servicios.</div></div>
-            <div id="service-detail" class="hidden">
-              <h3 id="service-title"></h3><p id="service-status" role="status"></p>
-              <p><a id="service-url" class="hidden" target="_blank" rel="noopener noreferrer">Abrir servicio ↗</a></p>
-              <div class="action-row"><button class="button secondary" id="service-ca" type="button" disabled>Descargar CA del piloto</button><button class="button secondary" id="service-credentials" type="button" disabled>Mostrar credenciales una vez</button><button class="button secondary" id="clear-service-credentials" type="button">Ocultar credenciales</button><button class="button primary" id="deliver-service" type="button" disabled>Completar entrega</button></div>
-              <p>Guarda las credenciales antes de completar la entrega. La entrega retira el acceso SSH temporal de instalación y conserva tu llave pública.</p>
-              <pre id="service-credentials-output" aria-live="polite">Las credenciales no se han consultado.</pre>
+          <details class="panel service-panel" id="services-panel">
+            <summary class="service-panel-summary"><span class="eyebrow">APLICACIONES</span><strong>Servicios Nextcloud y n8n</strong><span class="summary-status">Abrir o cerrar</span></summary>
+            <div class="service-panel-content">
+              <div class="panel-heading"><span></span><button class="button secondary" id="refresh-services" type="button">Actualizar servicios</button></div>
+              <div id="services-table" class="table-wrap"><div class="empty-state">Autoriza la API para consultar los servicios.</div></div>
+              <small class="panel-note">Pulsa <strong>Administrar</strong> para consultar acceso y credenciales, controlar la KVM o eliminar el servicio. Para eliminarlo, primero apaga la KVM.</small>
+              <div id="service-detail" class="hidden">
+                <div class="service-detail-heading"><div><p class="eyebrow">ADMINISTRACIÓN DEL SERVICIO</p><h3 id="service-title"></h3><p id="service-status" role="status"></p></div><button class="button secondary" id="refresh-service-detail" type="button">Actualizar estado</button></div>
+                <p><a id="service-url" class="hidden" target="_blank" rel="noopener noreferrer">Abrir servicio ↗</a></p>
+                <div class="action-row service-management-actions"><button class="button secondary" id="service-power-start" type="button" disabled>Encender KVM</button><button class="button secondary" id="service-power-shutdown" type="button" disabled>Apagar KVM</button><button class="button secondary" id="service-reboot" type="button" disabled>Reiniciar KVM</button><button class="button danger" id="delete-service" type="button" disabled>Eliminar servicio</button></div>
+                <div class="action-row"><button class="button secondary" id="service-ca" type="button" disabled>Descargar CA del piloto</button><button class="button secondary" id="service-credentials" type="button" disabled>Mostrar credenciales una vez</button><button class="button secondary" id="clear-service-credentials" type="button">Ocultar credenciales</button><button class="button primary" id="deliver-service" type="button" disabled>Completar entrega</button></div>
+                <p>Guarda las credenciales antes de completar la entrega. La entrega retira el acceso SSH temporal de instalación y conserva tu llave pública.</p>
+                <pre id="service-credentials-output" aria-live="polite">Las credenciales no se han consultado.</pre>
+              </div>
             </div>
-          </article>
+          </details>
 
           <details class="step-card" id="step-json" data-step="json">
             <summary><span class="step-number">3.</span> JSON de ejemplo <span class="summary-status">Cuerpo del contrato v1</span></summary>
@@ -298,6 +312,6 @@ DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
-    <script src="/docs/assets/docs.js?v=20261117-servicios2"></script>
+    <script src="/docs/assets/docs.js?v=20261117-servicios3"></script>
   </body>
 </html>

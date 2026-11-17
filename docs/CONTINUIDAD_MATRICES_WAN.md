@@ -45,6 +45,28 @@ actualizar producción como parte de esta continuidad.
 
 ## Ensayo LAN autorizado — 2026-11-17
 
+### Prioridad acordada para continuar
+
+Completar primero los servicios. Ejecutar ciclos LAN 1 y 2 de Nextcloud y n8n:
+cuatro planes por Ubuntu 24.04 y AlmaLinux 9, con seis operaciones físicas
+simultáneas y dos controles por ciclo. Confirmar instalación y readiness,
+conectividad SSH por llave y contraseña, HTTPS con la CA del piloto, uso real de
+la aplicación, acceso del usuario, persistencia tras reinicio, entrega y
+eliminación física. `BLOCKED` o `FAIL` detiene nuevas inyecciones y requiere
+recuperación controlada de las instancias propias.
+
+No iniciar la matriz de agentes hasta que ambos ciclos de servicios terminen
+`PASS`. La matriz KVM completa y los ciclos WAN se mantienen como etapas
+posteriores; WAN solo se aprueba cuando el equipo de redes confirme VLAN 211 y
+se valide la ruta a `190.0.231.1` desde las VMs. LAN no se reporta como WAN.
+
+El ciclo LAN `202611171525` quedó `BLOCKED` por pérdida de la salida SSH del
+runner después de registrar dos verificaciones. Sus seis VMs propias fueron
+recuperadas y confirmadas ausentes mediante la API. La corrección del runner
+preserva resultados frente a `BrokenPipeError`; aun así, se debe desplegar y
+verificar la revisión candidata antes de repetir la matriz. El detalle y las
+rutas privadas de evidencia están en `docs/auditorias/SERVICIOS_LAN_20261117.md`.
+
 Mientras se confirma la VLAN 211, se autoriza ejecutar las mismas combinaciones
 con `--network-profile lab_dhcp`, sin tag y sin reservas NetBox. Las aplicaciones
 web usan `access_mode=ip` y la misma CA privada del piloto para la IP observada

@@ -119,12 +119,17 @@ def create(request: ServiceCreateRequest, key: str | None):
 
 def list_services(limit=20, offset=0):
     with database() as db:
-        total = db.execute("SELECT COUNT(*) AS total FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id WHERE i.status!='deleted'").fetchone()["total"]
+        total = db.execute(
+            """SELECT COUNT(*) AS total FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            WHERE s.status!='deleted' AND i.status!='deleted'"""
+        ).fetchone()["total"]
         rows = db.execute(
             """SELECT s.service_id, s.instance_id, s.application_id, s.status,
             i.name, i.vmid, i.status AS infrastructure_status
             FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
-            WHERE i.status!='deleted' ORDER BY s.created_at DESC, s.service_id
+            WHERE s.status!='deleted' AND i.status!='deleted'
+            ORDER BY s.created_at DESC, s.service_id
             LIMIT ? OFFSET ?""", (limit, offset),
         ).fetchall()
     return {"services": [dict(row) for row in rows], "total": total, "limit": limit, "offset": offset}
