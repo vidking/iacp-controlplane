@@ -294,3 +294,30 @@ def test_dhcp_lease_must_identify_actual_mac_before_certificate_binding():
     assert proof('CLIENTID=01:aa:bb:cc:dd:ee:ff\nADDRESS=192.0.2.20\n',MAC)=='192.0.2.20'
     assert proof('CLIENTID=ff:aa:bb:cc:dd:ee:ff\nADDRESS=192.0.2.20\n',MAC) is None
     assert proof('CLIENTID=01:11:22:33:44:55:66\nADDRESS=192.0.2.20\n',MAC) is None
+
+
+def test_almalinux_requires_fixed_helper_instead_of_arbitrary_exec(monkeypatch):
+    initialize()
+    monkeypatch.setattr(bootstrap,'_wait_for_pool_membership',lambda *args,**kwargs:None)
+    commands=[]
+    fake=SimpleNamespace(vm_config=lambda *_:{'name':'alma-test','net0':'e1000='+MAC+',bridge=vmbr0','ipconfig0':'ip=dhcp'},guest_agent_interfaces=lambda *_:[],guest_agent_exec=lambda _n,_v,argv:commands.append(argv) or {'pid':10},guest_agent_exec_status=lambda *_:{'exited':True,'exitcode':1})
+    with pytest.raises(GuestIdentityError,match='IMAGE_BOOTSTRAP_REQUIRED'):
+        bootstrap.prepare(fake,node='mng01',vmid=40012,name='alma-test',instance_id='alma-test',spec={'image':'almalinux-9','network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
+    assert commands==[['/usr/bin/test','-x','/usr/local/libexec/iacp-guest-bootstrap']]
+
+
+def test_dns_falls_back_to_networkmanager_when_resolved_is_inactive():
+    tree = ast.parse(bootstrap.PROGRAM)
+    function = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == 'observed_dns'
+    )
+    calls = []
+    namespace = {
+        'shutil': SimpleNamespace(which=lambda name: '/usr/bin/' + name),
+        'subprocess': SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(returncode=1)),
+        'run': lambda argv: calls.append(argv) or '1.1.1.1\n8.8.8.8\n',
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<dns-proof>', 'exec'), namespace)
+    assert namespace['observed_dns']('eth0') == '1.1.1.1\n8.8.8.8\n'
+    assert calls == [['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0']]

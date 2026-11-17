@@ -278,14 +278,16 @@ def credentials(service_id):
         return result
 
 
-def cancel(job_id, key):
+def cancel(job_id, key, stopped=False):
     def builder(db):
         row = db.execute(
             "SELECT * FROM service_jobs WHERE job_id=?", (job_id,)
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
-        if row["status"] not in {"queued", "blocked"}:
+        if row["status"] not in {"queued", "blocked"} and not (
+            row["status"] == "uncertain" and stopped
+        ):
             raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RUNNING_OR_UNCERTAIN")
         db.execute(
             "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
@@ -300,7 +302,7 @@ def cancel(job_id, key):
     return _idempotent_mutation(
         scope=f"POST:service-jobs:{job_id}:cancel",
         idempotency_key=key,
-        body={},
+        body={"stopped": True} if stopped else {},
         builder=builder,
     )
 

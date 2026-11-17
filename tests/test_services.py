@@ -373,3 +373,12 @@ def test_services_allow_standard_images_and_ip_mode():
     assert ServiceCreateRequest.model_validate(agent).secrets.provider_api_key is None
     agent['configuration']['agent_mode']='connected'
     with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
+
+
+def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):
+    order=create(client)
+    with database() as db:db.execute("UPDATE service_jobs SET status='uncertain' WHERE job_id=?",(order['job_id'],))
+    path='/v1/service-jobs/'+order['job_id']+'/cancel'
+    assert client.post(path,headers={'Idempotency-Key':'cancel-unconfirmed'}).status_code==409
+    assert client.post(path,json={'previous_execution_stopped':True},headers={'Idempotency-Key':'cancel-reviewed'}).status_code==202
+    with database() as db:assert db.execute('SELECT status FROM service_jobs WHERE job_id=?',(order['job_id'],)).fetchone()['status']=='cancelled'

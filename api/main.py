@@ -937,8 +937,14 @@ def service_workers():
 
 
 @app.post("/v1/service-jobs/{job_id}/cancel", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
-def cancel_service_job(job_id: str, idempotency_key: str | None = Header(default=None)):
-    return applications.cancel(job_id, idempotency_key)
+def cancel_service_job(
+    job_id: str,
+    request: RecoveryRequest | None = None,
+    idempotency_key: str | None = Header(default=None),
+):
+    return applications.cancel(
+        job_id, idempotency_key, request.previous_execution_stopped if request else False
+    )
 
 
 

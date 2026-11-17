@@ -86,11 +86,14 @@ else:
  def gateway_ready(records,gateway,device):
   return any(record.get('dst')==gateway and record.get('dev')==device and record.get('lladdr') and set(record.get('state',[])).intersection({'REACHABLE','STALE','DELAY','PROBE','PERMANENT'}) for record in records)
  assert gateway_ready(neighbors,expected_gateway,device), 'IACP_GATEWAY_UNREACHABLE'
-resolver=shutil.which('resolvectl')
-if resolver:dns=run([resolver,'dns',device])
-else:
+def observed_dns(device):
+ resolver=shutil.which('resolvectl')
+ if resolver:
+  resolved=subprocess.run([resolver,'dns',device],capture_output=True,text=True,timeout=30)
+  if resolved.returncode==0:return resolved.stdout
  nmcli=shutil.which('nmcli');assert nmcli
- dns=run([nmcli,'-g','IP4.DNS','device','show',device])
+ return run([nmcli,'-g','IP4.DNS','device','show',device])
+dns=observed_dns(device)
 assert all(value in dns for value in ['1.1.1.1','8.8.8.8'])
 if not marker.exists():
  marker.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -176,37 +179,44 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         if time.monotonic() >= deadline:
             raise GuestIdentityError("GUEST_IDENTITY_AGENT_UNAVAILABLE")
         time.sleep(2)
-    result = client.guest_agent_exec(
-        node,
-        vmid,
-        [
-            "/usr/bin/python3",
-            "-c",
-            PROGRAM,
-            instance_id,
-            mac,
-            "static" if static else "dhcp",
-            spec.get("ipv4_cidr") or "",
-            spec.get("ipv4_gateway") or "",
-        ],
-    )
-    pid = result.get("pid")
-    if not isinstance(pid, int) or pid <= 0:
-        raise GuestIdentityError("SERVICE_BOOTSTRAP_PID_INVALID")
-    deadline = time.monotonic() + 180
-    while time.monotonic() < deadline:
-        heartbeat()
-        status = client.guest_agent_exec_status(node, vmid, pid)
-        if status.get("exited"):
-            if status.get("exitcode") != 0:
-                if "IACP_GATEWAY_UNREACHABLE" in str(status.get("err-data", "")):
-                    raise GuestIdentityError("STATIC_GATEWAY_UNREACHABLE")
-                raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
-            observed = json.loads(status.get("out-data", "{}"))
-            break
-        time.sleep(1)
-    else:
+
+    def guest_command(argv):
+        result = client.guest_agent_exec(node, vmid, argv)
+        pid = result.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            raise GuestIdentityError("SERVICE_BOOTSTRAP_PID_INVALID")
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            heartbeat()
+            status = client.guest_agent_exec_status(node, vmid, pid)
+            if status.get("exited"):
+                return status
+            time.sleep(1)
         raise GuestIdentityError("SERVICE_BOOTSTRAP_TIMEOUT")
+
+    prepared_image = spec.get("image") in {"almalinux-9", "almalinux-10"}
+    arguments = [
+        instance_id,
+        mac,
+        "static" if static else "dhcp",
+        spec.get("ipv4_cidr") or "",
+        spec.get("ipv4_gateway") or "",
+    ]
+    if prepared_image:
+        helper = "/usr/local/libexec/iacp-guest-bootstrap"
+        probe = guest_command(["/usr/bin/test", "-x", helper])
+        if probe.get("exitcode") != 0:
+            raise GuestIdentityError("IMAGE_BOOTSTRAP_REQUIRED")
+        status = guest_command([helper] + arguments)
+    else:
+        status = guest_command(["/usr/bin/python3", "-c", PROGRAM] + arguments)
+    if status.get("exitcode") != 0:
+        if "IACP_GATEWAY_UNREACHABLE" in str(status.get("err-data", "")):
+            raise GuestIdentityError("STATIC_GATEWAY_UNREACHABLE")
+        raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
+    observed = json.loads(status.get("out-data", "{}"))
+    if prepared_image and observed.get("bootstrap_protocol") != 1:
+        raise GuestIdentityError("IMAGE_BOOTSTRAP_PROTOCOL_MISMATCH")
     if (
         observed.get("instance_id") != instance_id
         or observed.get("mac_address") != mac
@@ -228,7 +238,12 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
                     address = ip_address(entry["ip-address"])
                 except (KeyError, ValueError):
                     continue
-                if address.version == 4 and not (address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified):
+                if address.version == 4 and not (
+                    address.is_loopback
+                    or address.is_link_local
+                    or address.is_multicast
+                    or address.is_unspecified
+                ):
                     addresses.append(str(address))
         lease_ip = observed.get("ipv4")
         if lease_ip and lease_ip in addresses:

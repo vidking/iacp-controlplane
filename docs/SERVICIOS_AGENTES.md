@@ -102,8 +102,11 @@ idempotencia para evitar persistir una respuesta con secretos en texto claro.
 4. `GET /v1/service-jobs/{id}`: trabajo, generación, error y eventos.
 5. `POST /v1/service-jobs/{id}/retry`: reintento; para `uncertain` requiere
    `{"previous_execution_stopped":true}` después de verificar procesos y lock remoto.
-6. `POST /v1/service-jobs/{id}/cancel`: solo trabajos `queued` o `blocked`;
-   no mata procesos remotos ni elimina VM/IP. No existe cancelación forzada de una ejecución.
+6. `POST /v1/service-jobs/{id}/cancel`: admite trabajos `queued` o `blocked`.
+   Para `uncertain`, exige `{"previous_execution_stopped":true}` después de
+   verificar la terminación del proceso y la ausencia de lock remoto. Rechaza
+   `running`; no mata procesos remotos ni elimina VM/IP. Sin body conserva el
+   contrato anterior. No existe cancelación forzada de una ejecución.
 7. `POST /v1/service-instances/{id}/connections`: actualizar claves y usuarios
    Telegram de un agente bloqueado o pendiente de entrega; genera otro trabajo.
 8. `POST /v1/service-instances/{id}/credentials`: recuperación única con
