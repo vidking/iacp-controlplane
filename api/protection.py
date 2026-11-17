@@ -5,7 +5,20 @@ from __future__ import annotations
 import os
 
 
-PROTECTED_VMIDS = {104, 106, 29000, 29001, 29010, 29011, 29012, 29013, 29014, 29015}
+PROTECTED_VMIDS = {
+    104,
+    106,
+    29000,
+    29001,
+    29010,
+    29011,
+    29012,
+    29013,
+    29014,
+    29015,
+    29016,
+    29017,
+}
 
 
 def protected_vmids() -> set[int]:

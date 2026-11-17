@@ -23,9 +23,10 @@ cuatro workers de servicios idle y cero operaciones activas, en cola o inciertas
 Limpiar por la API únicamente los servicios de prueba propios de ciclos previos,
 apagándolos antes de eliminarlos y confirmando liberación NetBox cuando aplique.
 
-1. La falta anterior de ARP hacia `190.0.231.1` se observó con tag 211 en
-   `vmbr0`. La topología de ensayo actual está descrita arriba: `vmbr3` sin tag
-   de Proxmox y VLAN 211 etiquetada aguas arriba.
+1. El primer lote en la topología actual confirmó `vmbr3` sin tag de Proxmox y
+   VLAN 211 aguas arriba. Aun así, el guest de `190.0.231.2` no recibió ARP de
+   `190.0.231.1`; otros guests de esa tanda sí resolvieron el gateway. No
+   continuar la matriz WAN hasta resolver o aislar ese caso de conectividad.
 2. Confirmar la imagen ejecutada y el manifiesto canónico
    `/etc/iacp/stacks/manifest-dev.json`. El archivo de entorno es
    `/etc/iacp/stacks/dev.env`; el Bearer dev se obtiene allí privadamente.
@@ -55,6 +56,33 @@ etapa, y `--cycle` a 2 cuando corresponda.
 Los directorios de evidencia deben ser nuevos. No pasar credenciales en argumentos.
 El runner fija el dominio dev y comprueba el header de revisión contra el entorno.
 Cada categoría contiene 16 casos y dos controles para mantener tandas de seis.
+
+## Primer lote físico en `vmbr3` — 2026-11-17
+
+Revisión ejecutada: `5892ffc8517d0d008684f6a587ea112d54f45c73`. El perfil API
+publicó `vmbr3`, tag Proxmox nulo y VLAN externa 211; la configuración efectiva
+de las seis NIC coincidió. El lote se detuvo con `BLOCKED` antes de inyectar la
+siguiente tanda:
+
+- `190.0.231.2` quedó con el vecino del gateway en `INCOMPLETE` y causó
+  `STATIC_GATEWAY_UNREACHABLE`. Los guests siguientes que recibieron
+  `190.0.231.3`–`.5` sí observaron la MAC del gateway. Esta evidencia no
+  determina por sí sola si existe una política de red o una condición puntual
+  de esa dirección; el equipo de redes debe revisar el caso antes de reintentar.
+- AlmaLinux 9 v2 no tenía `iproute`, necesario para validar la interfaz y ruta;
+  dos aprovisionamientos acabaron en `SERVICE_BOOTSTRAP_GUEST_FAILED`. Las
+  nuevas imágenes v3 incluyen ese paquete y ya pasaron su preparación.
+- Una instalación Nextcloud quedó incierta y dos terminaron; al detectar
+  operaciones inciertas no se iniciaron más casos.
+
+Las seis VMs se apagaron y eliminaron con la API. NetBox marcó liberadas las
+seis direcciones `.2`–`.7`, las consultas posteriores no encontraron objetos
+NetBox ni VMID en Proxmox, y las tres operaciones físicas inciertas se
+reconciliaron con recurso ausente. Al cierre había cero operaciones activas o
+inciertas, seis workers de infraestructura idle y cuatro workers de servicios
+idle. Evidencia privada: `/opt/iacp/evidence/wan-servicios-ciclo1-20261117222500/`
+y `recovery-summary.json` dentro de ese directorio. Este lote no cuenta como
+ciclo aprobado.
 
 La CA del piloto está en el directorio privado indicado por
 `IACP_SERVICE_CONFIG_DIR`; los workers necesitan `IACP_SERVICE_IP_TLS_ENABLED=1`.

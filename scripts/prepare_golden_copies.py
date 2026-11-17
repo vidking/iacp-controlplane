@@ -28,7 +28,20 @@ sys.path.insert(0, str(ROOT))
 from worker.proxmox import ProxmoxClient
 from scripts.prepare_almalinux_bootstrap import prepare
 
-COPIES = {9: (29010, 29014), 10: (29011, 29015)}
+COPIES = {9: (29010, 29016), 10: (29011, 29017)}
+BASE_PACKAGES = ("policycoreutils-python-utils", "iproute")
+PROTECTED_BASE_VMIDS = {
+    104,
+    106,
+    29000,
+    29001,
+    29010,
+    29011,
+    29012,
+    29013,
+    29014,
+    29015,
+}
 
 
 class Factory:
@@ -230,7 +243,7 @@ class Factory:
     def prepare_copy(self, version):
         self.idle()
         source, vmid = COPIES[version]
-        assert source != vmid and vmid not in {104, 106, 29000, 29001, 29010, 29011}
+        assert source != vmid and vmid not in PROTECTED_BASE_VMIDS
         assert int(self.client.get("/cluster/nextid?vmid=" + str(vmid))) == vmid
         original = self.client.vm_config("mng01", source)
         public = {
@@ -241,7 +254,7 @@ class Factory:
         item = {
             "vmid": vmid,
             "source": source,
-            "name": f"iacp-almalinux-{version}-bootstrap-v2-20261117",
+            "name": f"iacp-almalinux-{version}-bootstrap-v3-20261117",
             "phase": "clone_requested",
             "source_public": public,
         }
@@ -330,7 +343,11 @@ class Factory:
         hostkey = " ".join(known.read_text().strip().split()[1:])
         private = self.folder / ("console-password-" + str(vmid))
         self.event("instalar_bootstrap_fijo", vmid)
-        self.ssh(item, ["dnf", "-y", "install", "policycoreutils-python-utils"])
+        self.ssh(item, ["dnf", "-y", "install", *BASE_PACKAGES])
+        # El bootstrap y la prevalidación WAN consultan interfaces, rutas y
+        # vecinos mediante iproute2. No activar esta copia en el catálogo si
+        # el comando no quedó disponible dentro del guest.
+        self.ssh(item, ["ip", "-V"])
         self.ssh(item, ["mkdir", "-p", "/root/iacp-bootstrap-package"])
         for name in ["iacp-guest-bootstrap", "manifest.json", "install.sh"]:
             content = (self.bundle / name).read_text()

@@ -103,4 +103,26 @@ incluso cuando cloud-init devuelve código cero. Las revisiones anteriores
 29014 (AlmaLinux 9) y 29015 (AlmaLinux 10), ambas preparadas desde las originales
 29010/29011 y verificadas con SELinux Enforcing. Evidencia privada en
 `/opt/iacp/evidence/alma9-golden-v2-20261117/` y
-`/opt/iacp/evidence/alma10-golden-v2-20261117/`. La matriz se repetirá con v2.
+`/opt/iacp/evidence/alma10-golden-v2-20261117/`. Se planeó repetir la matriz
+con v2; la tanda WAN posterior detectó que faltaba `iproute`.
+
+## Revisión de herramientas de red v3 — 2026-11-17
+
+La primera tanda WAN encontró que las copias 29014/29015 no incluyen el
+comando `ip`, requerido para comprobar la configuración estática, la ruta por
+defecto y la vecindad del gateway dentro del guest. Se conservarán intactas esas
+copias y se preparan nuevas imágenes desde los originales protegidos:
+
+| Imagen lógica | Original conservada | Nueva copia v3 | Paquetes adicionales |
+| --- | --- | --- | --- |
+| AlmaLinux 9 | 29010 | 29016 | `iproute`, `policycoreutils-python-utils` |
+| AlmaLinux 10 | 29011 | 29017 | `iproute`, `policycoreutils-python-utils` |
+
+La fábrica verifica `ip -V` antes de instalar el helper y convertir la copia en
+template. La preparación física v3 terminó `PASS`: los dos helpers aprobaron
+protocolo e identidad con SELinux Enforcing, `ip -V` estuvo disponible y las
+plantillas quedaron listas. Evidencia privada en
+`/opt/iacp/evidence/alma9-golden-v3-20261117-r2/` y
+`/opt/iacp/evidence/alma10-golden-v3-20261117/`. El cambio de catálogo aún debe
+publicarse en dev; esta preparación no certifica las matrices de aplicaciones.
+Las imágenes originales y las copias v2 no se modificaron.

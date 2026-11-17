@@ -140,7 +140,7 @@ def test_allocation_keeps_scheduler_target_node(tmp_path, monkeypatch):
     assert row["node"] == "mng02"
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015, 29016, 29017])
 def test_allocation_never_reserves_a_protected_vmid(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_VMID_MIN", str(protected_vmid))
@@ -162,7 +162,7 @@ def test_allocation_honors_additional_protected_vmids(tmp_path, monkeypatch):
         allocate("operation-additional-protected", FakeProxmox())
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015, 29016, 29017])
 def test_worker_power_rejects_protected_vmid_before_proxmox_mutation(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -213,7 +213,7 @@ def test_worker_power_rejects_protected_vmid_before_proxmox_mutation(tmp_path, m
     )
 
 
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015, 29016, 29017])
 def test_worker_reconcile_rejects_protected_vmid_before_proxmox_observation(tmp_path, monkeypatch, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -279,7 +279,7 @@ def test_worker_reconcile_rejects_protected_vmid_before_proxmox_observation(tmp_
 
 
 @pytest.mark.parametrize("command", ["apply", "destroy"])
-@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015])
+@pytest.mark.parametrize("protected_vmid", [104, 106, 29000, 29012, 29013, 29014, 29015, 29016, 29017])
 def test_worker_apply_destroy_fail_closed_for_protected_vms(tmp_path, monkeypatch, command, protected_vmid):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
