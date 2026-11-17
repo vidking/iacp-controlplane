@@ -62,3 +62,22 @@ El formulario de autorización acepta el token como valor, entre comillas, con
 prefijo Bearer o como una única asignación `IACP_API_TOKEN=...`. No registra ni
 persiste el secreto en el navegador. El recurso JavaScript cambia su versión
 para evitar que una copia anterior del formulario permanezca en caché.
+
+### Recuperación del primer ensayo LAN
+
+La primera tanda creó seis KVM y verificó los cuatro planes de Ubuntu 24.04.
+El primer reboot de Ubuntu 26.04 quedó incierto al consultar Guest Agent durante
+el arranque. Se conserva el resultado fallido; no cuenta como ciclo aprobado.
+La corrección espera disponibilidad del canal con lecturas y registra la identidad
+verificada en todas las imágenes. No repite un POST exec de resultado incierto.
+
+La recuperación de un reboot puede demostrar su ejecución mediante una única tarea
+Proxmox exitosa del mismo nodo, VMID, identidad de API y ventana temporal de la
+operación. Se verifica su UPID y estado final; tareas ambiguas, ajenas o fuera de
+la ventana no autorizan cerrar la intención. No se vuelve a enviar el reboot.
+
+Las verificaciones y limpiezas de instancias independientes admiten hasta seis
+hilos, manteniendo el mismo límite de infraestructura. El cliente limita su
+frecuencia de consultas y reintenta HTTP 429 solo en lecturas o solicitudes con
+clave de idempotencia. Ante un fallo activa contención para nuevas mutaciones.
+La evidencia identifica también la huella SHA-256 del runner utilizado.

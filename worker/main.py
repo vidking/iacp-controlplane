@@ -918,8 +918,11 @@ def ensure_guest_identity_for_operation(
             return None
         from worker.service_bootstrap import prepare
         try:
-            return prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id, spec=spec,
-                           heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="static_guest_validation"))
+            result = prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id, spec=spec,
+                             heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="static_guest_validation"))
+            if result:
+                emit(operation_id, "guest.identity.verified", "succeeded", json.dumps({"ipv4": result.get("address"), "mode": "static-qga"}))
+            return result
         except GuestIdentityError:
             raise
         except Exception as error:
@@ -927,9 +930,12 @@ def ensure_guest_identity_for_operation(
     if not guest_identity_required(spec, stack, vmid):
         if stack == "mng01" and started and spec.get("image") in {"ubuntu-2604", "almalinux-9", "almalinux-10"} and spec.get("network_profile", "lab_dhcp") == "lab_dhcp":
             from worker.service_bootstrap import prepare
-            return prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id,
-                           spec=dict(spec, prepare_identity=True),
-                           heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="dhcp_guest_validation"))
+            result = prepare(client, node=node, vmid=int(vmid), name=name, instance_id=instance_id,
+                             spec=dict(spec, prepare_identity=True),
+                             heartbeat=lambda: heartbeat(worker_id, "running", operation_id, phase="dhcp_guest_validation"))
+            if result:
+                emit(operation_id, "guest.identity.verified", "succeeded", json.dumps({"ipv4": result.get("address"), "mode": "dhcp-qga"}))
+            return result
         return None
     if not started:
         emit(operation_id, "guest.identity.deferred", "pending", "se ejecutará al encender la VM")
@@ -1194,9 +1200,14 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
             ):
                 result = {"action": action, "already": True, **observed}
             else:
-                # Running alone cannot prove the reboot was accepted for any
-                # other failure mode, so keep the recovery fail-closed.
-                raise ProxmoxError("POWER_REBOOT_REQUIRES_REVIEW", uncertain=True)
+                proof = getattr(client, "completed_power_task_during", None)
+                task = proof(node, int(vmid), "reboot", source.get("started_at"), source.get("finished_at")) if proof else None
+                if not task or observed.get("power_state") != "running":
+                    raise ProxmoxError("POWER_REBOOT_REQUIRES_REVIEW", uncertain=True)
+                ensure_guest_identity_for_operation(worker_id, operation_id, client, stack=source.get("stack") or "mng01",
+                                                    node=node, vmid=int(vmid), name=name, instance_id=instance_id,
+                                                    spec=instance_spec(instance_id))
+                result = {"action": action, "already": True, "verified_task": task, **observed}
         else:
             result = client.power(node, int(vmid), name, action)
         if action == "start" and result.get("power_state") == "running":

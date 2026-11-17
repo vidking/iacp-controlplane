@@ -1209,3 +1209,23 @@ def test_operation_spec_preserves_ipam_resolved_payload():
     old = {"payload_json": json.dumps({"spec": {"network_profile": "prod_static", "ipv4_cidr": None}})}
     resolved = {"spec": {"network_profile": "prod_static", "ipv4_cidr": "190.0.231.2/24", "ipv4_gateway": "190.0.231.1"}}
     assert operation_spec(old, resolved) == resolved["spec"]
+
+
+def test_reboot_recovery_requires_unique_matching_task_and_time(monkeypatch):
+    from worker.proxmox import ProxmoxClient
+    client=object.__new__(ProxmoxClient)
+    client.token='test@pve!runtime=not-a-real-token'
+    task='UPID:mng01:000001:000002:000003:qmreboot:40018:test@pve!runtime:'
+    row={'node':'mng01','id':'40018','type':'qmreboot','user':'test@pve','tokenid':'runtime','status':'OK','starttime':100,'endtime':103,'upid':task}
+    records=[row]
+    calls=[]
+    monkeypatch.setattr(client,'get',lambda *_:records)
+    monkeypatch.setattr(client,'wait_task',lambda *args:calls.append(args))
+    assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:01:40+00:00','1970-01-01T00:01:45+00:00')==task
+    assert len(calls)==1
+    records.append(dict(row))
+    assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:01:40+00:00','1970-01-01T00:01:45+00:00') is None
+    records[:]=[dict(row,user='someone@pve')]
+    assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:01:40+00:00','1970-01-01T00:01:45+00:00') is None
+    records[:]=[row]
+    assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:02:00+00:00','1970-01-01T00:02:05+00:00') is None

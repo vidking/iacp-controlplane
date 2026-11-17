@@ -13,6 +13,7 @@ from worker.guest_identity import (
     _wait_for_pool_membership,
 )
 from worker.golden import configured_pool_id
+from worker.proxmox import ProxmoxError
 
 # Solo datos públicos salen del invitado. La identidad la acredita el paso previo.
 PROGRAM = r"""
@@ -151,6 +152,18 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         pool_id=configured_pool_id(),
         heartbeat=heartbeat,
     )
+    # Solo se repiten lecturas: un POST exec incierto nunca se vuelve a enviar.
+    deadline = time.monotonic() + 180
+    while True:
+        heartbeat()
+        try:
+            client.guest_agent_interfaces(node, vmid)
+            break
+        except ProxmoxError:
+            pass
+        if time.monotonic() >= deadline:
+            raise GuestIdentityError("GUEST_IDENTITY_AGENT_UNAVAILABLE")
+        time.sleep(2)
     result = client.guest_agent_exec(
         node,
         vmid,

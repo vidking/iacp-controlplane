@@ -249,3 +249,22 @@ def test_dhcp_bootstrap_refuses_vlan(monkeypatch):
     fake=SimpleNamespace(vm_config=lambda *_:{'name':'dhcp-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=211','ipconfig0':'ip=dhcp'})
     with pytest.raises(GuestIdentityError,match='DHCP_UNEXPECTED_VLAN'):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='dhcp-test',instance_id='dhcp-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
+
+
+def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
+    from worker.proxmox import ProxmoxError
+    initialize()
+    monkeypatch.setattr(bootstrap,'_wait_for_pool_membership',lambda *args,**kwargs:None)
+    monkeypatch.setattr(bootstrap.time,'sleep',lambda _:None)
+    calls={'reads':0,'exec':0}
+    def interfaces(*_):
+        calls['reads']+=1
+        if calls['reads']==1:raise ProxmoxError('AGENT_NOT_READY')
+        return []
+    def execute(*_):
+        calls['exec']+=1
+        raise ProxmoxError('RESULT_UNKNOWN',uncertain=True)
+    fake=SimpleNamespace(vm_config=lambda *_:{'name':'wait-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=211','ipconfig0':'ip=190.0.231.8/24,gw=190.0.231.1'},guest_agent_interfaces=interfaces,guest_agent_exec=execute)
+    with pytest.raises(ProxmoxError,match='RESULT_UNKNOWN'):
+        bootstrap.prepare(fake,node='mng01',vmid=40012,name='wait-test',instance_id='wait-test',spec={'network_profile':'prod_static','ipv4_cidr':'190.0.231.8/24','ipv4_gateway':'190.0.231.1'},heartbeat=lambda:None)
+    assert calls=={'reads':2,'exec':1}

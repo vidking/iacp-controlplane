@@ -473,6 +473,57 @@ class ProxmoxClient:
         if not isinstance(task, str) or len(task) > 512 or not re.fullmatch(pattern, task):
             raise ProxmoxError("POWER_TASK_IDENTITY_MISMATCH")
 
+    def completed_power_task_during(self, node, vmid, action, started_at, finished_at):
+        """Demostrar una mutación previa sin repetirla ni usar solo el estado running."""
+        from datetime import datetime
+
+        try:
+            begin = datetime.fromisoformat(started_at).timestamp()
+            end = datetime.fromisoformat(finished_at).timestamp()
+            if end < begin:
+                return None
+        except (TypeError, ValueError):
+            return None
+        owner = self.token.split("=", 1)[0]
+        task_type = {
+            "reboot": "qmreboot",
+            "start": "qmstart",
+            "shutdown": "qmshutdown",
+        }[action]
+        records = self.get(
+            f"/nodes/{quote(node, safe='')}/tasks?"
+            + urlencode({"vmid": vmid, "limit": 50, "typefilter": task_type})
+        )
+        matches = []
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            identity = record.get("user", "") + (
+                "!" + record["tokenid"] if record.get("tokenid") else ""
+            )
+            try:
+                valid = (
+                    record.get("node") == node
+                    and str(record.get("id")) == str(vmid)
+                    and record.get("type") == task_type
+                    and identity == owner
+                    and record.get("status") == "OK"
+                    and begin - 1
+                    <= float(record["starttime"])
+                    <= float(record["endtime"])
+                    <= end + 1
+                )
+            except (KeyError, TypeError, ValueError):
+                valid = False
+            if valid:
+                task = record.get("upid")
+                self._validate_task(node, vmid, action, task)
+                matches.append(task)
+        if len(matches) != 1:
+            return None
+        self.wait_task(node, vmid, action, matches[0])
+        return matches[0]
+
     def wait_task(self, node: str, vmid: int, action: str, task: str) -> dict:
         timeout = int(os.getenv("IACP_POWER_TIMEOUT", "180"))
         deadline = time.monotonic() + timeout

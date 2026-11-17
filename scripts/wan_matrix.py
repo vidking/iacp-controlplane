@@ -10,6 +10,8 @@ import argparse
 import base64
 import concurrent.futures
 import json
+import hashlib
+import threading
 import os
 from pathlib import Path
 import secrets
@@ -53,6 +55,9 @@ def cases(category):
 
 class Matrix:
     def __init__(self, args):
+        self.abort = threading.Event()
+        self.api_lock = threading.Lock()
+        self.last_request = 0.0
         self.args = args
         self.profile = args.network_profile
         self.env = dotenv_values(args.env, interpolate=False)
@@ -116,13 +121,40 @@ class Matrix:
             data=json.dumps(body).encode() if body is not None else None,
             method=method,
         )
-        try:
-            with urlopen(r, timeout=90) as f:
-                if f.headers.get("X-IACP-Build-Revision") != self.env["IACP_IMAGE_TAG"]:
-                    raise RuntimeError("RUNTIME_REVISION_MISMATCH")
-                return f.read() if raw else json.load(f)
-        except HTTPError as e:
-            raise RuntimeError(f"API_{e.code}_{method}_{path.split('/')[2]}") from None
+        for attempt in range(4):
+            if self.abort.is_set() and method != "GET":
+                raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
+            with self.api_lock:
+                time.sleep(max(0, 0.25 - (time.monotonic() - self.last_request)))
+                self.last_request = time.monotonic()
+            try:
+                with urlopen(r, timeout=90) as f:
+                    if (
+                        f.headers.get("X-IACP-Build-Revision")
+                        != self.env["IACP_IMAGE_TAG"]
+                    ):
+                        raise RuntimeError("RUNTIME_REVISION_MISMATCH")
+                    return f.read() if raw else json.load(f)
+            except HTTPError as e:
+                if e.code == 429 and (method == "GET" or key) and attempt < 3:
+                    time.sleep(2**attempt)
+                    continue
+                raise RuntimeError(
+                    f"API_{e.code}_{method}_{path.split('/')[2]}"
+                ) from None
+
+    def parallel(self, function, items):
+        def guarded(item):
+            if self.abort.is_set():
+                raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
+            try:
+                return function(item)
+            except Exception:
+                self.abort.set()
+                raise
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            return list(pool.map(guarded, items))
 
     def idle(self):
         state = self.api("GET", "/v1/observability")
@@ -182,6 +214,8 @@ class Matrix:
         item["known"] = str(known)
 
     def ssh(self, item, argv, input=None, password=None):
+        if self.abort.is_set():
+            raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
         args = [
             "ssh",
             "-o",
@@ -543,6 +577,7 @@ class Matrix:
             network_profile=self.profile,
             cycle=self.args.cycle,
             revision=self.env["IACP_IMAGE_TAG"],
+            harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=16,
             controls=2,
         )
@@ -582,9 +617,8 @@ class Matrix:
             for item in items:
                 if item["product"] != "kvm":
                     self.wait_service(item["job_id"])
-                self.verify(item)
-            for item in items:
-                self.cleanup(item)
+            self.parallel(self.verify, items)
+            self.parallel(self.cleanup, items)
         self.idle()
         self.record("COMPLETE", result="PASS", cases=16, controls=2)
 
