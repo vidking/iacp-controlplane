@@ -177,6 +177,8 @@ def test_prepare_develop_rejects_shared_proxmox_token(tmp_path):
 
 def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
     initialize()
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr0")
+    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "211")
     monkeypatch.setattr(
         bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
     )
@@ -230,6 +232,53 @@ def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
             spec=spec,
             heartbeat=lambda: None,
         )
+
+
+def test_static_bootstrap_accepts_upstream_vlan_on_vmbr3_without_proxmox_tag(monkeypatch):
+    initialize()
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "")
+    monkeypatch.setattr(
+        bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
+    )
+    config = {
+        "name": "wan-untagged-test",
+        "net0": "virtio=" + MAC + ",bridge=vmbr3",
+        "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
+    }
+    response = {
+        "instance_id": "wan-untagged-id",
+        "mac_address": MAC,
+        "host_key": "ssh-ed25519 AAAAexample",
+        "dns_servers": ["1.1.1.1", "8.8.8.8"],
+    }
+    fake = SimpleNamespace(
+        vm_config=lambda *_: config,
+        guest_agent_exec=lambda *_: {"pid": 10},
+        guest_agent_exec_status=lambda *_: {
+            "exited": True,
+            "exitcode": 0,
+            "out-data": json.dumps(response),
+        },
+        guest_agent_interfaces=lambda *_: [
+            {"hardware-address": MAC, "ip-addresses": [{"ip-address": "190.0.231.8"}]}
+        ],
+    )
+    result = bootstrap.prepare(
+        fake,
+        node="mng01",
+        vmid=40004,
+        name="wan-untagged-test",
+        instance_id="wan-untagged-id",
+        spec={
+            "network_profile": "prod_static",
+            "ipv4_cidr": "190.0.231.8/24",
+            "ipv4_gateway": "190.0.231.1",
+            "vlan_id": None,
+        },
+        heartbeat=lambda: None,
+    )
+    assert result["address"] == "190.0.231.8"
 
 
 def test_static_guest_readiness_requires_gateway_neighbor():

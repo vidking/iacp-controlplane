@@ -128,7 +128,7 @@ def render(application, configuration, secrets, release):
                 "N8N_ENCRYPTION_KEY": secrets["encryption_key"],
                 "N8N_HOST": configuration["domain"],
                 "N8N_PROTOCOL": "https",
-                "WEBHOOK_URL": f"https://{configuration['domain']}/",
+                "N8N_WEBHOOK_URL": f"https://{configuration['domain']}/",
                 "N8N_EDITOR_BASE_URL": f"https://{configuration['domain']}/",
                 "N8N_PROXY_HOPS": "1",
             }

@@ -128,6 +128,9 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         raise GuestIdentityError("SERVICE_BOOTSTRAP_PROTECTED")
     config = client.vm_config(node, vmid)
     if static:
+        from api.catalog import prod_static_proxmox_network
+
+        expected_network = prod_static_proxmox_network()
         network = config.get("net0", "")
         settings = dict(
             piece.split("=", 1) for piece in network.split(",") if "=" in piece
@@ -141,8 +144,12 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         if (
             config.get("name") != name
             or config.get("template")
-            or settings.get("bridge") != "vmbr0"
-            or settings.get("tag") != "211"
+            or settings.get("bridge") != expected_network["bridge"]
+            or settings.get("tag") != (
+                str(expected_network["vlan_tag"])
+                if expected_network["vlan_tag"] is not None
+                else None
+            )
             or ipsettings.get("ip") != spec.get("ipv4_cidr")
             or ipsettings.get("gw") != "190.0.231.1"
             or spec.get("ipv4_gateway") != "190.0.231.1"

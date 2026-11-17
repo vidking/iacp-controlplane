@@ -171,7 +171,15 @@ def get_service(service_id):
                 if not host:
                     binding = db.execute("SELECT binding_json FROM service_bindings WHERE service_id=?", (service_id,)).fetchone()
                     host = json.loads(binding["binding_json"]).get("address") if binding else None
-            result["access_url"] = "https://" + host + "/" if host else None
+            # El endpoint web no es utilizable hasta que la receta terminó de
+            # configurar la aplicación (incluidos trusted_domains en
+            # Nextcloud). Evita que el consumidor abra una IP intermedia y vea
+            # una pantalla de instalación o de dominio no confiable.
+            result["access_url"] = (
+                "https://" + host + "/"
+                if host and result["status"] in {"awaiting_customer", "delivered"}
+                else None
+            )
         return result
 
 

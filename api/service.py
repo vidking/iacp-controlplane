@@ -524,7 +524,11 @@ def _resolve_public_request(
         disk_gb=plan["disk_gb"],
         network_profile=resolved_profile,
         network_mode="static" if resolved_profile == "prod_static" else "dhcp",
-        vlan_id=211 if resolved_profile == "prod_static" else None,
+        vlan_id=(
+            profile["proxmox_vlan_tag"]
+            if resolved_profile == "prod_static"
+            else None
+        ),
         dns_servers=["1.1.1.1", "8.8.8.8"] if resolved_profile == "prod_static" else [],
         ssh_public_keys=request.access.ssh_public_keys,
         started=request.start_on_create,

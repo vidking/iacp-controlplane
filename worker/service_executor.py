@@ -292,7 +292,7 @@ def execute(service, job, heartbeat):
             tasks.extend(
                 [
                     {
-                        "name": "Autorizar dominio de Nextcloud",
+                        "name": "Autorizar hostname de acceso de Nextcloud",
                         **command(
                             base
                             + [
@@ -310,6 +310,28 @@ def execute(service, job, heartbeat):
                                 configuration["domain"],
                             ]
                         ),
+                        "no_log": True,
+                    },
+                    {
+                        "name": "Verificar hostname confiable de Nextcloud",
+                        **command(
+                            base
+                            + [
+                                "exec",
+                                "-T",
+                                "--user",
+                                "www-data",
+                                "app",
+                                "php",
+                                "occ",
+                                "config:system:get",
+                                "trusted_domains",
+                                "1",
+                            ]
+                        ),
+                        "register": "trusted_domain",
+                        "failed_when": "trusted_domain.rc != 0 or trusted_domain.stdout | trim != "
+                        + repr(configuration["domain"]),
                         "no_log": True,
                     },
                     {

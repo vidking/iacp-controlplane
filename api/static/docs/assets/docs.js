@@ -312,8 +312,14 @@
     $("service-domain").required = domain;
     $("ssh-key").required = false;
     $("ssh-key-label").textContent = "Llave pública SSH opcional";
+    $("root-password-label").textContent = service
+      ? "Contraseña root para acceso SSH (obligatoria)"
+      : "Contraseña root obligatoria";
+    $("root-password-help").textContent = service
+      ? "Es la credencial de la KVM, separada del acceso web de Nextcloud o n8n. Se entrega por bootstrap seguro y nunca se devuelve."
+      : "Credencial del sistema operativo para acceso SSH; se entrega por bootstrap seguro y nunca se devuelve.";
     $("ssh-key-help").textContent = service
-      ? "Opcional. Si no agregas una llave, la contraseña root permite conservar acceso SSH al sistema. La aplicación tiene su propio acceso web."
+      ? "Opcional. Si ya definiste contraseña root, no necesitas una llave SSH. Las credenciales web de la aplicación se administran por separado."
       : "Opcional. Permite iniciar sesión SSH sin usar la contraseña root.";
     $("started").disabled = service;
     if (service) $("started").checked = true;
@@ -749,6 +755,11 @@
     const kvmReady = ["ready", "stopped"].includes(service.infrastructure_status) && service.vmid != null;
     const url = $("service-url");
     url.classList.toggle("hidden", !ready || !service.access_url);
+    $("service-access-help").textContent = ready
+      ? service.configuration.access_mode === "ip"
+        ? "La aplicación está lista. Para HTTPS por IP, instala primero la CA del piloto."
+        : "La aplicación está lista en el dominio configurado."
+      : "La dirección HTTPS aparecerá cuando termine la instalación; no accedas por IP durante el aprovisionamiento.";
     if (ready && service.access_url?.startsWith("https://")) {
       url.href = service.access_url;
       url.textContent = `Abrir ${service.access_url} ↗`;

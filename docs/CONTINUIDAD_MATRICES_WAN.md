@@ -1,33 +1,57 @@
 # Continuidad de las matrices WAN
 
-Estado: **BLOCKED**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
+Estado: **EN CURSO**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
 
-1. El equipo de operaciones debe resolver la falta de ARP hacia `190.0.231.1` en VLAN 211 desde las
-   VMs del nodo `mng01`, sin alterar el perfil ni utilizar LAN para certificar WAN.
+### Actualización de topología y prioridad — 2026-11-17
+
+El bloqueo anterior se observó usando `vmbr0` con tag 211 en la NIC de la VM.
+El equipo de redes autorizó temporalmente que las VMs de prueba usen `vmbr3`
+sin tag de Proxmox, porque una capa superior ya entrega la VLAN 211 etiquetada.
+Esta configuración se limita al stack dev. `lab_dhcp` continúa en `vmbr0` sin
+tag y producción no se modifica.
+
+El candidato separa segmento externo y configuración de NIC mediante
+`IACP_PROD_STATIC_BRIDGE=vmbr3` y `IACP_PROD_STATIC_PROXMOX_VLAN_TAG=`. Antes de
+inyectar, `scripts/wan_matrix.py` compara el perfil publicado por la API y la
+configuración real de cada VM. El orden vigente prioriza servicios: completar
+Nextcloud y n8n en los dos ciclos WAN, con los cuatro workers de servicios y
+seis workers de infraestructura; luego continuar la matriz KVM. Los agentes
+siguen aplazados hasta cerrar los servicios.
+
+Antes de cada ciclo confirmar seis workers de infraestructura sanos e idle,
+cuatro workers de servicios idle y cero operaciones activas, en cola o inciertas.
+Limpiar por la API únicamente los servicios de prueba propios de ciclos previos,
+apagándolos antes de eliminarlos y confirmando liberación NetBox cuando aplique.
+
+1. La falta anterior de ARP hacia `190.0.231.1` se observó con tag 211 en
+   `vmbr0`. La topología de ensayo actual está descrita arriba: `vmbr3` sin tag
+   de Proxmox y VLAN 211 etiquetada aguas arriba.
 2. Confirmar la imagen ejecutada y el manifiesto canónico
    `/etc/iacp/stacks/manifest-dev.json`. El archivo de entorno es
    `/etc/iacp/stacks/dev.env`; el Bearer dev se obtiene allí privadamente.
 3. Comprobar seis workers de infraestructura sanos e idle, cuatro de servicios y
    ausencia de operaciones activas o inciertas. Conservar los datos históricos.
-4. Ejecutar primero KVM ciclo 1 y ciclo 2 con `scripts/wan_matrix.py`; después
-   habilitar Ansible mediante `IACP_SERVICE_EXECUTION_ENABLED=1` y
-   `service_execution_enabled=true` en el manifiesto. Aplicar el cambio con
+4. Habilitar Ansible para el stack dev mediante `IACP_SERVICE_EXECUTION_ENABLED=1`
+   y `service_execution_enabled=true` en el manifiesto. Aplicar el cambio con
    `iacpctl`, nunca reiniciando otros stacks.
-5. Ejecutar servicios ciclos 1 y 2; finalmente agentes ciclos 1 y 2. Ante fallo,
+5. Ejecutar servicios WAN ciclos 1 y 2. Solo tras aprobarlos continuar con KVM;
+   la matriz de agentes queda pendiente hasta cerrar los servicios. Ante fallo,
    detener nuevas inyecciones, recuperar y limpiar únicamente instancias propias
    antes de repetir el ciclo. Mantener los resultados fallidos.
 
-Ejemplo para cada categoría, usando el Python del entorno operativo privado y el
-release realmente desplegado:
+Ejemplo para el ciclo de servicios, usando el Python del entorno operativo
+privado y el release realmente desplegado:
 
 ```bash
 sudo /opt/iacp/tools/services-pilot-venv/bin/python \
   /opt/iacp/releases/controlplane-REVISION/scripts/wan_matrix.py \
-  --category kvm --cycle 1 --run MARCA_UTC_NUMERICA \
-  --evidence /opt/iacp/evidence/wan-kvm-ciclo1-MARCA_UTC_NUMERICA
+  --category services --cycle 1 --network-profile prod_static \
+  --run MARCA_UTC_NUMERICA \
+  --evidence /opt/iacp/evidence/wan-servicios-ciclo1-MARCA_UTC_NUMERICA
 ```
 
-Cambiar `--category` a `services` o `agents`, y `--cycle` a 2 cuando corresponda.
+Después de cerrar servicios, cambiar `--category` a `kvm` o `agents` según la
+etapa, y `--cycle` a 2 cuando corresponda.
 Los directorios de evidencia deben ser nuevos. No pasar credenciales en argumentos.
 El runner fija el dominio dev y comprueba el header de revisión contra el entorno.
 Cada categoría contiene 16 casos y dos controles para mantener tandas de seis.
@@ -43,9 +67,14 @@ recuperación y limpieza. Reutilizar la imagen inmutable certificada y ajustar
 únicamente la configuración productiva, incluida WAN exclusiva. No fusionar ni
 actualizar producción como parte de esta continuidad.
 
-## Ensayo LAN autorizado — 2026-11-17
+## Evidencia histórica: ensayo LAN autorizado — 2026-11-17
 
-### Prioridad acordada para continuar
+Esta sección conserva el alcance y las decisiones vigentes durante el ensayo
+LAN. La autorización posterior del equipo de redes para usar `vmbr3` sin tag de
+Proxmox, registrada arriba, reemplaza la topología LAN como siguiente paso de
+pruebas. La evidencia LAN no se convierte en evidencia WAN.
+
+### Alcance del ensayo LAN
 
 Completar primero los servicios. Ejecutar ciclos LAN 1 y 2 de Nextcloud y n8n:
 cuatro planes por Ubuntu 24.04 y AlmaLinux 9, con seis operaciones físicas
@@ -57,8 +86,7 @@ recuperación controlada de las instancias propias.
 
 No iniciar la matriz de agentes hasta que ambos ciclos de servicios terminen
 `PASS`. La matriz KVM completa y los ciclos WAN se mantienen como etapas
-posteriores; WAN solo se aprueba cuando el equipo de redes confirme VLAN 211 y
-se valide la ruta a `190.0.231.1` desde las VMs. LAN no se reporta como WAN.
+posteriores a servicios. El ensayo LAN no demuestra conectividad WAN.
 
 El ciclo LAN `202611171525` quedó `BLOCKED` por pérdida de la salida SSH del
 runner después de registrar dos verificaciones. Sus seis VMs propias fueron
@@ -67,11 +95,11 @@ preserva resultados frente a `BrokenPipeError`; aun así, se debe desplegar y
 verificar la revisión candidata antes de repetir la matriz. El detalle y las
 rutas privadas de evidencia están en `docs/auditorias/SERVICIOS_LAN_20261117.md`.
 
-Mientras se confirma la VLAN 211, se autoriza ejecutar las mismas combinaciones
-con `--network-profile lab_dhcp`, sin tag y sin reservas NetBox. Las aplicaciones
-web usan `access_mode=ip` y la misma CA privada del piloto para la IP observada
-mediante QEMU Guest Agent. Estos resultados certifican únicamente LAN y no
-sustituyen las matrices WAN pendientes.
+Durante esa fase se autorizó ejecutar las combinaciones con
+`--network-profile lab_dhcp`, sin tag y sin reservas NetBox. Las aplicaciones
+web usan `access_mode=ip` y la CA privada del piloto para la IP observada
+mediante QEMU Guest Agent. Esas instrucciones describen el ensayo histórico y
+no sustituyen la configuración WAN actual de `vmbr3` sin tag de Proxmox.
 
 El runner conserva WAN como valor predeterminado. Para LAN se debe indicar el
 perfil explícitamente. La identidad DHCP se configura por MAC en Netplan o

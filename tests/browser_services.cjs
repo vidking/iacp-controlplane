@@ -61,12 +61,16 @@ const server = http.createServer((request, response) => {
     await page.locator('[data-application-id="nextcloud"]').click();
     assert.equal(await page.locator('[data-application-id="nextcloud"]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
-    assert.match(await page.locator('#ssh-key-help').textContent(),/contraseña root permite conservar acceso SSH/);
+    assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
+    assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
+    assert.match(await page.locator('#ssh-key-help').textContent(),/ya definiste contraseña root.*no necesitas una llave SSH/i);
     await page.locator('[data-application-id="n8n"]').click();
     assert.equal(await page.locator('[data-application-id="n8n"]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.locator('#image option').count(),2);
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
-    assert.match(await page.locator('#ssh-key-help').textContent(),/contraseña root permite conservar acceso SSH/);
+    assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
+    assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
+    assert.match(await page.locator('#ssh-key-help').textContent(),/ya definiste contraseña root.*no necesitas una llave SSH/i);
     assert.equal(await page.locator('#started').isChecked(),true);
     assert.equal(await page.locator('#started').isDisabled(),true);
     await page.locator('#name').fill('prueba-service-n8n');

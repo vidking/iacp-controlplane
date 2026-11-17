@@ -19,6 +19,51 @@ def test_service_controls_cover_password_only_access():
     assert all(case['client_ssh_key'] is False for case in controls)
 
 
+def test_static_wan_binding_uses_vmbr3_untagged_for_upstream_vlan_211(tmp_path):
+    from types import SimpleNamespace
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    matrix.profile = "prod_static"
+    matrix.static_bridge = "vmbr3"
+    matrix.static_vlan_tag = None
+    matrix.folder = tmp_path
+    matrix.proxmox = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "prueba-service-nextcloud-c1-01",
+            "net0": "virtio=aa:bb:cc:dd:ee:ff,bridge=vmbr3",
+            "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
+        }
+    )
+    item = {
+        "vmid": 40008,
+        "name": "prueba-service-nextcloud-c1-01",
+        "instance_id": "instance-test",
+        "image": "ubuntu-2404",
+        "address": "190.0.231.8",
+    }
+    matrix.qga = lambda *_: "ssh-ed25519 AAAAexample"
+    matrix.binding(item)
+    assert (tmp_path / "known-40008").read_text() == (
+        "190.0.231.8 ssh-ed25519 AAAAexample\n"
+    )
+
+
+def test_compose_passes_wan_nic_settings_to_service_workers_without_proxmox_tokens():
+    from pathlib import Path
+    import yaml
+
+    compose = yaml.safe_load(
+        (Path(__file__).parents[1] / "deploy/portainer/docker-compose.yml").read_text()
+    )
+    for worker in ("service-worker-1", "service-worker-2", "service-worker-3", "service-worker-4"):
+        environment = compose["services"][worker]["environment"]
+        assert "IACP_PROD_STATIC_BRIDGE" in environment
+        assert "IACP_PROD_STATIC_PROXMOX_VLAN_TAG" in environment
+        assert "IACP_PROXMOX_MNG_API_TOKEN" not in environment
+        assert "IACP_PROXMOX_API_TOKEN" not in environment
+
+
 def test_parallel_failure_contains_future_mutations():
     import threading
     import pytest

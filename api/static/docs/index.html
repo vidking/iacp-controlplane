@@ -143,8 +143,8 @@
                   <div class="network-profile-note"><strong>Asignación controlada</strong><p>El consumidor elige el perfil, no envía IP, gateway ni prefijo. <code>Prod_Static</code> solo aparece habilitado cuando el prefijo NetBox autorizado está configurado.</p></div>
                 </div>
                 <div class="form-grid two-columns access-form-grid">
-                  <label>Contraseña root obligatoria<input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small>Se entrega por bootstrap seguro, nunca se devuelve y debe tener al menos 12 caracteres en producción.</small></label>
-                  <label><span id="ssh-key-label">Llave pública SSH opcional</span><textarea id="ssh-key" rows="2" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small id="ssh-key-help">Opcional. Si no agregas una llave, la contraseña root permite conservar acceso SSH al sistema.</small></label>
+                  <label><span id="root-password-label">Contraseña root obligatoria</span><input id="root-password" type="password" required minlength="12" autocomplete="new-password" placeholder="Mínimo 12 caracteres"><small id="root-password-help">Credencial del sistema operativo para acceso SSH; se entrega por bootstrap seguro y nunca se devuelve.</small></label>
+                  <label><span id="ssh-key-label">Llave pública SSH opcional</span><textarea id="ssh-key" rows="2" autocomplete="off" placeholder="ssh-ed25519 AAAA... usuario@equipo"></textarea><small id="ssh-key-help">Opcional. La contraseña root permite conservar acceso SSH al sistema.</small></label>
                 </div>
                 <label class="check-control"><input id="started" type="checkbox"> Iniciar la VM al completar aprovisionamiento</label>
                 <label class="vm-tags-field">Tags Proxmox adicionales (opcional)
@@ -174,7 +174,7 @@
               <small class="panel-note">Pulsa <strong>Administrar</strong> para consultar acceso y credenciales, controlar la KVM o eliminar el servicio. Para eliminarlo, primero apaga la KVM.</small>
               <div id="service-detail" class="hidden">
                 <div class="service-detail-heading"><div><p class="eyebrow">ADMINISTRACIÓN DEL SERVICIO</p><h3 id="service-title"></h3><p id="service-status" role="status"></p></div><button class="button secondary" id="refresh-service-detail" type="button">Actualizar estado</button></div>
-                <p><a id="service-url" class="hidden" target="_blank" rel="noopener noreferrer">Abrir servicio ↗</a></p>
+                <p><a id="service-url" class="hidden" target="_blank" rel="noopener noreferrer">Abrir servicio ↗</a><small id="service-access-help" class="form-hint">La dirección HTTPS aparecerá cuando termine la instalación; no accedas por IP durante el aprovisionamiento.</small></p>
                 <div class="action-row service-management-actions"><button class="button secondary" id="service-power-start" type="button" disabled>Encender KVM</button><button class="button secondary" id="service-power-shutdown" type="button" disabled>Apagar KVM</button><button class="button secondary" id="service-reboot" type="button" disabled>Reiniciar KVM</button><button class="button danger" id="delete-service" type="button" disabled>Eliminar servicio</button></div>
                 <div class="action-row"><button class="button secondary" id="service-ca" type="button" disabled>Descargar CA del piloto</button><button class="button secondary" id="service-credentials" type="button" disabled>Consultar acceso inicial</button><button class="button secondary" id="clear-service-credentials" type="button">Ocultar información</button><button class="button primary" id="deliver-service" type="button" disabled>Completar entrega</button></div>
                 <p>Consulta y guarda la información de acceso antes de completar la entrega. La entrega retira el acceso SSH temporal de instalación y conserva tu llave pública.</p>
@@ -312,6 +312,6 @@ DELETE BASE/v1/instances/&lt;instance_id&gt;</pre></div></details>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
-    <script src="/docs/assets/docs.js?v=20261117-servicios3"></script>
+    <script src="/docs/assets/docs.js?v=20261117-servicios5"></script>
   </body>
 </html>

@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from api.catalog import cluster_nodes, load_catalog
+from api.catalog import cluster_nodes, load_catalog, prod_static_proxmox_network
 from api.db import database, initialize
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
@@ -517,7 +517,7 @@ def _ensure_static_allocation(
         {
             "network_profile": "prod_static",
             "network_mode": "static",
-            "vlan_id": 211,
+            "vlan_id": prod_static_proxmox_network()["vlan_tag"],
             "dns_servers": ["1.1.1.1", "8.8.8.8"],
             "ipv4_cidr": allocation["address"],
             "ipv4_gateway": allocation["gateway"],

@@ -12,7 +12,9 @@ import sys
 import tempfile
 import time
 import uuid
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener, urlopen
 
 import yaml
 
@@ -81,6 +83,33 @@ def main():
 
             status = run(command + ["exec", "-T", "--user", "www-data", "app", "php", "occ", "status", "--output=json"])
             assert json.loads(status.stdout).get("installed") is True, "OCC_INSTALL_STATUS_FAILED"
+            trusted = run(command + ["exec", "-T", "--user", "www-data", "app", "php", "occ", "config:system:get", "trusted_domains", "1"])
+            assert trusted.stdout.strip() == "127.0.0.1", "NEXTCLOUD_IP_NOT_TRUSTED"
+
+            class NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, request, file, code, message, headers, new_url):
+                    return None
+
+            opener = build_opener(HTTPSHandler(context=context), NoRedirect())
+            current = url + "/"
+            for _ in range(5):
+                request = Request(current, headers={"Host": "127.0.0.1"})
+                try:
+                    with opener.open(request, timeout=15) as home:
+                        page_status, page_body = home.status, home.read()
+                        location = home.headers.get("Location")
+                except HTTPError as response:
+                    page_status, page_body = response.code, response.read()
+                    location = response.headers.get("Location")
+                if not 300 <= page_status < 400 or not location:
+                    break
+                target = urlsplit(location)
+                if target.hostname == "127.0.0.1" and target.port is None:
+                    target = target._replace(netloc=f"127.0.0.1:{port}")
+                current = urlunsplit(target)
+            homepage = page_body.decode(errors="replace").lower()
+            assert page_status == 200, "NEXTCLOUD_LOGIN_PAGE_UNAVAILABLE"
+            assert "untrusted domain" not in homepage and "dominio del que no se confía" not in homepage, "NEXTCLOUD_UNTRUSTED_HOSTNAME"
             token = base64.b64encode(("admin:" + password).encode()).decode()
             path = "/remote.php/dav/files/admin/iacp-validation.txt"
 

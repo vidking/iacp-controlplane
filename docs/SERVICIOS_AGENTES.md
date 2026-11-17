@@ -340,6 +340,15 @@ Durante el piloto la API y la consola permiten ambos perfiles:
 | `lab_dhcp` | DHCP sobre `vmbr0`, sin VLAN tag |
 | `prod_static` | Solo `190.0.231.0/24`, gateway `190.0.231.1`, VLAN 211 y DNS `1.1.1.1`, `8.8.8.8` |
 
+La VLAN 211 describe el segmento de red autorizado. El tag de la NIC en Proxmox
+es un ajuste separado: por defecto se conserva `vmbr0` con tag 211 para stacks
+existentes, pero el piloto dev puede usar `IACP_PROD_STATIC_BRIDGE=vmbr3` y
+`IACP_PROD_STATIC_PROXMOX_VLAN_TAG=none` cuando el switch superior entrega el
+tráfico ya etiquetado. En ese caso Terraform conecta la NIC a `vmbr3` sin `tag=`;
+el aprovisionador sigue reservando la IP WAN desde NetBox y verificando gateway,
+SSH y TLS. La configuración aparece en `GET /v1/network-profiles` para permitir
+que el runner valide el contrato antes de crear recursos.
+
 `IACP_ENFORCE_WAN_ONLY=0` mantiene esa selección, incluso con el runtime histórico
 identificado como producción. No activar el bloqueo durante estas pruebas.
 La promoción definitiva con servicios requiere `IACP_ENFORCE_WAN_ONLY=1`: la API
@@ -502,9 +511,12 @@ de los ensayos. No había operaciones activas ni inciertas; seis workers idle.
 ## Formulario de servicios en desarrollo
 
 En `/docs#create`, las tarjetas de producto permiten elegir KVM, Nextcloud y n8n. Para
-servicios solo muestra Ubuntu 24.04 y AlmaLinux 9, exige una llave pública del
-cliente y enciende la KVM para instalar la aplicación. El acceso por IP utiliza
-la CA del piloto; el modo dominio requiere un FQDN que apunte a la instancia.
+servicios solo muestra Ubuntu 24.04 y AlmaLinux 9. La contraseña root es la
+credencial del sistema operativo y permite acceso SSH; la llave pública del
+cliente es opcional. Las credenciales web son independientes: Nextcloud entrega
+su usuario administrativo inicial una sola vez y n8n presenta su propio alta
+inicial de propietario. El acceso por IP utiliza la CA del piloto; el modo
+dominio requiere un FQDN que apunte a la instancia.
 
 El panel de servicios es un acordeón que inicia cerrado. Consulta
 `GET /v1/service-instances` con paginación y autenticación Bearer, oculta
@@ -516,9 +528,20 @@ ocultarse; la entrega exige su consulta previa y retira el acceso SSH temporal d
 instalación.
 
 La interfaz de agentes se abordará después de estabilizar Nextcloud y n8n.
-Las pruebas actuales usan LAN DHCP; no certifican WAN ni autorizan promoción a
-producción. Los nombres nuevos de ensayo siguen `prueba-service-nextcloud-...`,
+Los nombres nuevos de ensayo siguen `prueba-service-nextcloud-...`,
 `prueba-service-n8n-...`, `prueba-kvm-...` y `prueba-agent-...`.
+
+### Actualización de topología WAN de desarrollo — 2026-11-17
+
+El equipo de redes indicó que las VMs de prueba pueden conectar temporalmente
+su NIC a `vmbr3` sin VLAN tag de Proxmox; una capa superior ya etiqueta el
+tráfico con VLAN 211. La configuración de producción no cambia. En dev, las
+variables `IACP_PROD_STATIC_BRIDGE` y
+`IACP_PROD_STATIC_PROXMOX_VLAN_TAG` controlan respectivamente el bridge y el
+tag interno de la NIC, mientras el perfil conserva el segmento externo 211.
+Antes de la matriz WAN, el runner compara estos valores con el catálogo de la
+API y con la configuración física de cada VM. `lab_dhcp` permanece en `vmbr0`
+sin tag y no se usa para certificar conectividad WAN.
 
 Prueba del formulario con API simulada, sin infraestructura:
 

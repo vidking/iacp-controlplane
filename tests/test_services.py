@@ -122,6 +122,35 @@ def test_password_only_service_requires_a_root_password(client):
     assert "root_password" in response.text
 
 
+def test_service_url_is_hidden_until_application_installation_finishes(client):
+    request = body("service-url-readiness")
+    request["configuration"] = {"access_mode": "ip"}
+    order = client.post(
+        "/v1/service-instances",
+        json=request,
+        headers={"Idempotency-Key": "service-url-readiness"},
+    ).json()
+    with database() as db:
+        db.execute(
+            "INSERT INTO service_bindings VALUES (?, ?, ?)",
+            (
+                order["service_id"],
+                json.dumps({"address": "192.0.2.42", "host_key": "ssh-ed25519 AAAA"}),
+                "2026-11-17T00:00:00+00:00",
+            ),
+        )
+    assert client.get(f"/v1/service-instances/{order['service_id']}").json()["access_url"] is None
+    with database() as db:
+        db.execute(
+            "UPDATE service_instances SET status='awaiting_customer' WHERE service_id=?",
+            (order["service_id"],),
+        )
+    assert (
+        client.get(f"/v1/service-instances/{order['service_id']}").json()["access_url"]
+        == "https://192.0.2.42/"
+    )
+
+
 def test_pool_claims_and_blocked_execution(client):
     orders = [create(client, f"app-{i}", f"create-{i}") for i in range(3)]
     for order in orders:
@@ -303,7 +332,12 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             trusted_domain_tasks = [
                 task
                 for task in service_tasks
-                if task.get("name") == "Autorizar dominio de Nextcloud"
+                if task.get("name") == "Autorizar hostname de acceso de Nextcloud"
+            ]
+            trusted_domain_checks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Verificar hostname confiable de Nextcloud"
             ]
             if application == "nextcloud" and expected_action == "install":
                 assert len(trusted_domain_tasks) == 1
@@ -314,8 +348,16 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     "--value",
                     "cloud.example.org",
                 ]
+                assert len(trusted_domain_checks) == 1
+                assert trusted_domain_checks[0]["no_log"] is True
+                assert trusted_domain_checks[0]["ansible.builtin.command"]["argv"][-2:] == [
+                    "trusted_domains",
+                    "1",
+                ]
+                assert "cloud.example.org" in trusted_domain_checks[0]["failed_when"]
             else:
                 assert trusted_domain_tasks == []
+                assert trusted_domain_checks == []
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(
@@ -469,6 +511,9 @@ def test_n8n_recipe_waits_for_database_and_migrations():
     assert '/healthz/readiness' in ' '.join(healthcheck['test'])
     assert healthcheck['start_period'] == '30s'
     assert compose['services']['app']['depends_on']['postgres']['condition'] == 'service_healthy'
+    environment = compose['services']['app']['environment']
+    assert environment['N8N_WEBHOOK_URL'] == 'https://n8n.example.invalid/'
+    assert 'WEBHOOK_URL' not in environment
 
 
 def test_n8n_recipe_leaves_authentication_to_n8n():

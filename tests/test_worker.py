@@ -422,6 +422,18 @@ def test_golden_variables_preserve_hardware_and_dhcp(tmp_path, monkeypatch):
     assert instance["ssh_public_keys"] == [key]
     assert instance["pool_id"] == "iacp-lab"
 
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "none")
+    static_spec = {
+        **spec,
+        "network_profile": "prod_static",
+        "network_mode": "static",
+        "vlan_id": None,
+    }
+    static_instance = variables(static_spec, 40001, golden)["instance"]
+    assert static_instance["network_bridge"] == "vmbr3"
+    assert static_instance["vlan_id"] is None
+
 
 def test_pool_is_configurable_only_as_internal_worker_setting(monkeypatch):
     monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
@@ -1202,6 +1214,52 @@ def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
     assert updates[0][0] == ("allocation-test", "release_pending")
     assert updates[0][1]["error"] == "IPAM_VM_STILL_PRESENT"
     assert events[0][1] == "ipam.release.pending"
+
+
+def test_static_ipam_does_not_restore_proxmox_vlan_tag_for_vmbr3(monkeypatch):
+    import worker.main as main
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "")
+    monkeypatch.setattr(main, "netbox_configured", lambda: True)
+    monkeypatch.setattr(main, "_ip_allocation", lambda _instance_id: None)
+    monkeypatch.setattr(
+        main,
+        "_begin_ip_allocation",
+        lambda **_kwargs: {
+            "allocation_id": "allocation-test",
+            "status": "allocating",
+        },
+    )
+    monkeypatch.setattr(main, "_complete_ip_allocation", lambda *_: None)
+    monkeypatch.setattr(main, "emit", lambda *_: None)
+    monkeypatch.setattr(main, "_update_operation_payload", lambda *_: None)
+    monkeypatch.setattr(main, "_update_instance_spec", lambda *_: None)
+
+    class NetBox:
+        config = SimpleNamespace(prefix_id=52)
+
+        def allocate(self, **_kwargs):
+            return SimpleNamespace(
+                ip_id=123,
+                address="190.0.231.8/24",
+                gateway="190.0.231.1",
+            )
+
+    monkeypatch.setattr(main, "NetBoxClient", NetBox)
+    result = main._ensure_static_allocation(
+        worker_id="worker-test",
+        operation_id="operation-test",
+        instance_id="instance-test",
+        vmid=40008,
+        payload={"spec": {"name": "prueba-kvm-wan", "network_profile": "prod_static"}},
+        source_operation={"commercial_context_json": "{}"},
+    )
+    assert result["network_mode"] == "static"
+    assert result["ipv4_cidr"] == "190.0.231.8/24"
+    assert result["vlan_id"] is None
 
 
 def test_operation_spec_preserves_ipam_resolved_payload():

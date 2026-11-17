@@ -78,6 +78,17 @@ class Matrix:
         assert args.cycle in (1, 2)
         self.folder = args.evidence.resolve()
         self.folder.mkdir(mode=0o700, parents=False, exist_ok=False)
+        self.static_bridge = "vmbr0"
+        self.static_vlan_tag = None
+        if self.profile == "prod_static":
+            self.static_bridge = (
+                self.env.get("IACP_PROD_STATIC_BRIDGE") or "vmbr0"
+            ).strip()
+            raw_vlan_tag = self.env.get("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "211")
+            raw_vlan_tag = (raw_vlan_tag or "").strip().lower()
+            if raw_vlan_tag not in {"", "none", "untagged"}:
+                self.static_vlan_tag = int(raw_vlan_tag)
+                assert 1 <= self.static_vlan_tag <= 4094
         self.key = self.folder / "client_key"
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)],
@@ -100,6 +111,20 @@ class Matrix:
             self.env["IACP_PROXMOX_MNG_ENDPOINT"],
             self.env["IACP_PROXMOX_MNG_API_TOKEN"],
         )
+        if self.profile == "prod_static":
+            profiles = self.api("GET", "/v1/network-profiles")["network_profiles"]
+            wan = next(item for item in profiles if item["profile_id"] == "prod_static")
+            assert wan["enabled"] is True, "WAN_PROFILE_DISABLED"
+            assert wan["proxmox_bridge"] == self.static_bridge, "WAN_BRIDGE_CONFIG_MISMATCH"
+            assert wan["proxmox_vlan_tag"] == self.static_vlan_tag, "WAN_VLAN_TAG_CONFIG_MISMATCH"
+            assert wan["vlan_id"] == 211, "WAN_UPSTREAM_VLAN_MISMATCH"
+            self.record(
+                "network_profile_verified",
+                profile="prod_static",
+                upstream_vlan=211,
+                bridge=self.static_bridge,
+                proxmox_vlan_tag=self.static_vlan_tag,
+            )
 
     def record(self, event, **data):
         with self.log.open("a") as f:
@@ -220,14 +245,25 @@ class Matrix:
     def binding(self, item):
         vmid = item["vmid"]
         config = self.proxmox.vm_config("mng01", vmid)
-        assert config["name"] == item["name"] and "bridge=vmbr0" in config["net0"]
+        nic = dict(
+            field.split("=", 1)
+            for field in config["net0"].split(",")
+            if "=" in field
+        )
+        assert config["name"] == item["name"]
         if self.profile == "prod_static":
-            assert "tag=211" in config["net0"]
+            assert nic.get("bridge") == self.static_bridge
+            assert nic.get("tag") == (
+                str(self.static_vlan_tag)
+                if self.static_vlan_tag is not None
+                else None
+            )
             assert config["ipconfig0"] in [
                 f"ip={item['address']}/24,gw=190.0.231.1",
                 f"gw=190.0.231.1,ip={item['address']}/24",
             ]
         else:
+            assert nic.get("bridge") == "vmbr0"
             assert "tag=" not in config["net0"] and config["ipconfig0"] == "ip=dhcp"
         known = self.folder / ("known-" + str(vmid))
         if item["image"] in {"almalinux-9", "almalinux-10"}:

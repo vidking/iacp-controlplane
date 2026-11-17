@@ -1,7 +1,7 @@
 import os
 import re
 
-from api.catalog import cluster_nodes, load_catalog
+from api.catalog import cluster_nodes, load_catalog, prod_static_proxmox_network
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
@@ -153,7 +153,11 @@ def variables(
             "numa": golden["numa"],
             "cpu_hotplugged": spec["vcpus"],
             "memory_mb": spec["memory_mb"],
-            "network_bridge": "vmbr0" if spec.get("network_profile") == "prod_static" else (golden["network_bridge"] or "vmbr0"),
+            "network_bridge": (
+                prod_static_proxmox_network()["bridge"]
+                if spec.get("network_profile") == "prod_static"
+                else (golden["network_bridge"] or "vmbr0")
+            ),
             "network_model": golden.get("network_model", "virtio"),
             "network_mode": spec.get("network_mode", "dhcp"),
             "vlan_id": spec.get("vlan_id"),
