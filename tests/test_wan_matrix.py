@@ -28,25 +28,12 @@ def test_service_controls_cover_password_only_access():
     assert all(case['client_ssh_key'] is False for case in controls)
 
 
-def test_wan_nic_preflight_allows_only_vmbr3_without_proxmox_tag():
+def test_wan_nic_preflight_allows_only_vmbr3():
     import pytest
 
-    assert wan_nic_config({
-        "IACP_PROD_STATIC_BRIDGE": "vmbr3",
-        "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "",
-    }) == ("vmbr3", None)
+    assert wan_nic_config({"IACP_PROD_STATIC_BRIDGE": "vmbr3"}) == "vmbr3"
     with pytest.raises(RuntimeError, match="WAN_BRIDGE_NOT_AUTHORIZED"):
-        wan_nic_config({
-            "IACP_PROD_STATIC_BRIDGE": "vmbr0",
-            "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "",
-        })
-    with pytest.raises(RuntimeError, match="WAN_PROXMOX_TAG_NOT_AUTHORIZED"):
-        wan_nic_config({
-            "IACP_PROD_STATIC_BRIDGE": "vmbr3",
-            "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "tagged",
-        })
-    with pytest.raises(RuntimeError, match="WAN_PROXMOX_VLAN_TAG_NOT_CONFIGURED"):
-        wan_nic_config({"IACP_PROD_STATIC_BRIDGE": "vmbr3"})
+        wan_nic_config({"IACP_PROD_STATIC_BRIDGE": "vmbr0"})
 
 
 def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
@@ -116,7 +103,6 @@ def test_static_wan_binding_uses_vmbr3_without_proxmox_tag(tmp_path):
     matrix = object.__new__(Matrix)
     matrix.profile = "prod_static"
     matrix.static_bridge = "vmbr3"
-    matrix.static_vlan_tag = None
     matrix.folder = tmp_path
     matrix.proxmox = SimpleNamespace(
         vm_config=lambda *_: {
@@ -150,7 +136,6 @@ def test_compose_passes_wan_nic_settings_to_service_workers_without_proxmox_toke
     for worker in ("service-worker-1", "service-worker-2", "service-worker-3", "service-worker-4"):
         environment = compose["services"][worker]["environment"]
         assert "IACP_PROD_STATIC_BRIDGE" in environment
-        assert "IACP_PROD_STATIC_PROXMOX_VLAN_TAG" in environment
         assert "IACP_PROXMOX_MNG_API_TOKEN" not in environment
         assert "IACP_PROXMOX_API_TOKEN" not in environment
 

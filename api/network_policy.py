@@ -31,11 +31,6 @@ def apply_to_spec(spec):
         raise HTTPException(503, "NETWORK_PROFILE_NOT_CONFIGURED")
     spec.network_profile = profile
     spec.network_mode = "static" if profile == "prod_static" else "dhcp"
-    spec.vlan_id = (
-        network_profile_by_id(profile)["proxmox_vlan_tag"]
-        if profile == "prod_static"
-        else None
-    )
     spec.ipv4_cidr = None
     spec.ipv4_gateway = None
     if profile == "prod_static":

@@ -102,8 +102,8 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
         assert [(item["image_id"], item["template_vm_id"]) for item in images] == [
             ("ubuntu-2404", 29000),
             ("ubuntu-2604", 29001),
-            ("almalinux-9", 29016),
-            ("almalinux-10", 29017),
+            ("almalinux-9", 29010),
+            ("almalinux-10", 29011),
         ]
 
 
@@ -1054,7 +1054,7 @@ def test_both_network_profiles_in_pilot_and_wan_only_after_promotion(monkeypatch
             result=client.post('/v1/instances',json=body,headers={'Idempotency-Key':profile})
             assert result.status_code==202,result.text
             detail=client.get('/v1/instances/'+result.json()['instance_id']).json()
-            assert detail['spec']['vlan_id']==(211 if profile=='prod_static' else None)
+            assert "vlan_id" not in detail["spec"]
         monkeypatch.setenv('IACP_ENFORCE_WAN_ONLY','1')
         body=public_body('final-lan');body['network_profile']='lab_dhcp'
         assert client.post('/v1/instances',json=body,headers={'Idempotency-Key':'final-lan'}).status_code==422
@@ -1062,16 +1062,16 @@ def test_both_network_profiles_in_pilot_and_wan_only_after_promotion(monkeypatch
         result=client.post('/v1/instances',json=body,headers={'Idempotency-Key':'final-wan'})
         assert result.status_code==202,result.text
         detail=client.get('/v1/instances/'+result.json()['instance_id']).json()
-        assert detail['spec']['network_profile']=='prod_static' and detail['spec']['vlan_id']==211
+        assert detail["spec"]["network_profile"] == "prod_static"
+        assert "vlan_id" not in detail["spec"]
 
 
-def test_prod_static_separates_upstream_vlan_from_untagged_vmbr3_nic(tmp_path, monkeypatch):
+def test_prod_static_exposes_vmbr3_without_tag_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.test.invalid/api")
     monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
-    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "")
     with TestClient(app) as client:
         profile = next(
             item
@@ -1079,9 +1079,9 @@ def test_prod_static_separates_upstream_vlan_from_untagged_vmbr3_nic(tmp_path, m
             if item["profile_id"] == "prod_static"
         )
         assert profile["enabled"] is True
-        assert profile["vlan_id"] == 211
         assert profile["proxmox_bridge"] == "vmbr3"
-        assert profile["proxmox_vlan_tag"] is None
+        assert "vlan_id" not in profile
+        assert "proxmox_vlan_tag" not in profile
         body = public_body("wan-untagged-vmbr3")
         body["network_profile"] = "prod_static"
         response = client.post(
@@ -1092,4 +1092,4 @@ def test_prod_static_separates_upstream_vlan_from_untagged_vmbr3_nic(tmp_path, m
         assert response.status_code == 202, response.text
         detail = client.get(f"/v1/instances/{response.json()['instance_id']}").json()
         assert detail["spec"]["network_profile"] == "prod_static"
-        assert detail["spec"]["vlan_id"] is None
+        assert "vlan_id" not in detail["spec"]

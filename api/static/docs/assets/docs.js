@@ -276,7 +276,7 @@
     (profilesBody.network_profiles || []).forEach((profile) => {
       const option = document.createElement("option");
       option.value = profile.profile_id;
-      option.textContent = profile.profile_id === "prod_static" ? "WAN estática · VLAN 211" : "LAN de pruebas · DHCP";
+      option.textContent = profile.profile_id === "prod_static" ? `WAN estática · ${profile.proxmox_bridge}` : "LAN de pruebas · DHCP";
       option.disabled = profile.enabled === false;
       profileSelect.append(option);
     });

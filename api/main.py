@@ -264,7 +264,7 @@ def plans():
     summary="Consultar perfiles de red disponibles",
     description=(
         "Permite elegir LAN o WAN durante el piloto. La plataforma asigna IP, "
-        "gateway y VLAN; la promoción definitiva puede exigir exclusivamente WAN."
+        "gateway; la promoción definitiva puede exigir exclusivamente WAN."
     ),
     operation_id="listNetworkProfiles",
 )

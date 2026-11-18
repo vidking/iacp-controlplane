@@ -104,7 +104,6 @@ class InstanceSpec(BaseModel):
     network_profile: NetworkProfile = "lab_dhcp"
     dns_servers: list[Literal["1.1.1.1", "8.8.8.8"]] = Field(default_factory=list)
     network_mode: Literal["dhcp", "static"] = "dhcp"
-    vlan_id: int | None = Field(default=None, ge=1, le=4094)
     ipv4_cidr: str | None = None
     ipv4_gateway: str | None = None
     ssh_public_keys: list[str] = Field(default_factory=list)

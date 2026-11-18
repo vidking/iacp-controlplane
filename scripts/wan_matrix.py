@@ -40,17 +40,12 @@ REQUIRED_SERVICE_WORKERS = 4
 
 
 def wan_nic_config(env):
-    """Validate the only authorized WAN NIC layout for this physical matrix."""
+    """Validate the bridge authorized for this physical matrix."""
 
     bridge = (env.get("IACP_PROD_STATIC_BRIDGE") or "").strip()
     if bridge != WAN_BRIDGE:
         raise RuntimeError("WAN_BRIDGE_NOT_AUTHORIZED")
-    if "IACP_PROD_STATIC_PROXMOX_VLAN_TAG" not in env:
-        raise RuntimeError("WAN_PROXMOX_VLAN_TAG_NOT_CONFIGURED")
-    vlan_tag = (env.get("IACP_PROD_STATIC_PROXMOX_VLAN_TAG") or "").strip().lower()
-    if vlan_tag not in {"", "none", "untagged"}:
-        raise RuntimeError("WAN_PROXMOX_TAG_NOT_AUTHORIZED")
-    return WAN_BRIDGE, None
+    return WAN_BRIDGE
 
 
 def require_four_idle_service_workers(service_state):
@@ -157,7 +152,6 @@ class Matrix:
         self.token = self.env["IACP_API_TOKEN"]
         assert args.cycle in (1, 2)
         self.static_bridge = WAN_BRIDGE if self.profile == "prod_static" else "vmbr0"
-        self.static_vlan_tag = None
         self.folder = args.evidence.resolve()
         self.folder.mkdir(mode=0o700, parents=False, exist_ok=False)
         self.key = self.folder / "client_key"
@@ -185,7 +179,7 @@ class Matrix:
 
     def verify_network_profile(self):
         if self.profile == "prod_static":
-            self.static_bridge, self.static_vlan_tag = wan_nic_config(self.env)
+            self.static_bridge = wan_nic_config(self.env)
             ipam_environment = {
                 key: str(value)
                 for key, value in self.env.items()
@@ -202,7 +196,6 @@ class Matrix:
             wan = next(item for item in profiles if item["profile_id"] == "prod_static")
             assert wan["enabled"] is True, "WAN_PROFILE_DISABLED"
             assert wan["proxmox_bridge"] == WAN_BRIDGE, "WAN_BRIDGE_CONFIG_MISMATCH"
-            assert wan["proxmox_vlan_tag"] == self.static_vlan_tag, "WAN_VLAN_TAG_CONFIG_MISMATCH"
             self.record(
                 "network_profile_verified",
                 profile="prod_static",
@@ -325,11 +318,7 @@ class Matrix:
         assert config["name"] == item["name"]
         if self.profile == "prod_static":
             assert nic.get("bridge") == self.static_bridge
-            assert nic.get("tag") == (
-                str(self.static_vlan_tag)
-                if self.static_vlan_tag is not None
-                else None
-            )
+            assert "tag" not in nic
             assert config["ipconfig0"] in [
                 f"ip={item['address']}/24,gw=190.0.231.1",
                 f"gw=190.0.231.1,ip={item['address']}/24",

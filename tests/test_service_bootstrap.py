@@ -175,10 +175,9 @@ def test_prepare_develop_rejects_shared_proxmox_token(tmp_path):
     assert not (tmp_path / "candidate").exists()
 
 
-def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
+def test_static_bootstrap_rejects_wrong_bridge_or_tag(monkeypatch):
     initialize()
-    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr0")
-    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "211")
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     monkeypatch.setattr(
         bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
     )
@@ -186,11 +185,11 @@ def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
         "network_profile": "prod_static",
         "ipv4_cidr": "190.0.231.8/24",
         "ipv4_gateway": "190.0.231.1",
-        "vlan_id": 211,
+        "vlan_id": None,
     }
     config = {
         "name": "static-test",
-        "net0": "virtio=" + MAC + ",bridge=vmbr0,tag=211",
+        "net0": "virtio=" + MAC + ",bridge=vmbr3",
         "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
     }
     response = {
@@ -221,7 +220,18 @@ def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
         heartbeat=lambda: None,
     )
     assert result["address"] == "190.0.231.8"
-    config["net0"] = "virtio=" + MAC + ",bridge=vmbr0,tag=212"
+    config["net0"] = "virtio=" + MAC + ",bridge=vmbr0"
+    with pytest.raises(GuestIdentityError, match="STATIC_IDENTITY_MISMATCH"):
+        bootstrap.prepare(
+            fake,
+            node="mng01",
+            vmid=40003,
+            name="static-test",
+            instance_id="static-id",
+            spec=spec,
+            heartbeat=lambda: None,
+        )
+    config["net0"] = "virtio=" + MAC + ",bridge=vmbr3,tag=7"
     with pytest.raises(GuestIdentityError, match="STATIC_IDENTITY_MISMATCH"):
         bootstrap.prepare(
             fake,
@@ -234,10 +244,9 @@ def test_static_bootstrap_validates_vlan_and_wan_identity(monkeypatch):
         )
 
 
-def test_static_bootstrap_accepts_upstream_vlan_on_vmbr3_without_proxmox_tag(monkeypatch):
+def test_static_bootstrap_accepts_vmbr3_without_tag(monkeypatch):
     initialize()
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
-    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "")
     monkeypatch.setattr(
         bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
     )
@@ -293,10 +302,10 @@ def test_static_guest_readiness_requires_gateway_neighbor():
     assert not ready([{'dst':'190.0.231.1','dev':'eth1','state':['REACHABLE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')
 
 
-def test_dhcp_bootstrap_refuses_vlan(monkeypatch):
+def test_dhcp_bootstrap_refuses_tagged_nic(monkeypatch):
     initialize()
-    fake=SimpleNamespace(vm_config=lambda *_:{'name':'dhcp-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=211','ipconfig0':'ip=dhcp'})
-    with pytest.raises(GuestIdentityError,match='DHCP_UNEXPECTED_VLAN'):
+    fake=SimpleNamespace(vm_config=lambda *_:{'name':'dhcp-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=9','ipconfig0':'ip=dhcp'})
+    with pytest.raises(GuestIdentityError,match='DHCP_UNEXPECTED_NIC_TAG'):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='dhcp-test',instance_id='dhcp-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
 
 

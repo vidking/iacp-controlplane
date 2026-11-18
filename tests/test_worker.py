@@ -423,7 +423,6 @@ def test_golden_variables_preserve_hardware_and_dhcp(tmp_path, monkeypatch):
     assert instance["pool_id"] == "iacp-lab"
 
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
-    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "none")
     static_spec = {
         **spec,
         "network_profile": "prod_static",
@@ -1216,13 +1215,12 @@ def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
     assert events[0][1] == "ipam.release.pending"
 
 
-def test_static_ipam_does_not_restore_proxmox_vlan_tag_for_vmbr3(monkeypatch):
+def test_static_ipam_keeps_vmbr3_without_tag(monkeypatch):
     import worker.main as main
     from types import SimpleNamespace
 
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
-    monkeypatch.setenv("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "")
     monkeypatch.setattr(main, "netbox_configured", lambda: True)
     monkeypatch.setattr(main, "_ip_allocation", lambda _instance_id: None)
     monkeypatch.setattr(

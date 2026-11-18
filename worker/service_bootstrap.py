@@ -145,11 +145,7 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
             config.get("name") != name
             or config.get("template")
             or settings.get("bridge") != expected_network["bridge"]
-            or settings.get("tag") != (
-                str(expected_network["vlan_tag"])
-                if expected_network["vlan_tag"] is not None
-                else None
-            )
+            or "tag" in settings
             or ipsettings.get("ip") != spec.get("ipv4_cidr")
             or ipsettings.get("gw") != "190.0.231.1"
             or spec.get("ipv4_gateway") != "190.0.231.1"
@@ -168,7 +164,7 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
     else:
         mac = _mac_from_config(config, name)
         if "tag=" in config.get("net0", ""):
-            raise GuestIdentityError("DHCP_UNEXPECTED_VLAN")
+            raise GuestIdentityError("DHCP_UNEXPECTED_NIC_TAG")
     _wait_for_pool_membership(
         client,
         node=node,
