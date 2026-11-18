@@ -97,7 +97,7 @@ def _certified_hardware_mismatches(raw: dict, disk: dict, cloudinit: dict, efi_d
         failures.append("cpu")
     if not str(raw.get("agent", "")).startswith("enabled=1"):
         failures.append("agent")
-    if raw.get("onboot", "0") not in {0, "0", False}:
+    if raw.get("onboot") not in {None, 0, "0", False}:
         failures.append("onboot")
     if disk.get("interface") != "scsi0" or disk.get("size_gb") != 20:
         failures.append("boot_disk")
@@ -152,13 +152,25 @@ def _hardware_signature(raw: dict) -> dict:
             "vga",
         )
     }
+    # Proxmox omite estos valores cuando usa el mismo default efectivo:
+    # onboot=0 y tamaño 4M para la unidad Cloud-Init.
+    onboot = raw.get("onboot")
+    if onboot in {None, 0, "0", False}:
+        signature["onboot"] = False
+    elif onboot in {1, "1", True}:
+        signature["onboot"] = True
+    if signature.get("onboot") is None:
+        signature["onboot"] = False
     devices = {}
     for key, value in raw.items():
         if re.fullmatch(r"(?:ide|sata|virtio|scsi|efidisk|tpmstate|rng)\d+", key):
             parsed = _device(value)
+            options = {name: option for name, option in parsed.items() if name != "datastore_id"}
+            if key == "scsi1" and options.get("media") == "cdrom":
+                options.setdefault("size", "4M")
             devices[key] = {
                 "datastore_id": parsed.get("datastore_id"),
-                "options": {name: option for name, option in parsed.items() if name != "datastore_id"},
+                "options": options,
             }
         elif re.fullmatch(r"net\d+", key):
             model, separator, options = str(value or "").partition("=")

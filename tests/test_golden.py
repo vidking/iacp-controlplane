@@ -83,6 +83,17 @@ def test_observe_accepts_template_matching_the_certified_ubuntu_hardware(golden_
 
 
 @pytest.mark.no_database
+def test_observe_normalizes_equivalent_proxmox_defaults(golden_source, monkeypatch):
+    raw, _entry = golden_source
+    raw["onboot"] = None
+    raw["scsi1"] = raw["scsi1"].replace(",size=4M", "")
+
+    observed = observe_with(golden_source, monkeypatch)
+
+    assert observed["image_id"] == "almalinux-9"
+
+
+@pytest.mark.no_database
 @pytest.mark.parametrize(
     ("field", "value", "expected_mismatch"),
     [
@@ -90,6 +101,7 @@ def test_observe_accepts_template_matching_the_certified_ubuntu_hardware(golden_
         ("net0", "e1000=BC:24:11:11:22:33,bridge=vmbr0", "network"),
         ("ide2", "DS_CYBERFUEL:vm-29010-cloudinit,media=cdrom", "ide_devices"),
         ("boot", "order=scsi1", "boot"),
+        ("onboot", 1, "onboot"),
     ],
 )
 def test_observe_rejects_template_hardware_drift(golden_source, monkeypatch, field, value, expected_mismatch):
