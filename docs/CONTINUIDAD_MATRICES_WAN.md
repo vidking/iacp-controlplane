@@ -1,6 +1,45 @@
 # Continuidad de las matrices WAN
 
-Estado: **EN CURSO**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
+Estado: **EN CURSO**, actualizado 2026-11-18. Rama: `devops/features`. Producción sin cambios.
+
+### Incidente del primer ciclo WAN de servicios — 2026-11-18
+
+La revisión ejecutada `f76798a768768d2c173318612f7bb9d4be908c88` inició el
+ciclo 1 de Nextcloud con `prod_static`, seis casos y nombres de prueba
+simbólicos. La evidencia privada está en
+`/opt/iacp/evidence/wan-services-cycle1-f76798a-20261118080200/`. El ciclo no
+completó la matriz y no cuenta como certificación:
+
+| VMID | IP | Imagen | Resultado observado |
+| --- | --- | --- | --- |
+| 40161 | 190.0.231.2 | Ubuntu 24.04 | `STATIC_GATEWAY_UNREACHABLE`; operación incierta. |
+| 40162 | 190.0.231.3 | Ubuntu 24.04 | Infraestructura lista; instalación incierta por `ANSIBLE_FAILED_SSH_CONNECTIVITY`. |
+| 40163 | 190.0.231.4 | Ubuntu 24.04 | El usuario confirmó que carga el login de Nextcloud. Esto comprueba la interfaz web; no cierra el ciclo de acceso ni de vida útil. |
+| 40164 | 190.0.231.5 | Ubuntu 24.04 | Nextcloud llegó a `awaiting_customer` y se observó el login; no se declara PASS integral. |
+| 40165 | 190.0.231.6 | AlmaLinux 9 | `SERVICE_BOOTSTRAP_GUEST_FAILED`; observación DNS incompleta. |
+| 40166 | 190.0.231.7 | AlmaLinux 9 | `SERVICE_BOOTSTRAP_GUEST_FAILED`; observación DNS incompleta. |
+
+La rama `devops/features` incorpora el arreglo de DNS en `8979ddb`. El worker
+acepta `resolvectl` solo si devuelve las direcciones exactas y usa NetworkManager
+como fallback. Esta revisión todavía requiere despliegue en desarrollo y
+verificación del runtime antes de repetir. La IP `.2` fue asignada en este lote;
+reconciliar su estado actual con NetBox y la evidencia anterior antes de
+reservarla o asignarla de nuevo. No reutilizarla a partir de supuestos.
+
+**Siguiente paso operativo:** actualizar únicamente el stack dev del IACP
+Control Plane (VM 104) con el procedimiento `scripts/iacpctl`; verificar la
+revisión del API, seis workers de infraestructura sanos e idle, cuatro workers
+de servicios idle y cero operaciones activas o inciertas. El equipo de
+operaciones debe recuperar por la API las intenciones de prueba propias,
+conservar sus evidencias y comprobar la liberación NetBox. Luego repetir
+servicios ciclo 1 con `prod_static`, un identificador de corrida y carpeta de
+evidencia nuevos. Detenerse ante cualquier estado incierto. No usar DHCP ni
+modificar producción.
+
+Las 64 aprobaciones siguen pendientes: 32 casos KVM y 32 casos de servicios
+(Nextcloud/n8n), dos ciclos por categoría. Los controles de acceso y casos
+adicionales no sustituyen esos 64 PASS. Los agentes permanecen fuera de esta
+fase.
 
 ### Actualización posterior — 2026-11-18
 
