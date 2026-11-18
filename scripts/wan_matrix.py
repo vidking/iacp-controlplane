@@ -38,6 +38,7 @@ from worker.proxmox import ProxmoxClient
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
 MAX_AUTHORIZED_HOST = 253
+EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
 
 
 def wan_nic_config(env):
@@ -69,6 +70,37 @@ def require_four_idle_service_workers(service_state):
             or not 0 <= heartbeat_age < 60
         ):
             raise RuntimeError("SERVICE_WORKERS_NOT_IDLE")
+
+
+def require_expected_golden_images(images, inventory, vm_config):
+    configured = {
+        str(row.get("image_id")): row.get("template_vm_id")
+        for row in images
+        if isinstance(row, dict)
+    }
+    if any(
+        configured.get(image_id) != vmid
+        for image_id, vmid in EXPECTED_ALMALINUX_IMAGES.items()
+    ):
+        raise RuntimeError("GOLDEN_IMAGE_CATALOG_MISMATCH")
+    nodes = {
+        int(row["vmid"]): str(row["node"])
+        for row in inventory
+        if isinstance(row, dict)
+        and str(row.get("vmid", "")).isdigit()
+        and row.get("node")
+    }
+    for vmid in EXPECTED_ALMALINUX_IMAGES.values():
+        node = nodes.get(vmid)
+        if node is None:
+            raise RuntimeError("GOLDEN_IMAGE_NOT_READY")
+        config = vm_config(node, vmid)
+        if config.get("template") not in {1, "1", True}:
+            raise RuntimeError("GOLDEN_IMAGE_NOT_TEMPLATE")
+    return [
+        {"image_id": image_id, "template_vm_id": vmid}
+        for image_id, vmid in EXPECTED_ALMALINUX_IMAGES.items()
+    ]
 
 
 def verify_netbox_state(client):
@@ -200,6 +232,12 @@ class Matrix:
             except NetBoxError as error:
                 raise RuntimeError("NETBOX_" + error.code) from None
             self.record("netbox_verified", **netbox_state)
+            golden_images = require_expected_golden_images(
+                self.api("GET", "/v1/images")["images"],
+                self.proxmox.inventory(),
+                self.proxmox.vm_config,
+            )
+            self.record("golden_images_verified", images=golden_images)
             profiles = self.api("GET", "/v1/network-profiles")["network_profiles"]
             wan = next(item for item in profiles if item["profile_id"] == "prod_static")
             assert wan["enabled"] is True, "WAN_PROFILE_DISABLED"

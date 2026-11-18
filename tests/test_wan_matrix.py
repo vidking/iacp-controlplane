@@ -59,6 +59,38 @@ def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
         require_four_idle_service_workers(busy)
 
 
+def test_wan_preflight_uses_only_current_almalinux_goldens():
+    import pytest
+
+    from scripts.wan_matrix import require_expected_golden_images
+
+    images = [
+        {"image_id": image_id, "template_vm_id": vmid}
+        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
+    ]
+    inventory = [
+        {"vmid": vmid, "node": "mng01"}
+        for vmid in (29010, 29011)
+    ]
+    assert require_expected_golden_images(
+        images, inventory, lambda _node, _vmid: {"template": 1}
+    ) == images
+
+    obsolete = [
+        {"image_id": image_id, "template_vm_id": vmid}
+        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
+    ]
+    with pytest.raises(RuntimeError, match="GOLDEN_IMAGE_CATALOG_MISMATCH"):
+        require_expected_golden_images(
+            obsolete, inventory, lambda _node, _vmid: {"template": 1}
+        )
+
+    with pytest.raises(RuntimeError, match="GOLDEN_IMAGE_NOT_READY"):
+        require_expected_golden_images(
+            images, inventory[:1], lambda _node, _vmid: {"template": 1}
+        )
+
+
 def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip():
     from ipaddress import IPv4Address, IPv4Network
     from types import SimpleNamespace
