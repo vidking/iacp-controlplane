@@ -75,7 +75,25 @@ class ProxmoxClient:
         timeout: float | None = None,
         attempts: int | None = None,
     ):
-        data = urlencode(parameters).encode() if parameters else None
+        if parameters:
+            # Proxmox declares ``sshkeys`` as a URL-encoded string inside the
+            # form body. Encode the plain OpenSSH key here, at the HTTP
+            # boundary, so callers never have to quote it themselves (and
+            # cannot accidentally send raw reserved characters or encode it
+            # twice before this form is serialized).
+            items = (
+                parameters.items() if isinstance(parameters, dict) else parameters
+            )
+            form_parameters = []
+            for name, value in items:
+                if name == "sshkeys" and value is not None:
+                    if not isinstance(value, str) or "\r" in value or "\x00" in value:
+                        raise ProxmoxError("PROXMOX_SSH_KEYS_INVALID")
+                    value = quote(value, safe="")
+                form_parameters.append((name, value))
+            data = urlencode(form_parameters).encode()
+        else:
+            data = None
         headers = {
             "Authorization": f"PVEAPIToken={self.token}",
             "Accept": "application/json",

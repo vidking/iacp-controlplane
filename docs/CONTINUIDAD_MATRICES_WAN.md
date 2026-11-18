@@ -2,6 +2,36 @@
 
 Estado: **EN CURSO**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
 
+### Actualización posterior — 2026-11-18
+
+Las Golden Images AlmaLinux definitivas se recrearon en el nodo `mng01` del
+clúster MNG: AlmaLinux 9 en 29010, desde 29016, y AlmaLinux 10 en 29011, desde
+29017. Ambas son plantillas detenidas y la comparación de hardware contra la
+Golden Image Ubuntu 24.04 protegida 29000 dio `PASS`: BIOS OVMF, máquina q35,
+VirtIO SCSI single, NIC VirtIO sobre `vmbr0`, disco SCSI de 20 GB, Cloud-Init en
+SCSI y EFI; sin dispositivos IDE ni VGA. Las fuentes 29016/29017 permanecen
+intactas. Evidencia privada de preparación:
+`/opt/iacp/evidence/alma-hardware-v14-20261118-9/` y
+`/opt/iacp/evidence/alma-hardware-v17-20261118-10/`.
+
+El catálogo de la rama `devops/features` apunta a 29010/29011. Este cambio de
+código no equivale a un despliegue ni certifica aprovisionamientos físicos. El
+equipo de operaciones confirmó que una KVM creada manualmente, conectada a
+`vmbr3` sin tag VLAN, alcanzó Internet y resolvió el gateway por ARP. Por ello,
+el fallo previo de `190.0.231.2/24` se trata como una discrepancia de la VM
+automatizada o de su ejecución, no como prueba de que `vmbr3` esté caído.
+
+El código de `prod_static` selecciona `vmbr3`, omite `vlan_id` y el preflight de
+la matriz rechaza cualquier `tag` en `net0`; también valida el `ipconfig0`
+estático con gateway `190.0.231.1`. Antes de reanudar las matrices, comparar la
+revisión y manifiesto realmente ejecutados con la revisión candidata, y
+contrastar en la VM automatizada y en la manual `net0`, `ipconfig0`, la MAC, la
+dirección asignada por NetBox, la ruta por defecto y el vecino ARP. Mantener
+`.2` reservada mientras no se explique ese resultado; usar únicamente la
+siguiente dirección que NetBox confirme disponible. Reanudar con `prod_static`,
+seis workers de infraestructura sanos e idle, cuatro workers de servicios idle
+y cero operaciones activas o inciertas. No cambiar a DHCP.
+
 ### Reintento de despliegue y preflight de servicios — 2026-11-18
 
 La revisión `8d2dcd919a7f1d126f6f3faef1f851e1cb083b09` se desplegó en el stack

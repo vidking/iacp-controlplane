@@ -1,9 +1,13 @@
+import base64
 import json
+import re
+import struct
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, unquote
 
 import pytest
 
@@ -617,6 +621,54 @@ def test_proxmox_retries_mutation_when_dns_fails_before_connecting(monkeypatch):
         "https://mng01.example/api2/json/nodes/mng01/status/reboot",
         "https://mng01.example/api2/json/nodes/mng01/status/reboot",
     ]
+
+
+def test_proxmox_encodes_raw_ssh_key_at_form_boundary_with_quotes_and_reserved_chars():
+    key_material = struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32)
+    key_material += bytes(range(0xF8, 0x100)) * 4
+    key_blob = base64.b64encode(key_material).decode("ascii")
+    public_key = f"ssh-ed25519 {key_blob} equipo 'red' \"$HOME\""
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"data":{"ok":true}}'
+
+    def fake_open(request, timeout):
+        captured["content_type"] = request.get_header("Content-type")
+        captured["body"] = request.data.decode("ascii")
+        return Response()
+
+    client = ProxmoxClient.__new__(ProxmoxClient)
+    client.base = "https://mng01.example/api2/json"
+    client.token = "user@pve!token"
+    client.opener = SimpleNamespace(open=fake_open)
+
+    assert client.put(
+        "/nodes/mng01/qemu/29010/config", {"sshkeys": public_key}
+    ) == {"ok": True}
+    assert captured["content_type"] == "application/x-www-form-urlencoded"
+    pve_value = parse_qs(captured["body"])["sshkeys"][0]
+    assert pve_value == quote(public_key, safe="")
+    assert re.fullmatch(r"[-%a-zA-Z0-9_.!~*'()]*", pve_value)
+    assert all(character not in pve_value for character in ("+", "/", "=", "'", '"'))
+    assert unquote(pve_value) == public_key
+
+
+def test_proxmox_rejects_ssh_key_values_with_line_return_or_binary_data():
+    client = ProxmoxClient.__new__(ProxmoxClient)
+    client.base = "https://mng01.example/api2/json"
+    client.token = "user@pve!token"
+
+    for value in ("ssh-ed25519 AAAA\rBBBB", b"ssh-ed25519 AAAA"):
+        with pytest.raises(ProxmoxError, match="PROXMOX_SSH_KEYS_INVALID"):
+            client.put("/nodes/mng01/qemu/29010/config", {"sshkeys": value})
 
 
 def test_proxmox_does_not_retry_mutation_after_http_5xx(monkeypatch):

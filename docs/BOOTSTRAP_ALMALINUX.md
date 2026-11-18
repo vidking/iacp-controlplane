@@ -126,3 +126,111 @@ plantillas quedaron listas. Evidencia privada en
 `/opt/iacp/evidence/alma10-golden-v3-20261117/`. El cambio de catálogo aún debe
 publicarse en dev; esta preparación no certifica las matrices de aplicaciones.
 Las imágenes originales y las copias v2 no se modificaron.
+
+## Consolidación de las plantillas AlmaLinux en MNG
+
+**Estado: BLOCKED.** Las copias 29016 y 29017 aprobaron la preparación de la
+imagen base. La [matriz física](CONTINUIDAD_MATRICES_WAN.md) mantiene casos
+pendientes de verificación y registra un fallo de resolución ARP del gateway WAN.
+
+El estado final solicitado para el nodo `mng01` del clúster MNG es `almalinux-9`
+en la VMID **29010** y `almalinux-10` en la VMID **29011**, con los mismos orígenes
+en los catálogos de producción y desarrollo. Las candidatas son **29016 → 29010**
+y **29017 → 29011**. La 29015 corresponde a AlmaLinux 10 v2 y le falta `iproute`.
+Las revisiones consultadas por HTTPS en el IACP Control Plane (VM 104) fueron
+`85e54ac` en `iac.cyberfuel.com` y `61ea3fb` en `dev-iac.cyberfuel.com`. Sus
+catálogos de repositorio apuntan a
+29010/29011 y 29016/29017, respectivamente. Cambiar el contenido bajo 29010/29011
+afecta los nuevos aprovisionamientos de producción aunque su imagen de API siga
+siendo la misma.
+
+1. **Verificar el estado real antes de la intervención.** El equipo de
+   operaciones consulta `GET /v1/images` en ambos dominios, registra la revisión y
+   los digests ejecutados y verifica el inventario y las dependencias de los
+   ocho VMID AlmaLinux en MNG. El módulo Terraform crea clones completos. La
+   inspección física también debe cubrir clones externos y cualquier referencia
+   activa a las plantillas. Validar nodo, almacenamiento, etiquetas, Guest Agent,
+   arranque y cloud-init.
+2. **Certificar las candidatas en desarrollo.** Cerrar el bloqueo de WAN con el
+   equipo de redes y completar los ciclos aprobados, con seis workers de
+   infraestructura sanos e idle antes de cada tanda de seis. Cubrir los cuatro
+   planes KVM en AlmaLinux 9 y 10 y las aplicaciones habilitadas para AlmaLinux 9.
+   El alcance actual de aplicaciones incluye Ubuntu 24.04 y AlmaLinux 9. La
+   cobertura de AlmaLinux 10 en este alcance corresponde a KVM. Registrar
+   aprovisionamiento, identidad y SSH, red, reinicio, persistencia, eliminación y
+   liberación IPAM cuando aplique. Arrancar los clones de prueba de ambas
+   candidatas en MNG y comprobar `ip -V`, SELinux Enforcing y el protocolo 1 del
+   helper a través de Guest Agent. Registrar el VMID de origen de cada clon y
+   eliminar las instancias de ensayo al finalizar. Los ensayos se ejecutan en
+   desarrollo con sus rangos, colas y credenciales aislados según la política
+   vigente.
+3. **Preparar una ventana operativa y reversión.** Antes de liberar 29010/29011,
+   verificar la recuperación de ambas originales a partir de respaldos de
+   configuración y discos. Conservar las candidatas 29016/29017 disponibles para
+   desarrollo y reversión. Coordinar la suspensión de nuevos aprovisionamientos
+   que consuman las plantillas durante el corte y confirmar cero operaciones
+   afectadas activas, en cola o inciertas y ausencia de locks antes de proceder.
+   La intervención física corresponde al equipo de operaciones de MNG.
+4. **Establecer los VMID definitivos y verificar los dos catálogos.** Recrear las
+   plantillas certificadas bajo 29010/29011, registrar su correspondencia con las
+   candidatas y verificar la configuración en `mng01`. Publicar primero en
+   desarrollo la revisión del catálogo con los VMID definitivos mediante
+   `scripts/iacpctl` y el Compose canónico. Comprobar `GET /v1/images` y validar
+   los aprovisionamientos sobre esos VMID. Cualquier promoción de software a
+   producción usa la misma imagen inmutable validada en desarrollo y requiere
+   autorización operativa. Verificar desde producción los aprovisionamientos
+   admitidos para ambas Golden Images con sus propios recursos de ensayo.
+5. **Retirar las copias al cierre.** Solo después del `PASS` en ambos dominios y de
+   verificar ausencia de referencias y dependencias, el equipo de operaciones
+   retira 29012–29017 del inventario de MNG. Conservar los respaldos y el
+   historial de evidencias según la política operativa. Ante un fallo en el
+   corte, suspender la limpieza, restaurar las originales en 29010/29011 y
+   recuperar el catálogo anterior de desarrollo si se llegó a cambiar. Mantener
+   las protecciones de la API, incluido el IACP Control Plane (VM 104), la VM 106
+   y la VM 29000. El alcance excluye Platinum/PRX.
+
+### Creación desde imágenes nuevas después del incidente
+
+**Estado: BLOCKED, 2026-11-17.** La salida operativa de `mng01` confirmó la
+ausencia de 29010 y 29011 tras el borrado. Los dos clones fueron rechazados
+porque el parámetro `pool` estaba vacío. A continuación se ejecutó la limpieza
+del rango 29012–29017. La creación nueva sustituye el procedimiento de corte
+anterior para este incidente.
+
+1. Obtener las imágenes Generic Cloud oficiales x86_64 de AlmaLinux 9 y 10 y
+   verificar la firma de su manifiesto y el SHA-256 de cada imagen.
+2. Confirmar el pool de IACP, el estado del almacenamiento `DS_CYBERFUEL` y
+   los VMID libres en el clúster MNG antes de importar. Crear las VMs de
+   preparación en 29016 y 29017 en `mng01`, que son los orígenes de la
+   revisión de desarrollo `61ea3fb`.
+   **Importación: PASS, 2026-11-17.** La salida de Proxmox confirma la creación
+   de `scsi0` y del disco cloud-init de cada VM en `DS_CYBERFUEL`. Ambos
+   SHA-256 coincidieron y las dos VMs quedaron detenidas.
+3. Instalar `qemu-guest-agent`, `iproute` y `policycoreutils-python-utils`
+   dentro de los guests. Aplicar el paquete generado por
+   `scripts/prepare_almalinux_bootstrap.py`, verificar protocolo 1 y SELinux
+   Enforcing, y retirar las credenciales temporales antes de convertir cada VM
+   en plantilla. Completar los aprovisionamientos físicos de desarrollo.
+4. Verificar que 29010 y 29011 estén libres y crear ambos destinos mediante
+   clones completos de las candidatas certificadas. Aplicar el catálogo común
+   en desarrollo y comprobar ambos dominios antes de retirar las candidatas.
+
+### Resultado de preparación y preflight WAN
+
+El 2026-11-17, hora de Costa Rica, se completó la preparación en el nodo
+`mng01` del clúster MNG desde el IACP Control Plane (VM 104). Desarrollo
+ejecutaba `61ea3fbe01157c89061186ae1473787e5d0e1fb3`.
+
+| Comprobación | Resultado | Evidencia |
+| --- | --- | --- |
+| Bootstrap de 29016, AlmaLinux 9.9, y 29017, AlmaLinux 10.3 | PASS | Ambas imágenes ejecutaron el helper por QEMU Guest Agent con protocolo 1 y SELinux Enforcing. Coincidieron la MAC, el ID de prueba y la clave SSH observada por consola autenticada. Se confirmó `iproute` y el DNS esperado. |
+| Sellado de 29016 y 29017 | PASS | Ambas VMs están detenidas y tienen `template: 1` y disco base en `DS_CYBERFUEL`. Se eliminaron las credenciales de preparación y se regeneró el disco cloud-init. Verificación en `/opt/iacp/evidence/almalinux-nuevas-preparacion-20261118T031925Z/confirmation.json`. |
+| Matriz física KVM WAN, ciclo 1 | BLOCKED | `NETBOX_IPAM_NOT_FOUND` antes de aprovisionar. El NetBox configurado respondió 404 para el prefijo ID 52 y la búsqueda por `190.0.231.0/24` devolvió cero resultados con la credencial del stack. Evidencia en `/opt/iacp/evidence/almalinux-nuevas-wan-kvm-ciclo1-20261118032630/results.jsonl`. |
+
+La imagen oficial traía deshabilitados los RPC que invocan y consultan la
+salida del helper. Las dos candidatas incorporan `guest-exec` y
+`guest-exec-status` en la lista permitida existente de Guest Agent. Las
+restricciones de SELinux permanecen activas. El preflight confirmó el puente
+`vmbr3` sin tag de Proxmox, con VLAN 211 aguas arriba. La certificación física
+requiere recuperar la visibilidad del prefijo autorizado en NetBox y completar
+los ciclos documentados antes de crear los destinos 29010/29011.

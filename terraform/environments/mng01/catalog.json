@@ -33,11 +33,10 @@
     },
     {
       "image_id": "almalinux-9",
-      "template_vm_id": 29016,
+      "template_vm_id": 29010,
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "almalinux-9",
-      "network_model": "e1000",
       "cloudinit_username": "root",
       "minimum_vcpus": 1,
       "minimum_memory_mb": 2048,
@@ -45,7 +44,7 @@
     },
     {
       "image_id": "almalinux-10",
-      "template_vm_id": 29017,
+      "template_vm_id": 29011,
       "source_node": "mng01",
       "storage": "DS_CYBERFUEL",
       "tag": "almalinux-10",

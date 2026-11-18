@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ejecuta la matriz real de lifecycle v1 de iac.cyberfuel.com sobre MNG.
+"""Ejecuta la matriz real de lifecycle v1 de IACP sobre el clúster MNG.
 
 Las credenciales permanecen en el entorno del proceso y la salida redacta
 resultados operativos. La matriz valida el runtime de laboratorio publicado
@@ -25,6 +25,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, build_opener
 
 
+E2E_STAGE = os.getenv("IACP_E2E_STAGE", "production")
 BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://iac.cyberfuel.com").rstrip("/")
 API_TOKEN = os.getenv("IACP_E2E_API_TOKEN") or os.getenv("IACP_API_TOKEN", "")
 PROXMOX_ENDPOINT = (
@@ -50,10 +51,23 @@ SSH_TIMEOUT = int(os.getenv("IACP_E2E_SSH_TIMEOUT", "360"))
 SSH_ATTEMPT_TIMEOUT = int(os.getenv("IACP_E2E_SSH_ATTEMPT_TIMEOUT", "45"))
 PING_TIMEOUT = int(os.getenv("IACP_E2E_PING_TIMEOUT", "8"))
 RUN_ID = os.getenv("IACP_E2E_RUN_ID", time.strftime("%Y%m%d%H%M%S", time.gmtime()))
-CHANNEL = "iac-prod-mng"
 NETWORK_PROFILE = os.getenv("IACP_E2E_NETWORK_PROFILE", "lab_dhcp")
 EVIDENCE_FILE = Path(os.environ["IACP_E2E_EVIDENCE_FILE"]) if os.getenv("IACP_E2E_EVIDENCE_FILE") else None
-RUN_PREFIX = f"e2e-{CHANNEL}-{RUN_ID}"
+STAGE_CONFIG = {
+    "production": {
+        "base_url": "https://iac.cyberfuel.com",
+        "vmid_range": (30000, 39999),
+        "runtime_stage": "production",
+        "name_prefix": "e2e-iac-prod-mng",
+    },
+    "develop": {
+        "base_url": "https://dev-iac.cyberfuel.com",
+        "vmid_range": (40000, 49999),
+        "runtime_stage": "develop",
+        "name_prefix": "prueba-kvm-dev",
+    },
+}
+RUN_PREFIX = f"{STAGE_CONFIG.get(E2E_STAGE, STAGE_CONFIG['production'])['name_prefix']}-{RUN_ID}"
 
 IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
@@ -95,25 +109,34 @@ def redact(value: object) -> str:
 
 
 def validate_execution_config() -> None:
+    stage = STAGE_CONFIG.get(E2E_STAGE)
+    if stage is None:
+        raise E2EError("IACP_E2E_STAGE debe ser production o develop")
     parsed = urlsplit(BASE_URL)
     if (
         parsed.scheme != "https"
-        or parsed.netloc != "iac.cyberfuel.com"
+        or BASE_URL != stage["base_url"]
+        or parsed.netloc != urlsplit(stage["base_url"]).netloc
         or parsed.path
         or parsed.query
         or parsed.fragment
     ):
-        raise E2EError("IACP_E2E_BASE_URL debe ser exactamente https://iac.cyberfuel.com")
+        raise E2EError(
+            "IACP_E2E_BASE_URL debe coincidir exactamente con el host del stage seleccionado"
+        )
     if not API_TOKEN:
-        raise E2EError("IACP_E2E_API_TOKEN es obligatorio para la API oficial de IAC")
+        raise E2EError("IACP_E2E_API_TOKEN es obligatorio para el stage seleccionado")
     if not PROXMOX_ENDPOINT.startswith("https://") or not PROXMOX_TOKEN:
         raise E2EError("las credenciales de lectura Proxmox del clúster MNG son obligatorias")
     if not re.fullmatch(r"\d{14}", RUN_ID):
         raise E2EError("IACP_E2E_RUN_ID debe usar 14 dígitos UTC: AAAAMMDDHHMMSS")
     if MAX_WORKERS != 6:
         raise E2EError("la matriz física debe usar los seis aprovisionamientos simultáneos")
-    if (VMID_MIN, VMID_MAX) != (30000, 39999):
-        raise E2EError("la matriz de iac.cyberfuel.com solo puede usar VMID 30000–39999")
+    if (VMID_MIN, VMID_MAX) != stage["vmid_range"]:
+        lower, upper = stage["vmid_range"]
+        raise E2EError(
+            f"la matriz {E2E_STAGE} solo puede usar VMID {lower}–{upper}"
+        )
     if NETWORK_PROFILE != "lab_dhcp":
         raise E2EError("esta matriz debe ejecutarse con IACP_E2E_NETWORK_PROFILE=lab_dhcp")
     if EVIDENCE_FILE is None:
@@ -927,7 +950,7 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
     report = {
         "run_id": RUN_ID,
         "base_url": BASE_URL,
-        "runtime_stage": "production",
+        "runtime_stage": STAGE_CONFIG[E2E_STAGE]["runtime_stage"],
         "environment": "lab",
         "cluster": "MNG",
         "vmid_range": [VMID_MIN, VMID_MAX],

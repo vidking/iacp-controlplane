@@ -76,8 +76,31 @@ def test_purge_run_names_cover_the_16_unique_image_plan_pairs():
 def test_physical_matrix_refuses_the_development_api(monkeypatch):
     monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://dev-iac.cyberfuel.com")
 
-    with pytest.raises(e2e_matrix.E2EError, match="iac.cyberfuel.com"):
+    with pytest.raises(e2e_matrix.E2EError, match="host del stage"):
         e2e_matrix.validate_execution_config()
+
+
+def test_physical_matrix_accepts_dev_only_with_dev_stage_and_vmid_range(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(e2e_matrix, "E2E_STAGE", "develop")
+    monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://dev-iac.cyberfuel.com")
+    monkeypatch.setattr(e2e_matrix, "API_TOKEN", "api-test-token")
+    monkeypatch.setattr(
+        e2e_matrix, "PROXMOX_ENDPOINT", "https://mng01.cyberfuel.com:8006"
+    )
+    monkeypatch.setattr(e2e_matrix, "PROXMOX_TOKEN", "mng-test-token")
+    monkeypatch.setattr(e2e_matrix, "RUN_ID", RUN_ID)
+    monkeypatch.setattr(e2e_matrix, "MAX_WORKERS", 6)
+    monkeypatch.setattr(e2e_matrix, "VMID_MIN", 40000)
+    monkeypatch.setattr(e2e_matrix, "VMID_MAX", 49999)
+    monkeypatch.setattr(e2e_matrix, "NETWORK_PROFILE", "lab_dhcp")
+    monkeypatch.setattr(e2e_matrix, "EVIDENCE_FILE", tmp_path / "dev.json")
+    workdata = tmp_path / "workdata"
+    workdata.mkdir()
+    monkeypatch.setenv("IACP_WORKDATA_DIR", str(workdata))
+
+    e2e_matrix.validate_execution_config()
 
 
 def test_physical_matrix_requires_six_simultaneous_provisions(monkeypatch):

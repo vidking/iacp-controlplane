@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -25,28 +26,275 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from worker.proxmox import ProxmoxClient
+from worker.proxmox import ProxmoxClient, ProxmoxError
 from scripts.prepare_almalinux_bootstrap import prepare
 
-COPIES = {9: (29010, 29016), 10: (29011, 29017)}
+COPIES = {
+    9: {"source": 29016, "target": 29010},
+    10: {"source": 29017, "target": 29011},
+}
 BASE_PACKAGES = ("policycoreutils-python-utils", "iproute")
 PROTECTED_BASE_VMIDS = {
     104,
     106,
     29000,
     29001,
-    29010,
-    29011,
     29012,
     29013,
     29014,
     29015,
 }
+REFERENCE_VM_ID = 29000
+REFERENCE_NAME = "iacp-ubuntu-2404-golden"
+GOLDEN_HARDWARE = {
+    "bios": "ovmf",
+    "machine": "q35",
+    "scsihw": "virtio-scsi-single",
+    "cpu": "x86-64-v4,flags=+aes",
+    "cores": 10,
+    "sockets": 1,
+    "vcpus": 2,
+    "numa": 1,
+    "memory": "4096",
+    "agent": "enabled=1",
+    "boot": "order=scsi0",
+    "serial0": "socket",
+    "hotplug": "disk,network,usb,memory,cpu",
+    "ipconfig0": "ip=dhcp",
+}
+
+
+def _device_options(value):
+    if not isinstance(value, str) or not value:
+        return None
+    fields = value.split(",")
+    result = {}
+    for field in fields[1:]:
+        key, separator, item = field.partition("=")
+        result[key] = item if separator else True
+    return result
+
+
+def hardware_signature(config):
+    """Return hardware-only settings, excluding per-VM volume IDs and MACs."""
+    net = config.get("net0", "").split(",")
+    model, separator, _mac = net[0].partition("=") if net else ("", "", "")
+    net_options = {}
+    for field in net[1:]:
+        key, separator, value = field.partition("=")
+        net_options[key] = value if separator else True
+    scsi1_options = _device_options(config.get("scsi1")) or {}
+    scsi0_options = _device_options(config.get("scsi0")) or {}
+    efidisk_options = _device_options(config.get("efidisk0")) or {}
+    scsi1_options.pop("size", None)
+    return {
+        **{key: str(config.get(key)) if config.get(key) is not None else None
+           for key in ("bios", "machine", "scsihw", "cpu", "cores", "sockets",
+                       "vcpus", "numa", "memory", "agent", "boot", "serial0",
+                       "hotplug", "ipconfig0")},
+        "scsi0_options": scsi0_options,
+        "scsi1_options": scsi1_options,
+        "efidisk_options": efidisk_options,
+        "network_model": model if separator else None,
+        "network_options": net_options,
+        "ide_devices": sorted(key for key in config if re.fullmatch(r"ide[0-3]", key)),
+        "vga": config.get("vga"),
+    }
+
+
+def assert_hardware_parity(reference, candidate):
+    expected = hardware_signature(reference)
+    actual = hardware_signature(candidate)
+    if expected != actual:
+        mismatches = sorted(key for key in expected if expected[key] != actual.get(key))
+        raise RuntimeError("GOLDEN_HARDWARE_MISMATCH:" + ",".join(mismatches))
+    if reference.get("name") != REFERENCE_NAME:
+        raise RuntimeError("GOLDEN_REFERENCE_IDENTITY_MISMATCH")
+    if any(expected.get(key) != str(value) for key, value in GOLDEN_HARDWARE.items()):
+        raise RuntimeError("GOLDEN_REFERENCE_HARDWARE_UNEXPECTED")
+    if (
+        expected["network_model"] != "virtio"
+        or expected["network_options"] != {"bridge": "vmbr0"}
+        or expected["scsi0_options"]
+        != {"discard": "on", "iothread": "1", "size": "20G"}
+        or expected["scsi1_options"] != {"media": "cdrom"}
+        or expected["efidisk_options"]
+        != {"efitype": "4m", "pre-enrolled-keys": "0", "size": "1M"}
+        or expected["ide_devices"]
+        or expected["vga"] is not None
+    ):
+        raise RuntimeError("GOLDEN_REFERENCE_HARDWARE_UNEXPECTED")
+    return expected
+
+
+def _disk_size_gb(value):
+    options = _device_options(value) or {}
+    size = str(options.get("size", ""))
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)G", size, re.IGNORECASE)
+    return float(match.group(1)) if match else None
+
+
+def remote_command(argv):
+    """Quote each SSH command argument once for the remote POSIX shell."""
+    return shlex.join([str(argument) for argument in argv])
+
+
+def align_hardware(client, vmid, name, reference):
+    config = client.vm_config("mng01", vmid)
+    if config.get("name") != name or config.get("template", 0):
+        raise RuntimeError("GOLDEN_CANDIDATE_IDENTITY_MISMATCH")
+    current = client.get(f"/nodes/mng01/qemu/{vmid}/status/current")
+    if current.get("status") != "stopped":
+        raise RuntimeError("GOLDEN_CANDIDATE_MUST_BE_STOPPED")
+    root_disk = config.get("scsi0")
+    if not isinstance(root_disk, str) or not root_disk.startswith(f"DS_CYBERFUEL:vm-{vmid}-disk-"):
+        raise RuntimeError("GOLDEN_CANDIDATE_DISK_IDENTITY_MISMATCH")
+    if _disk_size_gb(root_disk) != 20:
+        size = _disk_size_gb(root_disk)
+        if size is None or size > 20:
+            raise RuntimeError("GOLDEN_CANDIDATE_DISK_SIZE_UNSUPPORTED")
+        # Proxmox exposes QEMU disk resize as PUT. POST returns HTTP 501
+        # "Method not implemented" and leaves the disk unchanged.
+        task = client.put(
+            f"/nodes/mng01/qemu/{vmid}/resize",
+            {"disk": "scsi0", "size": f"+{20 - int(size)}G"},
+        )
+        if isinstance(task, str):
+            wait_task(client, task)
+        config = client.vm_config("mng01", vmid)
+
+    disk_volume = root_disk.split(",", 1)[0]
+    config_path = f"/nodes/mng01/qemu/{vmid}/config"
+    # PVE refuses to attach its generated cloud-init volume on SCSI while the
+    # cloned IDE cloud-init device still occupies the VM. Remove that device
+    # first, then allocate a fresh cloud-init disk on SCSI.
+    if "ide2" in config:
+        try:
+            client.put(config_path, {"delete": "ide2"})
+        except ProxmoxError as error:
+            observed = client.vm_config("mng01", vmid)
+            if "ide2" in observed or not error.uncertain:
+                raise
+        config = client.vm_config("mng01", vmid)
+    if not isinstance(config.get("scsi1"), str):
+        try:
+            client.put(config_path, {"scsi1": "DS_CYBERFUEL:cloudinit,media=cdrom"})
+        except ProxmoxError as error:
+            observed = client.vm_config("mng01", vmid)
+            if (
+                not isinstance(observed.get("scsi1"), str)
+                or "cloudinit" not in observed["scsi1"]
+                or not error.uncertain
+            ):
+                raise
+        config = client.vm_config("mng01", vmid)
+    cloudinit = config.get("scsi1")
+    if not isinstance(cloudinit, str) or "cloudinit" not in cloudinit:
+        raise RuntimeError("GOLDEN_CLOUDINIT_VOLUME_MISSING")
+    cloudinit_volume = cloudinit.split(",", 1)[0]
+    efidisk = config.get("efidisk0")
+    if isinstance(efidisk, str):
+        efi_options = _device_options(efidisk) or {}
+        if (
+            efi_options.get("efitype") != "4m"
+            or efi_options.get("pre-enrolled-keys") != "0"
+        ):
+            efi_volume = efidisk.split(",", 1)[0]
+            efidisk = efi_volume + ",efitype=4m,pre-enrolled-keys=0"
+    else:
+        efidisk = "DS_CYBERFUEL:1,efitype=4m,pre-enrolled-keys=0"
+    nic_fields = config.get("net0", "").split(",")
+    nic = nic_fields[0]
+    if "=" not in nic:
+        raise RuntimeError("GOLDEN_NIC_CONFIG_INVALID")
+    mac = nic.split("=", 1)[1]
+    ide_delete = [key for key in config if re.fullmatch(r"ide[0-3]", key)]
+    if config.get("vga") is not None:
+        ide_delete.append("vga")
+    parameters = {
+        key: value
+        for key, value in GOLDEN_HARDWARE.items()
+        if str(config.get(key)) != str(value)
+    }
+    if config.get("name") != name:
+        parameters["name"] = name
+    desired_tags = {
+        "golden-image",
+        "iacp",
+        f"almalinux-{9 if vmid == 29010 else 10}",
+        "v20261118",
+    }
+    current_tags = set(filter(None, str(config.get("tags", "")).split(";")))
+    if current_tags != desired_tags:
+        parameters["tags"] = ";".join(sorted(desired_tags))
+    description = "Golden Image AlmaLinux alineada con el hardware Ubuntu 29000"
+    if config.get("description") != description:
+        parameters["description"] = description
+
+    root_options = _device_options(config.get("scsi0")) or {}
+    if disk_volume != config.get("scsi0", "").split(",", 1)[0] or {
+        key: root_options.get(key) for key in ("discard", "iothread", "size")
+    } != {"discard": "on", "iothread": "1", "size": "20G"}:
+        parameters["scsi0"] = disk_volume + ",discard=on,iothread=1"
+    cloudinit_options = _device_options(config.get("scsi1")) or {}
+    if (
+        config.get("scsi1", "").split(",", 1)[0] != cloudinit_volume
+        or cloudinit_options.get("media") != "cdrom"
+    ):
+        parameters["scsi1"] = cloudinit_volume + ",media=cdrom"
+    efi_options = _device_options(config.get("efidisk0")) or {}
+    if (
+        not isinstance(config.get("efidisk0"), str)
+        or efi_options.get("efitype") != "4m"
+        or efi_options.get("pre-enrolled-keys") != "0"
+    ):
+        parameters["efidisk0"] = efidisk
+    desired_net = f"virtio={mac},bridge=vmbr0"
+    if config.get("net0") != desired_net:
+        parameters["net0"] = desired_net
+    if ide_delete:
+        parameters["delete"] = ",".join(ide_delete)
+    if parameters:
+        try:
+            client.put(config_path, parameters)
+        except ProxmoxError as error:
+            if not error.uncertain:
+                raise
+            observed = client.vm_config("mng01", vmid)
+            assert_hardware_parity(reference, observed)
+            return observed
+    aligned = client.vm_config("mng01", vmid)
+    assert_hardware_parity(reference, aligned)
+    return aligned
+
+
+def wait_task(client, task, timeout=900):
+    if not isinstance(task, str) or not task.startswith("UPID:mng01:"):
+        raise RuntimeError("GOLDEN_TASK_ID_INVALID")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = client.get("/nodes/mng01/tasks/" + quote(task, safe="") + "/status")
+        if state.get("status") == "stopped":
+            if state.get("exitstatus") != "OK":
+                raise RuntimeError("GOLDEN_TASK_FAILED")
+            return
+        time.sleep(2)
+    raise RuntimeError("GOLDEN_TASK_TIMEOUT")
 
 
 class Factory:
     def __init__(self, env_file, folder, *, resume=False):
         self.env = dotenv_values(env_file, interpolate=False)
+        for key in (
+            "IACP_RUNTIME_STAGE",
+            "IACP_PROXMOX_MNG_HOST_IP",
+            "IACP_PROXMOX_MNG_ENDPOINT",
+            "IACP_PROXMOX_MNG_API_TOKEN",
+            "IACP_PROXMOX_MNG_POOL_ID",
+            "IACP_API_TOKEN",
+        ):
+            if os.environ.get(key):
+                self.env[key] = os.environ[key]
         if (
             self.env.get("IACP_RUNTIME_STAGE") != "develop"
             or self.env.get("IACP_PROXMOX_MNG_HOST_IP") != "192.168.1.113"
@@ -92,6 +340,11 @@ class Factory:
     def event(self, phase, vmid):
         print(json.dumps({"phase": phase, "vmid": vmid}), flush=True)
 
+    def set_phase(self, phase, vmid):
+        self.state["current_phase"] = phase
+        self.save()
+        self.event(phase, vmid)
+
     def idle(self):
         request = Request(
             "https://dev-iac.cyberfuel.com/v1/observability",
@@ -108,20 +361,19 @@ class Factory:
             w["status"] == "idle" and w["liveness"] == "healthy"
             for w in state["workers"]
         )
+        service_request = Request(
+            "https://dev-iac.cyberfuel.com/v1/service-workers",
+            headers={"Authorization": "Bearer " + self.env["IACP_API_TOKEN"]},
+        )
+        with urlopen(service_request, timeout=30) as f:
+            service_state = json.load(f)
+        assert len(service_state["workers"]) == 4 and all(
+            w["status"] == "idle" and w["job_id"] is None
+            for w in service_state["workers"]
+        )
 
     def wait(self, task, timeout=900):
-        assert isinstance(task, str) and task.startswith("UPID:mng01:")
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            state = self.client.get(
-                "/nodes/mng01/tasks/" + quote(task, safe="") + "/status"
-            )
-            if state.get("status") == "stopped":
-                if state.get("exitstatus") != "OK":
-                    raise RuntimeError("FACTORY_TASK_FAILED")
-                return
-            time.sleep(2)
-        raise RuntimeError("FACTORY_TASK_TIMEOUT")
+        return wait_task(self.client, task, timeout)
 
     def ssh(self, item, argv, input=None, check=True):
         args = [
@@ -139,7 +391,7 @@ class Factory:
             "-i",
             str(self.key),
             "root@" + item["address"],
-            shlex.join(argv),
+            remote_command(argv),
         ]
         r = subprocess.run(
             args, input=input, capture_output=True, text=True, timeout=600
@@ -241,63 +493,97 @@ class Factory:
             return " ".join(key[:2])
 
     def prepare_copy(self, version):
+        source = COPIES[version]["source"]
+        vmid = COPIES[version]["target"]
+        self.set_phase("comprobar_capacidad", vmid)
         self.idle()
-        source, vmid = COPIES[version]
         assert source != vmid and vmid not in PROTECTED_BASE_VMIDS
-        assert int(self.client.get("/cluster/nextid?vmid=" + str(vmid))) == vmid
+        self.set_phase("leer_referencia_ubuntu", vmid)
+        reference = self.client.vm_config("mng01", REFERENCE_VM_ID)
+        if reference.get("template") != 1 or reference.get("name") != REFERENCE_NAME:
+            raise RuntimeError("GOLDEN_REFERENCE_NOT_PROTECTED_TEMPLATE")
+        self.set_phase("leer_fuente_almalinux", vmid)
         original = self.client.vm_config("mng01", source)
+        if original.get("template") != 1:
+            raise RuntimeError("GOLDEN_ALMALINUX_SOURCE_NOT_TEMPLATE")
         public = {
             key: original.get(key)
             for key in ["name", "template", "tags", "net0", "scsi0", "serial0"]
         }
-        assert public["template"] == 1
         item = {
             "vmid": vmid,
             "source": source,
-            "name": f"iacp-almalinux-{version}-bootstrap-v3-20261117",
+            "name": f"iacp-almalinux-{version}-golden",
             "phase": "clone_requested",
             "source_public": public,
         }
         self.state["copies"][str(version)] = item
         self.save()
-        self.event("clonar_copia", vmid)
-        task = self.client.post(
-            "/nodes/mng01/qemu/" + str(source) + "/clone",
-            {
-                "newid": vmid,
-                "full": 1,
-                "name": item["name"],
-                "target": "mng01",
-                "storage": "DS_CYBERFUEL",
-                "pool": self.env["IACP_PROXMOX_MNG_POOL_ID"],
-            },
-        )
-        item["clone_task"] = task
-        self.save()
-        self.wait(task)
+        self.set_phase("comprobar_inventario", vmid)
+        inventory = {int(row["vmid"]): row for row in self.client.inventory()}
+        target = inventory.get(vmid)
+        if target is None:
+            self.set_phase("reservar_vmid_objetivo", vmid)
+            if int(self.client.get("/cluster/nextid?vmid=" + str(vmid))) != vmid:
+                raise RuntimeError("GOLDEN_TARGET_VMID_NOT_FREE")
+            self.set_phase("crear_copia_completa", vmid)
+            try:
+                task = self.client.post(
+                    "/nodes/mng01/qemu/" + str(source) + "/clone",
+                    {
+                        "newid": vmid,
+                        "full": 1,
+                        "name": item["name"],
+                        "target": "mng01",
+                        "storage": "DS_CYBERFUEL",
+                        "pool": self.env["IACP_PROXMOX_MNG_POOL_ID"],
+                    },
+                )
+            except ProxmoxError:
+                # A timeout can lose the POST response after Proxmox accepted
+                # the clone. Observe the target before any retry.
+                observed = {int(row["vmid"]): row for row in self.client.inventory()}.get(vmid)
+                if observed is None or observed.get("name") != item["name"]:
+                    raise
+                task = None
+            item["clone_task"] = task
+            self.save()
+            if task:
+                self.wait(task)
+        else:
+            if (
+                target.get("name") != item["name"]
+                or target.get("node") != "mng01"
+                or target.get("pool") != self.env["IACP_PROXMOX_MNG_POOL_ID"]
+                or target.get("template")
+                or target.get("status") != "stopped"
+            ):
+                raise RuntimeError("GOLDEN_EXISTING_TARGET_NOT_SAFE_TO_REUSE")
         current = self.client.vm_config("mng01", vmid)
-        assert current["name"] == item["name"] and not current.get("template")
+        if current.get("name") != item["name"] or current.get("template"):
+            raise RuntimeError("GOLDEN_CLONE_IDENTITY_MISMATCH")
         mac = current["net0"].split(",")[0].split("=", 1)[1].lower()
         item["mac"] = mac
+        self.set_phase("alinear_hardware_con_ubuntu_29000", vmid)
+        align_hardware(self.client, vmid, item["name"], reference)
+        item["hardware_signature"] = hardware_signature(reference)
+        item["phase"] = "hardware_aligned"
+        self.save()
         password = secrets.token_urlsafe(40) + "Aa9!"
         private = self.folder / ("console-password-" + str(vmid))
         private.write_text(password)
         private.chmod(0o600)
-        net = ("e1000" if version == 9 else "virtio") + "=" + mac + ",bridge=vmbr0"
+        self.set_phase("configurar_acceso_cloudinit", vmid)
         self.client.put(
             "/nodes/mng01/qemu/" + str(vmid) + "/config",
             {
                 "ciuser": "root",
                 "cipassword": password,
-                "sshkeys": quote(self.public, safe=""),
+                # ProxmoxClient encodes this plain OpenSSH key at the HTTP
+                # boundary; callers must never pre-quote it.
+                "sshkeys": self.public,
                 "ipconfig0": "ip=dhcp",
-                "net0": net,
                 "nameserver": "1.1.1.1 8.8.8.8",
-                "vga": "serial0",
-                "description": "Copia autorizada para bootstrap; original "
-                + str(source)
-                + " intacta",
-                "tags": f"almalinux-{version};iacp-guest-bootstrap-1",
             },
         )
         item["phase"] = "configured"
@@ -316,12 +602,16 @@ class Factory:
 
     def resume_copy(self, version):
         self.idle()
-        source, vmid = COPIES[version]
+        source = COPIES[version]["source"]
+        vmid = COPIES[version]["target"]
         item = self.state["copies"][str(version)]
         assert item["vmid"] == vmid and item["source"] == source
         assert item["phase"] == "ssh_pinned", "FACTORY_PHASE_NOT_RESUMABLE"
         config = self.client.vm_config("mng01", vmid)
         assert config.get("name") == item["name"] and not config.get("template")
+        assert_hardware_parity(
+            self.client.vm_config("mng01", REFERENCE_VM_ID), config
+        )
         assert config["net0"].split(",")[0].split("=", 1)[1].lower() == item["mac"]
         original = self.client.vm_config("mng01", source)
         assert {k: original.get(k) for k in item["source_public"]} == item["source_public"]
@@ -336,13 +626,18 @@ class Factory:
         self.finish_copy(version, item)
 
     def finish_copy(self, version, item):
-        source, vmid = COPIES[version]
+        source = COPIES[version]["source"]
+        vmid = COPIES[version]["target"]
         mac = item["mac"]
         public = item["source_public"]
         known = self.folder / ("known-" + str(vmid))
         hostkey = " ".join(known.read_text().strip().split()[1:])
         private = self.folder / ("console-password-" + str(vmid))
         self.event("instalar_bootstrap_fijo", vmid)
+        self.ssh(item, ["test", "-d", "/sys/firmware/efi"])
+        self.ssh(item, ["systemctl", "is-active", "qemu-guest-agent"])
+        self.ssh(item, ["test", "-e", "/sys/bus/pci/drivers/virtio-pci"])
+        self.ssh(item, ["test", "-e", "/sys/bus/scsi/devices"])
         self.ssh(item, ["dnf", "-y", "install", *BASE_PACKAGES])
         # El bootstrap y la prevalidación WAN consultan interfaces, rutas y
         # vecinos mediante iproute2. No activar esta copia en el catálogo si
@@ -428,6 +723,8 @@ class Factory:
             self.wait(task)
         template = self.client.vm_config("mng01", vmid)
         assert template.get("template") == 1
+        reference = self.client.vm_config("mng01", REFERENCE_VM_ID)
+        assert_hardware_parity(reference, template)
         after = self.client.vm_config("mng01", source)
         assert {key: after.get(key) for key in public} == public, "SOURCE_IMAGE_CHANGED"
         item["phase"] = "template_ready"
@@ -436,6 +733,9 @@ class Factory:
         self.state.pop("error_type", None)
         self.save()
         private.unlink()
+        self.key.unlink(missing_ok=True)
+        self.key.with_suffix(".pub").unlink(missing_ok=True)
+        known.unlink(missing_ok=True)
         self.event("copia_versionada_lista", vmid)
 
 
@@ -451,8 +751,8 @@ def main():
         print(
             json.dumps(
                 {
-                    "source": COPIES[args.version][0],
-                    "copy": COPIES[args.version][1],
+                    "source": COPIES[args.version]["source"],
+                    "copy": COPIES[args.version]["target"],
                     "node": "mng01",
                     "mutations": False,
                 }
@@ -468,11 +768,22 @@ def main():
     except Exception as error:
         factory.state["result"] = "BLOCKED"
         factory.state["error_type"] = type(error).__name__
+        failure = {
+            "result": "BLOCKED",
+            "error_type": type(error).__name__,
+            "phase": factory.state.get("current_phase"),
+        }
+        if isinstance(error, ProxmoxError):
+            factory.state["error_code"] = str(error)
+            factory.state["http_status"] = error.status
+            factory.state["uncertain"] = error.uncertain
+            failure.update(
+                error_code=str(error),
+                http_status=error.status,
+                uncertain=error.uncertain,
+            )
         factory.save()
-        print(
-            json.dumps({"result": "BLOCKED", "error_type": type(error).__name__}),
-            flush=True,
-        )
+        print(json.dumps(failure), flush=True)
         sys.exit(1)
 
 
