@@ -39,7 +39,17 @@ from worker.proxmox import ProxmoxClient
 
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
-EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
+EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29016, "almalinux-10": 29017}
+EXCLUDED_WAN_ADDRESSES = {"190.0.231.2"}
+
+
+def required_cycles(category):
+    """KVM certification repeats each of its 16 combinations four times."""
+    if category == "kvm":
+        return 4
+    if category in {"services", "agents"}:
+        return 2
+    raise ValueError("MATRIX_CATEGORY_INVALID")
 
 
 def wan_nic_config(env):
@@ -120,6 +130,7 @@ def verify_netbox_state(client):
         (address, length)
         for address, length in available
         if first_authorized <= address <= last_authorized and length == prefix.prefixlen
+        and str(address) not in EXCLUDED_WAN_ADDRESSES
     ]
     if len(eligible) < 6:
         raise RuntimeError("NETBOX_AUTHORIZED_RANGE_EXHAUSTED")
@@ -174,7 +185,7 @@ class Matrix:
         )
         self.base = "https://dev-iac.cyberfuel.com"
         self.token = self.env["IACP_API_TOKEN"]
-        assert args.cycle in (1, 2)
+        assert 1 <= args.cycle <= required_cycles(args.category)
         self.static_bridge = WAN_BRIDGE if self.profile == "prod_static" else "vmbr0"
         self.folder = args.evidence.resolve()
         self.folder.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -911,13 +922,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--category", choices=["kvm", "services", "agents"], required=True
     )
-    parser.add_argument("--cycle", type=int, choices=[1, 2], required=True)
+    parser.add_argument("--cycle", type=int, required=True)
     parser.add_argument(
         "--network-profile", choices=["lab_dhcp", "prod_static"], default="prod_static"
     )
     parser.add_argument("--run", required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     args = parser.parse_args()
+    if not 1 <= args.cycle <= required_cycles(args.category):
+        parser.error(
+            "KVM admite ciclos 1–4; servicios y agentes admiten ciclos 1–2"
+        )
     if not args.run.isdigit() or len(args.run) > 14:
         parser.error("run debe ser una marca numérica de hasta 14 dígitos")
     matrix = Matrix(args)

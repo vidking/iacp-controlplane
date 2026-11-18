@@ -16,8 +16,15 @@ PROD_STATIC_LAST_HOST = 253
 
 
 def catalog_path() -> Path:
-    default_path = Path(__file__).resolve().parent.parent / "terraform" / "environments" / "mng01" / "catalog.json"
-    return Path(os.getenv("IACP_MNG_CATALOG", str(default_path)))
+    configured = os.getenv("IACP_MNG_CATALOG", "").strip()
+    if configured:
+        return Path(configured)
+    filename = (
+        "catalog-dev.json"
+        if os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop"
+        else "catalog.json"
+    )
+    return Path(__file__).resolve().parent.parent / "terraform" / "environments" / "mng01" / filename
 
 
 def load_catalog() -> dict:

@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -289,10 +290,25 @@ class ProxmoxClient:
             attempts=1,
         ) or {}
 
-    def guest_agent_exec(self, node: str, vmid: int, command: list[str]) -> dict:
+    def guest_agent_exec(
+        self,
+        node: str,
+        vmid: int,
+        command: list[str],
+        *,
+        input_data: str | bytes | None = None,
+    ) -> dict:
         if not command or any(not isinstance(item, str) for item in command):
             raise ProxmoxError("GUEST_AGENT_COMMAND_INVALID")
         parameters = [("command", item) for item in command]
+        if input_data is not None:
+            if isinstance(input_data, str):
+                input_data = input_data.encode()
+            if not isinstance(input_data, bytes) or len(input_data) > 45 * 1024:
+                raise ProxmoxError("GUEST_AGENT_INPUT_INVALID")
+            parameters.append(
+                ("input-data", base64.b64encode(input_data).decode("ascii"))
+            )
         return self._request(
             "POST",
             f"/nodes/{quote(node, safe='')}/qemu/{vmid}/agent/exec",

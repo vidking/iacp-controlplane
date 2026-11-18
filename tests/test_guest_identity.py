@@ -19,7 +19,7 @@ from worker.guest_identity import (
     ensure,
     required,
 )
-from worker.proxmox import ProxmoxClient
+from worker.proxmox import ProxmoxClient, ProxmoxError
 import worker.main as worker_main
 
 
@@ -343,7 +343,13 @@ def test_proxmox_guest_exec_encodes_repeated_command_parameters(monkeypatch):
 
     monkeypatch.setattr(client.opener, "open", open_request)
     command = ["/usr/bin/python3", "-c", "print('ok')", INSTANCE_ID, MAC, PROGRAM_SHA256]
-    assert client.guest_agent_exec("mng01", 30000, command) == {"pid": 7}
+    assert client.guest_agent_exec(
+        "mng01", 30000, command, input_data=b"root:temporary-password\n"
+    ) == {"pid": 7}
     parameters = parse_qsl(captured["request"].data.decode())
     assert [value for key, value in parameters if key == "command"] == command
+    encoded_input = next(value for key, value in parameters if key == "input-data")
+    assert base64.b64decode(encoded_input) == b"root:temporary-password\n"
     assert ("capture-output", "1") not in parameters
+    with pytest.raises(ProxmoxError, match="GUEST_AGENT_INPUT_INVALID"):
+        client.guest_agent_exec("mng01", 30000, command, input_data=b"x" * (45 * 1024 + 1))

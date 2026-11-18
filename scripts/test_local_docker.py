@@ -240,7 +240,7 @@ USER iacp
             "pytest_exit_code": result.returncode,
         }
         (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
-        print(f"PASS: runtime, promoción 6+2 y suite local. Evidencia: {evidence}")
+        print(f"PASS: runtime local aislado y suite unitaria. Evidencia: {evidence}")
     finally:
         logs = cp("logs", "--no-color", check=False)
         (evidence / "containers.log").write_text(logs.stdout + logs.stderr)

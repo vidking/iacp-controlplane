@@ -13,6 +13,9 @@ El ejemplo está en `terraform.tfvars.example`.
 En la ruta normal de la API no se edita este `tfvars`: el worker genera
 `generated.auto.tfvars.json` desde la orden y la Golden Image observada. El
 catálogo visible para editar imágenes y templates es `catalog.json`.
+El stack de desarrollo selecciona explícitamente `catalog-dev.json` mediante
+`IACP_MNG_CATALOG`; allí las AlmaLinux candidatas 29016/29017 se validan sin
+modificar los VMID 29010/29011 que conserva el catálogo estable.
 
 La red de laboratorio usa DHCP en `vmbr0` y no fija VLAN ni gateway. El worker
 lee de la Golden Image el CPU (`x86-64-v4`, flags, NUMA), el controlador de

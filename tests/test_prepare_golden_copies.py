@@ -1,27 +1,79 @@
 import shlex
 
+import pytest
+
 from scripts.prepare_golden_copies import (
     BASE_PACKAGES,
+    CLOUD_INIT_SERVICES,
     COPIES,
     GOLDEN_HARDWARE,
+    GUEST_BOOTSTRAP_CHECKS,
     PROTECTED_BASE_VMIDS,
     REFERENCE_NAME,
+    assert_runtime_idle,
     align_hardware,
     assert_hardware_parity,
+    guest_interface_name,
     remote_command,
+    usable_guest_ipv4,
 )
 
 
-def test_almalinux_network_bootstrap_uses_new_protected_copy_targets():
+@pytest.mark.no_database
+def test_shared_template_factory_requires_all_six_workers_idle():
+    state = {
+        "active_operations": 0,
+        "queue_depth": 0,
+        "uncertain_operations": 0,
+        "workers": [
+            {"status": "idle", "liveness": "healthy", "current_operation_id": None}
+            for _ in range(6)
+        ],
+    }
+    assert_runtime_idle(state)
+    state["workers"][4]["status"] = "busy"
+    with pytest.raises(RuntimeError, match="GOLDEN_RUNTIME_NOT_IDLE"):
+        assert_runtime_idle(state)
+
+
+def test_almalinux_factory_clones_current_vmids_to_temporary_candidates():
     assert COPIES == {
-        9: {"source": 29016, "target": 29010},
-        10: {"source": 29017, "target": 29011},
+        9: {"source": 29010, "target": 29016},
+        10: {"source": 29011, "target": 29017},
     }
     assert all(item["source"] != item["target"] for item in COPIES.values())
     assert {item["target"] for item in COPIES.values()}.isdisjoint(
         PROTECTED_BASE_VMIDS
     )
-    assert {"policycoreutils-python-utils", "iproute"}.issubset(BASE_PACKAGES)
+    assert {
+        "policycoreutils-python-utils",
+        "iproute",
+        "cloud-init",
+        "openssh-server",
+    }.issubset(BASE_PACKAGES)
+    assert CLOUD_INIT_SERVICES == (
+        "cloud-init-local.service",
+        "cloud-init.service",
+        "cloud-config.service",
+        "cloud-final.service",
+    )
+    assert GUEST_BOOTSTRAP_CHECKS == (("cloud-init", "--version"), ("ip", "-V"))
+
+
+@pytest.mark.no_database
+def test_initial_dhcp_interface_matches_the_cloned_mac():
+    assert guest_interface_name(
+        [
+            {"name": "lo", "hardware-address": "00:00:00:00:00:00"},
+            {"name": "ens18", "hardware-address": "BC:24:11:11:22:33"},
+        ],
+        "bc:24:11:11:22:33",
+    ) == "ens18"
+    with pytest.raises(RuntimeError, match="GOLDEN_GUEST_NIC_NOT_FOUND"):
+        guest_interface_name([], "bc:24:11:11:22:33")
+    assert usable_guest_ipv4("192.168.3.51")
+    assert not usable_guest_ipv4("169.254.1.2")
+    assert not usable_guest_ipv4("127.0.0.1")
 
 
 def golden_config(name, vmid, mac):
@@ -142,7 +194,7 @@ def test_disk_resize_uses_proxmox_put_and_matches_ubuntu_hardware():
 
     reference = golden_config(REFERENCE_NAME, 29000, "BC:24:11:F0:88:41")
     client = Client()
-    result = align_hardware(client, vmid, name, reference)
+    result = align_hardware(client, vmid, name, reference, version=9)
 
     assert [method for method, _path, _params in client.calls] == [
         "PUT",

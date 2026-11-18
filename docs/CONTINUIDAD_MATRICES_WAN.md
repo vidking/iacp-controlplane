@@ -2,6 +2,37 @@
 
 Estado: **EN CURSO**, actualizado 2026-11-18. Rama: `devops/features`. Producción sin cambios.
 
+### Estado operativo actual — 2026-11-18
+
+Se excluyó `190.0.231.2` de las matrices y NetBox la mantiene reservada con la
+etiqueta `reservada`; la siguiente dirección disponible quedó en `.3`. La
+ejecución de Nextcloud ciclo 1 más reciente (`/opt/iacp/evidence/wan-services-c1-202611180951/results.jsonl`)
+se detuvo ante el primer lote fallido y no certifica el ciclo. El usuario
+confirmó que los accesos web de prueba en `190.0.231.4` y `.5` muestran el login
+de Nextcloud; esos dos accesos no sustituyen las comprobaciones SSH, ciclo de
+vida, IPAM ni el PASS de cada caso.
+
+La inspección de clones AlmaLinux observó que sus imágenes no contenían
+`cloud-init` ni `iproute`. La fábrica ahora instala ambos paquetes, habilita
+las etapas de cloud-init y exige comprobar `cloud-init --version` e `ip -V`
+antes de sellar. También falla cerrada si el stack dev o productivo tiene
+operaciones, cola, incertidumbre o workers ocupados/no sanos, ya que ambos
+utilizan el clúster MNG. La corrección se está validando localmente; las
+templates compartidas 29010/29011 todavía no se modifican.
+
+El flujo de reparación prepara copias candidatas temporales 29016/29017 a partir
+de los templates públicos actuales. Solo después de certificar los paquetes, el
+helper, SELinux y la paridad de hardware contra 29000, crea copias de recuperación
+29018/29019 y recrea 29010/29011 desde las candidatas. Las imágenes temporales se
+retiran cuando las matrices estén completas. La promoción no procede con trabajo
+activo en dev o en producción.
+
+En la lectura de producción de las 2026-11-18 se observaron operaciones activas
+y workers ocupados. Por tanto, la preparación física de esas templates no es
+segura mientras esa condición persista. Dev tenía seis workers de infraestructura
+y cuatro de servicios sanos e idle, sin operaciones ni cola. No se inició otra
+matriz WAN hasta que las imágenes AlmaLinux cumplan los requisitos anteriores.
+
 ### Incidente del primer ciclo WAN de servicios — 2026-11-18
 
 La revisión ejecutada `f76798a768768d2c173318612f7bb9d4be908c88` inició el
@@ -371,3 +402,46 @@ esa evidencia y se agregó una verificación independiente de solo lectura con
 resultado `PASS` en `/opt/iacp/evidence/netbox-post-delete-verification-20261118T042026Z`.
 El código corregido y sus pruebas unitarias ahora incluyen `.2` cuando está
 disponible en NetBox.
+
+### Estado vigente de preparación y matrices — 2026-11-18
+
+Después de esa lectura, el equipo reservó nuevamente `190.0.231.2/24` en NetBox
+por la discrepancia ARP; los ensayos deben usar la siguiente dirección que el
+pool confirme disponible. La revisión local corrige el acceso de preparación
+AlmaLinux: QEMU Guest Agent instala `cloud-init`, `iproute`, OpenSSH y utilidades
+SELinux antes de requerir SSH, luego ejecuta y verifica un arranque real de
+Cloud-Init. La candidata solo pasa a promoción si el arranque termina, el
+helper está fijado, SELinux sigue Enforcing y el hardware coincide con Ubuntu
+24.04/29000. El cambio todavía no se ha ejecutado en MNG ni desplegado en el
+IACP Control Plane (VM 104).
+
+Alcance vigente solicitado: cuatro ciclos WAN KVM con las 16 combinaciones de
+imagen/plan por ciclo (64 PASS principales), y dos ciclos por cada servicio,
+Nextcloud y n8n (32 PASS principales por servicio). Las KVM verifican SSH por
+llave y contraseña, salida WAN, reinicio, eliminación y liberación de IP. Los
+servicios además verifican CA/TLS, GUI y autenticación funcional, persistencia,
+reinicio, entrega y liberación de IP. Cada lote conserva seis aprovisionamientos
+simultáneos y los controles se reportan aparte. La certificación permanece
+pendiente; no empezar matrices con operaciones activas o inciertas ni con
+workers no sanos. Producción permanece excluida.
+
+### Separación de catálogo de desarrollo — 2026-11-18
+
+El catálogo estable `catalog.json` conserva AlmaLinux 9/10 en 29010/29011. El
+stack `dev-iac.cyberfuel.com` usa `catalog-dev.json`, que conserva Ubuntu
+29000/29001 y dirige AlmaLinux a las copias preparadas 29016/29017. Así, las
+pruebas físicas pueden certificar las imágenes nuevas sin cambiar las plantillas
+que también consume producción. El preflight rechaza un catálogo distinto al de
+candidatos de desarrollo.
+
+La dirección `190.0.231.2` se excluye expresamente de las reservas NetBox en
+desarrollo y del preflight WAN, incluso si NetBox la reporta disponible; el
+runner exige seis direcciones adicionales dentro del rango autorizado. La regla
+no cambia las reservas del entorno productivo. No usar esa IP en la matriz hasta
+que Operaciones de red cierre la discrepancia ARP.
+
+La separación del catálogo y las reparaciones de preparación son cambios de
+código local. No se ha ejecutado la preparación en MNG ni desplegado el stack.
+La matriz física WAN completa permanece pendiente. No reemplazar las plantillas
+29010/29011 ni declarar PASS integral antes de certificar los ciclos previstos y
+coordinar una ventana independiente de promoción.

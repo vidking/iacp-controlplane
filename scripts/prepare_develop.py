@@ -96,6 +96,8 @@ def prepare(
         "IACP_PROXMOX_MNG_HOST_IP": host_ip,
         "IACP_PROXMOX_MNG_API_TOKEN": token,
         "IACP_PROXMOX_MNG_POOL_ID": pool_id,
+        "IACP_MNG_CATALOG": "/app/terraform/environments/mng01/catalog-dev.json",
+        "IACP_NETBOX_EXCLUDED_ADDRESSES": "190.0.231.2",
         "IACP_POSTGRES_VOLUME": "iacp_controlplane_dev_postgres",
         "IACP_WORKDATA_VOLUME": "iacp_controlplane_dev_workdata",
         "IACP_PROXY_SERVICE_ALIAS": "iacp-controlplane-api-dev",

@@ -39,6 +39,31 @@ def test_netbox_settings_normalize_status_url(monkeypatch):
     assert settings().expected_prefix == "190.0.231.0/24"
 
 
+def test_development_netbox_settings_exclude_unreliable_wan_address(monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
+    monkeypatch.delenv("IACP_NETBOX_EXCLUDED_ADDRESSES", raising=False)
+    monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example/api")
+    monkeypatch.setenv("IACP_NETBOX_TOKEN", "token-for-test")
+    assert settings().excluded_addresses == frozenset({ip_address("190.0.231.2")})
+
+    monkeypatch.setenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "")
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    assert settings().excluded_addresses == frozenset()
+
+
+def test_netbox_never_allocates_a_development_excluded_address(monkeypatch):
+    client = fake_client()
+    client.config = NetBoxSettings(
+        base_url="https://netbox.example/api",
+        token="test-token",
+        expected_prefix="190.0.231.0/24",
+        excluded_addresses=frozenset({ip_address("190.0.231.2")}),
+    )
+    monkeypatch.setattr(client, "_ip_records", lambda _prefix: [])
+    candidates = client.available_addresses(ipv4_network("190.0.231.0/24"))
+    assert candidates[0] == (ip_address("190.0.231.3"), 24)
+
+
 def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
     client = fake_client()
     requests = []

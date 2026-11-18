@@ -12,8 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:${PATH}" \
     IACP_TERRAFORM_PATH=/app/terraform \
     IACP_TERRAFORM_MNG_DIR=environments/mng01 \
-    IACP_WORKDATA_DIR=/var/lib/iacp-controlplane \
-    IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog.json
+    IACP_WORKDATA_DIR=/var/lib/iacp-controlplane
 
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 999 iacp && useradd --system --uid 999 --gid iacp --home-dir /app iacp

@@ -64,6 +64,7 @@ class NetBoxSettings:
     attempts: int = 3
     verify_tls: bool = True
     ca_file: str | None = None
+    excluded_addresses: frozenset[IPv4Address] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,23 @@ def settings() -> NetBoxSettings:
     # endpoint and must not become part of resource paths.
     if base_url.endswith("/status"):
         base_url = base_url[: -len("/status")].rstrip("/")
+    excluded_raw = os.getenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "").strip()
+    if not excluded_raw and os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop":
+        excluded_raw = "190.0.231.2"
+    try:
+        excluded_addresses = frozenset(
+            ip_address(value.strip())
+            for value in excluded_raw.split(",")
+            if value.strip()
+        )
+    except ValueError as error:
+        raise NetBoxError("IPAM_CONFIGURATION_INVALID") from error
+    expected_network = ip_network(PROD_STATIC_PREFIX)
+    if any(
+        not isinstance(address, IPv4Address) or address not in expected_network
+        for address in excluded_addresses
+    ):
+        raise NetBoxError("IPAM_CONFIGURATION_INVALID")
     return NetBoxSettings(
         base_url=base_url if base_url.endswith("/api") else f"{base_url}/api",
         token=token,
@@ -117,6 +135,7 @@ def settings() -> NetBoxSettings:
         attempts=attempts,
         verify_tls=_bool_env("IACP_NETBOX_VERIFY_TLS", True),
         ca_file=(os.getenv("IACP_NETBOX_CA_FILE") or "").strip() or None,
+        excluded_addresses=excluded_addresses,
     )
 
 
@@ -277,7 +296,9 @@ class NetBoxClient:
         return [
             (address, prefix.prefixlen)
             for address in prefix.hosts()
-            if self._in_pool(address, prefix) and address not in occupied
+            if self._in_pool(address, prefix)
+            and address not in occupied
+            and address not in self.config.excluded_addresses
         ]
 
     def get_ip(self, address: str) -> JsonObject | None:

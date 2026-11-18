@@ -5,6 +5,7 @@ pytestmark = pytest.mark.no_database
 from scripts.wan_matrix import (
     cases,
     require_four_idle_service_workers,
+    required_cycles,
     verify_netbox_state,
     wan_nic_config,
 )
@@ -18,6 +19,12 @@ def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
         assert len(main)==16
         assert len({(case['product'],case['image'],case['plan']) for case in main})==16
         if category!='kvm':assert {case['image'] for case in main}=={'ubuntu-2404','almalinux-9'}
+
+
+def test_wan_matrix_repeats_kvm_combinations_four_times_for_64_vms():
+    assert required_cycles("kvm") == 4
+    assert required_cycles("services") == 2
+    assert required_cycles("agents") == 2
 
 
 def test_service_controls_cover_password_only_access():
@@ -59,18 +66,32 @@ def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
         require_four_idle_service_workers(busy)
 
 
-def test_wan_preflight_uses_only_current_almalinux_goldens():
+def test_wan_preflight_uses_only_dev_almalinux_candidates():
+    import json
+    from pathlib import Path
+
     import pytest
 
-    from scripts.wan_matrix import require_expected_golden_images
+    from scripts.wan_matrix import EXPECTED_ALMALINUX_IMAGES, require_expected_golden_images
+
+    repo = Path(__file__).parents[1]
+    production_catalog = json.loads((repo / "terraform/environments/mng01/catalog.json").read_text())
+    development_catalog = json.loads((repo / "terraform/environments/mng01/catalog-dev.json").read_text())
+    production_images = {image["image_id"]: image["template_vm_id"] for image in production_catalog["images"]}
+    development_images = {image["image_id"]: image["template_vm_id"] for image in development_catalog["images"]}
+    assert production_images["almalinux-9"] == 29010
+    assert production_images["almalinux-10"] == 29011
+    assert development_images["almalinux-9"] == 29016
+    assert development_images["almalinux-10"] == 29017
+    assert EXPECTED_ALMALINUX_IMAGES == {"almalinux-9": 29016, "almalinux-10": 29017}
 
     images = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
+        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
     ]
     inventory = [
         {"vmid": vmid, "node": "mng01"}
-        for vmid in (29010, 29011)
+        for vmid in (29016, 29017)
     ]
     assert require_expected_golden_images(
         images, inventory, lambda _node, _vmid: {"template": 1}
@@ -78,7 +99,7 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
 
     obsolete = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
+        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
     ]
     with pytest.raises(RuntimeError, match="GOLDEN_IMAGE_CATALOG_MISMATCH"):
         require_expected_golden_images(
@@ -89,6 +110,29 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
         require_expected_golden_images(
             images, inventory[:1], lambda _node, _vmid: {"template": 1}
         )
+
+
+def test_catalog_defaults_follow_runtime_stage(monkeypatch):
+    from pathlib import Path
+
+    from api.catalog import catalog_path
+    import api.targets as targets
+
+    repo = Path(__file__).parents[1]
+    monkeypatch.delenv("IACP_MNG_CATALOG", raising=False)
+    monkeypatch.setenv("IACP_DEFAULT_ENVIRONMENT", "lab")
+    monkeypatch.setenv("IACP_ENABLED_ENVIRONMENTS", "lab")
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "develop")
+    monkeypatch.setattr(targets, "_state_backend_ready", lambda: True)
+    monkeypatch.setattr(targets, "_lab_ready", lambda: True)
+    expected_dev = repo / "terraform/environments/mng01/catalog-dev.json"
+    assert catalog_path() == expected_dev
+    assert targets.catalog_path("lab") == expected_dev
+
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    expected_stable = repo / "terraform/environments/mng01/catalog.json"
+    assert catalog_path() == expected_stable
+    assert targets.catalog_path("lab") == expected_stable
 
 
 def test_wan_preflight_uses_only_netbox_available_addresses():
@@ -102,13 +146,13 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
             return "190.0.231.1"
 
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 8)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 9)]
 
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
         "available_count": 6,
-        "next_available": "190.0.231.2/24",
+        "next_available": "190.0.231.3/24",
     }
 
     class OccupiedFirstNetBox(NetBoxStub):
@@ -116,6 +160,14 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
             return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
 
     assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.3/24"
+
+    class ExcludedAddressReturnedByNetBox(NetBoxStub):
+        def available_addresses(self, _prefix):
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 9)]
+
+    state = verify_netbox_state(ExcludedAddressReturnedByNetBox())
+    assert state["next_available"] == "190.0.231.3/24"
+    assert state["available_count"] == 6
 
     class OutOfScopeNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
@@ -162,6 +214,10 @@ def test_compose_passes_wan_nic_settings_to_service_workers_without_proxmox_toke
 
     compose = yaml.safe_load(
         (Path(__file__).parents[1] / "deploy/portainer/docker-compose.yml").read_text()
+    )
+    assert compose["x-runtime-environment"]["IACP_MNG_CATALOG"] == "${IACP_MNG_CATALOG:-}"
+    assert compose["x-runtime-environment"]["IACP_NETBOX_EXCLUDED_ADDRESSES"] == (
+        "${IACP_NETBOX_EXCLUDED_ADDRESSES:-}"
     )
     for worker in ("service-worker-1", "service-worker-2", "service-worker-3", "service-worker-4"):
         environment = compose["services"][worker]["environment"]

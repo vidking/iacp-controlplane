@@ -227,6 +227,15 @@ ejecutaba `61ea3fbe01157c89061186ae1473787e5d0e1fb3`.
 | Sellado de 29016 y 29017 | PASS | Ambas VMs están detenidas y tienen `template: 1` y disco base en `DS_CYBERFUEL`. Se eliminaron las credenciales de preparación y se regeneró el disco cloud-init. Verificación en `/opt/iacp/evidence/almalinux-nuevas-preparacion-20261118T031925Z/confirmation.json`. |
 | Matriz física KVM WAN, ciclo 1 | BLOCKED | `NETBOX_IPAM_NOT_FOUND` antes de aprovisionar. El NetBox configurado respondió 404 para el prefijo ID 52 y la búsqueda por `190.0.231.0/24` devolvió cero resultados con la credencial del stack. Evidencia en `/opt/iacp/evidence/almalinux-nuevas-wan-kvm-ciclo1-20261118032630/results.jsonl`. |
 
+### Separación de catálogos — 2026-11-18
+
+El catálogo estable `catalog.json` mantiene 29010/29011. El stack de desarrollo
+selecciona `IACP_MNG_CATALOG=/app/terraform/environments/mng01/catalog-dev.json`,
+que apunta a las candidatas 29016/29017. No se reemplazarán las plantillas
+oficiales antes de terminar y revisar la certificación de desarrollo; la
+promoción posterior requiere una ventana y reversión coordinadas porque MNG es
+compartido.
+
 La imagen oficial traía deshabilitados los RPC que invocan y consultan la
 salida del helper. Las dos candidatas incorporan `guest-exec` y
 `guest-exec-status` en la lista permitida existente de Guest Agent. Las
@@ -268,3 +277,48 @@ deben recuperarse mediante el flujo controlado de la API antes de cualquier
 reintento. Esta corrección no certifica todavía las matrices KVM ni Nextcloud/n8n,
 no libera sus IP de NetBox y no modifica las Golden Images ni la configuración
 de producción.
+
+### Preparación por QEMU Guest Agent — 2026-11-18
+
+La fábrica ya no depende de acceso por consola o SSH antes de reparar paquetes
+ausentes. Inicia la candidata, comprueba QEMU Guest Agent, instala
+`cloud-init`, `iproute`, `openssh-server` y utilidades SELinux por ese canal,
+entrega una llave temporal y verifica un arranque limpio donde Cloud-Init
+termina y `ip -V` responde. El protocolo oficial de QEMU documenta `input-data`
+codificado en Base64 para suministrar stdin a procesos del guest:
+[QEMU Guest Agent reference](https://www.qemu.org/docs/master/interop/qemu-ga-ref).
+La contraseña temporal no se guarda en argumentos de proceso ni en evidencia.
+Antes de sellar se retiran la llave, el marcador temporal y el acceso de
+preparación, y se comprueba que SELinux continúe Enforcing. La ejecución física
+de este flujo todavía está pendiente.
+
+### Requisito de cloud-init en clones AlmaLinux — 2026-11-18
+
+La inspección de solo lectura de los clones WAN creados desde las imágenes AlmaLinux
+29010/29011 confirmó que faltaban tanto `cloud-init` como `iproute`. El worker
+depende de ambos contratos: Proxmox entrega la configuración NoCloud de red,
+credenciales y clave SSH, y las comprobaciones WAN usan `iproute2`. La fábrica
+ahora instala `cloud-init` además de `iproute`, habilita las cuatro etapas de
+systemd de cloud-init y exige que `cloud-init --version` e `ip -V` respondan antes
+de sellar una imagen. Una copia que no cumpla esas comprobaciones no se publica
+como Golden Image.
+
+La instalación mediante `dnf install cloud-init` y la habilitación del servicio
+siguen el procedimiento documentado por [Red Hat para imágenes personalizadas
+de RHEL 10](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/deploying_and_managing_rhel_on_amazon_web_services/deploying-a-rhel-instance-by-using-a-custom-base-image).
+La compatibilidad de los paquetes debe confirmarse en los repositorios habilitados
+de cada versión de AlmaLinux durante la preparación física.
+
+La corrección de la fábrica y sus pruebas son locales. No certifica aún las
+imágenes físicas 29010/29011 ni las matrices. La actualización de templates del
+clúster MNG queda detenida mientras el stack productivo registra operaciones
+activas que comparten el clúster; no se cambia el stack productivo ni se altera
+ninguna VM de cliente para preparar estas pruebas.
+
+La preparación parte de los templates actuales 29010/29011 y crea candidatas
+temporales 29016/29017. Después verifica paquetes, helper, SELinux y paridad de
+hardware. Este cambio no promueve ni elimina templates, y no crea copias de
+respaldo 29018/29019. La sustitución futura de 29010/29011 requiere un
+procedimiento operativo revisado, respaldo y ventana independiente, porque esos
+VMID también sirven al stack productivo. Si cualquiera de los stacks tiene
+actividad, se rechaza la preparación compartida.

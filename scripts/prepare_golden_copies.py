@@ -7,7 +7,7 @@ se conservan únicamente en un directorio privado del Control Plane.
 
 from __future__ import annotations
 import argparse
-import base64
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -15,12 +15,11 @@ import re
 import secrets
 import shlex
 import socket
-import ssl
 import subprocess
 import sys
 import time
 import uuid
-from urllib.parse import urlencode, quote
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from dotenv import dotenv_values
 
@@ -30,10 +29,22 @@ from worker.proxmox import ProxmoxClient, ProxmoxError
 from scripts.prepare_almalinux_bootstrap import prepare
 
 COPIES = {
-    9: {"source": 29016, "target": 29010},
-    10: {"source": 29017, "target": 29011},
+    9: {"source": 29010, "target": 29016},
+    10: {"source": 29011, "target": 29017},
 }
-BASE_PACKAGES = ("policycoreutils-python-utils", "iproute")
+BASE_PACKAGES = (
+    "policycoreutils-python-utils",
+    "iproute",
+    "cloud-init",
+    "openssh-server",
+)
+CLOUD_INIT_SERVICES = (
+    "cloud-init-local.service",
+    "cloud-init.service",
+    "cloud-config.service",
+    "cloud-final.service",
+)
+GUEST_BOOTSTRAP_CHECKS = (("cloud-init", "--version"), ("ip", "-V"))
 PROTECTED_BASE_VMIDS = {
     104,
     106,
@@ -46,6 +57,7 @@ PROTECTED_BASE_VMIDS = {
 }
 REFERENCE_VM_ID = 29000
 REFERENCE_NAME = "iacp-ubuntu-2404-golden"
+PRODUCTION_API_CONTAINER = "iacp-controlplane-prod-v1-api-1"
 GOLDEN_HARDWARE = {
     "bios": "ovmf",
     "machine": "q35",
@@ -139,7 +151,7 @@ def remote_command(argv):
     return shlex.join([str(argument) for argument in argv])
 
 
-def align_hardware(client, vmid, name, reference):
+def align_hardware(client, vmid, name, reference, *, version):
     config = client.vm_config("mng01", vmid)
     if config.get("name") != name or config.get("template", 0):
         raise RuntimeError("GOLDEN_CANDIDATE_IDENTITY_MISMATCH")
@@ -219,15 +231,14 @@ def align_hardware(client, vmid, name, reference):
     if config.get("name") != name:
         parameters["name"] = name
     desired_tags = {
-        "golden-image",
         "iacp",
-        f"almalinux-{9 if vmid == 29010 else 10}",
-        "v20261118",
+        f"almalinux-{version}",
+        "bootstrap-candidate",
     }
     current_tags = set(filter(None, str(config.get("tags", "")).split(";")))
     if current_tags != desired_tags:
         parameters["tags"] = ";".join(sorted(desired_tags))
-    description = "Golden Image AlmaLinux alineada con el hardware Ubuntu 29000"
+    description = "Candidata AlmaLinux para validacion antes de reemplazar su template"
     if config.get("description") != description:
         parameters["description"] = description
 
@@ -280,6 +291,52 @@ def wait_task(client, task, timeout=900):
             return
         time.sleep(2)
     raise RuntimeError("GOLDEN_TASK_TIMEOUT")
+
+
+def assert_runtime_idle(state):
+    """Fail closed unless six workers and all operations are idle."""
+    workers = state.get("workers") or []
+    if (
+        state.get("active_operations") != 0
+        or state.get("queue_depth") != 0
+        or state.get("uncertain_operations") != 0
+        or len(workers) != 6
+        or any(
+            worker.get("status") != "idle"
+            or worker.get("liveness") != "healthy"
+            or worker.get("current_operation_id")
+            for worker in workers
+        )
+    ):
+        raise RuntimeError("GOLDEN_RUNTIME_NOT_IDLE")
+
+
+def guest_interface_name(interfaces, mac):
+    matches = [
+        interface
+        for interface in interfaces
+        if str(interface.get("hardware-address", "")).lower() == mac.lower()
+    ]
+    if (
+        len(matches) != 1
+        or not isinstance(matches[0].get("name"), str)
+        or not matches[0]["name"].strip()
+    ):
+        raise RuntimeError("GOLDEN_GUEST_NIC_NOT_FOUND")
+    return matches[0]["name"]
+
+
+def usable_guest_ipv4(value):
+    try:
+        address = ipaddress.ip_address(str(value))
+    except ValueError:
+        return False
+    return address.version == 4 and not (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_unspecified
+    )
 
 
 class Factory:
@@ -352,15 +409,7 @@ class Factory:
         )
         with urlopen(request, timeout=30) as f:
             state = json.load(f)
-        assert (
-            state["active_operations"] == 0
-            and state["queue_depth"] == 0
-            and state["uncertain_operations"] == 0
-        )
-        assert len(state["workers"]) == 6 and all(
-            w["status"] == "idle" and w["liveness"] == "healthy"
-            for w in state["workers"]
-        )
+        assert_runtime_idle(state)
         service_request = Request(
             "https://dev-iac.cyberfuel.com/v1/service-workers",
             headers={"Authorization": "Bearer " + self.env["IACP_API_TOKEN"]},
@@ -371,6 +420,34 @@ class Factory:
             w["status"] == "idle" and w["job_id"] is None
             for w in service_state["workers"]
         )
+
+        # Dev and production share MNG templates. Query production from its
+        # private in-network API container so an active production clone or
+        # lifecycle job blocks any shared-template preparation.
+        code = (
+            "import json,os,urllib.request; "
+            "r=urllib.request.Request('http://127.0.0.1:8080/v1/observability', "
+            "headers={'Authorization':'Bearer '+os.environ['IACP_API_TOKEN']}); "
+            "d=json.load(urllib.request.urlopen(r,timeout=15)); "
+            "w=[{'status':x.get('status'),'liveness':x.get('liveness'),"
+            "'current_operation_id':x.get('current_operation_id')} "
+            "for x in d.get('workers',[])]; "
+            "print(json.dumps({k:d.get(k) for k in "
+            "('active_operations','queue_depth','uncertain_operations')} | "
+            "{'workers':w}))"
+        )
+        production = subprocess.run(
+            ["docker", "exec", PRODUCTION_API_CONTAINER, "python", "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if production.returncode != 0:
+            raise RuntimeError("GOLDEN_PRODUCTION_OBSERVABILITY_UNAVAILABLE")
+        try:
+            assert_runtime_idle(json.loads(production.stdout))
+        except (json.JSONDecodeError, RuntimeError):
+            raise RuntimeError("GOLDEN_PRODUCTION_NOT_IDLE") from None
 
     def wait(self, task, timeout=900):
         return wait_task(self.client, task, timeout)
@@ -409,6 +486,7 @@ class Factory:
                     if interface.get("hardware-address", "").lower() == mac
                     for a in interface.get("ip-addresses", [])
                     if a.get("ip-address-type") == "ipv4"
+                    and usable_guest_ipv4(a.get("ip-address"))
                 ]
                 if len(set(values)) == 1:
                     return values[0]
@@ -417,80 +495,51 @@ class Factory:
             time.sleep(2)
         raise RuntimeError("FACTORY_DHCP_NOT_READY")
 
-    def console_key(self, item, password):
-        from websockets.sync.client import connect
-
-        proxy = self.client.post(
-            "/nodes/mng01/qemu/" + str(item["vmid"]) + "/termproxy",
-            {"serial": "serial0"},
+    def qga(self, vmid, argv, *, input_data=None, timeout=600):
+        result = self.client.guest_agent_exec(
+            "mng01", vmid, argv, input_data=input_data
         )
-        uri = (
-            "wss://mng01.cyberfuel.com:8006/api2/json/nodes/mng01/qemu/"
-            + str(item["vmid"])
-            + "/vncwebsocket?"
-            + urlencode({"port": proxy["port"], "vncticket": proxy["ticket"]})
+        pid = result.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            raise RuntimeError("FACTORY_GUEST_EXEC_PID_INVALID")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = self.client.guest_agent_exec_status("mng01", vmid, pid)
+            if status.get("exited"):
+                if status.get("exitcode") != 0:
+                    raise RuntimeError("FACTORY_GUEST_EXEC_FAILED")
+                return status.get("out-data", "")
+            time.sleep(2)
+        raise RuntimeError("FACTORY_GUEST_EXEC_TIMEOUT")
+
+    def wait_guest_agent(self, vmid, timeout=180):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if self.client.guest_agent_info("mng01", vmid):
+                    return
+            except ProxmoxError:
+                pass
+            time.sleep(2)
+        raise RuntimeError("FACTORY_GUEST_AGENT_UNAVAILABLE")
+
+    def ensure_initial_dhcp(self, vmid, mac):
+        interfaces = self.client.guest_agent_interfaces("mng01", vmid)
+        interface_name = guest_interface_name(interfaces, mac)
+        has_ipv4 = any(
+            entry.get("ip-address-type") == "ipv4"
+            and usable_guest_ipv4(entry.get("ip-address"))
+            for interface in interfaces
+            if str(interface.get("hardware-address", "")).lower() == mac.lower()
+            for entry in interface.get("ip-addresses", [])
         )
-        headers = {
-            "Authorization": "PVEAPIToken=" + self.env["IACP_PROXMOX_MNG_API_TOKEN"]
-        }
-        with connect(
-            uri,
-            ssl=ssl.create_default_context(),
-            subprotocols=["binary"],
-            additional_headers=headers,
-            proxy=None,
-            open_timeout=20,
-        ) as ws:
-            ws.send(proxy["user"] + ":" + proxy["ticket"] + "\n")
-            first = ws.recv(timeout=20)
-            first = first.encode() if isinstance(first, str) else first
-            if not first.startswith(b"OK"):
-                raise RuntimeError("FACTORY_CONSOLE_AUTH_FAILED")
-
-            def send(value):
-                ws.send("0:" + str(len(value.encode())) + ":" + value)
-
-            def expect(pattern, timeout=120):
-                data = b""
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    try:
-                        value = ws.recv(
-                            timeout=min(10, max(0.1, deadline - time.monotonic()))
-                        )
-                    except TimeoutError:
-                        ws.send("2")
-                        continue
-                    data += value.encode() if isinstance(value, str) else value
-                    match = re.search(pattern, data)
-                    if match:
-                        return match
-                    data = data[-65536:]
-                raise RuntimeError("FACTORY_CONSOLE_PROMPT_TIMEOUT")
-
-            send("\r")
-            expect(rb"login:\s*$")
-            send("root\r")
-            expect(rb"[Pp]assword:\s*$")
-            send(password + "\r")
-            expect(rb"[#]\s")
-            send("stty -echo\r")
-            nonce = uuid.uuid4().hex
-            send(
-                "printf 'IACP_"
-                + nonce
-                + ":'; base64 -w0 /etc/ssh/ssh_host_ed25519_key.pub; printf ':END_"
-                + nonce
-                + "\\n'\r"
+        if not has_ipv4:
+            self.qga(
+                vmid,
+                ["/usr/bin/nmcli", "device", "connect", interface_name],
+                timeout=180,
             )
-            match = expect(
-                ("IACP_" + nonce + ":([A-Za-z0-9+/=]+):END_" + nonce).encode(), 30
-            )
-            key = base64.b64decode(match.group(1)).decode().split()
-            if len(key) < 2 or key[0] != "ssh-ed25519":
-                raise RuntimeError("FACTORY_HOST_KEY_INVALID")
-            send("stty echo; exit\r")
-            return " ".join(key[:2])
+        return self.addresses(vmid, mac)
 
     def prepare_copy(self, version):
         source = COPIES[version]["source"]
@@ -513,7 +562,8 @@ class Factory:
         item = {
             "vmid": vmid,
             "source": source,
-            "name": f"iacp-almalinux-{version}-golden",
+            "name": f"iacp-almalinux-{version}-candidate",
+            "official_name": f"iacp-almalinux-{version}-golden",
             "phase": "clone_requested",
             "source_public": public,
         }
@@ -565,15 +615,14 @@ class Factory:
         mac = current["net0"].split(",")[0].split("=", 1)[1].lower()
         item["mac"] = mac
         self.set_phase("alinear_hardware_con_ubuntu_29000", vmid)
-        align_hardware(self.client, vmid, item["name"], reference)
+        align_hardware(
+            self.client, vmid, item["name"], reference, version=version
+        )
         item["hardware_signature"] = hardware_signature(reference)
         item["phase"] = "hardware_aligned"
         self.save()
         password = secrets.token_urlsafe(40) + "Aa9!"
-        private = self.folder / ("console-password-" + str(vmid))
-        private.write_text(password)
-        private.chmod(0o600)
-        self.set_phase("configurar_acceso_cloudinit", vmid)
+        self.set_phase("configurar_semilla_cloudinit", vmid)
         self.client.put(
             "/nodes/mng01/qemu/" + str(vmid) + "/config",
             {
@@ -589,12 +638,37 @@ class Factory:
         item["phase"] = "configured"
         self.save()
         self.wait(self.client.post("/nodes/mng01/qemu/" + str(vmid) + "/status/start"))
-        self.event("validar_consola_confiable", vmid)
-        hostkey = self.console_key(item, password)
+        self.event("esperar_agente_de_invitado", vmid)
+        self.wait_guest_agent(vmid)
+        item["address"] = self.ensure_initial_dhcp(vmid, mac)
+        self.event("instalar_prerrequisitos_por_agente", vmid)
+        self.qga(
+            vmid,
+            ["/usr/bin/dnf", "-y", "install", *BASE_PACKAGES],
+            timeout=900,
+        )
+        self.qga(vmid, ["/usr/sbin/chpasswd"], input_data=f"root:{password}\n")
+        self.qga(vmid, ["/usr/bin/install", "-d", "-m", "0700", "/root/.ssh"])
+        self.qga(
+            vmid,
+            ["/usr/bin/tee", "/root/.ssh/authorized_keys"],
+            input_data=self.public + "\n",
+        )
+        self.qga(vmid, ["/usr/bin/chmod", "0600", "/root/.ssh/authorized_keys"])
+        self.qga(vmid, ["/usr/sbin/restorecon", "-RF", "/root/.ssh"])
+        self.qga(vmid, ["/usr/bin/ssh-keygen", "-A"])
+        self.qga(vmid, ["/usr/bin/systemctl", "enable", "--now", "sshd"])
+        hostkey = self.qga(
+            vmid,
+            ["/usr/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"],
+        ).strip()
+        if not hostkey.startswith("ssh-ed25519 "):
+            raise RuntimeError("FACTORY_HOST_KEY_INVALID")
         item["address"] = self.addresses(vmid, mac)
         known = self.folder / ("known-" + str(vmid))
         known.write_text(item["address"] + " " + hostkey + "\n")
         known.chmod(0o600)
+        self.event("validar_ssh_de_candidata", vmid)
         assert self.ssh(item, ["getenforce"]).stdout.strip() == "Enforcing"
         item["phase"] = "ssh_pinned"
         self.save()
@@ -622,8 +696,75 @@ class Factory:
         hostkey = " ".join(known.read_text().strip().split()[1:])
         assert hostkey.startswith("ssh-ed25519 ")
         known.write_text(item["address"] + " " + hostkey + "\n")
+        known.chmod(0o600)
         assert self.ssh(item, ["getenforce"]).stdout.strip() == "Enforcing"
         self.finish_copy(version, item)
+
+    def _write_guest_file(self, vmid, path, content, mode):
+        self.qga(vmid, ["/usr/bin/tee", path], input_data=content)
+        self.qga(vmid, ["/usr/bin/chmod", mode, path])
+
+    def _verify_cloud_init_boot(self, item):
+        vmid = item["vmid"]
+        self.event("verificar_cloud_init_en_arranque_limpio", vmid)
+        self.qga(vmid, ["/usr/bin/cloud-init", "clean", "--logs", "--machine-id"])
+        self.qga(vmid, ["/usr/bin/systemctl", "poweroff"], timeout=60)
+        for _ in range(90):
+            state = self.client.get(
+                "/nodes/mng01/qemu/" + str(vmid) + "/status/current"
+            )
+            if state.get("status") == "stopped":
+                break
+            time.sleep(2)
+        if state.get("status") != "stopped":
+            raise RuntimeError("FACTORY_CLOUD_INIT_REBOOT_FAILED")
+        self.wait(
+            self.client.post("/nodes/mng01/qemu/" + str(vmid) + "/status/start")
+        )
+        self.wait_guest_agent(vmid)
+        result = self.qga(
+            vmid,
+            ["/usr/bin/cloud-init", "status", "--wait", "--long", "--format", "json"],
+            timeout=300,
+        )
+        try:
+            cloud_state = json.loads(result)
+        except json.JSONDecodeError:
+            raise RuntimeError("FACTORY_CLOUD_INIT_STATUS_INVALID") from None
+        if cloud_state.get("status") != "done":
+            raise RuntimeError("FACTORY_CLOUD_INIT_NOT_DONE")
+        instance_id = self.qga(vmid, ["/usr/bin/cloud-init", "query", "instance_id"])
+        if not instance_id.strip():
+            raise RuntimeError("FACTORY_CLOUD_INIT_INSTANCE_ID_MISSING")
+        self.qga(vmid, ["/usr/sbin/ip", "-V"])
+        for unit in CLOUD_INIT_SERVICES:
+            self.qga(vmid, ["/usr/bin/systemctl", "is-enabled", unit])
+        item["address"] = self.addresses(vmid, item["mac"])
+        known = self.folder / ("known-" + str(vmid))
+        hostkey = " ".join(known.read_text().strip().split()[1:])
+        known.write_text(item["address"] + " " + hostkey + "\n")
+        known.chmod(0o600)
+        assert self.ssh(item, ["getenforce"]).stdout.strip() == "Enforcing"
+        self.qga(vmid, ["/usr/bin/cloud-init", "clean", "--logs", "--machine-id"])
+        item["cloud_init_verified"] = True
+        self.save()
+
+    def _cleanup_guest(self, vmid):
+        cleanup = (
+            "set -e; rm -rf /var/lib/iacp /root/iacp-bootstrap-package; "
+            "rm -f /root/.ssh/authorized_keys /etc/ssh/ssh_host_* "
+            "/var/lib/NetworkManager/*lease* /var/lib/NetworkManager/secret_key; "
+            "passwd -l root >/dev/null; cloud-init clean --logs --machine-id; "
+            "printf 'IACP_FACTORY_CLEAN_OK\\n' > /.iacp-factory-clean"
+        )
+        self.qga(vmid, ["/bin/bash", "-c", cleanup])
+        marker = self.client.guest_agent_file_read(
+            "mng01", vmid, "/.iacp-factory-clean"
+        )
+        if marker.get("content", "").strip() != "IACP_FACTORY_CLEAN_OK":
+            raise RuntimeError("FACTORY_CLEANUP_UNCONFIRMED")
+        self.qga(vmid, ["/usr/bin/rm", "-f", "/.iacp-factory-clean"])
+        self.qga(vmid, ["/usr/bin/systemctl", "poweroff"], timeout=60)
 
     def finish_copy(self, version, item):
         source = COPIES[version]["source"]
@@ -632,31 +773,26 @@ class Factory:
         public = item["source_public"]
         known = self.folder / ("known-" + str(vmid))
         hostkey = " ".join(known.read_text().strip().split()[1:])
-        private = self.folder / ("console-password-" + str(vmid))
         self.event("instalar_bootstrap_fijo", vmid)
-        self.ssh(item, ["test", "-d", "/sys/firmware/efi"])
-        self.ssh(item, ["systemctl", "is-active", "qemu-guest-agent"])
-        self.ssh(item, ["test", "-e", "/sys/bus/pci/drivers/virtio-pci"])
-        self.ssh(item, ["test", "-e", "/sys/bus/scsi/devices"])
-        self.ssh(item, ["dnf", "-y", "install", *BASE_PACKAGES])
-        # El bootstrap y la prevalidación WAN consultan interfaces, rutas y
-        # vecinos mediante iproute2. No activar esta copia en el catálogo si
-        # el comando no quedó disponible dentro del guest.
-        self.ssh(item, ["ip", "-V"])
-        self.ssh(item, ["mkdir", "-p", "/root/iacp-bootstrap-package"])
+        self.qga(vmid, ["/usr/bin/test", "-d", "/sys/firmware/efi"])
+        self.qga(vmid, ["/usr/bin/systemctl", "is-active", "qemu-guest-agent"])
+        self.qga(vmid, ["/usr/bin/test", "-e", "/sys/bus/pci/drivers/virtio-pci"])
+        self.qga(vmid, ["/usr/bin/test", "-e", "/sys/bus/scsi/devices"])
+        self.qga(vmid, ["/usr/bin/systemctl", "enable", *CLOUD_INIT_SERVICES])
+        for unit in CLOUD_INIT_SERVICES:
+            self.qga(vmid, ["/usr/bin/systemctl", "is-enabled", unit])
+        for check in GUEST_BOOTSTRAP_CHECKS:
+            self.qga(vmid, list(check))
+        self.qga(vmid, ["/usr/bin/mkdir", "-p", "/root/iacp-bootstrap-package"])
         for name in ["iacp-guest-bootstrap", "manifest.json", "install.sh"]:
             content = (self.bundle / name).read_text()
-            self.ssh(
-                item,
-                [
-                    "sh",
-                    "-c",
-                    "umask 077; cat > "
-                    + shlex.quote("/root/iacp-bootstrap-package/" + name),
-                ],
-                input=content,
+            self._write_guest_file(
+                vmid,
+                "/root/iacp-bootstrap-package/" + name,
+                content,
+                "0755" if name == "iacp-guest-bootstrap" else "0600",
             )
-        self.ssh(item, ["bash", "/root/iacp-bootstrap-package/install.sh"])
+        self.qga(vmid, ["/usr/bin/bash", "/root/iacp-bootstrap-package/install.sh"])
         identifier = item.get("helper_identifier") or str(uuid.uuid4())
         item["helper_identifier"] = identifier
         self.save()
@@ -698,14 +834,13 @@ class Factory:
         ]
         item["address"] = self.addresses(vmid, mac)
         known.write_text(item["address"] + " " + hostkey + "\n")
+        known.chmod(0o600)
         assert self.ssh(item, ["getenforce"]).stdout.strip() == "Enforcing"
         item["phase"] = "helper_verified"
         self.save()
         self.event("helper_verificado_selinux_enforcing", vmid)
-        # Una sola sesión confiable: retirar credenciales de fábrica antes de apagar.
-        cleanup = "set -e; rm -rf /var/lib/iacp /root/iacp-bootstrap-package; rm -f /root/.ssh/authorized_keys; passwd -l root >/dev/null; cloud-init clean --logs --machine-id; rm -f /etc/ssh/ssh_host_* /var/lib/NetworkManager/*lease* /var/lib/NetworkManager/secret_key; printf 'IACP_FACTORY_CLEAN_OK\\n'; systemctl poweroff"
-        cleaned = self.ssh(item, ["sh", "-c", cleanup], check=False)
-        assert "IACP_FACTORY_CLEAN_OK" in cleaned.stdout, "FACTORY_CLEANUP_UNCONFIRMED"
+        self._verify_cloud_init_boot(item)
+        self._cleanup_guest(vmid)
         for _ in range(90):
             state = self.client.get(
                 "/nodes/mng01/qemu/" + str(vmid) + "/status/current"
@@ -716,7 +851,7 @@ class Factory:
         assert state.get("status") == "stopped"
         self.client.put(
             "/nodes/mng01/qemu/" + str(vmid) + "/config",
-            {"delete": "cipassword,sshkeys"},
+            {"delete": "cipassword,sshkeys,nameserver"},
         )
         task = self.client.post("/nodes/mng01/qemu/" + str(vmid) + "/template")
         if isinstance(task, str):
@@ -728,11 +863,11 @@ class Factory:
         after = self.client.vm_config("mng01", source)
         assert {key: after.get(key) for key in public} == public, "SOURCE_IMAGE_CHANGED"
         item["phase"] = "template_ready"
+        item["cloud_init_verified"] = True
         item["helper_sha256"] = json.loads((self.bundle / "manifest.json").read_text())["helper_sha256"]
         self.state.pop("result", None)
         self.state.pop("error_type", None)
         self.save()
-        private.unlink()
         self.key.unlink(missing_ok=True)
         self.key.with_suffix(".pub").unlink(missing_ok=True)
         known.unlink(missing_ok=True)

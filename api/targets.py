@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from api.catalog import catalog_path as mng_catalog_path
+
 
 class EnvironmentError(ValueError):
     """Error seguro de configuración o disponibilidad de un entorno."""
@@ -135,8 +137,7 @@ def _lab_ready() -> bool:
     credential_file = os.getenv("IACP_PROXMOX_MNG_CREDENTIALS_FILE", "/run/secrets/proxmox_credentials")
     terraform_root = Path(os.getenv("IACP_TERRAFORM_PATH", "/app/terraform"))
     terraform_dir = os.getenv("IACP_TERRAFORM_MNG_DIR", "environments/mng01")
-    default_catalog = Path(__file__).resolve().parent.parent / "terraform" / "environments" / "mng01" / "catalog.json"
-    catalog = os.getenv("IACP_MNG_CATALOG", str(default_catalog))
+    catalog = str(mng_catalog_path())
     return bool(
         _state_backend_ready()
         and _valid_proxmox_credentials(endpoint, token, credential_file)
@@ -234,8 +235,7 @@ def terraform_target_for_environment(environment: str) -> str:
 def catalog_path(environment: str | None = None) -> Path:
     selected = resolve_environment(environment)
     if selected == "lab":
-        default = Path(__file__).resolve().parent.parent / "terraform" / "environments" / "mng01" / "catalog.json"
-        return Path(os.getenv("IACP_MNG_CATALOG", str(default)))
+        return mng_catalog_path()
 
     configured = os.getenv("IACP_PRX_CATALOG", "").strip()
     if not configured:
