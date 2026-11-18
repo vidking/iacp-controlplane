@@ -8,7 +8,11 @@ from api.db import database, initialize
 from api.service import now
 from api.service_catalog import enabled
 from api.protection import is_protected_vmid
-from worker.service_executor import execute, ServiceBlocked
+from worker.service_executor import (
+    execute,
+    ServiceBlocked,
+    ServiceExecutionUncertain,
+)
 
 
 def event(db, job_id, phase, status):
@@ -128,6 +132,8 @@ def process(worker_id, job):
         execute(dict(service), job, lambda: heartbeat(worker_id, job))
     except ServiceBlocked as exc:
         status, error = "blocked", str(exc)
+    except ServiceExecutionUncertain as exc:
+        status, error = "uncertain", exc.code
     except Exception:
         status, error = "uncertain", "SERVICE_EXECUTION_UNCERTAIN"
     with database() as db:

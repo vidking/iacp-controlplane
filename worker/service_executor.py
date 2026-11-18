@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 from api.service_secrets import decrypt
 from worker.service_recipes import render, RecipeError
+from worker.service_diagnostics import (
+    ServiceExecutionUncertain,
+    safe_execution_error,
+)
 
 
 class ServiceBlocked(RuntimeError):
@@ -485,10 +489,17 @@ def execute(service, job, heartbeat):
         environment.update(
             ANSIBLE_LOCAL_TEMP=str(folder / "ansible"),
             ANSIBLE_SSH_CONTROL_PATH_DIR=str(folder / "ssh"),
+            ANSIBLE_CALLBACK_PLUGINS=str(
+                Path(__file__).resolve().parent / "ansible_callbacks"
+            ),
+            ANSIBLE_STDOUT_CALLBACK="iacp_safe_summary",
+            ANSIBLE_LOAD_CALLBACK_PLUGINS="1",
             ANSIBLE_HOST_KEY_CHECKING="True",
             ANSIBLE_NOCOLOR="1",
         )
-        with open(os.devnull, "w") as output:
+        summary_path = folder / "safe-ansible-events.log"
+        with summary_path.open("w", encoding="utf-8") as output:
+            summary_path.chmod(0o600)
             process = subprocess.Popen(
                 [
                     sys.executable,
@@ -500,20 +511,20 @@ def execute(service, job, heartbeat):
                 ],
                 env=environment,
                 stdout=output,
-                stderr=output,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
             import time
 
             started = time.monotonic()
+            timed_out = False
             try:
                 while process.poll() is None:
                     heartbeat()
                     if time.monotonic() - started > 1800:
-                        raise RuntimeError("SERVICE_EXECUTION_UNCERTAIN")
+                        timed_out = True
+                        break
                     time.sleep(2)
-                if process.returncode:
-                    raise RuntimeError("SERVICE_EXECUTION_UNCERTAIN")
             finally:
                 if process.poll() is None:
                     import signal
@@ -524,3 +535,12 @@ def execute(service, job, heartbeat):
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
+            output.flush()
+            if timed_out or process.returncode:
+                raise ServiceExecutionUncertain(
+                    safe_execution_error(
+                        summary_path.read_text(encoding="utf-8", errors="replace"),
+                        return_code=process.returncode,
+                        timed_out=timed_out,
+                    )
+                )

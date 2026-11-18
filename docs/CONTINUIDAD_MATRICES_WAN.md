@@ -90,6 +90,43 @@ Su clave privada no debe salir del Control Plane. La modalidad web por IP usa es
 CA y exige validación TLS. Los agentes usan `agent_mode=local`: no se certifican
 inferencia, Telegram ni proveedores externos.
 
+### Resultados recientes — 2026-11-17
+
+El equipo de redes confirmó que el enlace WAN temporal debe conectarse en
+`vmbr3` sin tag de Proxmox; VLAN 211 ya viene etiquetada desde la capa superior.
+El perfil `prod_static` de dev coincide con esa configuración. La confirmación
+no cambia el resultado del sondeo aislado de `190.0.231.2`: con la NIC en
+`vmbr3` sin tag, la VM no resolvió por ARP `190.0.231.1`. El caso terminó
+`STATIC_GATEWAY_UNREACHABLE`; la VM se eliminó por la API, la reserva se liberó y
+Proxmox confirmó la ausencia del recurso. No se certifica WAN ni se avanza a
+otra IP mientras el caso siga sin explicación de red. Revisión ejecutada:
+`08b57946bb41a080cb9523b28d1f0caf2a30fd60`. Evidencia privada:
+`/opt/iacp/evidence/wan-gateway-probe-08b57946bb41a080cb9523b28d1f0caf2a30fd60/`.
+
+El ciclo LAN 1 `202611172314`, revisión `08b57946bb41a080cb9523b28d1f0caf2a30fd60`,
+quedó `BLOCKED`, no aprobado. Doce casos completaron el ciclo de vida y
+verificaciones de extremo a extremo. En el lote final se instalaron cuatro
+combinaciones n8n/AlmaLinux 9 y el control de contraseña sin llave; no se
+completaron sus verificaciones de extremo a extremo. El control Nextcloud sin
+llave SSH quedó `uncertain` durante ejecución Ansible. El job de servicios se
+canceló solo después de confirmar que el worker había terminado; se preservó el
+fallo en la evidencia. Las seis VMs del lote se apagaron y eliminaron por la API;
+se verificó que no quedaran VMID ni operación activa/incierta y los cuatro
+workers de servicios y seis de infraestructura quedaron idle. DHCP no usa
+reservas NetBox. Evidencia privada:
+`/opt/iacp/evidence/lan-servicios-ciclo1-202611172314/`.
+
+La revisión candidata actual incorpora un callback Ansible de salida segura. El
+job conserva solo un código de una lista fija, por ejemplo
+`ANSIBLE_FAILED_NEXTCLOUD_INSTALL` o `ANSIBLE_FAILED_DOCKER_DEPENDENCIES`; no
+persiste la salida de Ansible ni valores de tareas. Tras validar y desplegar
+esta revisión únicamente en dev, repetir primero el ciclo LAN 1 con un nuevo
+directorio de evidencia para obtener el diagnóstico del caso fallido y cerrar
+los cinco casos aún sin verificación. Después de un ciclo completo `PASS`,
+continuar con LAN ciclo 2. WAN sigue bloqueado por la resolución ARP de `.2`;
+solicitar al equipo de redes revisar la conectividad de gateway/vecino para ese
+segmento antes de reintentar.
+
 Solo preparar promoción a `main` al aprobar ambos ciclos de cada categoría,
 recuperación y limpieza. Reutilizar la imagen inmutable certificada y ajustar
 únicamente la configuración productiva, incluida WAN exclusiva. No fusionar ni

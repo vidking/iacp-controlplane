@@ -163,6 +163,120 @@ def test_pool_claims_and_blocked_execution(client):
     assert client.get(f"/v1/service-jobs/{job['job_id']}").json()["status"] == "blocked"
 
 
+def test_service_execution_failure_keeps_only_safe_diagnostic(client, monkeypatch):
+    from worker.service_diagnostics import ServiceExecutionUncertain
+
+    order = create(client)
+    ready(order["instance_id"])
+    job = services.claim("diagnostic-worker")
+
+    def fail(*_args):
+        raise ServiceExecutionUncertain(
+            "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_NEXTCLOUD_INSTALL"
+        )
+
+    monkeypatch.setattr(services, "execute", fail)
+    services.process("diagnostic-worker", job)
+    result = client.get(f"/v1/service-jobs/{job['job_id']}")
+    assert result.json()["status"] == "uncertain"
+    assert result.json()["error"] == (
+        "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_NEXTCLOUD_INSTALL"
+    )
+
+
+def test_safe_ansible_error_parser_never_returns_raw_output():
+    from worker.service_diagnostics import safe_execution_error
+
+    error = safe_execution_error(
+        "IACP_TASK:APPLICATION_START\n"
+        "IACP_FAILED:NEXTCLOUD_INSTALL\n"
+        "token=private-value\n",
+        return_code=2,
+    )
+    assert error == "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_NEXTCLOUD_INSTALL"
+    assert "private-value" not in error
+
+
+def test_safe_ansible_timeout_reports_last_allowlisted_task():
+    from worker.service_diagnostics import safe_execution_error
+
+    error = safe_execution_error(
+        "IACP_TASK:DOCKER_DEPENDENCIES\n", return_code=-15, timed_out=True
+    )
+    assert error == "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_TIMEOUT_DOCKER_DEPENDENCIES"
+
+
+def test_ansible_safe_callback_reports_redacted_failure_event(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    from worker.service_diagnostics import safe_execution_error
+
+    callback_dir = Path(__file__).parents[1] / "worker" / "ansible_callbacks"
+    playbook = tmp_path / "failed-playbook.json"
+    playbook.write_text(
+        json.dumps(
+            [
+                {
+                    "hosts": "localhost",
+                    "connection": "local",
+                    "gather_facts": False,
+                    "tasks": [
+                        {
+                            "name": "Instalar dependencias de Ubuntu",
+                            "ansible.builtin.command": {
+                                "argv": [
+                                    "/bin/sh",
+                                    "-c",
+                                    "echo token-de-prueba; exit 1",
+                                ]
+                            },
+                            "no_log": True,
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "ANSIBLE_LOCAL_TEMP": str(tmp_path / "ansible"),
+        "ANSIBLE_CALLBACK_PLUGINS": str(callback_dir),
+        "ANSIBLE_STDOUT_CALLBACK": "iacp_safe_summary",
+        "ANSIBLE_LOAD_CALLBACK_PLUGINS": "1",
+        "ANSIBLE_NOCOLOR": "1",
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ansible.cli.playbook",
+            "-i",
+            "localhost,",
+            str(playbook),
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    lines = result.stdout.splitlines()
+    assert lines[0] == "IACP_TASK:DOCKER_DEPENDENCIES"
+    assert len(lines) == 2
+    assert lines[1] in {
+        "IACP_FAILED:DOCKER_DEPENDENCIES",
+        "IACP_UNREACHABLE:DOCKER_DEPENDENCIES",
+    }
+    assert "token-de-prueba" not in result.stdout + result.stderr
+    event_type = "UNREACHABLE" if "UNREACHABLE" in lines[1] else "FAILED"
+    assert safe_execution_error(result.stdout, return_code=result.returncode) == (
+        f"SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_{event_type}_DOCKER_DEPENDENCIES"
+    )
+
+
 def test_recovery_requires_explicit_stop_and_generation_changes(client):
     order = create(client)
     ready(order["instance_id"])
@@ -309,8 +423,15 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
         def __init__(self, args, **kwargs):
             from pathlib import Path
             control = Path(kwargs["env"]["ANSIBLE_SSH_CONTROL_PATH_DIR"])
+            callback_dir = Path(kwargs["env"]["ANSIBLE_CALLBACK_PLUGINS"])
             assert control.parent == Path(kwargs["env"]["ANSIBLE_LOCAL_TEMP"]).parent
             assert control.parent.is_dir()
+            assert callback_dir == (
+                Path(service_executor.__file__).resolve().parent
+                / "ansible_callbacks"
+            )
+            assert kwargs["env"]["ANSIBLE_STDOUT_CALLBACK"] == "iacp_safe_summary"
+            assert kwargs["env"]["ANSIBLE_LOAD_CALLBACK_PLUGINS"] == "1"
             playbook = json.loads((control.parent / "playbook.json").read_text())
             assert playbook[0]["gather_facts"] is False
             assert playbook[0]["pre_tasks"] == [
