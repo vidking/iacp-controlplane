@@ -276,6 +276,52 @@ def test_wait_service_retries_known_startup_failure_after_worker_release(monkeyp
     )
 
 
+def test_wait_service_retries_initial_ssh_failure_after_worker_release(monkeypatch):
+    import scripts.wan_matrix as wan_matrix
+
+    matrix = object.__new__(wan_matrix.Matrix)
+    job_id = "ssh-connectivity-job"
+    states = iter(
+        [
+            {
+                "job_id": job_id,
+                "status": "failed",
+                "error": "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SSH_CONNECTIVITY",
+                "worker_id": "service-worker-2",
+            },
+            {"job_id": job_id, "status": "succeeded", "error": ""},
+        ]
+    )
+    calls = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if path == f"/v1/service-jobs/{job_id}":
+            return next(states)
+        if path == "/v1/service-workers":
+            return {
+                "workers": [
+                    {
+                        "worker_id": "service-worker-2",
+                        "status": "idle",
+                        "job_id": None,
+                    }
+                ]
+            }
+        if path == f"/v1/service-jobs/{job_id}/retry":
+            return {"job_id": job_id, "status": "queued"}
+        raise AssertionError(path)
+
+    matrix.api = api
+    matrix.record = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _seconds: None)
+    matrix.wait_service(job_id)
+    assert any(
+        call[:2] == ("POST", f"/v1/service-jobs/{job_id}/retry")
+        for call in calls
+    )
+
+
 def test_wait_service_does_not_retry_when_original_worker_still_owns_job(monkeypatch):
     import pytest
 

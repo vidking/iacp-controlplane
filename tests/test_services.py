@@ -205,6 +205,7 @@ def test_application_image_pull_failure_is_retryable(client, monkeypatch):
     )
 
 
+@pytest.mark.no_database
 def test_safe_ansible_error_parser_never_returns_raw_output():
     from worker.service_diagnostics import safe_execution_error
 
@@ -218,6 +219,7 @@ def test_safe_ansible_error_parser_never_returns_raw_output():
     assert "private-value" not in error
 
 
+@pytest.mark.no_database
 def test_safe_ansible_timeout_reports_last_allowlisted_task():
     from worker.service_diagnostics import safe_execution_error
 
@@ -227,6 +229,7 @@ def test_safe_ansible_timeout_reports_last_allowlisted_task():
     assert error == "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_TIMEOUT_DOCKER_DEPENDENCIES"
 
 
+@pytest.mark.no_database
 def test_safe_image_pull_failure_is_retryable_without_marking_uncertain():
     from worker.service_diagnostics import safe_execution_error
 
@@ -237,6 +240,21 @@ def test_safe_image_pull_failure_is_retryable_without_marking_uncertain():
         return_code=2,
     )
     assert error == "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
+    assert "private-value" not in error
+
+
+@pytest.mark.no_database
+@pytest.mark.parametrize("result_event", ["FAILED", "UNREACHABLE"])
+def test_initial_ssh_wait_failure_is_safe_to_retry_without_remote_changes(result_event):
+    from worker.service_diagnostics import safe_execution_error
+
+    error = safe_execution_error(
+        "IACP_TASK:SSH_CONNECTIVITY\n"
+        f"IACP_{result_event}:SSH_CONNECTIVITY\n"
+        "token=private-value\n",
+        return_code=2,
+    )
+    assert error == "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SSH_CONNECTIVITY"
     assert "private-value" not in error
 
 

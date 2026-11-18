@@ -74,6 +74,9 @@ def safe_execution_error(
         if event == "TASK":
             last_task = code
         elif event in {"FAILED", "UNREACHABLE"}:
+            # This is the first pre-task. No service mutation has started yet.
+            if code == "SSH_CONNECTIVITY":
+                return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SSH_CONNECTIVITY"
             if event == "FAILED" and code == "APPLICATION_IMAGE_PULL":
                 return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
             return f"SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_{event}_{code}"

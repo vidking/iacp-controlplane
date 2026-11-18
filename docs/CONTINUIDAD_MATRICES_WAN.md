@@ -32,6 +32,13 @@ operaciones de MNG. La IP `.2` fue asignada en este lote; reconciliar su estado
 actual con NetBox y la evidencia anterior antes de reservarla o asignarla de
 nuevo. No reutilizarla a partir de supuestos.
 
+La revisión candidata también clasifica como fallo reintentable un error del
+primer pre-task `Esperar conectividad SSH`: Ansible todavía no ha comenzado
+cambios en el guest. El runner permitirá un solo reintento, únicamente cuando
+el worker anterior ya no posea el job. Esta regla no cambia los resultados
+históricos inciertos ni permite reintentar fallos posteriores al inicio de la
+instalación.
+
 **Siguiente paso operativo:** recuperar por la API las intenciones de prueba
 propias, conservar sus evidencias y comprobar la liberación NetBox. Actualizar
 únicamente el stack dev del IACP Control Plane (VM 104) con `scripts/iacpctl`,
