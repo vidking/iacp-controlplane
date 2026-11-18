@@ -315,10 +315,10 @@ clúster MNG queda detenida mientras el stack productivo registra operaciones
 activas que comparten el clúster; no se cambia el stack productivo ni se altera
 ninguna VM de cliente para preparar estas pruebas.
 
-La preparación parte de los templates actuales 29010/29011 y crea candidatas
-temporales 29016/29017. Después verifica paquetes, helper, SELinux y paridad de
-hardware. Este cambio no promueve ni elimina templates, y no crea copias de
-respaldo 29018/29019. La sustitución futura de 29010/29011 requiere un
-procedimiento operativo revisado, respaldo y ventana independiente, porque esos
-VMID también sirven al stack productivo. Si cualquiera de los stacks tiene
-actividad, se rechaza la preparación compartida.
+La fábrica puede preparar copias temporales 29016/29017 desde 29010/29011, pero
+el inventario consultado el 2026-11-18 no encontró esos VMID temporales. Las
+plantillas existentes y nuevas confirmadas por el usuario siguen en 29010/29011.
+El catálogo de Dev se alineó con esos VMID y la matriz las clona para probarlas;
+esta corrección no altera ni elimina las plantillas. Si una prueba demuestra que
+falta un paquete o un helper, detener la matriz y preparar una reparación con
+respaldo y ventana operativa antes de cambiar los VMID compartidos.

@@ -66,7 +66,7 @@ def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
         require_four_idle_service_workers(busy)
 
 
-def test_wan_preflight_uses_only_dev_almalinux_candidates():
+def test_wan_preflight_uses_the_confirmed_almalinux_vmids():
     import json
     from pathlib import Path
 
@@ -81,17 +81,17 @@ def test_wan_preflight_uses_only_dev_almalinux_candidates():
     development_images = {image["image_id"]: image["template_vm_id"] for image in development_catalog["images"]}
     assert production_images["almalinux-9"] == 29010
     assert production_images["almalinux-10"] == 29011
-    assert development_images["almalinux-9"] == 29016
-    assert development_images["almalinux-10"] == 29017
-    assert EXPECTED_ALMALINUX_IMAGES == {"almalinux-9": 29016, "almalinux-10": 29017}
+    assert development_images["almalinux-9"] == 29010
+    assert development_images["almalinux-10"] == 29011
+    assert EXPECTED_ALMALINUX_IMAGES == {"almalinux-9": 29010, "almalinux-10": 29011}
 
     images = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
+        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
     ]
     inventory = [
         {"vmid": vmid, "node": "mng01"}
-        for vmid in (29016, 29017)
+        for vmid in (29010, 29011)
     ]
     assert require_expected_golden_images(
         images, inventory, lambda _node, _vmid: {"template": 1}
@@ -99,7 +99,7 @@ def test_wan_preflight_uses_only_dev_almalinux_candidates():
 
     obsolete = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
+        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
     ]
     with pytest.raises(RuntimeError, match="GOLDEN_IMAGE_CATALOG_MISMATCH"):
         require_expected_golden_images(

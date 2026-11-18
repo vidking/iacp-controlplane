@@ -425,14 +425,17 @@ simultáneos y los controles se reportan aparte. La certificación permanece
 pendiente; no empezar matrices con operaciones activas o inciertas ni con
 workers no sanos. Producción permanece excluida.
 
-### Separación de catálogo de desarrollo — 2026-11-18
+### Catálogo Dev y VMID AlmaLinux confirmado — 2026-11-18
 
-El catálogo estable `catalog.json` conserva AlmaLinux 9/10 en 29010/29011. El
-stack `dev-iac.cyberfuel.com` usa `catalog-dev.json`, que conserva Ubuntu
-29000/29001 y dirige AlmaLinux a las copias preparadas 29016/29017. Así, las
-pruebas físicas pueden certificar las imágenes nuevas sin cambiar las plantillas
-que también consume producción. El preflight rechaza un catálogo distinto al de
-candidatos de desarrollo.
+La revisión desplegada inicialmente seleccionó 29016/29017 como candidatas, pero
+el inventario del clúster MNG consultado desde el IACP Control Plane (VM 104)
+confirmó que esos VMID no existen. Las imágenes AlmaLinux actuales aparecen
+como templates detenidos en `mng01`: AlmaLinux 9 en 29010 y AlmaLinux 10 en
+29011. El usuario confirmó que estos son los VMID nuevos que deben probarse.
+
+El catálogo de desarrollo se corrigió para utilizar 29010/29011, igual que el
+catálogo estable. La matriz crea clones de ensayo y no modifica los templates.
+Antes de inyectar, el preflight confirma imagen, VMID, nodo y `template: 1`.
 
 La dirección `190.0.231.2` se excluye expresamente de las reservas NetBox en
 desarrollo y del preflight WAN, incluso si NetBox la reporta disponible; el
@@ -440,8 +443,7 @@ runner exige seis direcciones adicionales dentro del rango autorizado. La regla
 no cambia las reservas del entorno productivo. No usar esa IP en la matriz hasta
 que Operaciones de red cierre la discrepancia ARP.
 
-La separación del catálogo y las reparaciones de preparación son cambios de
-código local. No se ha ejecutado la preparación en MNG ni desplegado el stack.
-La matriz física WAN completa permanece pendiente. No reemplazar las plantillas
-29010/29011 ni declarar PASS integral antes de certificar los ciclos previstos y
-coordinar una ventana independiente de promoción.
+La selección corregida del catálogo está pendiente de despliegue y verificación
+en Dev. No se ha inyectado la matriz física en esta revisión. Las plantillas
+29010/29011 permanecen intactas; no declarar PASS integral antes de certificar
+los ciclos previstos.
