@@ -373,21 +373,66 @@ def test_almalinux_requires_fixed_helper_instead_of_arbitrary_exec(monkeypatch):
     assert commands==[['/usr/bin/test','-x','/usr/local/libexec/iacp-guest-bootstrap']]
 
 
-def test_dns_falls_back_to_networkmanager_when_resolved_is_inactive():
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        SimpleNamespace(returncode=1, stdout=""),
+        SimpleNamespace(returncode=0, stdout=""),
+        SimpleNamespace(returncode=0, stdout="Link 2 (eth0): 1.1.1.1\n"),
+        SimpleNamespace(returncode=0, stdout="Link 2 (eth0): 11.1.1.1 8.8.8.80\n"),
+    ],
+)
+@pytest.mark.no_database
+def test_dns_falls_back_to_networkmanager_when_resolved_has_no_complete_dns(resolved):
+    tree = ast.parse(bootstrap.PROGRAM)
+    functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in {'has_expected_dns', 'observed_dns'}
+    ]
+    calls = []
+    namespace = {
+        're': __import__('re'),
+        'shutil': SimpleNamespace(which=lambda name: '/usr/bin/' + name),
+        'subprocess': SimpleNamespace(run=lambda *args, **kwargs: resolved),
+        'run': lambda argv: calls.append(argv) or '1.1.1.1\n8.8.8.8\n',
+    }
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<dns-proof>', 'exec'), namespace)
+    assert namespace['observed_dns']('eth0') == '1.1.1.1\n8.8.8.8\n'
+    assert calls == [['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0']]
+
+
+@pytest.mark.no_database
+def test_dns_uses_resolved_when_both_expected_servers_are_present():
+    tree = ast.parse(bootstrap.PROGRAM)
+    functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in {'has_expected_dns', 'observed_dns'}
+    ]
+    calls = []
+    expected = 'Link 2 (eth0): 1.1.1.1 8.8.8.8\n'
+    namespace = {
+        're': __import__('re'),
+        'shutil': SimpleNamespace(which=lambda name: '/usr/bin/' + name),
+        'subprocess': SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=expected)),
+        'run': lambda argv: calls.append(argv) or 'unexpected',
+    }
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<dns-proof>', 'exec'), namespace)
+    assert namespace['observed_dns']('eth0') == expected
+    assert calls == []
+
+
+@pytest.mark.no_database
+def test_dns_requires_exact_expected_addresses():
     tree = ast.parse(bootstrap.PROGRAM)
     function = next(
         node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == 'observed_dns'
+        if isinstance(node, ast.FunctionDef) and node.name == 'has_expected_dns'
     )
-    calls = []
-    namespace = {
-        'shutil': SimpleNamespace(which=lambda name: '/usr/bin/' + name),
-        'subprocess': SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(returncode=1)),
-        'run': lambda argv: calls.append(argv) or '1.1.1.1\n8.8.8.8\n',
-    }
+    namespace = {'re': __import__('re')}
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<dns-proof>', 'exec'), namespace)
-    assert namespace['observed_dns']('eth0') == '1.1.1.1\n8.8.8.8\n'
-    assert calls == [['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0']]
+    has_expected_dns = namespace['has_expected_dns']
+    assert has_expected_dns('1.1.1.1\n8.8.8.8\n')
+    assert not has_expected_dns('11.1.1.1\n8.8.8.80\n')
 
 
 def test_cloud_init_json_handles_wait_output_and_rejects_real_errors():

@@ -89,15 +89,21 @@ else:
  def gateway_ready(records,gateway,device):
   return any(record.get('dst')==gateway and record.get('dev')==device and record.get('lladdr') and set(record.get('state',[])).intersection({'REACHABLE','STALE','DELAY','PROBE','PERMANENT'}) for record in records)
  assert gateway_ready(neighbors,expected_gateway,device), 'IACP_GATEWAY_UNREACHABLE'
+def has_expected_dns(output):
+ observed=set(re.findall(r'(?<![0-9.])[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}(?![0-9.])',output))
+ return {'1.1.1.1','8.8.8.8'}<=observed
 def observed_dns(device):
  resolver=shutil.which('resolvectl')
  if resolver:
   resolved=subprocess.run([resolver,'dns',device],capture_output=True,text=True,timeout=30)
-  if resolved.returncode==0:return resolved.stdout
+  # AlmaLinux images may ship resolvectl while systemd-resolved is inactive.
+  # In that case the command can exit successfully but return no per-link DNS;
+  # use NetworkManager's active connection as the source of truth instead.
+  if resolved.returncode==0 and has_expected_dns(resolved.stdout):return resolved.stdout
  nmcli=shutil.which('nmcli');assert nmcli
  return run([nmcli,'-g','IP4.DNS','device','show',device])
 dns=observed_dns(device)
-assert all(value in dns for value in ['1.1.1.1','8.8.8.8'])
+assert has_expected_dns(dns)
 if not marker.exists():
  marker.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
  descriptor=os.open(marker,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)

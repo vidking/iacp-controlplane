@@ -234,3 +234,26 @@ restricciones de SELinux permanecen activas. El preflight confirmó el puente
 `vmbr3` sin tag de Proxmox, con VLAN 211 aguas arriba. La certificación física
 requiere recuperar la visibilidad del prefijo autorizado en NetBox y completar
 los ciclos documentados antes de crear los destinos 29010/29011.
+
+### Diagnóstico del bootstrap de servicios en AlmaLinux — 2026-11-18
+
+En el primer ciclo WAN de servicios, las VMs de prueba 40165 y 40166
+(AlmaLinux 9) llegaron a `SERVICE_BOOTSTRAP_GUEST_FAILED`. La salida del
+bootstrap indicaba que faltaban los DNS `1.1.1.1` y `8.8.8.8`, aunque la
+configuración de Proxmox y cloud-init contenía ambos servidores. La causa está
+en la observación del worker: `resolvectl dns eth0` puede devolver código 0 con
+salida vacía o incompleta cuando `systemd-resolved` no administra el enlace de
+NetworkManager.
+
+La revisión local de `worker/service_bootstrap.py` acepta la respuesta de
+`resolvectl` solo si contiene las dos direcciones exactas; en otro caso consulta
+`nmcli -g IP4.DNS device show`. La validación usa coincidencias de direcciones
+completas para evitar aceptar valores parecidos. Las pruebas unitarias cubren
+respuestas sin salida, parciales, código de error, direcciones parecidas y una
+respuesta completa de `resolvectl`.
+
+**Estado: corrección local verificada; despliegue y repetición física
+pendientes.** Los resultados inciertos existentes deben recuperarse mediante el
+flujo controlado de la API antes de cualquier reintento. Esta corrección no
+certifica todavía las matrices KVM ni Nextcloud/n8n, no libera sus IP de NetBox
+y no modifica las Golden Images ni la configuración de producción.
