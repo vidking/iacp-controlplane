@@ -1,4 +1,8 @@
-from scripts.wan_matrix import cases
+import pytest
+
+pytestmark = pytest.mark.no_database
+
+from scripts.wan_matrix import cases, require_four_idle_service_workers, wan_nic_config
 
 
 def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
@@ -19,8 +23,53 @@ def test_service_controls_cover_password_only_access():
     assert all(case['client_ssh_key'] is False for case in controls)
 
 
-def test_static_wan_binding_uses_vmbr3_untagged_for_upstream_vlan_211(tmp_path):
+def test_wan_nic_preflight_allows_only_vmbr3_without_proxmox_tag():
+    import pytest
+
+    assert wan_nic_config({
+        "IACP_PROD_STATIC_BRIDGE": "vmbr3",
+        "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "",
+    }) == ("vmbr3", None)
+    with pytest.raises(RuntimeError, match="WAN_BRIDGE_NOT_AUTHORIZED"):
+        wan_nic_config({
+            "IACP_PROD_STATIC_BRIDGE": "vmbr0",
+            "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "",
+        })
+    with pytest.raises(RuntimeError, match="WAN_PROXMOX_TAG_NOT_AUTHORIZED"):
+        wan_nic_config({
+            "IACP_PROD_STATIC_BRIDGE": "vmbr3",
+            "IACP_PROD_STATIC_PROXMOX_VLAN_TAG": "tagged",
+        })
+    with pytest.raises(RuntimeError, match="WAN_PROXMOX_VLAN_TAG_NOT_CONFIGURED"):
+        wan_nic_config({"IACP_PROD_STATIC_BRIDGE": "vmbr3"})
+
+
+def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
+    from datetime import UTC, datetime
+
+    import pytest
+
+    heartbeat = datetime.now(UTC).isoformat()
+    state = {
+        "max_concurrent": 4,
+        "workers": [
+            {"worker_id": f"service-worker-{index}", "status": "idle", "job_id": None, "last_heartbeat": heartbeat}
+            for index in range(1, 5)
+        ],
+    }
+    require_four_idle_service_workers(state)
+    with pytest.raises(RuntimeError, match="FOUR_SERVICE_WORKERS_REQUIRED"):
+        require_four_idle_service_workers({"max_concurrent": 2, "workers": state["workers"][:2]})
+    busy = {**state, "workers": [dict(worker) for worker in state["workers"]]}
+    busy["workers"][0]["status"] = "running"
+    busy["workers"][0]["job_id"] = "job-active"
+    with pytest.raises(RuntimeError, match="SERVICE_WORKERS_NOT_IDLE"):
+        require_four_idle_service_workers(busy)
+
+
+def test_static_wan_binding_uses_vmbr3_without_proxmox_tag(tmp_path):
     from types import SimpleNamespace
+
     from scripts.wan_matrix import Matrix
 
     matrix = object.__new__(Matrix)
@@ -51,6 +100,7 @@ def test_static_wan_binding_uses_vmbr3_untagged_for_upstream_vlan_211(tmp_path):
 
 def test_compose_passes_wan_nic_settings_to_service_workers_without_proxmox_tokens():
     from pathlib import Path
+
     import yaml
 
     compose = yaml.safe_load(
@@ -66,7 +116,9 @@ def test_compose_passes_wan_nic_settings_to_service_workers_without_proxmox_toke
 
 def test_parallel_failure_contains_future_mutations():
     import threading
+
     import pytest
+
     from scripts.wan_matrix import Matrix
     matrix=object.__new__(Matrix)
     matrix.abort=threading.Event()
@@ -78,6 +130,7 @@ def test_parallel_failure_contains_future_mutations():
 def test_record_keeps_matrix_running_when_ssh_output_closes(tmp_path, monkeypatch):
     import json
     import sys
+
     from scripts.wan_matrix import Matrix
 
     class ClosedOutput:
@@ -96,8 +149,10 @@ def test_record_keeps_matrix_running_when_ssh_output_closes(tmp_path, monkeypatc
 
 def test_almalinux_matrix_pins_key_through_validated_helper(tmp_path):
     import json
-    import pytest
     from types import SimpleNamespace
+
+    import pytest
+
     from scripts.wan_matrix import Matrix
     matrix = object.__new__(Matrix)
     matrix.profile = 'lab_dhcp'
@@ -167,6 +222,7 @@ def test_wait_service_retries_known_startup_failure_after_worker_release(monkeyp
 
 def test_wait_service_does_not_retry_when_original_worker_still_owns_job(monkeypatch):
     import pytest
+
     import scripts.wan_matrix as wan_matrix
 
     matrix = object.__new__(wan_matrix.Matrix)

@@ -10,12 +10,15 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
-def isolated_postgres_schema(monkeypatch, tmp_path):
+def isolated_postgres_schema(monkeypatch, tmp_path, request):
+    if request.node.get_closest_marker("no_database"):
+        yield
+        return
+
     base_conninfo = os.getenv("IACP_TEST_DATABASE_URL", "").strip()
     if not base_conninfo:
         pytest.skip("Define IACP_TEST_DATABASE_URL para ejecutar pruebas PostgreSQL aisladas")

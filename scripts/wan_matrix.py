@@ -6,30 +6,71 @@ La evidencia no contiene credenciales ni salidas de aplicación sin filtrar.
 """
 
 from __future__ import annotations
+
 import argparse
 import base64
 import concurrent.futures
-from datetime import datetime, timezone
-import json
 import hashlib
-import re
-import threading
+import json
 import os
-from pathlib import Path
+import re
 import secrets
 import shlex
 import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
+from datetime import UTC, datetime, timezone
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from worker.proxmox import ProxmoxClient
+
+WAN_BRIDGE = "vmbr3"
+REQUIRED_SERVICE_WORKERS = 4
+
+
+def wan_nic_config(env):
+    """Validate the only authorized WAN NIC layout for this physical matrix."""
+
+    bridge = (env.get("IACP_PROD_STATIC_BRIDGE") or "").strip()
+    if bridge != WAN_BRIDGE:
+        raise RuntimeError("WAN_BRIDGE_NOT_AUTHORIZED")
+    if "IACP_PROD_STATIC_PROXMOX_VLAN_TAG" not in env:
+        raise RuntimeError("WAN_PROXMOX_VLAN_TAG_NOT_CONFIGURED")
+    vlan_tag = (env.get("IACP_PROD_STATIC_PROXMOX_VLAN_TAG") or "").strip().lower()
+    if vlan_tag not in {"", "none", "untagged"}:
+        raise RuntimeError("WAN_PROXMOX_TAG_NOT_AUTHORIZED")
+    return WAN_BRIDGE, None
+
+
+def require_four_idle_service_workers(service_state):
+    workers = service_state.get("workers") or []
+    if (
+        service_state.get("max_concurrent") != REQUIRED_SERVICE_WORKERS
+        or len(workers) != REQUIRED_SERVICE_WORKERS
+    ):
+        raise RuntimeError("FOUR_SERVICE_WORKERS_REQUIRED")
+    now = datetime.now(UTC)
+    for worker in workers:
+        try:
+            heartbeat = datetime.fromisoformat(worker["last_heartbeat"])
+            heartbeat_age = (now - heartbeat).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("SERVICE_WORKERS_NOT_IDLE") from None
+        if (
+            worker.get("status") != "idle"
+            or worker.get("job_id")
+            or not 0 <= heartbeat_age < 60
+        ):
+            raise RuntimeError("SERVICE_WORKERS_NOT_IDLE")
 
 
 def cases(category):
@@ -76,19 +117,10 @@ class Matrix:
         self.base = "https://dev-iac.cyberfuel.com"
         self.token = self.env["IACP_API_TOKEN"]
         assert args.cycle in (1, 2)
+        self.static_bridge = WAN_BRIDGE if self.profile == "prod_static" else "vmbr0"
+        self.static_vlan_tag = None
         self.folder = args.evidence.resolve()
         self.folder.mkdir(mode=0o700, parents=False, exist_ok=False)
-        self.static_bridge = "vmbr0"
-        self.static_vlan_tag = None
-        if self.profile == "prod_static":
-            self.static_bridge = (
-                self.env.get("IACP_PROD_STATIC_BRIDGE") or "vmbr0"
-            ).strip()
-            raw_vlan_tag = self.env.get("IACP_PROD_STATIC_PROXMOX_VLAN_TAG", "211")
-            raw_vlan_tag = (raw_vlan_tag or "").strip().lower()
-            if raw_vlan_tag not in {"", "none", "untagged"}:
-                self.static_vlan_tag = int(raw_vlan_tag)
-                assert 1 <= self.static_vlan_tag <= 4094
         self.key = self.folder / "client_key"
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)],
@@ -111,19 +143,19 @@ class Matrix:
             self.env["IACP_PROXMOX_MNG_ENDPOINT"],
             self.env["IACP_PROXMOX_MNG_API_TOKEN"],
         )
+
+    def verify_network_profile(self):
         if self.profile == "prod_static":
+            self.static_bridge, self.static_vlan_tag = wan_nic_config(self.env)
             profiles = self.api("GET", "/v1/network-profiles")["network_profiles"]
             wan = next(item for item in profiles if item["profile_id"] == "prod_static")
             assert wan["enabled"] is True, "WAN_PROFILE_DISABLED"
-            assert wan["proxmox_bridge"] == self.static_bridge, "WAN_BRIDGE_CONFIG_MISMATCH"
+            assert wan["proxmox_bridge"] == WAN_BRIDGE, "WAN_BRIDGE_CONFIG_MISMATCH"
             assert wan["proxmox_vlan_tag"] == self.static_vlan_tag, "WAN_VLAN_TAG_CONFIG_MISMATCH"
-            assert wan["vlan_id"] == 211, "WAN_UPSTREAM_VLAN_MISMATCH"
             self.record(
                 "network_profile_verified",
                 profile="prod_static",
-                upstream_vlan=211,
-                bridge=self.static_bridge,
-                proxmox_vlan_tag=self.static_vlan_tag,
+                bridge=WAN_BRIDGE,
             )
 
     def record(self, event, **data):
@@ -208,18 +240,7 @@ class Matrix:
             for w in state["workers"]
         ), "SIX_WORKERS_REQUIRED"
         service_state = self.api("GET", "/v1/service-workers")
-        expected_services = int(self.env.get("IACP_SERVICE_MAX_CONCURRENT", "2"))
-        service_workers = service_state.get("workers", [])
-        assert service_state.get("max_concurrent") == expected_services, "SERVICE_CAPACITY_MISMATCH"
-        assert len(service_workers) == expected_services and all(
-            worker.get("status") == "idle"
-            and not worker.get("job_id")
-            and 0 <= (
-                datetime.now(timezone.utc)
-                - datetime.fromisoformat(worker["last_heartbeat"])
-            ).total_seconds() < 60
-            for worker in service_workers
-        ), "SERVICE_WORKERS_NOT_IDLE"
+        require_four_idle_service_workers(service_state)
         return state
 
     def wait_operation(self, job):
@@ -770,6 +791,7 @@ class Matrix:
             cases=16,
             controls=2,
         )
+        self.verify_network_profile()
         for offset in range(0, 18, 6):
             self.idle()
             with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
