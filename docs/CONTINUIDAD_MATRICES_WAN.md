@@ -2,6 +2,24 @@
 
 Estado: **EN CURSO**, 2026-11-17. Rama: `devops/features`. Producción sin cambios.
 
+### Reintento de despliegue y preflight de servicios — 2026-11-18
+
+La revisión `8d2dcd919a7f1d126f6f3faef1f851e1cb083b09` se desplegó en el stack
+dev del IACP Control Plane (VM 104). `iacpctl preflight`, `inventory`, `deploy`
+y `verify` dieron PASS. La API publicó `prod_static` habilitado con `vmbr3`,
+NetBox verificó `190.0.231.0/24` y `190.0.231.1`, y los seis workers de
+infraestructura y cuatro de servicios estaban sanos e idle.
+
+El ciclo WAN de servicios 1 se detuvo antes de crear VMs con
+`GOLDEN_IMAGE_NOT_READY`. El catálogo publicado apuntaba AlmaLinux 9/10 a
+29010/29011, que no existen en el inventario del clúster MNG. Las plantillas
+selladas y verificadas están en 29016/29017 en `mng01`. NetBox reportó `.2`
+como la siguiente dirección disponible. La evidencia del bloqueo está en
+`/opt/iacp/evidence/wan-servicios-ciclo1-20261118051100/results.jsonl`.
+
+El código de desarrollo debe apuntar el catálogo y el preflight a las plantillas
+29016/29017 antes de repetir. No se creó ninguna VM en este intento.
+
 ### Actualización de topología y prioridad — 2026-11-17
 
 El bloqueo anterior se observó usando `vmbr0` con tag 211 en la NIC de la VM.

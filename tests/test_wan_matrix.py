@@ -66,11 +66,11 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
 
     images = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
+        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
     ]
     inventory = [
         {"vmid": vmid, "node": "mng01"}
-        for vmid in (29010, 29011)
+        for vmid in (29016, 29017)
     ]
     assert require_expected_golden_images(
         images, inventory, lambda _node, _vmid: {"template": 1}
@@ -78,7 +78,7 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
 
     obsolete = [
         {"image_id": image_id, "template_vm_id": vmid}
-        for image_id, vmid in (("almalinux-9", 29016), ("almalinux-10", 29017))
+        for image_id, vmid in (("almalinux-9", 29010), ("almalinux-10", 29011))
     ]
     with pytest.raises(RuntimeError, match="GOLDEN_IMAGE_CATALOG_MISMATCH"):
         require_expected_golden_images(

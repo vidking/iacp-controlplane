@@ -31,7 +31,7 @@ const server = http.createServer((request, response) => {
       const request = route.request(), pathname = new URL(request.url()).pathname;
       let body = {};
       if (pathname === '/v1/plans') body = {plans:[{plan_id:'kvm-2',vcpus:2,memory_mb:4096,disk_gb:100}]};
-      else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000],['ubuntu-2604',29001],['almalinux-9',29010],['almalinux-10',29011]].map(([image_id,template_vm_id]) => ({image_id,template_vm_id}))};
+      else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000],['ubuntu-2604',29001],['almalinux-9',29016],['almalinux-10',29017]].map(([image_id,template_vm_id]) => ({image_id,template_vm_id}))};
       else if (pathname === '/v1/network-profiles') body = {network_profiles:[{profile_id:'lab_dhcp',enabled:true}],active_profile:'lab_dhcp'};
       else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404','almalinux-9']}));
       else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; payload = request.postDataJSON(); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }

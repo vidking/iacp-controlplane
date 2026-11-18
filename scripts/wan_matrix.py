@@ -39,7 +39,7 @@ from worker.proxmox import ProxmoxClient
 
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
-EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
+EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29016, "almalinux-10": 29017}
 
 
 def wan_nic_config(env):
