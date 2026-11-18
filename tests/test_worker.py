@@ -1038,6 +1038,118 @@ def test_reconcile_starts_recovered_provision_vm_before_guest_identity(tmp_path,
     assert "provision.power.start.completed" in kinds
 
 
+def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resources(
+    tmp_path, monkeypatch
+):
+    from worker.guest_identity import GuestIdentityError
+
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    instance_id = "reconcile-present-guest-failure-instance"
+    source_id = "reconcile-present-guest-failure-source"
+    recovery_id = "reconcile-present-guest-failure-operation"
+    name = "prueba-service-nextcloud-almalinux-9-kvm-1"
+    spec = {
+        "name": name,
+        "image": "almalinux-9",
+        "network_profile": "prod_static",
+        "started": True,
+    }
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(
+                operation_id, command, action, status, payload_json, instance_id,
+                vmid, stack, created_at
+            ) VALUES (?, 'provision', 'provision', 'uncertain', ?, ?, 40044,
+                      'mng01', 'now')
+            """,
+            (source_id, json.dumps({"command": "provision", "instance_id": instance_id, "spec": spec}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+                operation_id, command, action, status, payload_json, instance_id,
+                stack, created_at
+            ) VALUES (?, 'reconcile', 'reconcile', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (recovery_id, json.dumps({"instance_id": instance_id, "source_operation_id": source_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(
+                instance_id, operation_id, name, image, vmid, node, status,
+                power_state, spec_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'almalinux-9', 40044, 'mng01', 'uncertain',
+                      'unknown', ?, 'now', 'now')
+            """,
+            (instance_id, source_id, name, json.dumps(spec)),
+        )
+
+    class PresentRunningVm:
+        def set_heartbeat(self, _callback):
+            pass
+
+        def inventory(self, *, uncertain=False):
+            return [{"vmid": 40044, "name": name, "node": "mng01"}]
+
+        def power_state(self, node, vmid, requested_name):
+            assert (node, vmid, requested_name) == ("mng01", 40044, name)
+            return {"power_state": "running"}
+
+    def fail_release(*_args, **_kwargs):
+        pytest.fail("una VM presente debe retener VMID e IP hasta su eliminación confirmada")
+
+    def fail_identity(*_args, **_kwargs):
+        raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
+
+    monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", fail_identity)
+    monkeypatch.setattr("worker.main._release_static_allocation", fail_release)
+    monkeypatch.setattr("worker.main.release", fail_release)
+
+    execute_reconcile(
+        "worker-1",
+        {
+            "operation_id": recovery_id,
+            "payload_json": json.dumps(
+                {"command": "reconcile", "instance_id": instance_id, "source_operation_id": source_id}
+            ),
+        },
+        PresentRunningVm(),
+    )
+
+    with database() as db:
+        source = db.execute(
+            "SELECT status, phase, error FROM operations WHERE operation_id=?", (source_id,)
+        ).fetchone()
+        recovery = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id=?", (recovery_id,)
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, power_state, vmid FROM instances WHERE instance_id=?", (instance_id,)
+        ).fetchone()
+        events = [
+            row["kind"]
+            for row in db.execute(
+                "SELECT kind FROM events WHERE operation_id=? ORDER BY event_id",
+                (recovery_id,),
+            )
+        ]
+
+    assert (source["status"], source["phase"]) == ("failed", "guest_identity_failed")
+    assert source["error"] == "SERVICE_BOOTSTRAP_GUEST_FAILED"
+    assert (recovery["status"], recovery["error"]) == (
+        "failed",
+        "RECONCILIATION_GUEST_IDENTITY_FAILED",
+    )
+    assert (instance["status"], instance["power_state"], instance["vmid"]) == (
+        "failed",
+        "running",
+        40044,
+    )
+    assert "recovery.completed" in events
+
+
 def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
     class UnknownPower:
         def power_state(self, *_args):

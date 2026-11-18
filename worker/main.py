@@ -1131,6 +1131,70 @@ def close_source_after_reconciliation(
         emit(source_id, "operation.reconciled", terminal_status, terminal_error)
 
 
+def fail_present_source_after_identity_error(
+    source_operation: dict,
+    recovery_operation_id: str,
+    instance_id: str | None,
+    vmid: int,
+    node: str,
+    power_state: str,
+    error: GuestIdentityError,
+) -> None:
+    """Close a failed guest validation while retaining its VM and IP lease.
+
+    Reconciliation has already proved that the physical VM exists. Releasing
+    its NetBox address here would allow a second VM to claim an address that
+    remains configured on this one. Mark the failed provisioning terminal,
+    expose the confirmed power state, and require the normal API shutdown and
+    destroy lifecycle to release the allocation after physical absence is
+    confirmed.
+    """
+    if source_operation.get("command") not in {"apply", "provision"}:
+        raise RuntimeError("RECONCILIATION_SOURCE_COMMAND_INVALID")
+    if power_state not in {"running", "stopped"}:
+        raise ProxmoxError("RECONCILIATION_POWER_STATE_UNCONFIRMED", uncertain=True)
+
+    detail = operation_output(str(error))
+    update_operation(
+        source_operation["operation_id"],
+        status="failed",
+        phase="guest_identity_failed",
+        finished_at=now(),
+        last_heartbeat=now(),
+        exit_code=1,
+        error=detail,
+    )
+    update_instance(
+        instance_id,
+        "failed",
+        vmid=vmid,
+        power_state=power_state,
+        node=node,
+    )
+    emit(
+        source_operation["operation_id"],
+        "guest.identity.reconciliation_failed",
+        "failed",
+        detail,
+    )
+    update_operation(
+        recovery_operation_id,
+        status="failed",
+        phase="completed",
+        finished_at=now(),
+        last_heartbeat=now(),
+        exit_code=1,
+        output="La VM física existe; la IP queda retenida hasta completar apagado y eliminación por API.",
+        error="RECONCILIATION_GUEST_IDENTITY_FAILED",
+    )
+    emit(
+        recovery_operation_id,
+        "recovery.completed",
+        "failed",
+        "La VM existe y conserva su asignación IP para limpieza controlada por API.",
+    )
+
+
 def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) -> None:
     operation_id = operation["operation_id"]
     payload = json.loads(operation["payload_json"])
@@ -1262,7 +1326,7 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         if source_command in {"apply", "provision"}:
             spec = operation_spec(source, source_payload)
             started = bool(spec.get("started", True))
-            ensure_vm_running_if_requested(
+            observed = ensure_vm_running_if_requested(
                 worker_id,
                 operation_id,
                 client,
@@ -1271,18 +1335,33 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 name=name,
                 started=started,
             )
-            ensure_guest_identity_for_operation(
-                worker_id,
-                operation_id,
-                client,
-                stack=source.get("stack") or "mng01",
-                node=node,
-                vmid=int(vmid),
-                name=name,
-                instance_id=instance_id,
-                spec=spec,
-                started=started,
-            )
+            try:
+                ensure_guest_identity_for_operation(
+                    worker_id,
+                    operation_id,
+                    client,
+                    stack=source.get("stack") or "mng01",
+                    node=node,
+                    vmid=int(vmid),
+                    name=name,
+                    instance_id=instance_id,
+                    spec=spec,
+                    started=started,
+                )
+            except GuestIdentityError as error:
+                power = observed.get("power_state") if isinstance(observed, dict) else None
+                if power not in {"running", "stopped"}:
+                    power = client.power_state(node, int(vmid), name).get("power_state")
+                fail_present_source_after_identity_error(
+                    source,
+                    operation_id,
+                    instance_id,
+                    int(vmid),
+                    node,
+                    power,
+                    error,
+                )
+                return
         close_source_after_reconciliation(
             source, instance_id, int(vmid), node, source_payload,
             succeeded=True,
