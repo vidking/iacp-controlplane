@@ -58,8 +58,131 @@ def _boot_order(raw: str | None) -> list[str] | None:
     return order or None
 
 
+def _device(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    first, *rest = raw.split(",")
+    datastore_id = first.split(":", 1)[0] if ":" in first else None
+    values = {
+        key: value
+        for key, value in (part.split("=", 1) for part in rest if "=" in part)
+    }
+    return {"datastore_id": datastore_id, **values}
+
+
+def _certified_hardware_mismatches(raw: dict, disk: dict, cloudinit: dict, efi_disk: dict) -> list[str]:
+    """Comparar la plantilla con el estándar aprobado de Ubuntu 24.04."""
+
+    failures = []
+    expected_values = {
+        "bios": "ovmf",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "cores": "10",
+        "sockets": "1",
+        "vcpus": "2",
+        "numa": "1",
+        "memory": "4096",
+        "boot": "order=scsi0",
+        "serial0": "socket",
+        "hotplug": "disk,network,usb,memory,cpu",
+        "ipconfig0": "ip=dhcp",
+    }
+    failures.extend(
+        field for field, wanted in expected_values.items()
+        if str(raw.get(field, "")) != wanted
+    )
+    cpu_type, _, cpu_options = str(raw.get("cpu", "")).partition(",")
+    if cpu_type != "x86-64-v4" or cpu_options != "flags=+aes":
+        failures.append("cpu")
+    if not str(raw.get("agent", "")).startswith("enabled=1"):
+        failures.append("agent")
+    if raw.get("onboot", "0") not in {0, "0", False}:
+        failures.append("onboot")
+    if disk.get("interface") != "scsi0" or disk.get("size_gb") != 20:
+        failures.append("boot_disk")
+    if disk.get("discard") != "on" or disk.get("iothread") is not True:
+        failures.append("boot_disk_options")
+    if cloudinit.get("media") != "cdrom" or cloudinit.get("datastore_id") != disk.get("datastore_id"):
+        failures.append("cloudinit")
+    if efi_disk != {
+        "datastore_id": disk.get("datastore_id"),
+        "efitype": "4m",
+        "pre-enrolled-keys": "0",
+        "size": "1M",
+    }:
+        failures.append("efi_disk")
+    network = str(raw.get("net0", "")).split(",")
+    model, separator, _mac = network[0].partition("=") if network else ("", "", "")
+    network_options = {
+        key: value
+        for key, value in (part.split("=", 1) for part in network[1:] if "=" in part)
+    }
+    if model != "virtio" or not separator or network_options != {"bridge": "vmbr0"}:
+        failures.append("network")
+    if any(re.fullmatch(r"ide[0-3]", key) for key in raw):
+        failures.append("ide_devices")
+    if raw.get("vga") is not None:
+        failures.append("vga")
+    return failures
+
+
+def _hardware_signature(raw: dict) -> dict:
+    """Normalizar el hardware sin comparar MAC ni nombres de volúmenes clonados."""
+
+    signature = {
+        field: raw.get(field)
+        for field in (
+            "bios",
+            "machine",
+            "ostype",
+            "scsihw",
+            "cores",
+            "sockets",
+            "vcpus",
+            "cpu",
+            "numa",
+            "memory",
+            "balloon",
+            "agent",
+            "onboot",
+            "boot",
+            "hotplug",
+            "ipconfig0",
+            "vga",
+        )
+    }
+    devices = {}
+    for key, value in raw.items():
+        if re.fullmatch(r"(?:ide|sata|virtio|scsi|efidisk|tpmstate|rng)\d+", key):
+            parsed = _device(value)
+            devices[key] = {
+                "datastore_id": parsed.get("datastore_id"),
+                "options": {name: option for name, option in parsed.items() if name != "datastore_id"},
+            }
+        elif re.fullmatch(r"net\d+", key):
+            model, separator, options = str(value or "").partition("=")
+            _mac, comma, remainder = options.partition(",")
+            devices[key] = {
+                "model": model if separator else "",
+                "options": {
+                    name: option
+                    for name, option in (
+                        part.split("=", 1)
+                        for part in (remainder.split(",") if comma else [])
+                        if "=" in part
+                    )
+                },
+            }
+        elif re.fullmatch(r"serial\d+", key):
+            devices[key] = value
+    signature["devices"] = devices
+    return signature
+
+
 def observe(image_id: str, client: ProxmoxClient) -> dict:
-    entry = catalog().get(image_id)
+    image_catalog = catalog()
+    entry = image_catalog.get(image_id)
     if entry is None:
         raise ValueError("IMAGE_NOT_AVAILABLE")
     node = entry["source_node"]
@@ -83,6 +206,38 @@ def observe(image_id: str, client: ProxmoxClient) -> dict:
         raise ValueError("GOLDEN_STORAGE_MISMATCH")
     configured_model = str(raw.get("net0", "")).split("=", 1)[0].strip()
     network_model = entry.get("network_model") or configured_model or "virtio"
+    cloudinit = _device(raw.get("scsi1"))
+    if not cloudinit or cloudinit.get("media") != "cdrom":
+        raise ValueError("GOLDEN_CLOUDINIT_LAYOUT_INVALID")
+    efi_disk = _device(raw.get("efidisk0"))
+    if not efi_disk:
+        raise ValueError("GOLDEN_EFI_DISK_MISSING")
+    hardware_failures = _certified_hardware_mismatches(raw, disk, cloudinit, efi_disk)
+    if hardware_failures:
+        raise ValueError("GOLDEN_HARDWARE_NOT_CERTIFIED:" + ",".join(hardware_failures))
+    if image_id != "ubuntu-2404":
+        reference = image_catalog.get("ubuntu-2404")
+        if reference is None:
+            raise ValueError("GOLDEN_REFERENCE_IMAGE_UNAVAILABLE")
+        reference_raw = client.vm_config(reference["source_node"], int(reference["template_vm_id"]))
+        if reference_raw.get("template") != 1:
+            raise ValueError("GOLDEN_REFERENCE_IMAGE_NOT_TEMPLATE")
+        reference_disk_interface = next(
+            (name for name in ("scsi0", "sata0", "virtio0") if reference_raw.get(name)),
+            None,
+        )
+        if reference_disk_interface is None:
+            raise ValueError("GOLDEN_REFERENCE_BOOT_DISK_MISSING")
+        reference_disk = _disk(reference_raw[reference_disk_interface], reference_disk_interface)
+        reference_cloudinit = _device(reference_raw.get("scsi1"))
+        reference_efi = _device(reference_raw.get("efidisk0"))
+        reference_failures = _certified_hardware_mismatches(
+            reference_raw, reference_disk, reference_cloudinit, reference_efi
+        )
+        if reference_failures:
+            raise ValueError("GOLDEN_REFERENCE_NOT_CERTIFIED:" + ",".join(reference_failures))
+        if _hardware_signature(raw) != _hardware_signature(reference_raw):
+            raise ValueError("GOLDEN_HARDWARE_REFERENCE_MISMATCH")
     return {
         "image_id": image_id,
         "template_vm_id": vmid,
@@ -99,6 +254,13 @@ def observe(image_id: str, client: ProxmoxClient) -> dict:
         "hotplug": raw.get("hotplug"),
         "boot_order": _boot_order(raw.get("boot")),
         "agent_enabled": str(raw.get("agent", "")).startswith("enabled=1"),
+        "ostype": raw.get("ostype"),
+        "balloon_mb": int(raw.get("balloon", 0)),
+        "on_boot": str(raw.get("onboot", "0")) == "1",
+        "serial_port": raw.get("serial0"),
+        "efi_disk": efi_disk,
+        "cloudinit_interface": "scsi1",
+        "cloudinit_datastore_id": cloudinit.get("datastore_id"),
         "network_bridge": str(raw.get("net0", "")).split("bridge=", 1)[-1].split(",", 1)[0],
         "network_model": network_model,
         "disk": disk,
@@ -168,14 +330,10 @@ def variables(
             "dns_servers": spec.get("dns_servers", []),
             "ssh_public_keys": keys,
             "guest_agent_enabled": golden["agent_enabled"],
-            # WAN clones must stay stopped until the worker has verified the
-            # Proxmox cloud-init DNS setting. The normal completion path starts
-            # them only after that check, so cloud-init consumes the final seed.
-            "started": (
-                False
-                if spec.get("network_profile") == "prod_static"
-                else spec.get("started", True)
-            ),
+            # Every new KVM stays stopped until the worker compares the full
+            # Proxmox configuration with this request and the certified image.
+            # The requested state is applied only after that fail-closed gate.
+            "started": False,
             "bios": golden.get("bios"),
             "machine": golden.get("machine"),
             "scsi_hardware": golden.get("scsi_hardware"),

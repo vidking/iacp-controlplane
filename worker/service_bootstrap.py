@@ -100,8 +100,17 @@ def observed_dns(device):
   # In that case the command can exit successfully but return no per-link DNS;
   # use NetworkManager's active connection as the source of truth instead.
   if resolved.returncode==0 and has_expected_dns(resolved.stdout):return resolved.stdout
- nmcli=shutil.which('nmcli');assert nmcli
- return run([nmcli,'-g','IP4.DNS','device','show',device])
+ nmcli=shutil.which('nmcli');nm_output=''
+ if nmcli:
+  observed=subprocess.run([nmcli,'-g','IP4.DNS','device','show',device],capture_output=True,text=True,timeout=30)
+  nm_output=observed.stdout
+  if observed.returncode==0 and has_expected_dns(nm_output):return nm_output
+ resolver_file=Path('/etc/resolv.conf')
+ if resolver_file.is_file():
+  configured=resolver_file.read_text()
+  if has_expected_dns(configured):return configured
+ assert nmcli
+ return nm_output
 dns=observed_dns(device)
 assert has_expected_dns(dns)
 if not marker.exists():

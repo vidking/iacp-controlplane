@@ -21,6 +21,7 @@ from worker.main import (
     execute_reconcile,
     ensure_vm_running_if_requested,
     guest_identity_previously_verified,
+    instance_password_was_provisioned,
     local_variables,
     operation_output,
     physical_presence,
@@ -425,6 +426,7 @@ def test_golden_variables_preserve_hardware_and_dhcp(tmp_path, monkeypatch):
     assert instance["boot_order"] == ["scsi0"]
     assert instance["ssh_public_keys"] == [key]
     assert instance["pool_id"] == "iacp-lab"
+    assert instance["started"] is False
 
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     static_spec = {
@@ -738,7 +740,7 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
     assert physical_presence(client, 40000, True, name="other", node="mng01") is False
 
 
-def test_power_operation_updates_instance_and_operation(tmp_path, monkeypatch):
+def test_power_start_fails_closed_without_a_saved_request_spec(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
     operation_id = "power-operation"
@@ -760,17 +762,21 @@ def test_power_operation_updates_instance_and_operation(tmp_path, monkeypatch):
         )
 
     class FakePower:
-        def power(self, node, vmid, name, action):
-            assert (node, vmid, name, action) == ("mng01", 40000, "power-test", "start")
-            return {"action": action, "power_state": "running", "task": "synthetic"}
+        def power(self, *_args):
+            pytest.fail("no se permite iniciar una VM sin el contrato original")
 
-    execute_power("worker-1", {"operation_id": operation_id, "payload_json": json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id})}, FakePower())
+    with pytest.raises(ProxmoxError, match="PREBOOT_EXPECTATION_REQUIRED"):
+        execute_power(
+            "worker-1",
+            {"operation_id": operation_id, "payload_json": json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id})},
+            FakePower(),
+        )
     with database() as db:
         operation = db.execute("SELECT status FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
         instance = db.execute("SELECT status, power_state FROM instances WHERE instance_id=?", (instance_id,)).fetchone()
-    assert operation["status"] == "succeeded"
+    assert operation["status"] == "running"
     assert instance["status"] == "ready"
-    assert instance["power_state"] == "running"
+    assert instance["power_state"] == "stopped"
 
 
 def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monkeypatch):
@@ -785,6 +791,13 @@ def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monke
         "started": False,
     }
     with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, secret_path, created_at)
+            VALUES ('plan-identity', 'provision', 'succeeded', '{}', ?, NULL, 'now')
+            """,
+            (instance_id,),
+        )
         db.execute(
             """
             INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
@@ -805,15 +818,35 @@ def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monke
         )
 
     class FakePower:
+        def __init__(self):
+            self.power_calls = []
+
+        def power_state(self, *_args):
+            return {"power_state": "stopped"}
+
         def power(self, node, vmid, name, action):
+            self.power_calls.append((node, vmid, name, action))
             assert (node, vmid, name, action) == ("mng01", 40000, "identity-test", "start")
             return {"action": action, "power_state": "running"}
 
     calls = []
+    preboot_checks = []
     monkeypatch.setattr(
         "worker.main.ensure_guest_identity_for_operation",
         lambda *args, **kwargs: calls.append((args, kwargs)),
     )
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **kwargs: (
+            preboot_checks.append(kwargs.get("require_stopped"))
+            or client.power_state()
+        ),
+    )
+    client = FakePower()
     execute_power(
         "worker-1",
         {
@@ -822,13 +855,102 @@ def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monke
                 {"command": "power", "power_action": "start", "instance_id": instance_id}
             ),
         },
-        FakePower(),
+        client,
     )
 
     assert len(calls) == 1
     assert calls[0][1]["instance_id"] == instance_id
     assert calls[0][1]["vmid"] == 40000
     assert calls[0][1]["spec"] == spec
+    assert preboot_checks == [True, True]
+    assert client.power_calls == [("mng01", 40000, "identity-test", "start")]
+
+
+def test_power_start_does_not_mutate_if_last_preboot_read_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    operation_id = "power-last-gate-operation"
+    instance_id = "power-last-gate-instance"
+    spec = {"image": "ubuntu-2404", "network_profile": "lab_dhcp", "started": False}
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+            VALUES ('power-last-gate-source', 'provision', 'succeeded', '{}', ?, 'now')
+            """,
+            (instance_id,),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'power', 'power', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (operation_id, json.dumps({"power_action": "start", "instance_id": instance_id}), instance_id),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, 'power-last-gate-source', 'last-gate-test', 'ubuntu-2404', 40009, 'mng01', 'ready', 'stopped', ?, 'now', 'now')
+            """,
+            (instance_id, json.dumps(spec)),
+        )
+
+    class FakePower:
+        def __init__(self):
+            self.power_calls = []
+
+        def power_state(self, *_args):
+            return {"power_state": "stopped"}
+
+        def power(self, *_args):
+            self.power_calls.append("power")
+            pytest.fail("no se inicia si la última lectura de configuración falla")
+
+    checks = []
+
+    def verify(_operation_id, client, **_kwargs):
+        checks.append(True)
+        if len(checks) == 2:
+            raise ProxmoxError("PREBOOT_VALIDATION_FAILED:memory_mb")
+        return client.power_state()
+
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr("worker.main.verify_preboot_configuration", verify)
+    client = FakePower()
+    with pytest.raises(ProxmoxError, match="PREBOOT_VALIDATION_FAILED:memory_mb"):
+        execute_power(
+            "worker-1",
+            {
+                "operation_id": operation_id,
+                "payload_json": json.dumps({"power_action": "start", "instance_id": instance_id}),
+            },
+            client,
+        )
+    assert len(checks) == 2
+    assert client.power_calls == []
+
+
+def test_instance_password_presence_comes_from_original_operation_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, secret_path, created_at)
+            VALUES ('credential-source', 'provision', 'succeeded', '{}', '/private/one-shot-secret', 'now')
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, status, spec_json, created_at, updated_at)
+            VALUES ('credential-instance', 'credential-source', 'credential-test', 'ubuntu-2404', 'ready', '{}', 'now', 'now')
+            """
+        )
+
+    assert instance_password_was_provisioned("credential-instance") is True
 
 
 def test_power_reboot_reuses_audited_guest_identity(tmp_path, monkeypatch):
@@ -865,12 +987,23 @@ def test_power_reboot_reuses_audited_guest_identity(tmp_path, monkeypatch):
         )
 
     class FakePower:
+        def power_state(self, *_args):
+            return {"power_state": "running"}
+
         def power(self, *_args):
             return {"action": "reboot", "power_state": "running"}
 
     monkeypatch.setattr(
         "worker.main.ensure_guest_identity_for_operation",
         lambda *_args, **_kwargs: pytest.fail("la identidad verificada no debe depender del Guest Agent tras reboot"),
+    )
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state(),
     )
     execute_power(
         "worker-1",
@@ -942,6 +1075,18 @@ def test_reconcile_closes_reboot_identity_agent_outage_without_rebooting_again(t
 
         def power(self, *_args):
             pytest.fail("la reconciliación no debe repetir el reboot")
+
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr("worker.main.instance_password_was_provisioned", lambda _instance_id: False)
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state(
+            "mng01", 40001, "reconcile-reboot-verified"
+        ),
+    )
 
     execute_reconcile(
         "worker-1",
@@ -1017,6 +1162,16 @@ def test_reconcile_starts_recovered_provision_vm_before_guest_identity(tmp_path,
         "worker.main.ensure_guest_identity_for_operation",
         lambda *_args, **_kwargs: events.append("guest.identity"),
     )
+    monkeypatch.setattr(
+        "worker.main.operation_preboot_expectation",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state(
+            "mng01", 40002, "reconcile-stopped-provision"
+        ),
+    )
     execute_reconcile(
         "worker-1",
         {
@@ -1071,6 +1226,13 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
         )
         db.execute(
             """
+            INSERT INTO events(operation_id, kind, status, occurred_at)
+            VALUES (?, 'kvm.preboot.verified', 'succeeded', 'now')
+            """,
+            (source_id,),
+        )
+        db.execute(
+            """
             INSERT INTO operations(
                 operation_id, command, action, status, payload_json, instance_id,
                 stack, created_at
@@ -1107,6 +1269,14 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
         raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
 
     monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", fail_identity)
+    monkeypatch.setattr(
+        "worker.main.operation_preboot_expectation",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state("mng01", 40044, name),
+    )
     monkeypatch.setattr("worker.main._release_static_allocation", fail_release)
     monkeypatch.setattr("worker.main.release", fail_release)
 
@@ -1153,7 +1323,9 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
     assert "recovery.completed" in events
 
 
-def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
+def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state(monkeypatch):
+    from worker import main as worker_main
+
     class UnknownPower:
         def power_state(self, *_args):
             return {"power_state": "unknown"}
@@ -1161,6 +1333,12 @@ def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
         def power(self, *_args):
             pytest.fail("no debe iniciar cuando Proxmox no confirma stopped")
 
+    def verify(_operation_id, client, **_kwargs):
+        if client.power_state() != {"power_state": "stopped"}:
+            raise ProxmoxError("PROVISION_POWER_STATE_UNCONFIRMED", uncertain=True)
+
+    monkeypatch.setattr(worker_main, "verify_preboot_configuration", verify)
+    monkeypatch.setattr(worker_main, "preboot_previously_verified", lambda _operation_id: False)
     with pytest.raises(ProxmoxError, match="PROVISION_POWER_STATE_UNCONFIRMED") as error:
         ensure_vm_running_if_requested(
             "worker-1",
@@ -1170,6 +1348,7 @@ def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
             vmid=40003,
             name="unknown-power",
             started=True,
+            expected={"instance": {"vm_name": "unknown-power", "dns_servers": []}},
         )
     assert error.value.uncertain
 
@@ -1198,6 +1377,14 @@ def test_ensure_vm_running_sets_and_verifies_cloudinit_dns_before_requested_star
             self.calls.append(("power", action))
             return {"power_state": "running"}
 
+    def verify(_operation_id, client, **kwargs):
+        client.calls.append(("preboot_gate", kwargs.get("record", True)))
+        return client.power_state()
+
+    monkeypatch.setattr(worker_main, "verify_preboot_configuration", verify)
+    monkeypatch.setattr(worker_main, "preboot_previously_verified", lambda _operation_id: False)
+    monkeypatch.setattr(worker_main, "heartbeat", lambda *_args, **_kwargs: None)
+
     client = StaticVM()
     started = ensure_vm_running_if_requested(
         "worker-1",
@@ -1207,15 +1394,65 @@ def test_ensure_vm_running_sets_and_verifies_cloudinit_dns_before_requested_star
         vmid=40003,
         name="static-dns-start",
         started=True,
-        dns_servers=["1.1.1.1", "8.8.8.8"],
+        expected={
+            "instance": {
+                "vm_name": "static-dns-start",
+                "started": False,
+                "dns_servers": ["1.1.1.1", "8.8.8.8"],
+            }
+        },
     )
     assert client.calls == [
         ("dns", "mng01", 40003, "static-dns-start", ["1.1.1.1", "8.8.8.8"]),
+        ("preboot_gate", True),
+        ("power_state",),
+        ("preboot_gate", False),
         ("power_state",),
         ("power", "start"),
     ]
     assert started == {"power_state": "running"}
     assert events[0][1:3] == ("cloudinit.dns.verified", "succeeded")
+
+
+def test_provision_does_not_start_if_final_stopped_configuration_read_fails(monkeypatch):
+    from worker import main as worker_main
+
+    class ChangedBeforeStart:
+        def __init__(self):
+            self.gate_calls = 0
+            self.power_calls = []
+
+        def power_state(self, *_args):
+            return {"power_state": "stopped"}
+
+        def power(self, *_args):
+            self.power_calls.append("power")
+            pytest.fail("la VM debe quedar detenida ante cualquier discrepancia final")
+
+    client = ChangedBeforeStart()
+
+    def verify(_operation_id, _client, **_kwargs):
+        client.gate_calls += 1
+        if client.gate_calls == 2:
+            raise ProxmoxError("PREBOOT_VALIDATION_FAILED:network_gateway")
+        return {"power_state": "stopped"}
+
+    monkeypatch.setattr(worker_main, "verify_preboot_configuration", verify)
+    monkeypatch.setattr(worker_main, "preboot_previously_verified", lambda _operation_id: False)
+    monkeypatch.setattr(worker_main, "heartbeat", lambda *_args, **_kwargs: None)
+    with pytest.raises(ProxmoxError, match="PREBOOT_VALIDATION_FAILED:network_gateway"):
+        ensure_vm_running_if_requested(
+            "worker-1",
+            "preboot-last-read",
+            client,
+            node="mng01",
+            vmid=40004,
+            name="preboot-last-read",
+            started=True,
+            expected={"instance": {"vm_name": "preboot-last-read", "dns_servers": []}},
+        )
+    assert client.gate_calls == 2
+    assert client.power_calls == []
 
 
 def test_proxmox_ensure_cloudinit_dns_updates_only_verified_vm_config(monkeypatch):
@@ -1228,6 +1465,7 @@ def test_proxmox_ensure_cloudinit_dns_updates_only_verified_vm_config(monkeypatc
     }
     writes = []
     monkeypatch.setattr(client, "vm_config", lambda *_: dict(config))
+    monkeypatch.setattr(client, "power_state", lambda *_: {"power_state": "stopped"})
 
     def put(path, parameters):
         writes.append((path, parameters))
@@ -1335,16 +1573,36 @@ def test_execute_starts_physically_recovered_vm_before_guest_identity(tmp_path, 
     monkeypatch.setattr("worker.main.load_environment", lambda: None)
     monkeypatch.setattr("worker.main.ProxmoxClient", lambda: client)
     monkeypatch.setattr("worker.main.validate_pool", lambda _client: "iacp-lab")
-    monkeypatch.setattr("worker.main.observe", lambda *_args: {"network_model": "virtio"})
+    monkeypatch.setattr(
+        "worker.main.observe",
+        lambda image_id, *_args: {"image_id": image_id, "network_model": "virtio"},
+    )
     monkeypatch.setattr("worker.main.cluster_nodes", lambda: ["mng01"])
     monkeypatch.setattr("worker.main.select_target_node", lambda _client: "mng01")
     monkeypatch.setattr("worker.main.allocate", lambda *_args, **_kwargs: 40010)
     monkeypatch.setattr("worker.main._ensure_static_allocation", lambda **kwargs: dict(kwargs["payload"]["spec"]))
-    monkeypatch.setattr("worker.main.golden_variables", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "worker.main.golden_variables",
+        lambda spec, vmid, *_args, **_kwargs: {
+            "instance": {
+                "vm_name": spec["name"],
+                "vm_id": vmid,
+                "node_name": "mng01",
+                "image": spec["image"],
+                "started": False,
+                "dns_servers": [],
+            }
+        },
+    )
     monkeypatch.setattr("worker.main.read_secret", lambda _path: None)
     monkeypatch.setattr("worker.main.create_workspace", lambda *_args: (str(workspace), str(workspace)))
     monkeypatch.setattr("worker.main.write_variables", lambda *_args: "variables.json")
     monkeypatch.setattr("worker.main.terraform_commands", lambda *_args: [])
+    monkeypatch.setattr("worker.main.assert_stopped_plan", lambda *_args: None)
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state("mng01", 40010, spec["name"]),
+    )
     monkeypatch.setattr("worker.main.secret_path_for_command", lambda *_args: None)
     monkeypatch.setattr("worker.main.run_commands", lambda *_args, **_kwargs: next(commands_run))
     monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", lambda *_args, **_kwargs: actions.append("guest.identity"))

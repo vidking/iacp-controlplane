@@ -461,15 +461,23 @@ def test_dns_falls_back_to_networkmanager_when_resolved_has_no_complete_dns(reso
         if isinstance(node, ast.FunctionDef) and node.name in {'has_expected_dns', 'observed_dns'}
     ]
     calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return resolved if argv[1] == 'dns' else SimpleNamespace(returncode=0, stdout='1.1.1.1\n8.8.8.8\n')
+
     namespace = {
         're': __import__('re'),
+        'Path': lambda _path: SimpleNamespace(is_file=lambda: False),
         'shutil': SimpleNamespace(which=lambda name: '/usr/bin/' + name),
-        'subprocess': SimpleNamespace(run=lambda *args, **kwargs: resolved),
-        'run': lambda argv: calls.append(argv) or '1.1.1.1\n8.8.8.8\n',
+        'subprocess': SimpleNamespace(run=run),
     }
     exec(compile(ast.Module(body=functions, type_ignores=[]), '<dns-proof>', 'exec'), namespace)
     assert namespace['observed_dns']('eth0') == '1.1.1.1\n8.8.8.8\n'
-    assert calls == [['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0']]
+    assert calls == [
+        ['/usr/bin/resolvectl', 'dns', 'eth0'],
+        ['/usr/bin/nmcli', '-g', 'IP4.DNS', 'device', 'show', 'eth0'],
+    ]
 
 
 @pytest.mark.no_database
@@ -490,6 +498,39 @@ def test_dns_uses_resolved_when_both_expected_servers_are_present():
     exec(compile(ast.Module(body=functions, type_ignores=[]), '<dns-proof>', 'exec'), namespace)
     assert namespace['observed_dns']('eth0') == expected
     assert calls == []
+
+
+@pytest.mark.no_database
+def test_dns_falls_back_to_effective_resolver_file_when_services_have_no_dns():
+    tree = ast.parse(bootstrap.PROGRAM)
+    functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in {'has_expected_dns', 'observed_dns'}
+    ]
+    commands = []
+
+    class ResolverFile:
+        def is_file(self):
+            return True
+
+        def read_text(self):
+            return 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n'
+
+    namespace = {
+        're': __import__('re'),
+        'Path': lambda _path: ResolverFile(),
+        'shutil': SimpleNamespace(which=lambda _name: '/usr/bin/tool'),
+        'subprocess': SimpleNamespace(
+            run=lambda argv, **_kwargs: commands.append(argv)
+            or SimpleNamespace(returncode=0, stdout='')
+        ),
+    }
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<dns-proof>', 'exec'), namespace)
+    assert namespace['observed_dns']('eth0') == 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n'
+    assert commands == [
+        ['/usr/bin/tool', 'dns', 'eth0'],
+        ['/usr/bin/tool', '-g', 'IP4.DNS', 'device', 'show', 'eth0'],
+    ]
 
 
 @pytest.mark.no_database

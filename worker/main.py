@@ -12,10 +12,17 @@ from api.db import database, initialize
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
-from worker.golden import observe, validate_pool, variables as golden_variables
+from worker.golden import configured_pool_id, observe, validate_pool, variables as golden_variables
 from worker.guest_identity import GuestIdentityError, ensure as ensure_guest_identity, required as guest_identity_required
 from worker.heartbeat import heartbeat
 from worker.netbox import NetBoxAllocation, NetBoxClient, NetBoxError, configured as netbox_configured
+from worker.preboot import (
+    assert_stopped_plan,
+    expectation as preboot_expectation,
+    load_expectation as load_preboot_expectation,
+    mismatches as preboot_mismatches,
+    save_expectation as save_preboot_expectation,
+)
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
 
 
@@ -212,6 +219,13 @@ DETERMINISTIC_ERROR_MARKERS = (
     "ipam_instance_required",
     "protected_instance",
     "network_policy_mismatch",
+    "terraform_start_before_validation_blocked",
+    "terraform_plan_inspection_failed",
+    "terraform_vm_change_not_found",
+    "preboot_expectation_required",
+    "preboot_validation_failed",
+    "preboot_dns_vm_already_running",
+    "preboot_expectation_mismatch",
 )
 
 RETRYABLE_COMMAND_MARKERS = (
@@ -562,6 +576,16 @@ def instance_plan_operation(instance_id: str) -> str | None:
     return row["operation_id"] if row else None
 
 
+def instance_password_was_provisioned(instance_id: str | None) -> bool:
+    """Read the original operation's non-secret credential-presence metadata."""
+
+    source_id = instance_plan_operation(instance_id or "")
+    source = find_operation(source_id) if source_id else None
+    if source is None or source.get("command") not in {"plan", "provision"}:
+        raise ProxmoxError("PREBOOT_EXPECTATION_REQUIRED")
+    return bool(source.get("secret_path"))
+
+
 def data_root() -> str:
     return os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane")
 
@@ -897,6 +921,117 @@ def operation_spec(source_operation: dict, fallback_payload: dict | None = None)
     return spec if isinstance(spec, dict) else {}
 
 
+def expected_preboot_for_spec(
+    spec: dict,
+    *,
+    vmid: int,
+    node: str,
+    client: ProxmoxClient,
+    stack: str = "mng01",
+    password_present: bool | None,
+) -> dict:
+    """Rebuild the expected portal/image contract for recovery and lifecycle starts."""
+
+    if not isinstance(spec, dict) or not spec.get("image") or not spec.get("name"):
+        raise ProxmoxError("PREBOOT_EXPECTATION_REQUIRED")
+    golden = observe(spec["image"], client)
+    values = golden_variables(
+        spec,
+        int(vmid),
+        golden,
+        stack,
+        target_node=node,
+        allowed_nodes=cluster_nodes(),
+        # The original operation retains only whether a password was supplied;
+        # the secret itself is removed after provisioning.
+        has_root_password=(True if password_present is None else password_present),
+        pool_id=configured_pool_id(),
+    )
+    return preboot_expectation(
+        values["instance"],
+        golden,
+        password_present=password_present,
+        node=node,
+        vmid=int(vmid),
+    )
+
+
+def operation_preboot_expectation(
+    workspace: str,
+    spec: dict,
+    *,
+    vmid: int,
+    node: str,
+    client: ProxmoxClient,
+    stack: str,
+    password_present: bool | None,
+) -> dict:
+    """Use the plan-time contract; fall back only for pre-gate recovery records."""
+
+    expectation_path = os.path.join(workspace, "preboot.expectation.json")
+    if not os.path.exists(expectation_path):
+        return expected_preboot_for_spec(
+            spec,
+            vmid=vmid,
+            node=node,
+            client=client,
+            stack=stack,
+            password_present=password_present,
+        )
+    expected = load_preboot_expectation(workspace)
+    if (
+        expected.get("vmid") != int(vmid)
+        or expected.get("node") != node
+        or expected.get("image_id") != spec.get("image")
+        or expected.get("instance", {}).get("vm_name") != spec.get("name")
+    ):
+        raise ProxmoxError("PREBOOT_EXPECTATION_MISMATCH")
+    return expected
+
+
+def verify_preboot_configuration(
+    operation_id: str,
+    client: ProxmoxClient,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    expected: dict,
+    require_stopped: bool = True,
+    record: bool = True,
+    proof_operation_id: str | None = None,
+) -> dict:
+    config = client.vm_config(node, int(vmid))
+    power = client.power_state(node, int(vmid), name)
+    power_state = power.get("power_state")
+    failures = preboot_mismatches(
+        config,
+        expected,
+        vmid=int(vmid),
+        node=node,
+        name=name,
+        power_state=power_state,
+        require_stopped=require_stopped,
+    )
+    if failures:
+        detail = json.dumps(
+            {"node": node, "vmid": int(vmid), "fields": failures},
+            sort_keys=True,
+        )
+        if record:
+            emit(operation_id, "kvm.preboot.rejected", "failed", detail)
+        raise ProxmoxError("PREBOOT_VALIDATION_FAILED:" + ",".join(failures))
+    if record:
+        detail = json.dumps(
+            {"node": node, "vmid": int(vmid), "power_state": power_state},
+            sort_keys=True,
+        )
+        emit(operation_id, "kvm.preboot.verified", "succeeded", detail)
+        if proof_operation_id and proof_operation_id != operation_id:
+            emit(proof_operation_id, "kvm.preboot.verified", "succeeded", detail)
+    return power
+
+
 def ensure_guest_identity_for_operation(
     worker_id: str,
     operation_id: str,
@@ -974,21 +1109,52 @@ def ensure_vm_running_if_requested(
     vmid: int,
     name: str,
     started: bool,
-    dns_servers: list[str] | None = None,
+    expected: dict | None = None,
+    proof_operation_id: str | None = None,
 ) -> dict | None:
-    """Converge a recovered VM to the requested running state before guest checks."""
+    """Apply the requested power state only after a complete stopped-state gate."""
+    if not isinstance(expected, dict):
+        raise ProxmoxError("PREBOOT_EXPECTATION_REQUIRED")
+    instance = expected.get("instance") or {}
+    dns_servers = instance.get("dns_servers") or []
     if dns_servers:
         config = client.ensure_cloudinit_dns(node, vmid, name, dns_servers)
         emit(operation_id, "cloudinit.dns.verified", "succeeded", config["nameserver"])
+    gate_already_passed = preboot_previously_verified(proof_operation_id or operation_id)
+    observed = verify_preboot_configuration(
+        operation_id,
+        client,
+        node=node,
+        vmid=vmid,
+        name=name,
+        expected=expected,
+        require_stopped=not (started and gate_already_passed),
+        proof_operation_id=proof_operation_id,
+    )
     if not started:
         return None
-    observed = client.power_state(node, vmid, name)
     power_state = observed.get("power_state")
-    if power_state == "running":
+    if power_state == "running" and gate_already_passed:
         return observed
     if power_state != "stopped":
         raise ProxmoxError("PROVISION_POWER_STATE_UNCONFIRMED", uncertain=True)
 
+    # Repeat the read-only gate immediately before the Proxmox power request.
+    # Any concurrent drift leaves the clone stopped and the operation failed.
+    observed = verify_preboot_configuration(
+        operation_id,
+        client,
+        node=node,
+        vmid=vmid,
+        name=name,
+        expected=expected,
+        require_stopped=not gate_already_passed,
+        record=False,
+    )
+    if observed.get("power_state") == "running" and gate_already_passed:
+        return observed
+    if observed.get("power_state") != "stopped":
+        raise ProxmoxError("PROVISION_POWER_STATE_UNCONFIRMED", uncertain=True)
     heartbeat(worker_id, "running", operation_id, phase="provision_recovery_start")
     emit(operation_id, "provision.power.start.started", "running", f"VMID {vmid} estaba detenida")
     result = client.power(node, vmid, name, "start")
@@ -996,6 +1162,36 @@ def ensure_vm_running_if_requested(
         raise ProxmoxError("PROVISION_POWER_START_UNCONFIRMED", uncertain=True)
     emit(operation_id, "provision.power.start.completed", "succeeded", f"VMID {vmid} está ejecutándose")
     return result
+
+
+def verify_power_preconditions(
+    operation_id: str,
+    client: ProxmoxClient,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    action: str,
+    expected: dict,
+) -> dict:
+    """Releer la configuración completa justo antes de iniciar o reiniciar."""
+
+    if action not in {"start", "reboot"}:
+        raise ProxmoxError("POWER_ACTION_INVALID")
+    required_state = "stopped" if action == "start" else "running"
+    observed = verify_preboot_configuration(
+        operation_id,
+        client,
+        node=node,
+        vmid=vmid,
+        name=name,
+        expected=expected,
+        require_stopped=(action == "start"),
+        record=False,
+    )
+    if observed.get("power_state") != required_state:
+        raise ProxmoxError("PROVISION_POWER_STATE_UNCONFIRMED", uncertain=True)
+    return observed
 
 
 def guest_identity_previously_verified(instance_id: str) -> bool:
@@ -1013,6 +1209,23 @@ def guest_identity_previously_verified(instance_id: str) -> bool:
             LIMIT 1
             """,
             (instance_id,),
+        ).fetchone()
+    return row is not None
+
+
+def preboot_previously_verified(operation_id: str | None) -> bool:
+    """A recovered running clone is accepted only if its own gate was audited."""
+
+    if not operation_id:
+        return False
+    with database() as db:
+        row = db.execute(
+            """
+            SELECT 1 FROM events
+            WHERE operation_id=? AND kind='kvm.preboot.verified' AND status='succeeded'
+            LIMIT 1
+            """,
+            (operation_id,),
         ).fetchone()
     return row is not None
 
@@ -1258,6 +1471,34 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         if action not in {"start", "shutdown", "reboot"}:
             raise RuntimeError("POWER_ACTION_INVALID")
         observed = client.power_state(node, int(vmid), name)
+        if action in {"start", "reboot"}:
+            spec = instance_spec(instance_id)
+            expected = expected_preboot_for_spec(
+                spec,
+                vmid=int(vmid),
+                node=node,
+                client=client,
+                stack=source.get("stack") or "mng01",
+                password_present=instance_password_was_provisioned(instance_id),
+            )
+            dns_servers = expected.get("instance", {}).get("dns_servers") or []
+            if dns_servers:
+                client.ensure_cloudinit_dns(node, int(vmid), name, dns_servers)
+            observed = verify_preboot_configuration(
+                operation_id,
+                client,
+                node=node,
+                vmid=int(vmid),
+                name=name,
+                expected=expected,
+                require_stopped=False,
+            )
+            if (
+                action == "start"
+                and observed.get("power_state") == "running"
+                and not preboot_previously_verified(source.get("operation_id"))
+            ):
+                raise ProxmoxError("POWER_START_WITHOUT_PREBOOT_PROOF", uncertain=True)
         desired = "running" if action == "start" else "stopped"
         if action in {"start", "shutdown"} and observed.get("power_state") == desired:
             result = {"action": action, "already": True, **observed}
@@ -1282,6 +1523,16 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                                                     spec=instance_spec(instance_id))
                 result = {"action": action, "already": True, "verified_task": task, **observed}
         else:
+            if action in {"start", "reboot"}:
+                verify_power_preconditions(
+                    operation_id,
+                    client,
+                    node=node,
+                    vmid=int(vmid),
+                    name=name,
+                    action=action,
+                    expected=expected,
+                )
             result = client.power(node, int(vmid), name, action)
         if action == "start" and result.get("power_state") == "running":
             ensure_guest_identity_for_operation(
@@ -1330,6 +1581,20 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         if source_command in {"apply", "provision"}:
             spec = operation_spec(source, source_payload)
             started = bool(spec.get("started", True))
+            source_stack = source.get("stack") or "mng01"
+            source_workspace = os.path.join(
+                source.get("workspace_path") or os.path.join(data_root(), "plans", source.get("plan_operation_id") or source.get("operation_id"), "terraform"),
+                source_stack_directory(source_stack),
+            )
+            expected_preboot = operation_preboot_expectation(
+                source_workspace,
+                spec,
+                vmid=int(vmid),
+                node=node,
+                client=client,
+                stack=source_stack,
+                password_present=bool(source.get("secret_path")),
+            )
             observed = ensure_vm_running_if_requested(
                 worker_id,
                 operation_id,
@@ -1338,11 +1603,8 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 vmid=int(vmid),
                 name=name,
                 started=started,
-                dns_servers=(
-                    spec.get("dns_servers")
-                    if spec.get("network_profile") == "prod_static"
-                    else None
-                ),
+                expected=expected_preboot,
+                proof_operation_id=source.get("operation_id"),
             )
             try:
                 ensure_guest_identity_for_operation(
@@ -1415,7 +1677,7 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     instance_id = payload.get("instance_id") or operation.get("instance_id")
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, vmid, node, name, status, spec_json FROM instances WHERE instance_id=?",
+            "SELECT instance_id, operation_id, vmid, node, name, status, spec_json FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     if row is None or row["vmid"] is None:
@@ -1429,6 +1691,31 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     if is_protected_vmid(vmid):
         raise RuntimeError("PROTECTED_INSTANCE")
     node = row["node"] or "mng01"
+    try:
+        spec = json.loads(row["spec_json"] or "{}")
+    except (TypeError, ValueError):
+        spec = {}
+    if action in {"start", "reboot"}:
+        expected = expected_preboot_for_spec(
+            spec,
+            vmid=vmid,
+            node=node,
+            client=client,
+            stack=operation.get("stack") or "mng01",
+            password_present=instance_password_was_provisioned(instance_id),
+        )
+        dns_servers = expected.get("instance", {}).get("dns_servers") or []
+        if dns_servers:
+            client.ensure_cloudinit_dns(node, vmid, row["name"], dns_servers)
+        verify_preboot_configuration(
+            operation_id,
+            client,
+            node=node,
+            vmid=vmid,
+            name=row["name"],
+            expected=expected,
+            require_stopped=(action == "start"),
+        )
     update_operation(operation_id, vmid=vmid)
     update_instance(instance_id, "powering", vmid=vmid, power_state="unknown")
     emit(operation_id, f"power.{action}.started", "running")
@@ -1436,6 +1723,16 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     if setter is not None:
         setter(lambda: heartbeat(worker_id, "running", operation_id, phase=f"power_{action}"))
     heartbeat(worker_id, "running", operation_id, phase=f"power_{action}")
+    if action in {"start", "reboot"}:
+        verify_power_preconditions(
+            operation_id,
+            client,
+            node=node,
+            vmid=vmid,
+            name=row["name"],
+            action=action,
+            expected=expected,
+        )
     result = client.power(node, vmid, row["name"], action)
     power_state = result.get("power_state")
     if (
@@ -1443,10 +1740,6 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
         and power_state == "running"
         and not guest_identity_previously_verified(instance_id)
     ):
-        try:
-            spec = json.loads(row["spec_json"] or "{}")
-        except (TypeError, ValueError):
-            spec = {}
         ensure_guest_identity_for_operation(
             worker_id,
             operation_id,
@@ -1580,11 +1873,20 @@ def execute(worker_id: str, operation: dict) -> None:
                 )
                 update_instance(instance_id, "planning", vmid=vmid, node=target_node)
                 emit(operation_id, "vmid.reserved", "held", str(vmid))
+                expected = preboot_expectation(
+                    values["instance"],
+                    golden,
+                    password_present=bool(secret_path),
+                    node=target_node,
+                    vmid=int(vmid),
+                )
             else:
                 values = local_variables(spec)
                 update_instance(instance_id, "planning")
             workspace_root, workspace = create_workspace(operation_id, source_path, stack)
             write_variables(workspace, values)
+            if stack == "mng01" and command in {"plan", "provision"}:
+                save_preboot_expectation(workspace, expected)
             plan_path = os.path.join(data_root(), "plans", operation_id, "plan.tfplan")
             update_operation(
                 operation_id,
@@ -1642,6 +1944,8 @@ def execute(worker_id: str, operation: dict) -> None:
                 emit(operation_id, "terraform.plan.completed", "succeeded")
                 phase = "apply"
                 update_operation(operation_id, phase=phase)
+                if stack == "mng01":
+                    assert_stopped_plan(workspace, plan_path)
                 emit(operation_id, "terraform.apply.started", "running")
                 apply_code, apply_output, apply_error = run_commands(
                     worker_id,
@@ -1656,6 +1960,8 @@ def execute(worker_id: str, operation: dict) -> None:
                 error = operation_output(error + apply_error)
         else:
             update_operation(operation_id, phase=phase)
+            if command == "apply" and stack == "mng01":
+                assert_stopped_plan(workspace, plan_path)
             emit(operation_id, f"terraform.{command}.started", "running")
             heartbeat(worker_id, "running", operation_id, phase=phase)
             return_code, output, error = run_commands(
@@ -1698,6 +2004,8 @@ def execute(worker_id: str, operation: dict) -> None:
                     if recovered:
                         break
                     time.sleep(min(15.0, 2 * (2**retry)))
+                    if stack == "mng01" and command in {"apply", "provision"}:
+                        assert_stopped_plan(workspace, plan_path)
                     retry_code, retry_output, retry_error = run_commands(
                         worker_id,
                         operation_id,
@@ -1725,6 +2033,15 @@ def execute(worker_id: str, operation: dict) -> None:
                         spec = operation_spec(source_operation, source_payload)
                         started = requested_started if requested_started is not None else bool(spec.get("started", True))
                         recovery_node = target_node or identity.get("node") or "mng01"
+                        expected_preboot = operation_preboot_expectation(
+                            workspace,
+                            spec,
+                            vmid=int(vmid),
+                            node=recovery_node,
+                            client=client,
+                            stack=stack,
+                            password_present=bool(secret_path),
+                        )
                         ensure_vm_running_if_requested(
                             worker_id,
                             operation_id,
@@ -1733,11 +2050,7 @@ def execute(worker_id: str, operation: dict) -> None:
                             vmid=int(vmid),
                             name=identity.get("name", ""),
                             started=started,
-                            dns_servers=(
-                                spec.get("dns_servers")
-                                if spec.get("network_profile") == "prod_static"
-                                else None
-                            ),
+                            expected=expected_preboot,
                         )
                         ensure_guest_identity_for_operation(
                             worker_id,
@@ -1809,6 +2122,15 @@ def execute(worker_id: str, operation: dict) -> None:
             spec = operation_spec(source_operation, source_payload)
             started = requested_started if requested_started is not None else bool(spec.get("started", True))
             instance = instance_identity(instance_id)
+            expected_preboot = operation_preboot_expectation(
+                workspace,
+                spec,
+                vmid=int(vmid),
+                node=target_node or instance.get("node") or "mng01",
+                client=client,
+                stack=stack,
+                password_present=bool(secret_path),
+            )
             ensure_vm_running_if_requested(
                 worker_id,
                 operation_id,
@@ -1817,11 +2139,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 vmid=int(vmid),
                 name=instance.get("name", ""),
                 started=started,
-                dns_servers=(
-                    spec.get("dns_servers")
-                    if spec.get("network_profile") == "prod_static"
-                    else None
-                ),
+                expected=expected_preboot,
             )
             ensure_guest_identity_for_operation(
                 worker_id,

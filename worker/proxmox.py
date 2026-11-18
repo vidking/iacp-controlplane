@@ -253,6 +253,9 @@ class ProxmoxClient:
             raise ProxmoxError("CLOUDINIT_DNS_IDENTITY_MISMATCH")
         desired = " ".join(servers)
         if str(config.get("nameserver") or "").strip() != desired:
+            state = self.power_state(node, vmid, name).get("power_state")
+            if state != "stopped":
+                raise ProxmoxError("PREBOOT_DNS_VM_ALREADY_RUNNING")
             self.put(
                 f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config",
                 {"nameserver": desired},
