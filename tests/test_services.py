@@ -100,6 +100,15 @@ def test_disabled_catalog_and_no_side_effects(client, monkeypatch):
         assert db.execute("SELECT COUNT(*) AS n FROM instances").fetchone()["n"] == 0
 
 
+def test_services_catalog_publishes_all_four_service_images_but_keeps_agent_scope(client):
+    catalog = {item["application_id"]: item for item in client.get("/v1/applications").json()}
+    service_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+    for application in ("nextcloud", "n8n"):
+        assert catalog[application]["supported_image_ids"] == service_images
+    for application in ("hermes", "openclaw"):
+        assert catalog[application]["supported_image_ids"] == ["ubuntu-2404", "almalinux-9"]
+
+
 def test_atomic_idempotent_order_and_encrypted_credentials(client):
     order = create(client)
     assert create(client) == order
@@ -537,6 +546,31 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 },
             ]
             service_tasks = playbook[0]["tasks"][1]["block"]
+            alma_repo_tasks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Configurar repositorio Docker para AlmaLinux"
+            ]
+            alma_install_tasks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Instalar Docker en AlmaLinux"
+            ]
+            assert len(alma_repo_tasks) == 1
+            assert alma_repo_tasks[0]["ansible.builtin.get_url"] == {
+                "url": "https://download.docker.com/linux/alma/docker-ce.repo",
+                "dest": "/etc/yum.repos.d/docker-ce.repo",
+                "mode": "0644",
+                "validate_certs": True,
+            }
+            assert len(alma_install_tasks) == 1
+            assert alma_install_tasks[0]["ansible.builtin.dnf"]["name"] == [
+                "docker-ce",
+                "docker-ce-cli",
+                "containerd.io",
+                "docker-buildx-plugin",
+                "docker-compose-plugin",
+            ]
             image_pull_tasks = [
                 task
                 for task in service_tasks
@@ -714,7 +748,7 @@ def test_release_manifest_cannot_change_on_retry(client):
 def test_services_allow_standard_images_and_ip_mode():
     from api.service_models import ServiceCreateRequest
     from pydantic import ValidationError
-    for image in ['ubuntu-2404', 'almalinux-9']:
+    for image in ['ubuntu-2404', 'ubuntu-2604', 'almalinux-9', 'almalinux-10']:
         body = {'application_id':'nextcloud','instance':{'name':'ip-service','plan_id':'kvm-1','image_id':image,'network_profile':'prod_static','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'access_mode':'ip'}}
         assert ServiceCreateRequest.model_validate(body).configuration.domain is None
         body['instance']['network_profile']='lab_dhcp'
@@ -723,6 +757,9 @@ def test_services_allow_standard_images_and_ip_mode():
         with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(body)
     agent={'application_id':'hermes','instance':{'name':'local-agent','plan_id':'kvm-1','image_id':'almalinux-9','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'agent_mode':'local'}}
     assert ServiceCreateRequest.model_validate(agent).secrets.provider_api_key is None
+    agent['instance']['image_id']='almalinux-10'
+    with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
+    agent['instance']['image_id']='almalinux-9'
     agent['configuration']['agent_mode']='connected'
     with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
 

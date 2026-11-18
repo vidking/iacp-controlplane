@@ -198,17 +198,26 @@ def execute(service, job, heartbeat):
             {
                 "name": "Configurar repositorio Docker para AlmaLinux",
                 "when": "ansible_facts.os_family == 'RedHat'",
-                "ansible.builtin.yum_repository": {
-                    "name": "docker-ce-stable", "description": "Docker CE estable",
-                    "baseurl": "https://download.docker.com/linux/centos/9/$basearch/stable",
-                    "enabled": True, "gpgcheck": True,
-                    "gpgkey": "https://download.docker.com/linux/centos/gpg",
+                "ansible.builtin.get_url": {
+                    "url": "https://download.docker.com/linux/alma/docker-ce.repo",
+                    "dest": "/etc/yum.repos.d/docker-ce.repo",
+                    "mode": "0644",
+                    "validate_certs": True,
                 },
             },
             {
                 "name": "Instalar Docker en AlmaLinux",
                 "when": "ansible_facts.os_family == 'RedHat'",
-                "ansible.builtin.dnf": {"name": ["docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"], "state": "present"},
+                "ansible.builtin.dnf": {
+                    "name": [
+                        "docker-ce",
+                        "docker-ce-cli",
+                        "containerd.io",
+                        "docker-buildx-plugin",
+                        "docker-compose-plugin",
+                    ],
+                    "state": "present",
+                },
             },
             {
                 "name": "Iniciar Docker",

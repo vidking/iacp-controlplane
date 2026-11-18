@@ -154,9 +154,8 @@ siendo la misma.
 2. **Certificar las candidatas en desarrollo.** Cerrar el bloqueo de WAN con el
    equipo de redes y completar los ciclos aprobados, con seis workers de
    infraestructura sanos e idle antes de cada tanda de seis. Cubrir los cuatro
-   planes KVM en AlmaLinux 9 y 10 y las aplicaciones habilitadas para AlmaLinux 9.
-   El alcance actual de aplicaciones incluye Ubuntu 24.04 y AlmaLinux 9. La
-   cobertura de AlmaLinux 10 en este alcance corresponde a KVM. Registrar
+   planes KVM en AlmaLinux 9 y 10 y los cuatro sistemas operativos disponibles
+   para Nextcloud y n8n, repartidos entre sus dos ciclos. Registrar
    aprovisionamiento, identidad y SSH, red, reinicio, persistencia, eliminación y
    liberación IPAM cuando aplique. Arrancar los clones de prueba de ambas
    candidatas en MNG y comprobar `ip -V`, SELinux Enforcing y el protocolo 1 del

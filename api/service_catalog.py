@@ -14,6 +14,14 @@ APPLICATIONS = {
     "openclaw": {"label": "OpenClaw", "components": ["app"]},
 }
 
+SUPPORTED_SERVICE_IMAGE_IDS = [
+    "ubuntu-2404",
+    "ubuntu-2604",
+    "almalinux-9",
+    "almalinux-10",
+]
+SUPPORTED_AGENT_IMAGE_IDS = ["ubuntu-2404", "almalinux-9"]
+
 
 def enabled(name: str) -> bool:
     return os.getenv(name, "0").lower() in {"1", "true", "yes"}
@@ -30,7 +38,11 @@ def catalog() -> list[dict]:
             version=releases[key]["version"],
             validation_scope=releases[key]["validation_scope"],
             image_id="ubuntu-2404",
-            supported_image_ids=["ubuntu-2404", "almalinux-9"],
+            supported_image_ids=(
+                SUPPORTED_SERVICE_IMAGE_IDS
+                if key in {"nextcloud", "n8n"}
+                else SUPPORTED_AGENT_IMAGE_IDS
+            ),
             access_modes=["domain", "ip"] if key in {"nextcloud", "n8n"} else ["ssh"],
             agent_modes=["connected", "local"] if key in {"hermes", "openclaw"} else [],
             enabled=enabled("IACP_SERVICES_ENABLED"),

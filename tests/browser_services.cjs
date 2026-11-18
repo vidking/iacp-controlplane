@@ -33,7 +33,7 @@ const server = http.createServer((request, response) => {
       if (pathname === '/v1/plans') body = {plans:[{plan_id:'kvm-2',vcpus:2,memory_mb:4096,disk_gb:100}]};
       else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000],['ubuntu-2604',29001],['almalinux-9',29010],['almalinux-10',29011]].map(([image_id,template_vm_id]) => ({image_id,template_vm_id}))};
       else if (pathname === '/v1/network-profiles') body = {network_profiles:[{profile_id:'lab_dhcp',enabled:true}],active_profile:'lab_dhcp'};
-      else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404','almalinux-9']}));
+      else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404','ubuntu-2604','almalinux-9','almalinux-10']}));
       else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; payload = request.postDataJSON(); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }
       else if (pathname === '/v1/service-instances/service-test' && request.method() === 'DELETE') { deleted=true; deletePosts+=1; body={operation_id:'operation-delete-test'}; }
       else if (pathname === '/v1/service-instances') body = {services:created && !deleted ? [service()] : [],total:created && !deleted ? 1 : 0};
@@ -60,13 +60,15 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('[data-application-id="n8n"]').isEnabled(),true);
     await page.locator('[data-application-id="nextcloud"]').click();
     assert.equal(await page.locator('[data-application-id="nextcloud"]').getAttribute('aria-pressed'),'true');
+    assert.equal(await page.locator('#image option').count(),4);
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
     assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
     assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
     assert.match(await page.locator('#ssh-key-help').textContent(),/ya definiste contraseña root.*no necesitas una llave SSH/i);
     await page.locator('[data-application-id="n8n"]').click();
     assert.equal(await page.locator('[data-application-id="n8n"]').getAttribute('aria-pressed'),'true');
-    assert.equal(await page.locator('#image option').count(),2);
+    assert.equal(await page.locator('#image option').count(),4);
+    await page.locator('#image').selectOption('ubuntu-2604');
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
     assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
     assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
@@ -78,7 +80,7 @@ const server = http.createServer((request, response) => {
     assert.equal((await page.locator('#json-preview').textContent()).includes('password-ficticio'),false);
     await page.locator('#create-form').evaluate(form => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector('#create-button').disabled === false);
-    assert.equal(payload.application_id,'n8n'); assert.equal(payload.instance.image_id,'ubuntu-2404');
+    assert.equal(payload.application_id,'n8n'); assert.equal(payload.instance.image_id,'ubuntu-2604');
     assert.deepEqual(payload.configuration,{access_mode:'ip'});
     assert.deepEqual(payload.instance.access.ssh_public_keys,[]);
     assert.equal(payload.instance.access.root_password,'password-ficticio-123');

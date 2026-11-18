@@ -10,6 +10,7 @@ from pydantic import (
     model_validator,
 )
 from api.models import InstanceCreateRequest
+from api.service_catalog import SUPPORTED_AGENT_IMAGE_IDS, SUPPORTED_SERVICE_IMAGE_IDS
 
 
 class ApplicationConfiguration(BaseModel):
@@ -60,12 +61,17 @@ class ServiceCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def compatible(self):
+        supported_images = (
+            SUPPORTED_SERVICE_IMAGE_IDS
+            if self.application_id in {"nextcloud", "n8n"}
+            else SUPPORTED_AGENT_IMAGE_IDS
+        )
         if (
-            self.instance.image_id not in {"ubuntu-2404", "almalinux-9"}
+            self.instance.image_id not in supported_images
             or not self.instance.start_on_create
         ):
             raise ValueError(
-                "las recetas requieren ubuntu-2404 o almalinux-9 y start_on_create=true"
+                "la imagen no está habilitada para esta aplicación o start_on_create no es true"
             )
         if (
             not self.instance.access.ssh_public_keys

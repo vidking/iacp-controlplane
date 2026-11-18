@@ -437,10 +437,13 @@ invitado. La clave privada de la CA permanece en el Control Plane. No existe aú
 renovación automática: este modo certifica el piloto y no equivale a un producto
 público con TLS confiable de forma predeterminada.
 
-Las recetas admiten Ubuntu 24.04 y AlmaLinux 9; los contenedores conservan los
-mismos digests. En AlmaLinux se instala Docker desde su repositorio firmado y se
-mantiene SELinux, etiquetando los bind mounts necesarios. La verificación WAN
-observa interfaces, rutas y DNS del sistema operativo sin imponer Netplan a AlmaLinux.
+Las recetas de Nextcloud y n8n admiten Ubuntu 24.04, Ubuntu 26.04, AlmaLinux 9 y
+AlmaLinux 10; los contenedores conservan los mismos digests. En AlmaLinux se instala
+Docker desde el repositorio oficial firmado para AlmaLinux y se mantiene SELinux,
+etiquetando los bind mounts necesarios. La verificación WAN observa interfaces,
+rutas y DNS del sistema operativo sin imponer Netplan a AlmaLinux. La matriz de
+servicios distribuye Ubuntu en el ciclo 1 y AlmaLinux en el ciclo 2, con ambas
+aplicaciones y los cuatro planes en cada ciclo.
 
 `configuration.agent_mode="local"` permite validar Hermes/OpenClaw sin credencial
 real de proveedor. El modo predeterminado `connected` sigue exigiendo modelo y
@@ -454,13 +457,14 @@ IPAM; interrumpe la inyección al fallar. Las credenciales de aplicación se con
 una sola vez y permanecen en memoria durante el caso, nunca en los resultados.
 La clave SSH exclusiva del ensayo se conserva en el directorio privado de evidencia.
 
-Matrices: cuatro imágenes × cuatro planes para KVM; dos aplicaciones × dos
-sistemas × cuatro planes para servicios y para agentes. Completar dos ciclos
-limpios de cada categoría antes de preparar una promoción; no confundir los
-controles adicionales ni los ensayos fallidos con los 16 casos de aceptación.
+Matrices: cuatro imágenes × cuatro planes para KVM; Nextcloud y n8n × dos
+imágenes por ciclo × cuatro planes para servicios, completando las cuatro
+imágenes en los ciclos 1 y 2. La matriz de agentes conserva dos sistemas por
+ciclo hasta que ese alcance se reactive. No confundir los controles adicionales
+ni los ensayos fallidos con los 16 casos de aceptación de cada ciclo.
 
 Las recetas Docker y TLS se apoyan en la documentación oficial de
-[instalación RPM de Docker](https://docs.docker.com/engine/install/centos/) y
+[instalación RPM de Docker en AlmaLinux](https://docs.docker.com/engine/install/almalinux/) y
 [certificados explícitos de Caddy](https://caddyserver.com/docs/caddyfile/directives/tls).
 La compatibilidad concreta con las Golden Images de AlmaLinux se determina con
 la matriz física; la prueba de sintaxis de Ansible por sí sola no la certifica.

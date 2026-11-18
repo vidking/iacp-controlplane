@@ -145,14 +145,20 @@ def verify_netbox_state(client):
     }
 
 
-def cases(category, images=None):
+def cases(category, images=None, cycle=1):
     if category == "kvm":
+        supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+    elif category == "services":
         supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
     else:
         supported_images = ["ubuntu-2404", "almalinux-9"]
     selected_images = list(dict.fromkeys(images or supported_images))
     if not selected_images or set(selected_images) - set(supported_images):
         raise ValueError("MATRIX_IMAGES_INVALID")
+    if category == "services" and cycle not in {1, 2}:
+        raise ValueError("MATRIX_CYCLE_INVALID")
+    if category == "services" and len(selected_images) == 4:
+        selected_images = selected_images[:2] if cycle == 1 else selected_images[2:]
     products = (
         ["kvm"]
         if category == "kvm"
@@ -171,6 +177,8 @@ def cases(category, images=None):
     # las 16 posiciones de matriz.
     if len(result) < 16:
         result = (result * ((16 + len(result) - 1) // len(result)))[:16]
+    elif len(result) > 16:
+        raise ValueError("MATRIX_IMAGE_SELECTION_REQUIRES_TWO_IMAGES_PER_CYCLE")
     else:
         result = result[:16]
     controls = [dict(result[0], control=True), dict(result[-1], control=True)]
@@ -277,7 +285,7 @@ class Matrix:
             selected_images = self.args.images or (
                 ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
                 if self.args.category == "kvm"
-                else ["ubuntu-2404", "almalinux-9"]
+                else ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
             )
             catalog_images = self.api("GET", "/v1/images")["images"]
             catalog_ids = {
@@ -939,7 +947,7 @@ class Matrix:
         )
 
     def run(self):
-        planned = cases(self.args.category, self.args.images)
+        planned = cases(self.args.category, self.args.images, self.args.cycle)
         existing_names = []
         offset = 0
         while True:
@@ -967,7 +975,7 @@ class Matrix:
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=16,
             controls=2,
-            images=self.args.images or None,
+            images=sorted({case["image"] for case in planned}),
             name_prefix=(
                 "kvm-prueba"
                 if self.args.category == "kvm"
@@ -1035,7 +1043,7 @@ if __name__ == "__main__":
         "--images",
         nargs="+",
         choices=["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"],
-        help="Limita la matriz a imágenes concretas y repite combinaciones hasta 16 casos.",
+        help="Limita la matriz a imágenes concretas; servicios separa Ubuntu y AlmaLinux por ciclo.",
     )
     args = parser.parse_args()
     if not 1 <= args.cycle <= required_cycles(args.category):

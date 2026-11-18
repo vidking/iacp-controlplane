@@ -14,13 +14,36 @@ from scripts.wan_matrix import (
 
 
 def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
-    for category in ['kvm','services','agents']:
+    for category in ['kvm','agents']:
         matrix=cases(category)
         assert len(matrix)==18 and len(matrix)%6==0
         main=[case for case in matrix if not case['control']]
         assert len(main)==16
         assert len({(case['product'],case['image'],case['plan']) for case in main})==16
-        if category!='kvm':assert {case['image'] for case in main}=={'ubuntu-2404','almalinux-9'}
+
+
+def test_service_cycles_cover_every_image_plan_and_application_once():
+    cycles = [cases("services", cycle=cycle) for cycle in (1, 2)]
+    main_cycles = [
+        [case for case in matrix if not case["control"]]
+        for matrix in cycles
+    ]
+    expected = {
+        (product, image, f"kvm-{plan}")
+        for product in ("nextcloud", "n8n")
+        for image in ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
+        for plan in range(1, 5)
+    }
+    actual = [
+        (case["product"], case["image"], case["plan"])
+        for main in main_cycles
+        for case in main
+    ]
+    assert len(main_cycles[0]) == len(main_cycles[1]) == 16
+    assert {case["image"] for case in main_cycles[0]} == {"ubuntu-2404", "ubuntu-2604"}
+    assert {case["image"] for case in main_cycles[1]} == {"almalinux-9", "almalinux-10"}
+    assert len(actual) == len(set(actual)) == 32
+    assert set(actual) == expected
 
 
 def test_service_matrix_can_run_ubuntu_only_without_waiting_for_almalinux():
@@ -46,7 +69,10 @@ def test_service_matrix_can_run_ubuntu_only_without_waiting_for_almalinux():
 
 def test_service_matrix_rejects_images_outside_its_catalog():
     with pytest.raises(ValueError, match="MATRIX_IMAGES_INVALID"):
-        cases("services", images=["ubuntu-2604"])
+        cases("services", images=["ubuntu-2204"])
+
+    with pytest.raises(ValueError, match="MATRIX_IMAGE_SELECTION_REQUIRES_TWO_IMAGES_PER_CYCLE"):
+        cases("services", images=["ubuntu-2404", "ubuntu-2604", "almalinux-9"])
 
 
 def test_matrix_names_are_short_sequential_and_skip_existing_api_history():
@@ -81,6 +107,11 @@ def test_wan_matrix_repeats_kvm_combinations_four_times_for_64_vms():
     assert required_cycles("kvm") == 4
     assert required_cycles("services") == 2
     assert required_cycles("agents") == 2
+
+
+def test_service_matrix_can_target_new_ubuntu_and_alma_images():
+    assert {case["image"] for case in cases("services", images=["ubuntu-2604"])} == {"ubuntu-2604"}
+    assert {case["image"] for case in cases("services", images=["almalinux-10"])} == {"almalinux-10"}
 
 
 def test_service_controls_cover_password_only_access():
