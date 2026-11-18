@@ -77,7 +77,7 @@ def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip
             return {"status": {"value": "reserved"}, "tags": []}
 
         def available_addresses(self, _prefix):
-            return [(IPv4Address("190.0.231.3"), 24)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
 
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix_id": 52,
@@ -93,6 +93,13 @@ def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip
 
     with pytest.raises(RuntimeError, match="NETBOX_RESERVED_ADDRESS_INVALID"):
         verify_netbox_state(UnreservedNetBox())
+
+    class OutOfScopeNetBox(NetBoxStub):
+        def available_addresses(self, _prefix):
+            return [(IPv4Address("190.0.231.254"), 24)]
+
+    with pytest.raises(RuntimeError, match="NETBOX_AUTHORIZED_RANGE_EXHAUSTED"):
+        verify_netbox_state(OutOfScopeNetBox())
 
 
 def test_static_wan_binding_uses_vmbr3_without_proxmox_tag(tmp_path):

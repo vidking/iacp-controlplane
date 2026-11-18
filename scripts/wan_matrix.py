@@ -37,6 +37,7 @@ from worker.proxmox import ProxmoxClient
 
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
+MAX_AUTHORIZED_HOST = 253
 
 
 def wan_nic_config(env):
@@ -96,14 +97,21 @@ def verify_netbox_state(client):
     )
     if any(str(address) == "190.0.231.2" for address, _ in available):
         raise RuntimeError("NETBOX_RESERVED_ADDRESS_AVAILABLE")
-    if not available:
-        raise RuntimeError("NETBOX_NO_AVAILABLE_ADDRESSES")
+    first_authorized = prefix.network_address + 2
+    last_authorized = prefix.network_address + MAX_AUTHORIZED_HOST
+    eligible = [
+        (address, length)
+        for address, length in available
+        if first_authorized <= address <= last_authorized
+    ]
+    if len(eligible) < 6:
+        raise RuntimeError("NETBOX_AUTHORIZED_RANGE_EXHAUSTED")
     return {
         "prefix_id": 52,
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
         "reserved_address": "190.0.231.2/24",
-        "next_available": f"{available[0][0]}/{available[0][1]}",
+        "next_available": f"{eligible[0][0]}/{eligible[0][1]}",
     }
 
 
