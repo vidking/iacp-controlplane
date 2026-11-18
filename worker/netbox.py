@@ -105,7 +105,7 @@ def settings() -> NetBoxSettings:
         base_url = base_url[: -len("/status")].rstrip("/")
     excluded_raw = os.getenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "").strip()
     if not excluded_raw and os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop":
-        excluded_raw = "190.0.231.2"
+        excluded_raw = "190.0.231.2,190.0.231.3"
     try:
         excluded_addresses = frozenset(
             ip_address(value.strip())

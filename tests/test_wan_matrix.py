@@ -137,37 +137,52 @@ def test_catalog_defaults_follow_runtime_stage(monkeypatch):
 
 def test_wan_preflight_uses_only_netbox_available_addresses():
     from ipaddress import IPv4Address
+    from ipaddress import ip_address
     from types import SimpleNamespace
 
     class NetBoxStub:
-        config = SimpleNamespace(expected_prefix="190.0.231.0/24")
+        config = SimpleNamespace(
+            expected_prefix="190.0.231.0/24",
+            excluded_addresses=frozenset(
+                {ip_address("190.0.231.2"), ip_address("190.0.231.3")}
+            ),
+        )
 
         def validate_gateway(self, _prefix):
             return "190.0.231.1"
 
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 9)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 10)]
 
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
         "available_count": 6,
-        "next_available": "190.0.231.3/24",
+        "next_available": "190.0.231.4/24",
     }
 
     class OccupiedFirstNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 10)]
 
-    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.3/24"
+    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.4/24"
 
     class ExcludedAddressReturnedByNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 9)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 10)]
 
     state = verify_netbox_state(ExcludedAddressReturnedByNetBox())
-    assert state["next_available"] == "190.0.231.3/24"
+    assert state["next_available"] == "190.0.231.4/24"
     assert state["available_count"] == 6
+
+    class MissingRequiredExclusion(NetBoxStub):
+        config = SimpleNamespace(
+            expected_prefix="190.0.231.0/24",
+            excluded_addresses=frozenset({ip_address("190.0.231.2")}),
+        )
+
+    with pytest.raises(RuntimeError, match="NETBOX_REQUIRED_ADDRESS_EXCLUSION_MISSING"):
+        verify_netbox_state(MissingRequiredExclusion())
 
     class OutOfScopeNetBox(NetBoxStub):
         def available_addresses(self, _prefix):

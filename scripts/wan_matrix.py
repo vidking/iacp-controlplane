@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from datetime import UTC, datetime, timezone
-from ipaddress import ip_network
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -40,7 +40,7 @@ from worker.proxmox import ProxmoxClient
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
 EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
-EXCLUDED_WAN_ADDRESSES = {"190.0.231.2"}
+EXCLUDED_WAN_ADDRESSES = {"190.0.231.2", "190.0.231.3"}
 
 
 def required_cycles(category):
@@ -117,6 +117,9 @@ def require_expected_golden_images(images, inventory, vm_config):
 def verify_netbox_state(client):
     if client.config.expected_prefix != PROD_STATIC_PREFIX:
         raise RuntimeError("NETBOX_PREFIX_NOT_AUTHORIZED")
+    required_exclusions = {ip_address(value) for value in EXCLUDED_WAN_ADDRESSES}
+    if not required_exclusions.issubset(client.config.excluded_addresses):
+        raise RuntimeError("NETBOX_REQUIRED_ADDRESS_EXCLUSION_MISSING")
     prefix = ip_network(PROD_STATIC_PREFIX)
     gateway = client.validate_gateway(prefix)
     if gateway != "190.0.231.1":
