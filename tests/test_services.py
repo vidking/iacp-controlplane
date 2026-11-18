@@ -184,6 +184,27 @@ def test_service_execution_failure_keeps_only_safe_diagnostic(client, monkeypatc
     )
 
 
+def test_application_image_pull_failure_is_retryable(client, monkeypatch):
+    from worker.service_diagnostics import ServiceExecutionFailed
+
+    order = create(client)
+    ready(order["instance_id"])
+    job = services.claim("image-pull-worker")
+
+    def fail(*_args):
+        raise ServiceExecutionFailed(
+            "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
+        )
+
+    monkeypatch.setattr(services, "execute", fail)
+    services.process("image-pull-worker", job)
+    result = client.get(f"/v1/service-jobs/{job['job_id']}")
+    assert result.json()["status"] == "failed"
+    assert result.json()["error"] == (
+        "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
+    )
+
+
 def test_safe_ansible_error_parser_never_returns_raw_output():
     from worker.service_diagnostics import safe_execution_error
 
@@ -204,6 +225,19 @@ def test_safe_ansible_timeout_reports_last_allowlisted_task():
         "IACP_TASK:DOCKER_DEPENDENCIES\n", return_code=-15, timed_out=True
     )
     assert error == "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_TIMEOUT_DOCKER_DEPENDENCIES"
+
+
+def test_safe_image_pull_failure_is_retryable_without_marking_uncertain():
+    from worker.service_diagnostics import safe_execution_error
+
+    error = safe_execution_error(
+        "IACP_TASK:APPLICATION_IMAGE_PULL\n"
+        "IACP_FAILED:APPLICATION_IMAGE_PULL\n"
+        "token=private-value\n",
+        return_code=2,
+    )
+    assert error == "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
+    assert "private-value" not in error
 
 
 def test_ansible_safe_callback_reports_redacted_failure_event(tmp_path):
@@ -450,6 +484,25 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 },
             ]
             service_tasks = playbook[0]["tasks"][1]["block"]
+            image_pull_tasks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Descargar imágenes de aplicación"
+            ]
+            application_start_tasks = [
+                task for task in service_tasks if task.get("name") == "Arrancar aplicación"
+            ]
+            if expected_action == "install":
+                assert len(image_pull_tasks) == 1
+                assert len(application_start_tasks) == 1
+                assert service_tasks.index(image_pull_tasks[0]) < service_tasks.index(application_start_tasks[0])
+                assert image_pull_tasks[0]["ansible.builtin.command"]["argv"][-1] == "pull"
+                assert image_pull_tasks[0]["retries"] == 3
+                assert image_pull_tasks[0]["delay"] == 10
+                assert image_pull_tasks[0]["until"] == "application_image_pull.rc == 0"
+            else:
+                assert image_pull_tasks == []
+                assert application_start_tasks == []
             trusted_domain_tasks = [
                 task
                 for task in service_tasks

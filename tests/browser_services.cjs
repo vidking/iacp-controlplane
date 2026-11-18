@@ -111,6 +111,7 @@ const server = http.createServer((request, response) => {
     await page.locator('#delete-service').click();
     await page.waitForFunction(() => document.querySelector('#service-detail').classList.contains('hidden'));
     assert.equal(deletePosts,1);
+    await page.waitForFunction(() => document.querySelector('[data-service-row="service-test"]') === null);
     assert.equal(await page.locator('[data-service-row="service-test"]').count(),0);
     await page.locator('#services-panel > summary').click();
     assert.equal(await page.locator('#services-panel').evaluate(element => element.open),false);

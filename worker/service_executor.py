@@ -10,6 +10,7 @@ from pathlib import Path
 from api.service_secrets import decrypt
 from worker.service_recipes import render, RecipeError
 from worker.service_diagnostics import (
+    ServiceExecutionFailed,
     ServiceExecutionUncertain,
     safe_execution_error,
 )
@@ -218,6 +219,16 @@ def execute(service, job, heartbeat):
                 }
             )
         base = ["docker", "compose", "--project-directory", root]
+        tasks.append(
+            {
+                "name": "Descargar imágenes de aplicación",
+                **command(base + ["pull"]),
+                "register": "application_image_pull",
+                "retries": 3,
+                "delay": 10,
+                "until": "application_image_pull.rc == 0",
+            }
+        )
         if service["application_id"] == "openclaw":
             tasks.append(
                 {
@@ -537,10 +548,14 @@ def execute(service, job, heartbeat):
                         process.wait()
             output.flush()
             if timed_out or process.returncode:
-                raise ServiceExecutionUncertain(
-                    safe_execution_error(
-                        summary_path.read_text(encoding="utf-8", errors="replace"),
-                        return_code=process.returncode,
-                        timed_out=timed_out,
-                    )
+                error = safe_execution_error(
+                    summary_path.read_text(encoding="utf-8", errors="replace"),
+                    return_code=process.returncode,
+                    timed_out=timed_out,
                 )
+                failure = (
+                    ServiceExecutionFailed
+                    if error.startswith("SERVICE_EXECUTION_FAILED:")
+                    else ServiceExecutionUncertain
+                )
+                raise failure(error)

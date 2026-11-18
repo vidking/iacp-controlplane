@@ -11,6 +11,7 @@ from api.protection import is_protected_vmid
 from worker.service_executor import (
     execute,
     ServiceBlocked,
+    ServiceExecutionFailed,
     ServiceExecutionUncertain,
 )
 
@@ -132,6 +133,8 @@ def process(worker_id, job):
         execute(dict(service), job, lambda: heartbeat(worker_id, job))
     except ServiceBlocked as exc:
         status, error = "blocked", str(exc)
+    except ServiceExecutionFailed as exc:
+        status, error = "failed", exc.code
     except ServiceExecutionUncertain as exc:
         status, error = "uncertain", exc.code
     except Exception:

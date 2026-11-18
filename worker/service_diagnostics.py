@@ -15,6 +15,7 @@ TASK_CODES = {
     "Crear directorio": "SERVICE_DIRECTORY",
     "Crear datos": "SERVICE_DIRECTORY",
     "Escribir configuración": "SERVICE_CONFIGURATION",
+    "Descargar imágenes de aplicación": "APPLICATION_IMAGE_PULL",
     "Configurar gateway": "AGENT_CONFIGURATION",
     "Seleccionar modelo": "AGENT_MODEL",
     "Arrancar aplicación": "APPLICATION_START",
@@ -44,6 +45,14 @@ class ServiceExecutionUncertain(RuntimeError):
         super().__init__(code)
 
 
+class ServiceExecutionFailed(RuntimeError):
+    """Falló una fase previa al arranque que se puede reintentar sin ambigüedad."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
 def task_code(name: str) -> str:
     """Devuelve un identificador allowlist; nunca devuelve entrada arbitraria."""
 
@@ -65,6 +74,8 @@ def safe_execution_error(
         if event == "TASK":
             last_task = code
         elif event in {"FAILED", "UNREACHABLE"}:
+            if event == "FAILED" and code == "APPLICATION_IMAGE_PULL":
+                return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
             return f"SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_{event}_{code}"
     if timed_out:
         return f"SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_TIMEOUT_{last_task}"

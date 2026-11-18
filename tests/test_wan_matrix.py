@@ -115,3 +115,88 @@ def test_almalinux_matrix_pins_key_through_validated_helper(tmp_path):
     observed['instance_id'] = 'another-instance'
     with pytest.raises(AssertionError):
         matrix.binding(item)
+
+
+def test_wait_service_retries_known_startup_failure_after_worker_release(monkeypatch):
+    import scripts.wan_matrix as wan_matrix
+
+    matrix = object.__new__(wan_matrix.Matrix)
+    job_id = "job-test"
+    states = iter(
+        [
+            {
+                "job_id": job_id,
+                "status": "uncertain",
+                "error": "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_APPLICATION_START",
+                "worker_id": "service-worker-4",
+            },
+            {"job_id": job_id, "status": "succeeded", "error": ""},
+        ]
+    )
+    calls = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if path == f"/v1/service-jobs/{job_id}":
+            return next(states)
+        if path == "/v1/service-workers":
+            return {
+                "workers": [
+                    {
+                        "worker_id": "service-worker-4",
+                        "status": "running",
+                        "job_id": "another-job",
+                    }
+                ]
+            }
+        if path == f"/v1/service-jobs/{job_id}/retry":
+            return {"job_id": job_id, "status": "queued"}
+        raise AssertionError(path)
+
+    matrix.api = api
+    matrix.record = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _seconds: None)
+    matrix.wait_service(job_id)
+    assert calls[2] == (
+        "POST",
+        f"/v1/service-jobs/{job_id}/retry",
+        {"previous_execution_stopped": True},
+        f"matrix-service-retry-{job_id}",
+    )
+
+
+def test_wait_service_does_not_retry_when_original_worker_still_owns_job(monkeypatch):
+    import pytest
+    import scripts.wan_matrix as wan_matrix
+
+    matrix = object.__new__(wan_matrix.Matrix)
+    job_id = "job-test"
+    calls = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path))
+        if path == f"/v1/service-jobs/{job_id}":
+            return {
+                "job_id": job_id,
+                "status": "uncertain",
+                "error": "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_APPLICATION_START",
+                "worker_id": "service-worker-4",
+            }
+        if path == "/v1/service-workers":
+            return {
+                "workers": [
+                    {
+                        "worker_id": "service-worker-4",
+                        "status": "running",
+                        "job_id": job_id,
+                    }
+                ]
+            }
+        raise AssertionError("must not retry an active execution")
+
+    matrix.api = api
+    matrix.record = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _seconds: None)
+    with pytest.raises(RuntimeError, match="SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED"):
+        matrix.wait_service(job_id)
+    assert not any(path.endswith("/retry") for _, path in calls)

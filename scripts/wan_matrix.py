@@ -651,10 +651,51 @@ class Matrix:
         )
 
     def wait_service(self, jobid):
+        retry_attempted = False
+        retryable_errors = {
+            "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL",
+            "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_APPLICATION_START",
+            "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_UNREACHABLE_APPLICATION_START",
+        }
         for _ in range(1200):
             job = self.api("GET", "/v1/service-jobs/" + jobid)
             if job["status"] == "succeeded":
                 return
+            if (
+                not retry_attempted
+                and job["status"] in {"failed", "uncertain"}
+                and job.get("error") in retryable_errors
+            ):
+                worker_id = job.get("worker_id")
+                workers = self.api("GET", "/v1/service-workers").get("workers", [])
+                owner = next(
+                    (worker for worker in workers if worker.get("worker_id") == worker_id),
+                    None,
+                )
+                if (
+                    owner is None
+                    or owner.get("status") not in {"idle", "running"}
+                    or owner.get("job_id") == jobid
+                ):
+                    raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+                response = self.api(
+                    "POST",
+                    "/v1/service-jobs/" + jobid + "/retry",
+                    {"previous_execution_stopped": True},
+                    key="matrix-service-retry-" + jobid,
+                )
+                if response.get("status") != "queued":
+                    raise RuntimeError("SERVICE_RETRY_NOT_QUEUED")
+                self.record(
+                    "service_retry",
+                    job_id=jobid,
+                    worker_id=worker_id,
+                    previous_status=job["status"],
+                    error_code=job["error"],
+                    attempt=2,
+                )
+                retry_attempted = True
+                continue
             if job["status"] in {"blocked", "failed", "uncertain", "cancelled"}:
                 raise RuntimeError(
                     "SERVICE_" + job["status"].upper() + "_" + str(job.get("error", ""))

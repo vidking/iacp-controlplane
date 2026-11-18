@@ -90,6 +90,43 @@ Su clave privada no debe salir del Control Plane. La modalidad web por IP usa es
 CA y exige validación TLS. Los agentes usan `agent_mode=local`: no se certifican
 inferencia, Telegram ni proveedores externos.
 
+### Actualización operativa — 2026-11-18
+
+Esta actualización reemplaza el próximo paso LAN indicado en la sección
+histórica. El equipo de redes confirmó `vmbr3` sin tag de Proxmox y VLAN 211 en
+la capa superior. Proxmox muestra el puente activo sobre `vlan211`; el guest
+usó `vmbr3` sin tag. La prueba NetBox de `190.0.231.2/24` no resolvió ARP para
+`190.0.231.1` (`STATIC_GATEWAY_UNREACHABLE`). Tras apagar y eliminar la VMID
+40140 por la API, la IP quedó liberada y sin objeto NetBox; la reconciliación de
+la operación original terminó `failed` por recurso físico ausente. Esta
+dirección no está certificada. No se seguirá usando `lab_dhcp` en matrices
+físicas; las siguientes matrices deben usar `prod_static` y NetBox. Se reservó
+temporalmente `.2/24` en NetBox con estado `reserved` y tag `reservada`; el
+endpoint `available-ips` confirmó que la siguiente dirección es `.3/24`. La
+reserva permanece dentro del prefijo autorizado para impedir que una solicitud
+de cliente reciba la dirección que falló. Evidencia privada de la revisión
+`59ca188`: `/opt/iacp/evidence/wan-gateway-probe-59ca188-202611172359/`.
+
+El ciclo LAN 1 `20261118005202`, revisión `59ca188`, quedó `BLOCKED`: cinco
+servicios Nextcloud instalaron; el caso Ubuntu 24.04/`kvm-4` quedó `uncertain`
+con `ANSIBLE_FAILED_APPLICATION_START`. Antes de limpiar se comprobó que el job
+no tuviera worker asignado, el daemon Docker estuviera activo, Compose fuera
+válido y la imagen de Nextcloud no estuviera descargada. Se conservó el error y
+se apagaron y eliminaron por la API las seis VMs propias. Los seis workers de
+infraestructura y los cuatro de servicios quedaron idle; no hubo operaciones
+activas o inciertas al cierre. Este intento no cuenta como aprobado. Evidencia
+privada:
+`/opt/iacp/evidence/lan-servicios-ciclo1-20261118005202/results.jsonl` y
+`/opt/iacp/evidence/recuperacion-lan-servicios-20261118020900/recovery-summary.json`.
+
+El candidato local incorpora `docker compose pull` con reintentos antes del
+arranque. Un fallo de descarga se clasifica como `failed` reintentable porque
+no inicia contenedores; errores de arranque conservan `uncertain` hasta que el
+worker anterior deje el job. El runner prueba una recuperación única solo para
+los códigos permitidos y únicamente después de comprobar la liberación del
+worker. La imagen y el navegador pasan por pruebas locales antes de desplegar
+este candidato exclusivamente a dev.
+
 ### Resultados recientes — 2026-11-17
 
 El equipo de redes confirmó que el enlace WAN temporal debe conectarse en
