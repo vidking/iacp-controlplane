@@ -431,11 +431,14 @@ def test_golden_variables_preserve_hardware_and_dhcp(tmp_path, monkeypatch):
         **spec,
         "network_profile": "prod_static",
         "network_mode": "static",
+        "dns_servers": ["1.1.1.1", "8.8.8.8"],
         "vlan_id": None,
     }
     static_instance = variables(static_spec, 40001, golden)["instance"]
     assert static_instance["network_bridge"] == "vmbr3"
     assert static_instance["vlan_id"] is None
+    assert static_instance["dns_servers"] == ["1.1.1.1", "8.8.8.8"]
+    assert static_instance["started"] is False
 
 
 def test_pool_is_configurable_only_as_internal_worker_setting(monkeypatch):
@@ -1169,6 +1172,100 @@ def test_ensure_vm_running_if_requested_fails_closed_for_unknown_power_state():
             started=True,
         )
     assert error.value.uncertain
+
+
+def test_ensure_vm_running_sets_and_verifies_cloudinit_dns_before_requested_start(
+    monkeypatch,
+):
+    from worker import main as worker_main
+
+    events = []
+    monkeypatch.setattr(worker_main, "emit", lambda *args: events.append(args))
+
+    class StaticVM:
+        def __init__(self):
+            self.calls = []
+
+        def ensure_cloudinit_dns(self, node, vmid, name, servers):
+            self.calls.append(("dns", node, vmid, name, servers))
+            return {"nameserver": "1.1.1.1 8.8.8.8"}
+
+        def power_state(self, *_args):
+            self.calls.append(("power_state",))
+            return {"power_state": "stopped"}
+
+        def power(self, node, vmid, name, action):
+            self.calls.append(("power", action))
+            return {"power_state": "running"}
+
+    client = StaticVM()
+    started = ensure_vm_running_if_requested(
+        "worker-1",
+        "static-dns-start",
+        client,
+        node="mng01",
+        vmid=40003,
+        name="static-dns-start",
+        started=True,
+        dns_servers=["1.1.1.1", "8.8.8.8"],
+    )
+    assert client.calls == [
+        ("dns", "mng01", 40003, "static-dns-start", ["1.1.1.1", "8.8.8.8"]),
+        ("power_state",),
+        ("power", "start"),
+    ]
+    assert started == {"power_state": "running"}
+    assert events[0][1:3] == ("cloudinit.dns.verified", "succeeded")
+
+
+def test_proxmox_ensure_cloudinit_dns_updates_only_verified_vm_config(monkeypatch):
+    client = ProxmoxClient.__new__(ProxmoxClient)
+    config = {
+        "name": "static-dns-test",
+        "template": 0,
+        "net0": "virtio=aa:bb:cc:dd:ee:ff,bridge=vmbr3",
+        "nameserver": "",
+    }
+    writes = []
+    monkeypatch.setattr(client, "vm_config", lambda *_: dict(config))
+
+    def put(path, parameters):
+        writes.append((path, parameters))
+        config.update(parameters)
+
+    monkeypatch.setattr(client, "put", put)
+    result = client.ensure_cloudinit_dns(
+        "mng01", 40003, "static-dns-test", ["1.1.1.1", "8.8.8.8"]
+    )
+    assert result == {"nameserver": "1.1.1.1 8.8.8.8"}
+    assert writes == [
+        (
+            "/nodes/mng01/qemu/40003/config",
+            {"nameserver": "1.1.1.1 8.8.8.8"},
+        )
+    ]
+
+
+def test_proxmox_ensure_cloudinit_dns_rejects_identity_mismatch_without_write(
+    monkeypatch,
+):
+    client = ProxmoxClient.__new__(ProxmoxClient)
+    writes = []
+    monkeypatch.setattr(
+        client,
+        "vm_config",
+        lambda *_: {
+            "name": "different-vm",
+            "template": 0,
+            "net0": "virtio=aa:bb:cc:dd:ee:ff,bridge=vmbr3",
+        },
+    )
+    monkeypatch.setattr(client, "put", lambda *args: writes.append(args))
+    with pytest.raises(ProxmoxError, match="CLOUDINIT_DNS_IDENTITY_MISMATCH"):
+        client.ensure_cloudinit_dns(
+            "mng01", 40003, "expected-vm", ["1.1.1.1", "8.8.8.8"]
+        )
+    assert writes == []
 
 
 def test_execute_starts_physically_recovered_vm_before_guest_identity(tmp_path, monkeypatch):

@@ -237,6 +237,35 @@ class ProxmoxClient:
         )
         return {"network_model": model, "net0": desired}
 
+    def ensure_cloudinit_dns(
+        self, node: str, vmid: int, name: str, servers: list[str]
+    ) -> dict:
+        """Converge the cloud-init resolver field before a static-WAN guest boots."""
+
+        if servers != ["1.1.1.1", "8.8.8.8"]:
+            raise ProxmoxError("CLOUDINIT_DNS_INVALID")
+        config = self.vm_config(node, vmid)
+        if (
+            config.get("name") != name
+            or config.get("template", 0)
+            or not isinstance(config.get("net0"), str)
+        ):
+            raise ProxmoxError("CLOUDINIT_DNS_IDENTITY_MISMATCH")
+        desired = " ".join(servers)
+        if str(config.get("nameserver") or "").strip() != desired:
+            self.put(
+                f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config",
+                {"nameserver": desired},
+            )
+        observed = self.vm_config(node, vmid)
+        if (
+            observed.get("name") != name
+            or observed.get("template", 0)
+            or str(observed.get("nameserver") or "").strip() != desired
+        ):
+            raise ProxmoxError("CLOUDINIT_DNS_UNVERIFIED", uncertain=True)
+        return {"nameserver": desired}
+
     def storage_status(self, node: str, storage: str) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/storage/{quote(storage, safe='')}/status") or {}
 

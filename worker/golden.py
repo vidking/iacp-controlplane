@@ -168,7 +168,14 @@ def variables(
             "dns_servers": spec.get("dns_servers", []),
             "ssh_public_keys": keys,
             "guest_agent_enabled": golden["agent_enabled"],
-            "started": spec.get("started", True),
+            # WAN clones must stay stopped until the worker has verified the
+            # Proxmox cloud-init DNS setting. The normal completion path starts
+            # them only after that check, so cloud-init consumes the final seed.
+            "started": (
+                False
+                if spec.get("network_profile") == "prod_static"
+                else spec.get("started", True)
+            ),
             "bios": golden.get("bios"),
             "machine": golden.get("machine"),
             "scsi_hardware": golden.get("scsi_hardware"),

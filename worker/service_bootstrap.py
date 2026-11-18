@@ -219,15 +219,6 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         probe = guest_command(["/usr/bin/test", "-x", helper])
         if probe.get("exitcode") != 0:
             raise GuestIdentityError("IMAGE_BOOTSTRAP_REQUIRED")
-        cloud_init = guest_command(["/usr/bin/test", "-x", "/usr/bin/cloud-init"])
-        if cloud_init.get("exitcode") != 0:
-            raise GuestIdentityError("IMAGE_CLOUD_INIT_MISSING")
-        iproute = any(
-            guest_command(["/usr/bin/test", "-x", path]).get("exitcode") == 0
-            for path in ("/usr/sbin/ip", "/usr/bin/ip")
-        )
-        if not iproute:
-            raise GuestIdentityError("IMAGE_IPROUTE_MISSING")
         status = guest_command([helper] + arguments)
     else:
         status = guest_command(["/usr/bin/python3", "-c", PROGRAM] + arguments)

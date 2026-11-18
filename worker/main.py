@@ -974,8 +974,12 @@ def ensure_vm_running_if_requested(
     vmid: int,
     name: str,
     started: bool,
+    dns_servers: list[str] | None = None,
 ) -> dict | None:
     """Converge a recovered VM to the requested running state before guest checks."""
+    if dns_servers:
+        config = client.ensure_cloudinit_dns(node, vmid, name, dns_servers)
+        emit(operation_id, "cloudinit.dns.verified", "succeeded", config["nameserver"])
     if not started:
         return None
     observed = client.power_state(node, vmid, name)
@@ -1334,6 +1338,11 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 vmid=int(vmid),
                 name=name,
                 started=started,
+                dns_servers=(
+                    spec.get("dns_servers")
+                    if spec.get("network_profile") == "prod_static"
+                    else None
+                ),
             )
             try:
                 ensure_guest_identity_for_operation(
@@ -1724,6 +1733,11 @@ def execute(worker_id: str, operation: dict) -> None:
                             vmid=int(vmid),
                             name=identity.get("name", ""),
                             started=started,
+                            dns_servers=(
+                                spec.get("dns_servers")
+                                if spec.get("network_profile") == "prod_static"
+                                else None
+                            ),
                         )
                         ensure_guest_identity_for_operation(
                             worker_id,
@@ -1803,6 +1817,11 @@ def execute(worker_id: str, operation: dict) -> None:
                 vmid=int(vmid),
                 name=instance.get("name", ""),
                 started=started,
+                dns_servers=(
+                    spec.get("dns_servers")
+                    if spec.get("network_profile") == "prod_static"
+                    else None
+                ),
             )
             ensure_guest_identity_for_operation(
                 worker_id,
