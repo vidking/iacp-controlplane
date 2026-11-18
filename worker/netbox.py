@@ -19,7 +19,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
 
-from api.catalog import PROD_STATIC_FIRST_HOST, PROD_STATIC_LAST_HOST, PROD_STATIC_PREFIX
+from api.catalog import (
+    PROD_STATIC_FIRST_HOST,
+    PROD_STATIC_LAST_HOST,
+    PROD_STATIC_LEGACY_FIRST_HOST,
+    PROD_STATIC_LEGACY_LAST_HOST,
+    PROD_STATIC_PREFIX,
+)
 
 
 JsonObject: TypeAlias = dict[str, object]
@@ -278,6 +284,18 @@ class NetBoxClient:
 
     @staticmethod
     def _in_pool(address: IPv4Address, prefix: IPv4Network) -> bool:
+        """Accept existing allocations across the historical authorized range."""
+
+        return (
+            prefix.network_address + PROD_STATIC_LEGACY_FIRST_HOST
+            <= address
+            <= prefix.network_address + PROD_STATIC_LEGACY_LAST_HOST
+        )
+
+    @staticmethod
+    def _in_allocation_pool(address: IPv4Address, prefix: IPv4Network) -> bool:
+        """Restrict new allocations to the current, narrower address pool."""
+
         return (
             prefix.network_address + PROD_STATIC_FIRST_HOST
             <= address
@@ -296,7 +314,7 @@ class NetBoxClient:
         return [
             (address, prefix.prefixlen)
             for address in prefix.hosts()
-            if self._in_pool(address, prefix)
+            if self._in_allocation_pool(address, prefix)
             and address not in occupied
             and address not in self.config.excluded_addresses
         ]

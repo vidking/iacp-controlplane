@@ -65,7 +65,25 @@ def test_netbox_never_allocates_a_development_excluded_address(monkeypatch):
     )
     monkeypatch.setattr(client, "_ip_records", lambda _prefix: [])
     candidates = client.available_addresses(ipv4_network("190.0.231.0/24"))
-    assert candidates[0] == (ip_address("190.0.231.3"), 24)
+    assert candidates[0] == (ip_address("190.0.231.10"), 24)
+
+
+def test_netbox_new_allocation_pool_is_limited_to_hosts_10_through_250():
+    prefix = ipv4_network("190.0.231.0/24")
+
+    assert not NetBoxClient._in_allocation_pool(ip_address("190.0.231.9"), prefix)
+    assert NetBoxClient._in_allocation_pool(ip_address("190.0.231.10"), prefix)
+    assert NetBoxClient._in_allocation_pool(ip_address("190.0.231.250"), prefix)
+    assert not NetBoxClient._in_allocation_pool(ip_address("190.0.231.251"), prefix)
+
+
+def test_netbox_keeps_historical_allocations_valid_for_recovery_and_release():
+    prefix = ipv4_network("190.0.231.0/24")
+
+    assert NetBoxClient._in_pool(ip_address("190.0.231.2"), prefix)
+    assert NetBoxClient._in_pool(ip_address("190.0.231.9"), prefix)
+    assert NetBoxClient._in_pool(ip_address("190.0.231.251"), prefix)
+    assert NetBoxClient._in_pool(ip_address("190.0.231.253"), prefix)
 
 
 def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
@@ -76,7 +94,7 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
 
-    record = {"id": 88, "address": "198.51.100.2/24", "comments": "iacp-instance=instance-1"}
+    record = {"id": 88, "address": "198.51.100.10/24", "comments": "iacp-instance=instance-1"}
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
 
     def request(method, path, payload=None, **_kwargs):
@@ -91,9 +109,9 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
         name="cliente-demo",
         customer_tag="cl-demo",
     )
-    assert result.address == "198.51.100.2/24"
+    assert result.address == "198.51.100.10/24"
     assert requests[0][0:2] == ("POST", "/ipam/ip-addresses/")
-    assert requests[0][2]["address"] == "198.51.100.2/24"
+    assert requests[0][2]["address"] == "198.51.100.10/24"
     assert requests[0][2]["tags"] == [7, 8]
     assert requests[0][2]["vrf"] is None
     assert "iacp-instance=instance-1" in requests[0][2]["comments"]
@@ -146,8 +164,8 @@ def test_netbox_available_ips_paginates_and_protects_boundaries(monkeypatch):
     monkeypatch.setattr(client, "_request", request)
     candidates = client.available_addresses(ipv4_network("198.51.100.0/24"))
     assert calls == [0, 1]
-    assert candidates[0] == (ip_address("198.51.100.2"), 24)
-    assert candidates[-1] == (ip_address("198.51.100.253"), 24)
+    assert candidates[0] == (ip_address("198.51.100.10"), 24)
+    assert candidates[-1] == (ip_address("198.51.100.250"), 24)
 
 
 def test_netbox_lookup_failure_does_not_log_the_token(
@@ -306,7 +324,7 @@ def test_netbox_reloads_pool_after_a_confirmed_collision(monkeypatch, status):
         assert payload is not None
         address = payload["address"]
         posted.append(address)
-        if address == "198.51.100.2/24":
+        if address == "198.51.100.10/24":
             records.append({"id": 23, "address": address, "comments": "otro propietario"})
             raise NetBoxError("IPAM_ADDRESS_CONFLICT", status)
         record = {"id": 24, **payload}
@@ -315,7 +333,7 @@ def test_netbox_reloads_pool_after_a_confirmed_collision(monkeypatch, status):
 
     monkeypatch.setattr(client, "_request", request)
     allocation = client.allocate(instance_id="ours", operation_id="op", vmid=40001, name="mine")
-    assert posted == ["198.51.100.2/24", "198.51.100.3/24"]
+    assert posted == ["198.51.100.10/24", "198.51.100.11/24"]
     assert len(range_reads) == 3
     assert allocation.ip_id == 24
     assert allocation.marker == "iacp-instance=ours"
@@ -340,7 +358,7 @@ def test_netbox_does_not_retry_a_rejection_without_evidence_of_occupation(monkey
     monkeypatch.setattr(client, "_request", request)
     with pytest.raises(NetBoxError, match="IPAM_ADDRESS_CONFLICT"):
         client.allocate(instance_id="ours", operation_id="op", vmid=40001, name="mine")
-    assert posted == ["198.51.100.2/24"]
+    assert posted == ["198.51.100.10/24"]
 
 
 def test_netbox_duplicate_after_success_blocks_provisioning(monkeypatch):
@@ -399,7 +417,7 @@ def test_netbox_concurrent_workers_reserve_different_ips(monkeypatch):
 
     with ThreadPoolExecutor(max_workers=2) as workers:
         allocations = list(workers.map(allocate, (1, 2)))
-    assert {entry.address for entry in allocations} == {"198.51.100.2/24", "198.51.100.3/24"}
+    assert {entry.address for entry in allocations} == {"198.51.100.10/24", "198.51.100.11/24"}
     assert len({entry.ip_id for entry in allocations}) == 2
 
 
@@ -421,7 +439,7 @@ def test_netbox_release_preserves_exclusions_and_reservations(monkeypatch, host,
     assert calls == ["GET"]
 
 
-def test_netbox_release_allows_first_authorized_host(monkeypatch):
+def test_netbox_release_allows_historical_first_host(monkeypatch):
     client = fake_client()
     record = {
         "id": 90, "address": "198.51.100.2/24", "status": "active",

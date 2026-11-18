@@ -447,3 +447,26 @@ La selección corregida del catálogo está pendiente de despliegue y verificaci
 en Dev. No se ha inyectado la matriz física en esta revisión. Las plantillas
 29010/29011 permanecen intactas; no declarar PASS integral antes de certificar
 los ciclos previstos.
+
+### Rango NetBox y consulta Fedora/Debian — 2026-11-18
+
+Por solicitud del usuario, las nuevas asignaciones estáticas se limitan a
+`190.0.231.10`–`190.0.231.250`. La lectura GET desde el API del stack dev en el
+IACP Control Plane (VM 104) confirmó el prefijo `/24`, gateway `190.0.231.1` y
+241 direcciones disponibles en ese rango, con `.10` como primera libre y `.250`
+como última. NetBox no se modificó. La validación de asignaciones históricas
+conserva `.2`–`.253` para permitir recuperación y liberación seguras; ese rango
+amplio no se usa para nuevas reservas.
+
+La lectura autenticada de Proxmox desde el mismo stack no mostró VMID 29005 ni
+29006 en el inventario visible. Las consultas GET de configuración a ambos
+VMID en `mng01` respondieron HTTP 403. Esto no demuestra que las VMs no existan;
+el token actual no permite confirmar template, almacenamiento, hardware ni
+Cloud-Init. Estado **BLOCKED** para Fedora 45 y Debian 13: no se añadieron al
+catálogo ni se desplegó una referencia que el runtime no puede validar.
+
+La política `.10`–`.250` quedó implementada localmente. `tests/test_netbox.py` y
+`tests/test_wan_matrix.py`: 23 PASS, 28 SKIP. El runtime dev continúa en
+`79e9d51431f9f6233cff529de2c94c95fe204d60`; preflight, inventory y verify de la
+revisión activa dieron PASS con evidencias privadas bajo
+`/opt/iacp/evidence/`. La política local aún no está desplegada.

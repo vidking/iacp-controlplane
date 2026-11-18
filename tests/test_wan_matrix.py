@@ -237,28 +237,31 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
             return "190.0.231.1"
 
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 10)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 19)]
 
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
-        "available_count": 7,
-        "next_available": "190.0.231.3/24",
+        "available_count": 9,
+        "next_available": "190.0.231.10/24",
     }
 
     class OccupiedFirstNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 10)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(11, 20)]
 
-    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.3/24"
+    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.11/24"
 
     class ExcludedAddressReturnedByNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 10)]
+            return [
+                (IPv4Address("190.0.231.2"), 24),
+                *[(IPv4Address(f"190.0.231.{host}"), 24) for host in range(10, 19)],
+            ]
 
     state = verify_netbox_state(ExcludedAddressReturnedByNetBox())
-    assert state["next_available"] == "190.0.231.3/24"
-    assert state["available_count"] == 7
+    assert state["next_available"] == "190.0.231.10/24"
+    assert state["available_count"] == 9
 
     class MissingRequiredExclusion(NetBoxStub):
         config = SimpleNamespace(
@@ -271,7 +274,7 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
 
     class OutOfScopeNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
-            return [(IPv4Address("190.0.231.254"), 24)]
+            return [(IPv4Address("190.0.231.251"), 24)]
 
     with pytest.raises(RuntimeError, match="NETBOX_AUTHORIZED_RANGE_EXHAUSTED"):
         verify_netbox_state(OutOfScopeNetBox())
