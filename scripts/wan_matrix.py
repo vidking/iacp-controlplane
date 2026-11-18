@@ -24,6 +24,7 @@ import threading
 import time
 from datetime import UTC, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -31,6 +32,7 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from worker.netbox import NetBoxClient, NetBoxError
 from worker.proxmox import ProxmoxClient
 
 WAN_BRIDGE = "vmbr3"
@@ -71,6 +73,43 @@ def require_four_idle_service_workers(service_state):
             or not 0 <= heartbeat_age < 60
         ):
             raise RuntimeError("SERVICE_WORKERS_NOT_IDLE")
+
+
+def verify_netbox_state(client):
+    if client.config.prefix_id != 52:
+        raise RuntimeError("NETBOX_PREFIX_NOT_AUTHORIZED")
+    prefix, _ = client.get_prefix()
+    if str(prefix) != "190.0.231.0/24":
+        raise RuntimeError("NETBOX_PREFIX_NOT_AUTHORIZED")
+    gateway = client.validate_gateway(prefix)
+    if gateway != "190.0.231.1":
+        raise RuntimeError("NETBOX_GATEWAY_NOT_AUTHORIZED")
+    reserved_ip = client.get_ip("190.0.231.2/24")
+    if not reserved_ip:
+        raise RuntimeError("NETBOX_RESERVED_ADDRESS_MISSING")
+    status = reserved_ip.get("status")
+    status = status.get("value") if isinstance(status, dict) else status
+    tags = {
+        str(tag.get("slug") or tag.get("name"))
+        for tag in (reserved_ip.get("tags") or [])
+        if isinstance(tag, dict)
+    }
+    if status != "reserved" and "reservada" not in tags:
+        raise RuntimeError("NETBOX_RESERVED_ADDRESS_INVALID")
+    available = sorted(
+        client.available_addresses(prefix), key=lambda item: int(item[0])
+    )
+    if any(str(address) == "190.0.231.2" for address, _ in available):
+        raise RuntimeError("NETBOX_RESERVED_ADDRESS_AVAILABLE")
+    if not available:
+        raise RuntimeError("NETBOX_NO_AVAILABLE_ADDRESSES")
+    return {
+        "prefix_id": 52,
+        "prefix": "190.0.231.0/24",
+        "gateway": "190.0.231.1",
+        "reserved_address": "190.0.231.2/24",
+        "next_available": f"{available[0][0]}/{available[0][1]}",
+    }
 
 
 def cases(category):
@@ -147,6 +186,18 @@ class Matrix:
     def verify_network_profile(self):
         if self.profile == "prod_static":
             self.static_bridge, self.static_vlan_tag = wan_nic_config(self.env)
+            ipam_environment = {
+                key: str(value)
+                for key, value in self.env.items()
+                if key.startswith("IACP_NETBOX_") and value is not None
+            }
+            try:
+                with patch.dict(os.environ, ipam_environment):
+                    netbox = NetBoxClient()
+                    netbox_state = verify_netbox_state(netbox)
+            except NetBoxError as error:
+                raise RuntimeError("NETBOX_" + error.code) from None
+            self.record("netbox_verified", **netbox_state)
             profiles = self.api("GET", "/v1/network-profiles")["network_profiles"]
             wan = next(item for item in profiles if item["profile_id"] == "prod_static")
             assert wan["enabled"] is True, "WAN_PROFILE_DISABLED"

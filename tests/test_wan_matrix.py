@@ -2,7 +2,12 @@ import pytest
 
 pytestmark = pytest.mark.no_database
 
-from scripts.wan_matrix import cases, require_four_idle_service_workers, wan_nic_config
+from scripts.wan_matrix import (
+    cases,
+    require_four_idle_service_workers,
+    verify_netbox_state,
+    wan_nic_config,
+)
 
 
 def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
@@ -65,6 +70,42 @@ def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
     busy["workers"][0]["job_id"] = "job-active"
     with pytest.raises(RuntimeError, match="SERVICE_WORKERS_NOT_IDLE"):
         require_four_idle_service_workers(busy)
+
+
+def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip():
+    from ipaddress import IPv4Address, IPv4Network
+    from types import SimpleNamespace
+
+    class NetBoxStub:
+        config = SimpleNamespace(prefix_id=52)
+
+        def get_prefix(self):
+            return IPv4Network("190.0.231.0/24"), {}
+
+        def validate_gateway(self, _prefix):
+            return "190.0.231.1"
+
+        def get_ip(self, address):
+            assert address == "190.0.231.2/24"
+            return {"status": {"value": "reserved"}, "tags": []}
+
+        def available_addresses(self, _prefix):
+            return [(IPv4Address("190.0.231.3"), 24)]
+
+    assert verify_netbox_state(NetBoxStub()) == {
+        "prefix_id": 52,
+        "prefix": "190.0.231.0/24",
+        "gateway": "190.0.231.1",
+        "reserved_address": "190.0.231.2/24",
+        "next_available": "190.0.231.3/24",
+    }
+
+    class UnreservedNetBox(NetBoxStub):
+        def get_ip(self, _address):
+            return {"status": {"value": "active"}, "tags": []}
+
+    with pytest.raises(RuntimeError, match="NETBOX_RESERVED_ADDRESS_INVALID"):
+        verify_netbox_state(UnreservedNetBox())
 
 
 def test_static_wan_binding_uses_vmbr3_without_proxmox_tag(tmp_path):
