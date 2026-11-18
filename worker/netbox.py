@@ -14,11 +14,25 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
+from typing import TypeAlias, TypeGuard
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
 
 from api.catalog import PROD_STATIC_FIRST_HOST, PROD_STATIC_LAST_HOST, PROD_STATIC_PREFIX
+
+
+JsonObject: TypeAlias = dict[str, object]
+
+
+def _is_json_object(value: object) -> TypeGuard[JsonObject]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _response_int(value: object) -> int:
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise TypeError("El valor de respuesta no es un entero convertible.")
 
 
 class NetBoxError(RuntimeError):
@@ -195,10 +209,13 @@ class NetBoxClient:
     def _tag_id(self, slug: str) -> int:
         query = urlencode({"slug": slug, "limit": 2, "brief": "true"})
         response = self._request("GET", f"/extras/tags/?{query}", retry_get=True)
-        rows = response.get("results", []) if isinstance(response, dict) else []
-        if len(rows) != 1 or not isinstance(rows[0], dict) or rows[0].get("id") is None:
+        rows = response.get("results", []) if _is_json_object(response) else []
+        if not isinstance(rows, list) or len(rows) != 1:
             raise NetBoxError("IPAM_TAG_NOT_FOUND")
-        return int(rows[0]["id"])
+        row = rows[0]
+        if not _is_json_object(row) or row.get("id") is None:
+            raise NetBoxError("IPAM_TAG_NOT_FOUND")
+        return _response_int(row["id"])
 
     @staticmethod
     def _address_value(value: object) -> tuple[IPv4Address, int] | None:
@@ -208,22 +225,26 @@ class NetBoxClient:
                 return None
             address, length = raw.split("/", 1)
             parsed = ip_address(address)
-            return (parsed, int(length)) if parsed.version == 4 else None
+            return (parsed, int(length)) if isinstance(parsed, IPv4Address) else None
         except (ValueError, TypeError):
             return None
 
-    def _ip_records(self, parent: IPv4Network) -> list[dict]:
+    def _ip_records(self, parent: IPv4Network) -> list[JsonObject]:
         offset = 0
-        records = []
+        records: list[JsonObject] = []
         while True:
             query = urlencode(
                 {"parent": str(parent), "ordering": "id", "limit": 100, "offset": offset}
             )
             response = self._request("GET", f"/ipam/ip-addresses/?{query}", retry_get=True)
-            rows = response.get("results") if isinstance(response, dict) else None
-            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            if not _is_json_object(response):
+                raise NetBoxError("IPAM_RESPONSE_INVALID")
+            rows = response.get("results")
+            if not isinstance(rows, list):
                 raise NetBoxError("IPAM_RESPONSE_INVALID")
             for row in rows:
+                if not _is_json_object(row):
+                    raise NetBoxError("IPAM_RESPONSE_INVALID")
                 if row.get("vrf") is not None:
                     continue
                 value = self._address_value(row.get("address"))
@@ -247,26 +268,31 @@ class NetBoxClient:
     def available_addresses(self, prefix: IPv4Network) -> list[tuple[IPv4Address, int]]:
         if str(prefix) != self.config.expected_prefix:
             raise NetBoxError("IPAM_PREFIX_INVALID")
-        occupied = {ip_address(row["address"].split("/")[0]) for row in self._ip_records(prefix)}
+        occupied: set[IPv4Address] = set()
+        for row in self._ip_records(prefix):
+            value = self._address_value(row.get("address"))
+            if value is None:
+                raise NetBoxError("IPAM_RESPONSE_INVALID")
+            occupied.add(value[0])
         return [
             (address, prefix.prefixlen)
             for address in prefix.hosts()
             if self._in_pool(address, prefix) and address not in occupied
         ]
 
-    def get_ip(self, address: str) -> dict | None:
+    def get_ip(self, address: str) -> JsonObject | None:
         query = urlencode({"address": address, "limit": 2})
         response = self._request("GET", f"/ipam/ip-addresses/?{query}", retry_get=True)
-        rows = response.get("results", []) if isinstance(response, dict) else []
+        rows = response.get("results", []) if _is_json_object(response) else []
         if not isinstance(rows, list) or len(rows) != 1:
             return None
         record = rows[0]
-        if isinstance(record, dict) and record.get("address") == address:
+        if _is_json_object(record) and record.get("address") == address:
             return record
         return None
 
     @staticmethod
-    def _marker_matches(record: dict | None, marker: str) -> bool:
+    def _marker_matches(record: JsonObject | None, marker: str) -> bool:
         if not record:
             return False
         text = " ".join(
@@ -277,15 +303,17 @@ class NetBoxClient:
             is not None
         )
 
-    def _is_reserved(self, record: dict) -> bool:
-        tags = record.get("tags") or []
-        tag_slugs = {
-            str(tag.get("slug") or tag.get("name"))
-            for tag in tags
-            if isinstance(tag, dict)
-        }
+    def _is_reserved(self, record: JsonObject) -> bool:
+        tags = record.get("tags")
+        tag_slugs: set[str] = set()
+        if isinstance(tags, list):
+            tag_slugs = {
+                str(tag.get("slug") or tag.get("name"))
+                for tag in tags
+                if _is_json_object(tag)
+            }
         status = record.get("status")
-        status_value = status.get("value") if isinstance(status, dict) else status
+        status_value = status.get("value") if _is_json_object(status) else status
         return self.config.gateway_tag in tag_slugs or status_value == "reserved"
 
     def validate_gateway(self, prefix: IPv4Network) -> str:
@@ -313,13 +341,15 @@ class NetBoxClient:
             result = self._request(
                 "POST", "/extras/tags/", {"name": slug, "slug": slug}
             )
-            return int(result["id"])
+            if not _is_json_object(result):
+                raise NetBoxError("IPAM_RESPONSE_INVALID")
+            return _response_int(result["id"])
         except NetBoxError as error:
             if error.code not in {"IPAM_ADDRESS_CONFLICT", "IPAM_REQUEST_UNCERTAIN"}:
                 raise
             return self._tag_id(slug)
 
-    def owned_allocation(self, prefix: IPv4Network, marker: str) -> dict | None:
+    def owned_allocation(self, prefix: IPv4Network, marker: str) -> JsonObject | None:
         # Recuperar una reserva cuyo POST terminó antes de persistirla localmente.
         matches = [
             row for row in self._ip_records(prefix) if self._marker_matches(row, marker)
@@ -336,9 +366,11 @@ class NetBoxClient:
         marker: str,
         expected_address: str | None = None,
     ) -> NetBoxAllocation:
-        if not isinstance(record, dict):
+        if not _is_json_object(record):
             raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
         address = record.get("address")
+        if not isinstance(address, str):
+            raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
         value = self._address_value(address)
         ip_id = record.get("id")
         if (
@@ -354,7 +386,10 @@ class NetBoxClient:
         ):
             raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
         try:
-            existing = self._ip_records(ip_network(f"{value[0]}/32"))
+            parent = ip_network(f"{value[0]}/32")
+            if not isinstance(parent, IPv4Network):
+                raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
+            existing = self._ip_records(parent)
         except NetBoxError as error:
             raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True) from error
         if (
@@ -395,7 +430,10 @@ class NetBoxClient:
         customer_tag: str | None = None,
         tags: list[str] | None = None,
     ) -> NetBoxAllocation:
-        prefix = ip_network(self.config.expected_prefix)
+        parsed_prefix = ip_network(self.config.expected_prefix)
+        if not isinstance(parsed_prefix, IPv4Network):
+            raise NetBoxError("IPAM_PREFIX_INVALID")
+        prefix = parsed_prefix
         gateway = self.validate_gateway(prefix)
         tag_id = self._tag_id(self.config.allocation_tag)
         marker = f"iacp-instance={instance_id}"
@@ -410,11 +448,14 @@ class NetBoxClient:
         owned = self.owned_allocation(prefix, marker)
         if owned:
             allocation = self._confirm_allocation(owned, prefix, gateway, marker)
-            existing_tags = [
-                int(tag["id"])
-                for tag in owned.get("tags", [])
-                if isinstance(tag, dict) and "id" in tag
-            ]
+            existing_tags: list[int] = []
+            existing_tag_values = owned.get("tags", [])
+            if isinstance(existing_tag_values, list):
+                existing_tags = [
+                    _response_int(tag["id"])
+                    for tag in existing_tag_values
+                    if _is_json_object(tag) and "id" in tag
+                ]
             try:
                 self._request(
                     "PATCH",
@@ -467,16 +508,21 @@ class NetBoxClient:
             return self._confirm_allocation(record, prefix, gateway, marker, address)
         raise NetBoxError("IPAM_POOL_EXHAUSTED", 409)
 
-    def release(self, allocation: dict, *, marker: str) -> None:
-        ip_id = int(allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0)
-        prefix = ip_network(self.config.expected_prefix)
+    def release(self, allocation: JsonObject, *, marker: str) -> None:
+        ip_id = _response_int(
+            allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0
+        )
+        parsed_prefix = ip_network(self.config.expected_prefix)
+        if not isinstance(parsed_prefix, IPv4Network):
+            raise NetBoxError("IPAM_PREFIX_INVALID")
+        prefix = parsed_prefix
         if ip_id <= 0:
             record = self.owned_allocation(prefix, marker)
             if record is None:
                 if allocation.get("status") == "release_pending":
                     raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True)
                 return
-            ip_id = int(record["id"])
+            ip_id = _response_int(record["id"])
             allocation = dict(allocation, address=record["address"])
         path = f"/ipam/ip-addresses/{ip_id}/"
         try:
@@ -487,11 +533,11 @@ class NetBoxClient:
             raise
         value = (
             self._address_value(record.get("address"))
-            if isinstance(record, dict)
+            if _is_json_object(record)
             else None
         )
         if (
-            not isinstance(record, dict)
+            not _is_json_object(record)
             or record.get("id") != ip_id
             or not self._marker_matches(record, marker)
             or value is None

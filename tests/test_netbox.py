@@ -1,7 +1,8 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
+from email.message import Message
 from io import BytesIO
-from ipaddress import ip_address, ip_network
+from ipaddress import IPv4Network, ip_address, ip_network
 from threading import Barrier
 from time import sleep
 from traceback import format_exception
@@ -12,6 +13,12 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from worker.netbox import NetBoxClient, NetBoxError, NetBoxSettings, settings
+
+
+def ipv4_network(value: str) -> IPv4Network:
+    network = ip_network(value)
+    assert isinstance(network, IPv4Network)
+    return network
 
 
 def fake_client() -> NetBoxClient:
@@ -65,7 +72,7 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
 
 def test_netbox_rejects_gateway_when_it_is_not_reserved(monkeypatch):
     client = fake_client()
-    prefix = ip_network("198.51.100.0/24")
+    prefix = ipv4_network("198.51.100.0/24")
     monkeypatch.setattr(
         client, "get_ip", lambda _: {"id": 1, "status": {"value": "active"}, "tags": []}
     )
@@ -108,7 +115,7 @@ def test_netbox_available_ips_paginates_and_protects_boundaries(monkeypatch):
         ]}
 
     monkeypatch.setattr(client, "_request", request)
-    candidates = client.available_addresses(ip_network("198.51.100.0/24"))
+    candidates = client.available_addresses(ipv4_network("198.51.100.0/24"))
     assert calls == [0, 1]
     assert candidates[0] == (ip_address("198.51.100.2"), 24)
     assert candidates[-1] == (ip_address("198.51.100.253"), 24)
@@ -129,13 +136,13 @@ def test_netbox_lookup_failure_does_not_log_the_token(
             request.full_url,
             404,
             f"Echo de prueba: {client.config.token}",
-            {},
+            Message(),
             BytesIO(json.dumps({"debug": client.config.token}).encode()),
         )
 
     monkeypatch.setattr(client, "opener", SimpleNamespace(open=open_request), raising=False)
     with pytest.raises(NetBoxError, match="IPAM_NOT_FOUND") as failure:
-        client.available_addresses(ip_network("198.51.100.0/24"))
+        client.available_addresses(ipv4_network("198.51.100.0/24"))
 
     error = failure.value
     assert error.status == 404 and not error.uncertain
@@ -150,7 +157,7 @@ def test_netbox_rejects_supernet_before_sending_request(monkeypatch):
     client = fake_client()
     monkeypatch.setattr(client, "_request", lambda *_args: pytest.fail("Llamada fuera del alcance"))
     with pytest.raises(NetBoxError, match="IPAM_PREFIX_INVALID"):
-        client.available_addresses(ip_network("198.51.96.0/21"))
+        client.available_addresses(ipv4_network("198.51.96.0/21"))
 
 
 def test_lost_post_reuses_owned_address_and_preserves_external_tags(monkeypatch):
@@ -253,15 +260,21 @@ def test_netbox_reloads_pool_after_a_confirmed_collision(monkeypatch, status):
     posted = []
     range_reads = []
 
-    def request(method, path, payload=None, **_kwargs):
+    def request(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
         url = urlsplit(path)
         assert url.path == "/ipam/ip-addresses/"
         if method == "GET":
-            parent = ip_network(parse_qs(url.query)["parent"][0])
+            parent = ipv4_network(parse_qs(url.query)["parent"][0])
             if parent.prefixlen == 24:
                 range_reads.append(parent)
             return {"results": [r for r in records if ip_address(r["address"].split("/")[0]) in parent]}
         assert method == "POST"
+        assert payload is not None
         address = payload["address"]
         posted.append(address)
         if address == "198.51.100.2/24":
@@ -283,9 +296,15 @@ def test_netbox_does_not_retry_a_rejection_without_evidence_of_occupation(monkey
     client = netbox_for_allocation(monkeypatch)
     posted = []
 
-    def request(method, _path, payload=None, **_kwargs):
+    def request(
+        method: str,
+        _path: str,
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
         if method == "GET":
             return {"results": []}
+        assert payload is not None
         posted.append(payload["address"])
         raise NetBoxError("IPAM_ADDRESS_CONFLICT", 400)
 
@@ -303,7 +322,7 @@ def test_netbox_duplicate_after_success_blocks_provisioning(monkeypatch):
 
     def request(method, path, **_kwargs):
         calls.append(method)
-        parent = ip_network(parse_qs(urlsplit(path).query)["parent"][0])
+        parent = ipv4_network(parse_qs(urlsplit(path).query)["parent"][0])
         return {"results": [record, other] if parent.prefixlen == 32 else []}
 
     def send(method, path, payload=None, **kwargs):
@@ -325,11 +344,17 @@ def test_netbox_concurrent_workers_reserve_different_ips(monkeypatch):
     ready = Barrier(2, timeout=5)
     records = []
 
-    def request(method, path, payload=None, **_kwargs):
+    def request(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
         if method == "GET":
-            parent = ip_network(parse_qs(urlsplit(path).query)["parent"][0])
+            parent = ipv4_network(parse_qs(urlsplit(path).query)["parent"][0])
             return {"results": [r for r in records if ip_address(r["address"].split("/")[0]) in parent]}
         sleep(0.04)
+        assert payload is not None
         record = {"id": len(records) + 100, **payload}
         records.append(record)
         return record
@@ -402,7 +427,7 @@ def test_gateway_contract_returns_ip_without_prefix(monkeypatch):
         )
 
     monkeypatch.setattr(client, "opener", SimpleNamespace(open=open_request), raising=False)
-    assert client.validate_gateway(ip_network("198.51.100.0/24")) == "198.51.100.1"
+    assert client.validate_gateway(ipv4_network("198.51.100.0/24")) == "198.51.100.1"
     assert observed == [
         (
             "GET",
@@ -423,7 +448,7 @@ def test_missing_exact_gateway_reports_absent_ip_address(monkeypatch, addresses)
         },
     )
     with pytest.raises(NetBoxError, match="IPAM_GATEWAY_NOT_FOUND") as failure:
-        client.validate_gateway(ip_network("198.51.100.0/24"))
+        client.validate_gateway(ipv4_network("198.51.100.0/24"))
     assert failure.value.detail == (
         "No se encontró la dirección del gateway 198.51.100.1/24 en NetBox."
     )
