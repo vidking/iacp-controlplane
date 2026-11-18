@@ -255,3 +255,19 @@ abrir el mismo puerto interno del broker que el proceso principal. El runner
 asigna `N8N_RUNNERS_BROKER_PORT=5681` únicamente al proceso CLI de validación;
 no publica ese puerto ni cambia el servicio. La importación y ejecución del
 workflow de código se comprobaron en Docker con la imagen fijada por digest.
+
+### Actualización IPAM 2026-11-18
+
+El equipo de desarrollo confirmó que `190.0.231.2/24` está disponible. Se
+eliminó únicamente su registro reservado en NetBox (ID 2026). La lectura
+posterior confirmó que `.2` ya no aparece y que el registro del gateway
+`190.0.231.1/24` (ID 2010) conserva estado `reserved`. El pool de pruebas usa
+las direcciones `.2` a `.253` que NetBox reporte disponibles; la primera lectura
+posterior mostró `.2` como siguiente dirección elegible.
+
+La primera verificación posterior a la eliminación quedó `FAIL` porque utilizó
+el cliente de la revisión anterior, que todavía comenzaba en `.3`. Se conserva
+esa evidencia y se agregó una verificación independiente de solo lectura con
+resultado `PASS` en `/opt/iacp/evidence/netbox-post-delete-verification-20261118T042026Z`.
+El código corregido y sus pruebas unitarias ahora incluyen `.2` cuando está
+disponible en NetBox.

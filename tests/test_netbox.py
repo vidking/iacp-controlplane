@@ -40,7 +40,7 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
 
-    record = {"id": 88, "address": "198.51.100.3/24", "comments": "iacp-instance=instance-1"}
+    record = {"id": 88, "address": "198.51.100.2/24", "comments": "iacp-instance=instance-1"}
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
 
     def request(method, path, payload=None, **_kwargs):
@@ -55,9 +55,9 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
         name="cliente-demo",
         customer_tag="cl-demo",
     )
-    assert result.address == "198.51.100.3/24"
+    assert result.address == "198.51.100.2/24"
     assert requests[0][0:2] == ("POST", "/ipam/ip-addresses/")
-    assert requests[0][2]["address"] == "198.51.100.3/24"
+    assert requests[0][2]["address"] == "198.51.100.2/24"
     assert requests[0][2]["tags"] == [7, 8]
     assert requests[0][2]["vrf"] is None
     assert "iacp-instance=instance-1" in requests[0][2]["comments"]
@@ -110,7 +110,7 @@ def test_netbox_available_ips_paginates_and_protects_boundaries(monkeypatch):
     monkeypatch.setattr(client, "_request", request)
     candidates = client.available_addresses(ip_network("198.51.100.0/24"))
     assert calls == [0, 1]
-    assert candidates[0] == (ip_address("198.51.100.5"), 24)
+    assert candidates[0] == (ip_address("198.51.100.2"), 24)
     assert candidates[-1] == (ip_address("198.51.100.253"), 24)
 
 
@@ -223,7 +223,7 @@ def test_atomic_post_timeout_does_not_allocate_again(monkeypatch):
     calls = []
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
-    record = {"id": 90, "address": "198.51.100.3/24", "comments": "iacp-instance=lost"}
+    record = {"id": 90, "address": "198.51.100.2/24", "comments": "iacp-instance=lost"}
     results = iter([None, record])
     monkeypatch.setattr(client, "owned_allocation", lambda *_: next(results))
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
@@ -264,7 +264,7 @@ def test_netbox_reloads_pool_after_a_confirmed_collision(monkeypatch, status):
         assert method == "POST"
         address = payload["address"]
         posted.append(address)
-        if address == "198.51.100.3/24":
+        if address == "198.51.100.2/24":
             records.append({"id": 23, "address": address, "comments": "otro propietario"})
             raise NetBoxError("IPAM_ADDRESS_CONFLICT", status)
         record = {"id": 24, **payload}
@@ -273,7 +273,7 @@ def test_netbox_reloads_pool_after_a_confirmed_collision(monkeypatch, status):
 
     monkeypatch.setattr(client, "_request", request)
     allocation = client.allocate(instance_id="ours", operation_id="op", vmid=40001, name="mine")
-    assert posted == ["198.51.100.3/24", "198.51.100.4/24"]
+    assert posted == ["198.51.100.2/24", "198.51.100.3/24"]
     assert len(range_reads) == 3
     assert allocation.ip_id == 24
     assert allocation.marker == "iacp-instance=ours"
@@ -292,13 +292,13 @@ def test_netbox_does_not_retry_a_rejection_without_evidence_of_occupation(monkey
     monkeypatch.setattr(client, "_request", request)
     with pytest.raises(NetBoxError, match="IPAM_ADDRESS_CONFLICT"):
         client.allocate(instance_id="ours", operation_id="op", vmid=40001, name="mine")
-    assert posted == ["198.51.100.3/24"]
+    assert posted == ["198.51.100.2/24"]
 
 
 def test_netbox_duplicate_after_success_blocks_provisioning(monkeypatch):
     client = netbox_for_allocation(monkeypatch)
-    record = {"id": 90, "address": "198.51.100.3/24", "comments": "iacp-instance=ours"}
-    other = {"id": 91, "address": "198.51.100.3/32", "comments": "otro propietario"}
+    record = {"id": 90, "address": "198.51.100.2/24", "comments": "iacp-instance=ours"}
+    other = {"id": 91, "address": "198.51.100.2/32", "comments": "otro propietario"}
     calls = []
 
     def request(method, path, **_kwargs):
@@ -345,12 +345,12 @@ def test_netbox_concurrent_workers_reserve_different_ips(monkeypatch):
 
     with ThreadPoolExecutor(max_workers=2) as workers:
         allocations = list(workers.map(allocate, (1, 2)))
-    assert {entry.address for entry in allocations} == {"198.51.100.3/24", "198.51.100.4/24"}
+    assert {entry.address for entry in allocations} == {"198.51.100.2/24", "198.51.100.3/24"}
     assert len({entry.ip_id for entry in allocations}) == 2
 
 
 @pytest.mark.parametrize(
-    ("host", "status"), [(1, "active"), (2, "active"), (254, "active"), (12, "reserved")]
+    ("host", "status"), [(1, "active"), (254, "active"), (12, "reserved")]
 )
 def test_netbox_release_preserves_exclusions_and_reservations(monkeypatch, host, status):
     client = fake_client()
@@ -365,6 +365,20 @@ def test_netbox_release_preserves_exclusions_and_reservations(monkeypatch, host,
     with pytest.raises(NetBoxError, match="IPAM_IDENTITY_MISMATCH"):
         client.release({"netbox_ip_id": 90, "address": record["address"]}, marker="iacp-instance=ours")
     assert calls == ["GET"]
+
+
+def test_netbox_release_allows_first_authorized_host(monkeypatch):
+    client = fake_client()
+    record = {
+        "id": 90, "address": "198.51.100.2/24", "status": "active",
+        "comments": "iacp-instance=ours",
+    }
+    calls = []
+    monkeypatch.setattr(
+        client, "_request", lambda method, path, **_: calls.append(method) or record
+    )
+    client.release({"netbox_ip_id": 90, "address": record["address"]}, marker="iacp-instance=ours")
+    assert calls == ["GET", "DELETE"]
 
 
 def test_netbox_release_keeps_an_unresolved_post_pending(monkeypatch):

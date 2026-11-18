@@ -91,7 +91,7 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
         )
 
 
-def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip():
+def test_wan_preflight_uses_only_netbox_available_addresses():
     from ipaddress import IPv4Address
     from types import SimpleNamespace
 
@@ -101,26 +101,21 @@ def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip
         def validate_gateway(self, _prefix):
             return "190.0.231.1"
 
-        def get_ip(self, address):
-            assert address == "190.0.231.2/24"
-            return {"status": {"value": "reserved"}, "tags": []}
-
         def available_addresses(self, _prefix):
-            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 8)]
 
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
-        "reserved_address": "190.0.231.2/24",
-        "next_available": "190.0.231.3/24",
+        "available_count": 6,
+        "next_available": "190.0.231.2/24",
     }
 
-    class UnreservedNetBox(NetBoxStub):
-        def get_ip(self, _address):
-            return {"status": {"value": "active"}, "tags": []}
+    class OccupiedFirstNetBox(NetBoxStub):
+        def available_addresses(self, _prefix):
+            return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
 
-    with pytest.raises(RuntimeError, match="NETBOX_RESERVED_ADDRESS_INVALID"):
-        verify_netbox_state(UnreservedNetBox())
+    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.3/24"
 
     class OutOfScopeNetBox(NetBoxStub):
         def available_addresses(self, _prefix):

@@ -111,23 +111,9 @@ def verify_netbox_state(client):
     gateway = client.validate_gateway(prefix)
     if gateway != "190.0.231.1":
         raise RuntimeError("NETBOX_GATEWAY_NOT_AUTHORIZED")
-    reserved_ip = client.get_ip("190.0.231.2/24")
-    if not reserved_ip or reserved_ip.get("vrf") is not None:
-        raise RuntimeError("NETBOX_RESERVED_ADDRESS_MISSING")
-    status = reserved_ip.get("status")
-    status = status.get("value") if isinstance(status, dict) else status
-    tags = {
-        str(tag.get("slug") or tag.get("name"))
-        for tag in (reserved_ip.get("tags") or [])
-        if isinstance(tag, dict)
-    }
-    if status != "reserved" and "reservada" not in tags:
-        raise RuntimeError("NETBOX_RESERVED_ADDRESS_INVALID")
     available = sorted(
         client.available_addresses(prefix), key=lambda item: int(item[0])
     )
-    if any(str(address) == "190.0.231.2" for address, _ in available):
-        raise RuntimeError("NETBOX_RESERVED_ADDRESS_AVAILABLE")
     first_authorized = prefix.network_address + PROD_STATIC_FIRST_HOST
     last_authorized = prefix.network_address + PROD_STATIC_LAST_HOST
     eligible = [
@@ -140,7 +126,7 @@ def verify_netbox_state(client):
     return {
         "prefix": str(prefix),
         "gateway": "190.0.231.1",
-        "reserved_address": "190.0.231.2/24",
+        "available_count": len(eligible),
         "next_available": f"{eligible[0][0]}/{eligible[0][1]}",
     }
 
