@@ -6,10 +6,12 @@ import pytest
 from scripts.prepare_almalinux_bootstrap import prepare
 
 
+@pytest.mark.no_database
 def test_bundle_is_fixed_validated_and_does_not_disable_selinux(tmp_path):
     output = prepare(tmp_path / "bundle")
     helper = (output / "iacp-guest-bootstrap").read_bytes()
-    ast.parse(helper.decode())
+    helper_text = helper.decode()
+    ast.parse(helper_text)
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["helper_sha256"] == hashlib.sha256(helper).hexdigest()
     assert manifest["bootstrap_protocol"] == 1
@@ -17,6 +19,8 @@ def test_bundle_is_fixed_validated_and_does_not_disable_selinux(tmp_path):
     assert "setenforce" not in installer and "SELINUX=disabled" not in installer
     assert "virt_qemu_ga_unconfined_exec_t" in installer
     assert "setsebool -P virt_qemu_ga_run_unconfined on" in installer
+    assert "if resolved.returncode==0 and has_expected_dns(resolved.stdout)" in helper_text
+    assert "if resolved.returncode==0:return resolved.stdout" not in helper_text
     subprocess.run(["bash", "-n", str(output / "install.sh")], check=True)
     with pytest.raises(FileExistsError):
         prepare(output)

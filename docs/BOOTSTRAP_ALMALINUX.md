@@ -245,15 +245,26 @@ en la observación del worker: `resolvectl dns eth0` puede devolver código 0 co
 salida vacía o incompleta cuando `systemd-resolved` no administra el enlace de
 NetworkManager.
 
-La revisión local de `worker/service_bootstrap.py` acepta la respuesta de
-`resolvectl` solo si contiene las dos direcciones exactas; en otro caso consulta
+La revisión de `worker/service_bootstrap.py` acepta la respuesta de `resolvectl`
+solo si contiene las dos direcciones exactas; en otro caso consulta
 `nmcli -g IP4.DNS device show`. La validación usa coincidencias de direcciones
 completas para evitar aceptar valores parecidos. Las pruebas unitarias cubren
 respuestas sin salida, parciales, código de error, direcciones parecidas y una
 respuesta completa de `resolvectl`.
 
-**Estado: corrección local verificada; despliegue y repetición física
-pendientes.** Los resultados inciertos existentes deben recuperarse mediante el
-flujo controlado de la API antes de cualquier reintento. Esta corrección no
-certifica todavía las matrices KVM ni Nextcloud/n8n, no libera sus IP de NetBox
-y no modifica las Golden Images ni la configuración de producción.
+AlmaLinux ejecuta el helper que se generó e instaló dentro de la imagen; por
+tanto, desplegar solo el worker/API no actualiza el helper de las imágenes que
+ya existen. Para probar el arreglo, Operaciones debe generar y preparar nuevas
+copias usando esta revisión, validar el hash del helper y volver a comparar todo
+el hardware con la referencia 29000 antes de habilitarlas en el catálogo dev.
+`scripts/prepare_golden_copies.py` rechaza un VMID destino existente. No
+eliminar ni reemplazar 29010/29011 sin respaldo verificado y procedimiento de
+reversión; conservar intactas las fuentes 29016/29017. La preparación física de
+las imágenes corresponde al equipo de operaciones de MNG.
+
+**Estado: corrección del código fuente verificada; actualización de las imágenes,
+despliegue y repetición física pendientes.** Los resultados inciertos existentes
+deben recuperarse mediante el flujo controlado de la API antes de cualquier
+reintento. Esta corrección no certifica todavía las matrices KVM ni Nextcloud/n8n,
+no libera sus IP de NetBox y no modifica las Golden Images ni la configuración
+de producción.

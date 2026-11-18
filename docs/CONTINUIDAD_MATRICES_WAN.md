@@ -21,20 +21,26 @@ completó la matriz y no cuenta como certificación:
 
 La rama `devops/features` incorpora el arreglo de DNS en `8979ddb`. El worker
 acepta `resolvectl` solo si devuelve las direcciones exactas y usa NetworkManager
-como fallback. Esta revisión todavía requiere despliegue en desarrollo y
-verificación del runtime antes de repetir. La IP `.2` fue asignada en este lote;
-reconciliar su estado actual con NetBox y la evidencia anterior antes de
-reservarla o asignarla de nuevo. No reutilizarla a partir de supuestos.
+como fallback. AlmaLinux lleva una copia de este programa dentro de su helper;
+por eso se deben regenerar y preparar las imágenes a partir de esta revisión.
+Desplegar solo el worker/API no actualizará las Golden Images existentes. El
+procedimiento de copias rechaza VMID destino ya existentes: Operaciones debe
+verificar respaldo/reversión antes de reemplazar 29010/29011, preservar las
+fuentes 29016/29017 y volver a comparar hardware, hash del helper y SELinux con
+la referencia 29000. Esta preparación física corresponde al equipo de
+operaciones de MNG. La IP `.2` fue asignada en este lote; reconciliar su estado
+actual con NetBox y la evidencia anterior antes de reservarla o asignarla de
+nuevo. No reutilizarla a partir de supuestos.
 
-**Siguiente paso operativo:** actualizar únicamente el stack dev del IACP
-Control Plane (VM 104) con el procedimiento `scripts/iacpctl`; verificar la
-revisión del API, seis workers de infraestructura sanos e idle, cuatro workers
-de servicios idle y cero operaciones activas o inciertas. El equipo de
-operaciones debe recuperar por la API las intenciones de prueba propias,
-conservar sus evidencias y comprobar la liberación NetBox. Luego repetir
-servicios ciclo 1 con `prod_static`, un identificador de corrida y carpeta de
-evidencia nuevos. Detenerse ante cualquier estado incierto. No usar DHCP ni
-modificar producción.
+**Siguiente paso operativo:** recuperar por la API las intenciones de prueba
+propias, conservar sus evidencias y comprobar la liberación NetBox. Actualizar
+únicamente el stack dev del IACP Control Plane (VM 104) con `scripts/iacpctl`,
+preparar las imágenes AlmaLinux con el helper de esta revisión y verificar el
+runtime, seis workers de infraestructura sanos e idle, cuatro workers de
+servicios idle y cero operaciones activas o inciertas. Luego repetir servicios
+ciclo 1 con `prod_static`, un identificador de corrida y carpeta de evidencia
+nuevos. Detenerse ante cualquier estado incierto. No usar DHCP ni modificar
+producción.
 
 Las 64 aprobaciones siguen pendientes: 32 casos KVM y 32 casos de servicios
 (Nextcloud/n8n), dos ciclos por categoría. Los controles de acceso y casos
