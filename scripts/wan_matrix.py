@@ -208,6 +208,15 @@ def allocate_matrix_names(category, planned, existing_names):
     return names
 
 
+def matrix_netbox_tags(name):
+    """Use the VM name as the human-visible NetBox test tag."""
+    if not re.fullmatch(
+        r"kvm-(?:prueba|service-[a-z0-9-]+|agent-[a-z0-9-]+)-[0-9]{3,}", name
+    ):
+        raise ValueError("MATRIX_NETBOX_TAG_INVALID")
+    return [name]
+
+
 class Matrix:
     def __init__(self, args):
         self.abort = threading.Event()
@@ -509,7 +518,9 @@ class Matrix:
                 "ssh_public_keys": [self.public] if case.get("client_ssh_key", True) else [],
                 "root_password": password,
             },
-            "tags": ["wan-matrix-" + self.args.run],
+            # NetBox should identify a test allocation by its readable VM
+            # hostname; the run identifier remains in the evidence directory.
+            "tags": matrix_netbox_tags(name),
             "start_on_create": True,
         }
         if case["product"] == "kvm":

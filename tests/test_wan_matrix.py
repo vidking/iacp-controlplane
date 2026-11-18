@@ -5,6 +5,7 @@ pytestmark = pytest.mark.no_database
 from scripts.wan_matrix import (
     allocate_matrix_names,
     cases,
+    matrix_netbox_tags,
     require_four_idle_service_workers,
     required_cycles,
     verify_netbox_state,
@@ -65,6 +66,15 @@ def test_matrix_names_are_short_sequential_and_skip_existing_api_history():
 
     kvm_names = allocate_matrix_names("kvm", cases("kvm", images=["ubuntu-2404"]), set())
     assert kvm_names[:4] == [f"kvm-prueba-{n:03d}" for n in range(1, 5)]
+
+
+def test_matrix_netbox_tag_is_the_short_vm_name():
+    assert matrix_netbox_tags("kvm-service-n8n-001") == ["kvm-service-n8n-001"]
+    assert matrix_netbox_tags("kvm-service-nextcloud-001") == [
+        "kvm-service-nextcloud-001"
+    ]
+    with pytest.raises(ValueError, match="MATRIX_NETBOX_TAG_INVALID"):
+        matrix_netbox_tags("wan-matrix-20261118184500")
 
 
 def test_wan_matrix_repeats_kvm_combinations_four_times_for_64_vms():
