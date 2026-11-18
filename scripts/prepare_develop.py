@@ -65,11 +65,8 @@ def prepare(
         if not ipam_env.is_file() or ipam_env.stat().st_mode & 0o777 != 0o600:
             raise ValueError("La configuración IPAM debe tener permisos 600")
         ipam = dotenv_values(ipam_env, interpolate=False)
-        if (
-            not ipam.get("IACP_NETBOX_TOKEN")
-            or ipam.get("IACP_NETBOX_PREFIX_ID") != "52"
-        ):
-            raise ValueError("IPAM requiere token y prefijo 52")
+        if not ipam.get("IACP_NETBOX_TOKEN"):
+            raise ValueError("IPAM requiere un token NetBox")
     output = output.resolve()
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     private = output / "services"
@@ -112,7 +109,6 @@ def prepare(
     for key in [
         "IACP_NETBOX_URL",
         "IACP_NETBOX_TOKEN",
-        "IACP_NETBOX_PREFIX_ID",
         "IACP_NETBOX_PREFIX_LENGTH",
         "IACP_NETBOX_GATEWAY_HOST",
         "IACP_NETBOX_ALLOCATION_TAG",

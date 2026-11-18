@@ -312,6 +312,7 @@ def test_dhcp_bootstrap_refuses_tagged_nic(monkeypatch):
 def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
     from worker.proxmox import ProxmoxError
     initialize()
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     monkeypatch.setattr(bootstrap,'_wait_for_pool_membership',lambda *args,**kwargs:None)
     monkeypatch.setattr(bootstrap.time,'sleep',lambda _:None)
     calls={'reads':0,'exec':0}
@@ -322,7 +323,15 @@ def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
     def execute(*_):
         calls['exec']+=1
         raise ProxmoxError('RESULT_UNKNOWN',uncertain=True)
-    fake=SimpleNamespace(vm_config=lambda *_:{'name':'wait-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=211','ipconfig0':'ip=190.0.231.8/24,gw=190.0.231.1'},guest_agent_interfaces=interfaces,guest_agent_exec=execute)
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "wait-test",
+            "net0": f"virtio={MAC},bridge=vmbr3",
+            "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
+        },
+        guest_agent_interfaces=interfaces,
+        guest_agent_exec=execute,
+    )
     with pytest.raises(ProxmoxError,match='RESULT_UNKNOWN'):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='wait-test',instance_id='wait-test',spec={'network_profile':'prod_static','ipv4_cidr':'190.0.231.8/24','ipv4_gateway':'190.0.231.1'},heartbeat=lambda:None)
     assert calls=={'reads':2,'exec':1}

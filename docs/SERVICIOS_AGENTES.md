@@ -356,10 +356,16 @@ elige WAN al omitir el perfil y rechaza LAN; los workers también comprueban la
 política antes de ejecutar operaciones. `prod_static` sigue perteneciendo al
 entorno `lab` de MNG y no habilita Platinum/PRX.
 
-NetBox usa el prefijo 52, VRF global. La asignación utiliza el endpoint atómico
-`POST /ipam/prefixes/52/available-ips/`, con marcador de propiedad por instancia.
-Una respuesta incierta se recupera buscando ese marcador; no se repite ciegamente
-la reserva. La IP del gateway queda reservada y nunca se entrega a una VM.
+La reserva consulta `GET /api/ipam/ip-addresses/?parent=190.0.231.0/24` y elige
+una dirección de `.3` a `.253` en la VRF global. El gateway `190.0.231.1/24`
+se verifica por coincidencia exacta en `/api/ipam/ip-addresses/`. El gateway
+y la exclusión `.2` quedan fuera del rango de asignación. El worker crea la
+dirección exacta mediante `POST /api/ipam/ip-addresses/` y guarda el ID y el
+marcador de propiedad. Ante un rechazo por ocupación, vuelve a consultar el
+rango. Ante una respuesta incierta, busca el marcador antes de continuar.
+PostgreSQL serializa las reservas entre los workers de una misma base. Cada
+reserva se vuelve a consultar antes de aprovisionar la VM y se deja pendiente de
+reconciliación si NetBox muestra más de un registro para la IP en la VRF global.
 La eliminación confirma ausencia física de la VM y propiedad/dirección de la
 reserva antes de liberar. Si no puede demostrarlo, conserva la IP como
 `release_pending` para recuperación controlada.

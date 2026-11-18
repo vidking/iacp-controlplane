@@ -10,6 +10,10 @@ import os
 import re
 from pathlib import Path
 
+PROD_STATIC_PREFIX = "190.0.231.0/24"
+PROD_STATIC_FIRST_HOST = 3
+PROD_STATIC_LAST_HOST = 253
+
 
 def catalog_path() -> Path:
     default_path = Path(__file__).resolve().parent.parent / "terraform" / "environments" / "mng01" / "catalog.json"
@@ -63,9 +67,7 @@ def network_profile_catalog() -> list[dict]:
     # the exact authorized /24. Secrets are intentionally not exposed here;
     # the worker validates the token when it performs an allocation.
     try:
-        prefix_id = int((os.getenv("IACP_NETBOX_PREFIX_ID") or "").strip())
-        prefix_valid = prefix_id == 52
-        prefix_valid = prefix_valid and int(os.getenv("IACP_NETBOX_PREFIX_LENGTH", "24")) == 24
+        prefix_valid = int(os.getenv("IACP_NETBOX_PREFIX_LENGTH", "24")) == 24
         prefix_valid = prefix_valid and int(os.getenv("IACP_NETBOX_GATEWAY_HOST", "1")) == 1
     except ValueError:
         prefix_valid = False
@@ -94,7 +96,7 @@ def network_profile_catalog() -> list[dict]:
             "label": "Prod_Static",
             "network_mode": "static",
             "ipam": "netbox",
-            "prefix": "190.0.231.0/24",
+            "prefix": PROD_STATIC_PREFIX,
             "prefix_length": 24,
             "proxmox_bridge": proxmox_network["bridge"] if proxmox_network else None,
             "gateway": "190.0.231.1",

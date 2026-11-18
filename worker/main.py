@@ -380,7 +380,6 @@ def _begin_ip_allocation(
     *,
     instance_id: str,
     operation_id: str,
-    prefix_id: int,
     marker: str,
 ) -> dict:
     allocation_id = str(uuid.uuid4())
@@ -406,17 +405,16 @@ def _begin_ip_allocation(
             """
             INSERT INTO ip_allocations(
               allocation_id, instance_id, operation_id, provider, profile,
-              prefix_id, marker, status, created_at
-            ) VALUES (?, ?, ?, 'netbox', 'prod_static', ?, ?, 'allocating', ?)
+              marker, status, created_at
+            ) VALUES (?, ?, ?, 'netbox', 'prod_static', ?, 'allocating', ?)
             """,
-            (allocation_id, instance_id, operation_id, prefix_id, marker, created),
+            (allocation_id, instance_id, operation_id, marker, created),
         )
         db.execute("COMMIT")
     return {
         "allocation_id": allocation_id,
         "instance_id": instance_id,
         "operation_id": operation_id,
-        "prefix_id": prefix_id,
         "marker": marker,
         "status": "allocating",
     }
@@ -483,7 +481,6 @@ def _ensure_static_allocation(
         allocation = _begin_ip_allocation(
             instance_id=instance_id,
             operation_id=operation_id,
-            prefix_id=client.config.prefix_id,
             marker=marker,
         )
     if allocation.get("status") == "release_pending":

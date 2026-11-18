@@ -87,6 +87,28 @@ def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatc
     assert response.headers["X-IACP-Build-Revision"] == revision
 
 
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("IPAM_ALLOCATION_CONFLICT", "NetBox no confirmó una reserva única para la instancia."),
+        ("IPAM_GATEWAY_NOT_FOUND", "No se encontró en NetBox la dirección exacta del gateway."),
+    ],
+)
+def test_operation_exposes_netbox_missing_object(code, message):
+    with TestClient(app) as client:
+        response = client.post("/v1/instances", json=public_body())
+        assert response.status_code == 202
+        operation_id = response.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='failed', error=? WHERE operation_id=?",
+                (code, operation_id),
+            )
+        operation = client.get(f"/v1/operations/{operation_id}").json()
+        assert operation["error_code"] == code
+        assert operation["error"] == f"{message} Código: {code}."
+
+
 def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
@@ -164,7 +186,6 @@ def test_prod_static_request_persists_profile_without_accepting_an_ip_from_consu
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.cyberfuel.com/api")
-    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     body = public_body("static-profile")
     body["network_profile"] = "prod_static"
     with TestClient(app) as client:
@@ -637,7 +658,6 @@ def test_network_profile_is_part_of_public_idempotency_fingerprint(tmp_path, mon
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example.invalid/api")
-    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     body = public_body("idempotency-network-profile")
 
     with TestClient(app) as client:
@@ -1047,7 +1067,6 @@ def test_both_network_profiles_in_pilot_and_wan_only_after_promotion(monkeypatch
     monkeypatch.setenv('IACP_ENFORCE_WAN_ONLY','0')
     monkeypatch.setenv('IACP_PROD_STATIC_ENABLED','1')
     monkeypatch.setenv('IACP_NETBOX_URL','https://netbox.test.invalid/api')
-    monkeypatch.setenv('IACP_NETBOX_PREFIX_ID','52')
     with TestClient(app) as client:
         for profile in ['lab_dhcp','prod_static']:
             body=public_body('pilot-'+profile.replace('_','-'));body['network_profile']=profile
@@ -1070,7 +1089,6 @@ def test_prod_static_exposes_vmbr3_without_tag_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_PROD_STATIC_ENABLED", "1")
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.test.invalid/api")
-    monkeypatch.setenv("IACP_NETBOX_PREFIX_ID", "52")
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     with TestClient(app) as client:
         profile = next(

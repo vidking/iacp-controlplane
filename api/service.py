@@ -106,8 +106,12 @@ PUBLIC_ERROR_CODES = {
     "IPAM_CONFIGURATION_INVALID": "IPAM_CONFIGURATION_INVALID",
     "IPAM_PREFIX_INVALID": "IPAM_PREFIX_INVALID",
     "IPAM_PREFIX_POOL_UNSAFE": "IPAM_PREFIX_POOL_UNSAFE",
+    "IPAM_GATEWAY_NOT_FOUND": "IPAM_GATEWAY_NOT_FOUND",
     "IPAM_GATEWAY_NOT_RESERVED": "IPAM_GATEWAY_NOT_RESERVED",
     "IPAM_POOL_EXHAUSTED": "IPAM_POOL_EXHAUSTED",
+    "IPAM_ADDRESS_CONFLICT": "IPAM_ADDRESS_CONFLICT",
+    "IPAM_ALLOCATION_CONFLICT": "IPAM_ALLOCATION_CONFLICT",
+    "IPAM_RESPONSE_INVALID": "IPAM_RESPONSE_INVALID",
     "IPAM_TAG_NOT_FOUND": "IPAM_TAG_NOT_FOUND",
     "IPAM_PERMISSION_DENIED": "IPAM_PERMISSION_DENIED",
     "IPAM_UNAVAILABLE": "IPAM_SERVICE_UNAVAILABLE",
@@ -317,7 +321,11 @@ def public_operation_error(operation: dict) -> str:
     code = public_error_code(operation.get("error"), operation.get("status"))
     if not code:
         return ""
-    return f"La operación no pudo confirmarse. Código: {code}."
+    message = {
+        "IPAM_GATEWAY_NOT_FOUND": "No se encontró en NetBox la dirección exacta del gateway.",
+        "IPAM_ALLOCATION_CONFLICT": "NetBox no confirmó una reserva única para la instancia.",
+    }.get(code, "La operación no pudo confirmarse.")
+    return f"{message} Código: {code}."
 
 
 def _public_payload(value) -> dict:

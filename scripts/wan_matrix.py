@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from datetime import UTC, datetime, timezone
+from ipaddress import ip_network
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -32,12 +33,12 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from api.catalog import PROD_STATIC_FIRST_HOST, PROD_STATIC_LAST_HOST, PROD_STATIC_PREFIX
 from worker.netbox import NetBoxClient, NetBoxError
 from worker.proxmox import ProxmoxClient
 
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
-MAX_AUTHORIZED_HOST = 253
 EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
 
 
@@ -104,16 +105,14 @@ def require_expected_golden_images(images, inventory, vm_config):
 
 
 def verify_netbox_state(client):
-    if client.config.prefix_id != 52:
+    if client.config.expected_prefix != PROD_STATIC_PREFIX:
         raise RuntimeError("NETBOX_PREFIX_NOT_AUTHORIZED")
-    prefix, _ = client.get_prefix()
-    if str(prefix) != "190.0.231.0/24":
-        raise RuntimeError("NETBOX_PREFIX_NOT_AUTHORIZED")
+    prefix = ip_network(PROD_STATIC_PREFIX)
     gateway = client.validate_gateway(prefix)
     if gateway != "190.0.231.1":
         raise RuntimeError("NETBOX_GATEWAY_NOT_AUTHORIZED")
     reserved_ip = client.get_ip("190.0.231.2/24")
-    if not reserved_ip:
+    if not reserved_ip or reserved_ip.get("vrf") is not None:
         raise RuntimeError("NETBOX_RESERVED_ADDRESS_MISSING")
     status = reserved_ip.get("status")
     status = status.get("value") if isinstance(status, dict) else status
@@ -129,18 +128,17 @@ def verify_netbox_state(client):
     )
     if any(str(address) == "190.0.231.2" for address, _ in available):
         raise RuntimeError("NETBOX_RESERVED_ADDRESS_AVAILABLE")
-    first_authorized = prefix.network_address + 2
-    last_authorized = prefix.network_address + MAX_AUTHORIZED_HOST
+    first_authorized = prefix.network_address + PROD_STATIC_FIRST_HOST
+    last_authorized = prefix.network_address + PROD_STATIC_LAST_HOST
     eligible = [
         (address, length)
         for address, length in available
-        if first_authorized <= address <= last_authorized
+        if first_authorized <= address <= last_authorized and length == prefix.prefixlen
     ]
     if len(eligible) < 6:
         raise RuntimeError("NETBOX_AUTHORIZED_RANGE_EXHAUSTED")
     return {
-        "prefix_id": 52,
-        "prefix": "190.0.231.0/24",
+        "prefix": str(prefix),
         "gateway": "190.0.231.1",
         "reserved_address": "190.0.231.2/24",
         "next_available": f"{eligible[0][0]}/{eligible[0][1]}",

@@ -92,14 +92,11 @@ def test_wan_preflight_uses_only_current_almalinux_goldens():
 
 
 def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip():
-    from ipaddress import IPv4Address, IPv4Network
+    from ipaddress import IPv4Address
     from types import SimpleNamespace
 
     class NetBoxStub:
-        config = SimpleNamespace(prefix_id=52)
-
-        def get_prefix(self):
-            return IPv4Network("190.0.231.0/24"), {}
+        config = SimpleNamespace(expected_prefix="190.0.231.0/24")
 
         def validate_gateway(self, _prefix):
             return "190.0.231.1"
@@ -112,7 +109,6 @@ def test_wan_preflight_checks_authorized_netbox_prefix_and_preserves_reserved_ip
             return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 9)]
 
     assert verify_netbox_state(NetBoxStub()) == {
-        "prefix_id": 52,
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
         "reserved_address": "190.0.231.2/24",

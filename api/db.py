@@ -238,7 +238,7 @@ _SCHEMA = (
         operation_id TEXT NOT NULL,
         provider TEXT NOT NULL DEFAULT 'netbox',
         profile TEXT NOT NULL,
-        prefix_id BIGINT NOT NULL,
+        prefix_id BIGINT,
         netbox_ip_id BIGINT,
         address TEXT NOT NULL DEFAULT '',
         gateway TEXT NOT NULL DEFAULT '',
@@ -249,6 +249,7 @@ _SCHEMA = (
         last_error TEXT NOT NULL DEFAULT ''
     )
     """,
+    "ALTER TABLE ip_allocations ALTER COLUMN prefix_id DROP NOT NULL",
     """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_allocations_active_instance
     ON ip_allocations(instance_id, profile)

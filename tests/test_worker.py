@@ -1237,8 +1237,6 @@ def test_static_ipam_keeps_vmbr3_without_tag(monkeypatch):
     monkeypatch.setattr(main, "_update_instance_spec", lambda *_: None)
 
     class NetBox:
-        config = SimpleNamespace(prefix_id=52)
-
         def allocate(self, **_kwargs):
             return SimpleNamespace(
                 ip_id=123,
@@ -1258,6 +1256,39 @@ def test_static_ipam_keeps_vmbr3_without_tag(monkeypatch):
     assert result["network_mode"] == "static"
     assert result["ipv4_cidr"] == "190.0.231.8/24"
     assert result["vlan_id"] is None
+
+
+def test_ipam_ledger_preserves_legacy_prefix_ids_and_allows_direct_reservations():
+    from api.db import initialize
+    from worker.main import _begin_ip_allocation, _complete_ip_allocation, _ip_allocation
+    from worker.netbox import NetBoxAllocation
+
+    initialize()
+    with database() as db:
+        db.execute("ALTER TABLE ip_allocations ALTER COLUMN prefix_id SET NOT NULL")
+        db.execute(
+            """
+            INSERT INTO ip_allocations(
+                allocation_id, instance_id, operation_id, profile, prefix_id,
+                netbox_ip_id, address, marker, status, created_at
+            ) VALUES (?, ?, ?, 'prod_static', 52, 91, ?, ?, 'allocated', ?)
+            """,
+            ("legacy-allocation", "legacy-vm", "legacy-op", "190.0.231.7/24",
+             "iacp-instance=legacy-vm", "2026-01-01T00:00:00+00:00"),
+        )
+    initialize()
+    legacy = _ip_allocation("legacy-vm")
+    assert legacy["prefix_id"] == 52 and legacy["netbox_ip_id"] == 91
+
+    intent = _begin_ip_allocation(
+        instance_id="direct-vm", operation_id="direct-op", marker="iacp-instance=direct-vm"
+    )
+    _complete_ip_allocation(intent["allocation_id"], NetBoxAllocation(
+        92, "190.0.231.8/24", "190.0.231.0/24", "190.0.231.1", "iacp-instance=direct-vm"
+    ))
+    stored = _ip_allocation("direct-vm")
+    assert stored["prefix_id"] is None
+    assert stored["netbox_ip_id"] == 92 and stored["marker"] == "iacp-instance=direct-vm"
 
 
 def test_operation_spec_preserves_ipam_resolved_payload():

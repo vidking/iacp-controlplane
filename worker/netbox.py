@@ -1,7 +1,7 @@
 """Cliente NetBox que conserva las reservas ante resultados inciertos.
 
-El endpoint available-ips elige y crea la dirección bajo el lock de NetBox.
-El marcador permite recuperar una respuesta perdida sin reservar otra IP.
+El cliente reserva una dirección exacta del rango autorizado y conserva un
+marcador por instancia para reconciliar resultados inciertos.
 """
 
 from __future__ import annotations
@@ -12,11 +12,13 @@ import re
 import socket
 import ssl
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener, HTTPSHandler
+
+from api.catalog import PROD_STATIC_FIRST_HOST, PROD_STATIC_LAST_HOST, PROD_STATIC_PREFIX
 
 
 class NetBoxError(RuntimeError):
@@ -38,9 +40,8 @@ class NetBoxError(RuntimeError):
 @dataclass(frozen=True)
 class NetBoxSettings:
     base_url: str
-    token: str
-    prefix_id: int
-    expected_prefix: str = "190.0.231.0/24"
+    token: str = field(repr=False)
+    expected_prefix: str = PROD_STATIC_PREFIX
     prefix_length: int = 24
     gateway_host: int = 1
     allocation_tag: str = "ocupada"
@@ -71,18 +72,16 @@ def _bool_env(name: str, default: bool = True) -> bool:
 def settings() -> NetBoxSettings:
     base_url = (os.getenv("IACP_NETBOX_URL") or "").strip().rstrip("/")
     token = (os.getenv("IACP_NETBOX_TOKEN") or "").strip()
-    prefix_raw = (os.getenv("IACP_NETBOX_PREFIX_ID") or "").strip()
-    if not base_url or not token or not prefix_raw:
+    if not base_url or not token:
         raise NetBoxError("IPAM_NOT_CONFIGURED")
     try:
-        prefix_id = int(prefix_raw)
         prefix_length = int(os.getenv("IACP_NETBOX_PREFIX_LENGTH", "24"))
         gateway_host = int(os.getenv("IACP_NETBOX_GATEWAY_HOST", "1"))
         timeout = max(1.0, float(os.getenv("IACP_NETBOX_TIMEOUT", "15")))
         attempts = max(1, int(os.getenv("IACP_NETBOX_RETRY_ATTEMPTS", "3")))
     except ValueError as error:
         raise NetBoxError("IPAM_CONFIGURATION_INVALID") from error
-    if not 1 <= prefix_id or prefix_length != 24 or gateway_host != 1:
+    if prefix_length != 24 or gateway_host != 1:
         raise NetBoxError("IPAM_CONFIGURATION_INVALID")
     # Accept both the API root and the status URL shown by NetBox's UI. The
     # client always talks to the API root; `/api/status/` is only a health
@@ -92,7 +91,6 @@ def settings() -> NetBoxSettings:
     return NetBoxSettings(
         base_url=base_url if base_url.endswith("/api") else f"{base_url}/api",
         token=token,
-        prefix_id=prefix_id,
         prefix_length=prefix_length,
         gateway_host=gateway_host,
         allocation_tag=(
@@ -112,7 +110,6 @@ def configured() -> bool:
     return bool(
         (os.getenv("IACP_NETBOX_URL") or "").strip()
         and (os.getenv("IACP_NETBOX_TOKEN") or "").strip()
-        and (os.getenv("IACP_NETBOX_PREFIX_ID") or "").strip()
     )
 
 
@@ -172,6 +169,7 @@ class NetBoxClient:
                 return json.loads(raw)
             except HTTPError as error:
                 status = error.code
+                error.close()
                 if (
                     retry_get
                     and 500 <= status < 600
@@ -179,52 +177,20 @@ class NetBoxClient:
                 ):
                     time.sleep(min(4.0, 0.5 * (2**attempt)))
                     continue
-                detail = ""
-                try:
-                    detail = error.read().decode("utf-8", "replace")
-                except Exception:
-                    pass
                 raise NetBoxError(
                     _error_code(status),
                     status,
                     uncertain=method != "GET" and status >= 500,
-                    detail=detail,
-                ) from error
-            except (URLError, TimeoutError, socket.timeout, ValueError) as error:
+                ) from None
+            except (URLError, TimeoutError, socket.timeout, ValueError):
                 if retry_get and attempt + 1 < self.config.attempts:
                     time.sleep(min(4.0, 0.5 * (2**attempt)))
                     continue
                 raise NetBoxError(
                     "IPAM_UNAVAILABLE" if method == "GET" else "IPAM_REQUEST_UNCERTAIN",
                     uncertain=method != "GET",
-                    detail=str(error),
-                ) from error
+                ) from None
         raise NetBoxError("IPAM_UNAVAILABLE")
-
-    def get_prefix(self) -> tuple[IPv4Network, dict]:
-        response = self._request(
-            "GET",
-            f"/ipam/prefixes/{self.config.prefix_id}/?fields=id,prefix,is_pool,status,vrf",
-            retry_get=True,
-        )
-        if not isinstance(response, dict):
-            raise NetBoxError("IPAM_PREFIX_INVALID")
-        raw_prefix = response.get("prefix")
-        try:
-            prefix = ip_network(str(raw_prefix), strict=True)
-        except ValueError as error:
-            raise NetBoxError("IPAM_PREFIX_INVALID") from error
-        if (
-            prefix.version != 4
-            or prefix.prefixlen != self.config.prefix_length
-            or str(prefix) != self.config.expected_prefix
-        ):
-            raise NetBoxError("IPAM_PREFIX_INVALID")
-        if response.get("vrf") is not None:
-            raise NetBoxError("IPAM_PREFIX_VRF_UNSUPPORTED")
-        if response.get("is_pool"):
-            raise NetBoxError("IPAM_PREFIX_POOL_UNSAFE")
-        return prefix, response
 
     def _tag_id(self, slug: str) -> int:
         query = urlencode({"slug": slug, "limit": 2, "brief": "true"})
@@ -246,39 +212,58 @@ class NetBoxClient:
         except (ValueError, TypeError):
             return None
 
-    def available_addresses(self, prefix: IPv4Network) -> list[tuple[IPv4Address, int]]:
-        response = self._request(
-            "GET",
-            f"/ipam/prefixes/{self.config.prefix_id}/available-ips/",
-            retry_get=True,
-        )
-        rows = response if isinstance(response, list) else []
-        candidates = []
-        for row in rows:
-            value = self._address_value(
-                row.get("address") if isinstance(row, dict) else row
+    def _ip_records(self, parent: IPv4Network) -> list[dict]:
+        offset = 0
+        records = []
+        while True:
+            query = urlencode(
+                {"parent": str(parent), "ordering": "id", "limit": 100, "offset": offset}
             )
-            if value is None:
-                continue
-            address, length = value
-            if (
-                address in prefix
-                and length == self.config.prefix_length
-                and address
-                not in {
-                    prefix.network_address,
-                    prefix.broadcast_address,
-                    prefix.network_address + self.config.gateway_host,
-                }
-            ):
-                candidates.append(value)
-        return candidates
+            response = self._request("GET", f"/ipam/ip-addresses/?{query}", retry_get=True)
+            rows = response.get("results") if isinstance(response, dict) else None
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise NetBoxError("IPAM_RESPONSE_INVALID")
+            for row in rows:
+                if row.get("vrf") is not None:
+                    continue
+                value = self._address_value(row.get("address"))
+                if value is None or value[0] not in parent:
+                    raise NetBoxError("IPAM_RESPONSE_INVALID")
+                records.append(row)
+            if not response.get("next"):
+                return records
+            if not rows:
+                raise NetBoxError("IPAM_RESPONSE_INVALID")
+            offset += len(rows)
+
+    @staticmethod
+    def _in_pool(address: IPv4Address, prefix: IPv4Network) -> bool:
+        return (
+            prefix.network_address + PROD_STATIC_FIRST_HOST
+            <= address
+            <= prefix.network_address + PROD_STATIC_LAST_HOST
+        )
+
+    def available_addresses(self, prefix: IPv4Network) -> list[tuple[IPv4Address, int]]:
+        if str(prefix) != self.config.expected_prefix:
+            raise NetBoxError("IPAM_PREFIX_INVALID")
+        occupied = {ip_address(row["address"].split("/")[0]) for row in self._ip_records(prefix)}
+        return [
+            (address, prefix.prefixlen)
+            for address in prefix.hosts()
+            if self._in_pool(address, prefix) and address not in occupied
+        ]
 
     def get_ip(self, address: str) -> dict | None:
         query = urlencode({"address": address, "limit": 2})
         response = self._request("GET", f"/ipam/ip-addresses/?{query}", retry_get=True)
         rows = response.get("results", []) if isinstance(response, dict) else []
-        return rows[0] if len(rows) == 1 and isinstance(rows[0], dict) else None
+        if not isinstance(rows, list) or len(rows) != 1:
+            return None
+        record = rows[0]
+        if isinstance(record, dict) and record.get("address") == address:
+            return record
+        return None
 
     @staticmethod
     def _marker_matches(record: dict | None, marker: str) -> bool:
@@ -292,12 +277,7 @@ class NetBoxClient:
             is not None
         )
 
-    def validate_gateway(self, prefix: IPv4Network) -> str:
-        gateway = prefix.network_address + self.config.gateway_host
-        address = f"{gateway}/{self.config.prefix_length}"
-        record = self.get_ip(address)
-        if record is None:
-            raise NetBoxError("IPAM_GATEWAY_NOT_RESERVED")
+    def _is_reserved(self, record: dict) -> bool:
         tags = record.get("tags") or []
         tag_slugs = {
             str(tag.get("slug") or tag.get("name"))
@@ -306,7 +286,18 @@ class NetBoxClient:
         }
         status = record.get("status")
         status_value = status.get("value") if isinstance(status, dict) else status
-        if self.config.gateway_tag not in tag_slugs and status_value != "reserved":
+        return self.config.gateway_tag in tag_slugs or status_value == "reserved"
+
+    def validate_gateway(self, prefix: IPv4Network) -> str:
+        gateway = prefix.network_address + self.config.gateway_host
+        address = f"{gateway}/{self.config.prefix_length}"
+        record = self.get_ip(address)
+        if record is None or record.get("vrf") is not None:
+            raise NetBoxError(
+                "IPAM_GATEWAY_NOT_FOUND",
+                detail=f"No se encontró la dirección del gateway {address} en NetBox.",
+            )
+        if not self._is_reserved(record):
             raise NetBoxError("IPAM_GATEWAY_NOT_RESERVED")
         return str(gateway)
 
@@ -330,32 +321,51 @@ class NetBoxClient:
 
     def owned_allocation(self, prefix: IPv4Network, marker: str) -> dict | None:
         # Recuperar una reserva cuyo POST terminó antes de persistirla localmente.
-        query = urlencode({"parent": str(prefix), "limit": 100, "offset": 0})
-        offset = 0
-        matches = []
-        while True:
-            response = self._request(
-                "GET", f"/ipam/ip-addresses/?{query}", retry_get=True
-            )
-            if not isinstance(response, dict) or not isinstance(
-                response.get("results"), list
-            ):
-                raise NetBoxError("IPAM_RESPONSE_INVALID")
-            rows = response["results"]
-            matches.extend(
-                row
-                for row in rows
-                if isinstance(row, dict)
-                and row.get("vrf") is None
-                and self._marker_matches(row, marker)
-            )
-            if not isinstance(response, dict) or not response.get("next"):
-                break
-            offset += 100
-            query = urlencode({"parent": str(prefix), "limit": 100, "offset": offset})
+        matches = [
+            row for row in self._ip_records(prefix) if self._marker_matches(row, marker)
+        ]
         if len(matches) > 1:
-            raise NetBoxError("IPAM_ALLOCATION_CONFLICT")
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
         return matches[0] if matches else None
+
+    def _confirm_allocation(
+        self,
+        record: object,
+        prefix: IPv4Network,
+        gateway: str,
+        marker: str,
+        expected_address: str | None = None,
+    ) -> NetBoxAllocation:
+        if not isinstance(record, dict):
+            raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
+        address = record.get("address")
+        value = self._address_value(address)
+        ip_id = record.get("id")
+        if (
+            type(ip_id) is not int
+            or ip_id <= 0
+            or value is None
+            or value[1] != prefix.prefixlen
+            or not self._in_pool(value[0], prefix)
+            or (expected_address is not None and address != expected_address)
+            or record.get("vrf") is not None
+            or self._is_reserved(record)
+            or not self._marker_matches(record, marker)
+        ):
+            raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
+        try:
+            existing = self._ip_records(ip_network(f"{value[0]}/32"))
+        except NetBoxError as error:
+            raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True) from error
+        if (
+            len(existing) != 1
+            or existing[0].get("id") != ip_id
+            or existing[0].get("address") != address
+            or self._is_reserved(existing[0])
+            or not self._marker_matches(existing[0], marker)
+        ):
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+        return NetBoxAllocation(ip_id, address, str(prefix), gateway, marker)
 
     def allocate(self, **kwargs) -> NetBoxAllocation:
         # Serializa los aprovisionadores IACP del mismo prefijo durante la llamada remota.
@@ -363,7 +373,10 @@ class NetBoxClient:
 
         with database() as db:
             db.execute("BEGIN")
-            db.execute("SELECT pg_advisory_xact_lock(105, ?)", (self.config.prefix_id,))
+            db.execute(
+                "SELECT pg_advisory_xact_lock(105, hashtext(?))",
+                (self.config.expected_prefix,),
+            )
             try:
                 result = self._allocate(**kwargs)
                 db.execute("COMMIT")
@@ -382,7 +395,7 @@ class NetBoxClient:
         customer_tag: str | None = None,
         tags: list[str] | None = None,
     ) -> NetBoxAllocation:
-        prefix, _ = self.get_prefix()
+        prefix = ip_network(self.config.expected_prefix)
         gateway = self.validate_gateway(prefix)
         tag_id = self._tag_id(self.config.allocation_tag)
         marker = f"iacp-instance={instance_id}"
@@ -396,22 +409,21 @@ class NetBoxClient:
         )
         owned = self.owned_allocation(prefix, marker)
         if owned:
-            value = self._address_value(owned.get("address"))
-            if value is None or value[0] not in prefix or value[1] != prefix.prefixlen:
-                raise NetBoxError("IPAM_IDENTITY_MISMATCH")
+            allocation = self._confirm_allocation(owned, prefix, gateway, marker)
             existing_tags = [
                 int(tag["id"])
                 for tag in owned.get("tags", [])
                 if isinstance(tag, dict) and "id" in tag
             ]
-            self._request(
-                "PATCH",
-                f"/ipam/ip-addresses/{int(owned['id'])}/",
-                {"tags": list(dict.fromkeys(existing_tags + tag_ids))},
-            )
-            return NetBoxAllocation(
-                int(owned["id"]), str(owned["address"]), str(prefix), gateway, marker
-            )
+            try:
+                self._request(
+                    "PATCH",
+                    f"/ipam/ip-addresses/{allocation.ip_id}/",
+                    {"tags": list(dict.fromkeys(existing_tags + tag_ids))},
+                )
+            except NetBoxError as error:
+                raise NetBoxError(error.code, error.status, uncertain=True) from error
+            return allocation
         description = (
             f"IACP {customer_tag or 'customer'} | {name} | vmid:{vmid} | {marker}"[:200]
         )
@@ -423,64 +435,46 @@ class NetBoxClient:
             "description": description,
             "comments": comments,
             "tags": tag_ids,
-            "prefix_length": prefix.prefixlen,
+            "vrf": None,
         }
-        try:
-            response = self._request(
-                "POST",
-                f"/ipam/prefixes/{self.config.prefix_id}/available-ips/",
-                payload,
-            )
-        except NetBoxError as error:
-            if error.uncertain:
-                # No repetir un POST cuyo resultado aún no conocemos.
-                record = self.owned_allocation(prefix, marker)
-                if record is None:
+        candidates = self.available_addresses(prefix)
+        attempted = set()
+        while candidates:
+            candidate = candidates[0]
+            attempted.add(candidate)
+            address = f"{candidate[0]}/{candidate[1]}"
+            try:
+                record = self._request(
+                    "POST", "/ipam/ip-addresses/", {**payload, "address": address}
+                )
+            except NetBoxError as error:
+                if error.uncertain:
+                    # Resolver por propietario antes de considerar otra escritura.
+                    try:
+                        record = self.owned_allocation(prefix, marker)
+                    except NetBoxError as lookup_error:
+                        raise error from lookup_error
+                    if record is None:
+                        raise
+                elif error.status in {400, 409}:
+                    available = self.available_addresses(prefix)
+                    if candidate in available:
+                        raise
+                    candidates = [value for value in available if value not in attempted]
+                    continue
+                else:
                     raise
-                response = record
-            elif error.status == 409:
-                raise NetBoxError("IPAM_POOL_EXHAUSTED", 409) from error
-            else:
-                raise
-        record = (
-            response[0]
-            if isinstance(response, list) and len(response) == 1
-            else response
-        )
-        try:
-            value = self._address_value(record["address"])
-            ip_id = int(record["id"])
-            valid = (
-                ip_id > 0
-                and value is not None
-                and value[0] in prefix
-                and value[1] == prefix.prefixlen
-                and value[0]
-                not in {
-                    prefix.network_address,
-                    prefix.broadcast_address,
-                    prefix.network_address + self.config.gateway_host,
-                }
-                and record.get("vrf") is None
-                and self._marker_matches(record, marker)
-            )
-        except (TypeError, KeyError, ValueError):
-            valid = False
-        if not valid:
-            raise NetBoxError("IPAM_RESPONSE_INVALID", uncertain=True)
-        return NetBoxAllocation(ip_id, record["address"], str(prefix), gateway, marker)
+            return self._confirm_allocation(record, prefix, gateway, marker, address)
+        raise NetBoxError("IPAM_POOL_EXHAUSTED", 409)
 
     def release(self, allocation: dict, *, marker: str) -> None:
         ip_id = int(allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0)
-        if (
-            allocation.get("prefix_id")
-            and int(allocation["prefix_id"]) != self.config.prefix_id
-        ):
-            raise NetBoxError("IPAM_IDENTITY_MISMATCH")
+        prefix = ip_network(self.config.expected_prefix)
         if ip_id <= 0:
-            prefix, _ = self.get_prefix()
             record = self.owned_allocation(prefix, marker)
             if record is None:
+                if allocation.get("status") == "release_pending":
+                    raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True)
                 return
             ip_id = int(record["id"])
             allocation = dict(allocation, address=record["address"])
@@ -496,20 +490,15 @@ class NetBoxClient:
             if isinstance(record, dict)
             else None
         )
-        prefix = ip_network(self.config.expected_prefix)
         if (
             not isinstance(record, dict)
+            or record.get("id") != ip_id
             or not self._marker_matches(record, marker)
             or value is None
-            or value[0] not in prefix
-            or value[0]
-            in {
-                prefix.network_address,
-                prefix.broadcast_address,
-                prefix.network_address + self.config.gateway_host,
-            }
+            or not self._in_pool(value[0], prefix)
             or value[1] != prefix.prefixlen
             or record.get("vrf") is not None
+            or self._is_reserved(record)
             or not allocation.get("address")
             or record.get("address") != allocation["address"]
         ):
