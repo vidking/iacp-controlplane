@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from cryptography.fernet import Fernet
@@ -8,6 +10,39 @@ from api.main import app
 from api.service_secrets import decrypt
 from worker import services
 from worker.service_recipes import render, RecipeError
+
+
+def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
+    from worker.service_executor import NEXTCLOUD_READY_SCRIPT
+
+    state = tmp_path / "attempt"
+    state.write_text("0")
+    setup = f"""
+php() {{
+  IFS= read -r status_calls < "$IACP_TEST_ATTEMPT"
+  case "$status_calls" in
+    0) printf 'Nextcloud setup in progress\\n' ;;
+    1) printf '{{"installed": false}}\\n' ;;
+    *) printf '{{ "installed" : true }}\\n' ;;
+  esac
+  status_calls=$((status_calls + 1))
+  printf '%s' "$status_calls" > "$IACP_TEST_ATTEMPT"
+}}
+sleep() {{ :; }}
+"""
+    environment = os.environ | {"IACP_TEST_ATTEMPT": str(state)}
+
+    result = subprocess.run(
+        ["sh", "-ec", setup + NEXTCLOUD_READY_SCRIPT],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "IACP_NEXTCLOUD_INSTALLED\n"
+    assert state.read_text() == "3"
 
 
 def body(name="service-demo"):

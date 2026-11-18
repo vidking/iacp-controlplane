@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.no_database
 
 from scripts.wan_matrix import (
+    allocate_matrix_names,
     cases,
     require_four_idle_service_workers,
     required_cycles,
@@ -19,6 +20,51 @@ def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
         assert len(main)==16
         assert len({(case['product'],case['image'],case['plan']) for case in main})==16
         if category!='kvm':assert {case['image'] for case in main}=={'ubuntu-2404','almalinux-9'}
+
+
+def test_service_matrix_can_run_ubuntu_only_without_waiting_for_almalinux():
+    matrix = cases("services", images=["ubuntu-2404"])
+    main = [case for case in matrix if not case["control"]]
+    assert len(matrix) == 18 and len(main) == 16
+    assert {case["image"] for case in main} == {"ubuntu-2404"}
+    assert {(case["product"], case["plan"]) for case in main} == {
+        (product, f"kvm-{plan}")
+        for product in ("nextcloud", "n8n")
+        for plan in range(1, 5)
+    }
+    assert all(
+        sum(
+            case["product"] == product and case["plan"] == plan
+            for case in main
+        )
+        == 2
+        for product in ("nextcloud", "n8n")
+        for plan in (f"kvm-{n}" for n in range(1, 5))
+    )
+
+
+def test_service_matrix_rejects_images_outside_its_catalog():
+    with pytest.raises(ValueError, match="MATRIX_IMAGES_INVALID"):
+        cases("services", images=["ubuntu-2604"])
+
+
+def test_matrix_names_are_short_sequential_and_skip_existing_api_history():
+    service_cases = cases("services", images=["ubuntu-2404"])
+    names = allocate_matrix_names("services", service_cases, set())
+    nextcloud = [name for name in names if name.startswith("kvm-service-nextcloud-")]
+    n8n = [name for name in names if name.startswith("kvm-service-n8n-")]
+    assert nextcloud == [f"kvm-service-nextcloud-{n:03d}" for n in range(1, 10)]
+    assert n8n == [f"kvm-service-n8n-{n:03d}" for n in range(1, 10)]
+    assert all(len(name) <= 63 and name.rsplit("-", 1)[-1].isdigit() for name in names)
+
+    second_run = allocate_matrix_names("services", service_cases, names)
+    nextcloud_second = [name for name in second_run if name.startswith("kvm-service-nextcloud-")]
+    n8n_second = [name for name in second_run if name.startswith("kvm-service-n8n-")]
+    assert nextcloud_second == [f"kvm-service-nextcloud-{n:03d}" for n in range(10, 19)]
+    assert n8n_second == [f"kvm-service-n8n-{n:03d}" for n in range(10, 19)]
+
+    kvm_names = allocate_matrix_names("kvm", cases("kvm", images=["ubuntu-2404"]), set())
+    assert kvm_names[:4] == [f"kvm-prueba-{n:03d}" for n in range(1, 5)]
 
 
 def test_wan_matrix_repeats_kvm_combinations_four_times_for_64_vms():
@@ -143,9 +189,7 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
     class NetBoxStub:
         config = SimpleNamespace(
             expected_prefix="190.0.231.0/24",
-            excluded_addresses=frozenset(
-                {ip_address("190.0.231.2"), ip_address("190.0.231.3")}
-            ),
+            excluded_addresses=frozenset({ip_address("190.0.231.2")}),
         )
 
         def validate_gateway(self, _prefix):
@@ -157,28 +201,28 @@ def test_wan_preflight_uses_only_netbox_available_addresses():
     assert verify_netbox_state(NetBoxStub()) == {
         "prefix": "190.0.231.0/24",
         "gateway": "190.0.231.1",
-        "available_count": 6,
-        "next_available": "190.0.231.4/24",
+        "available_count": 7,
+        "next_available": "190.0.231.3/24",
     }
 
     class OccupiedFirstNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
             return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(3, 10)]
 
-    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.4/24"
+    assert verify_netbox_state(OccupiedFirstNetBox())["next_available"] == "190.0.231.3/24"
 
     class ExcludedAddressReturnedByNetBox(NetBoxStub):
         def available_addresses(self, _prefix):
             return [(IPv4Address(f"190.0.231.{host}"), 24) for host in range(2, 10)]
 
     state = verify_netbox_state(ExcludedAddressReturnedByNetBox())
-    assert state["next_available"] == "190.0.231.4/24"
-    assert state["available_count"] == 6
+    assert state["next_available"] == "190.0.231.3/24"
+    assert state["available_count"] == 7
 
     class MissingRequiredExclusion(NetBoxStub):
         config = SimpleNamespace(
             expected_prefix="190.0.231.0/24",
-            excluded_addresses=frozenset({ip_address("190.0.231.2")}),
+            excluded_addresses=frozenset(),
         )
 
     with pytest.raises(RuntimeError, match="NETBOX_REQUIRED_ADDRESS_EXCLUSION_MISSING"):

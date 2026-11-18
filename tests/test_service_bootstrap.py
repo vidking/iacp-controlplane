@@ -148,7 +148,7 @@ def test_prepare_develop_is_private_and_non_destructive(tmp_path):
     env = dotenv_values(path.parent / "dev.env", interpolate=False)
     assert env["IACP_SERVICE_EXECUTION_ENABLED"] == "0"
     assert env["IACP_MNG_CATALOG"] == "/app/terraform/environments/mng01/catalog-dev.json"
-    assert env["IACP_NETBOX_EXCLUDED_ADDRESSES"] == "190.0.231.2,190.0.231.3"
+    assert env["IACP_NETBOX_EXCLUDED_ADDRESSES"] == "190.0.231.2"
     assert env["POSTGRES_PASSWORD"] != "old-database"
     assert reference.read_text().startswith("POSTGRES_PASSWORD=old-database")
     with pytest.raises(FileExistsError):

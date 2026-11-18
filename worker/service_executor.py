@@ -16,6 +16,36 @@ from worker.service_diagnostics import (
 )
 
 
+NEXTCLOUD_READY_SCRIPT = (
+    "set -eu\n"
+    "attempt=0\n"
+    "while [ \"$attempt\" -lt 60 ]; do\n"
+    "  if php occ status --output=json 2>/dev/null | grep -Eq '\"installed\"[[:space:]]*:[[:space:]]*true[[:space:]]*([,}])'; then\n"
+    "    printf 'IACP_NEXTCLOUD_INSTALLED\\n'\n"
+    "    exit 0\n"
+    "  fi\n"
+    "  attempt=$((attempt + 1))\n"
+    "  sleep 5\n"
+    "done\n"
+    "exit 1\n"
+)
+
+
+def nextcloud_status_argv(base: list[str]) -> list[str]:
+    """Espera a que OCC informe instalación sin analizar JSON intermedio inválido."""
+
+    return base + [
+        "exec",
+        "-T",
+        "--user",
+        "www-data",
+        "app",
+        "sh",
+        "-ec",
+        NEXTCLOUD_READY_SCRIPT,
+    ]
+
+
 class ServiceBlocked(RuntimeError):
     pass
 
@@ -284,24 +314,10 @@ def execute(service, job, heartbeat):
             tasks.append(
                 {
                     "name": "Esperar instalación Nextcloud",
-                    **command(
-                        base
-                        + [
-                            "exec",
-                            "-T",
-                            "--user",
-                            "www-data",
-                            "app",
-                            "php",
-                            "occ",
-                            "status",
-                            "--output=json",
-                        ]
-                    ),
+                    **command(nextcloud_status_argv(base)),
                     "register": "installation_status",
-                    "until": "installation_status.rc == 0 and (installation_status.stdout | from_json).installed",
-                    "retries": 60,
-                    "delay": 5,
+                    "failed_when": "installation_status.rc != 0",
+                    "no_log": True,
                 }
             )
             tasks.extend(
@@ -382,22 +398,10 @@ def execute(service, job, heartbeat):
             tasks.append(
                 {
                     "name": "Verificar Nextcloud",
-                    **command(
-                        base
-                        + [
-                            "exec",
-                            "-T",
-                            "--user",
-                            "www-data",
-                            "app",
-                            "php",
-                            "occ",
-                            "status",
-                            "--output=json",
-                        ]
-                    ),
+                    **command(nextcloud_status_argv(base)),
                     "register": "nextcloud_status",
-                    "failed_when": "not (nextcloud_status.stdout | from_json).installed",
+                    "failed_when": "nextcloud_status.rc != 0",
+                    "no_log": True,
                 }
             )
         tasks.append(

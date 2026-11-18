@@ -40,7 +40,7 @@ from worker.proxmox import ProxmoxClient
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
 EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
-EXCLUDED_WAN_ADDRESSES = {"190.0.231.2", "190.0.231.3"}
+EXCLUDED_WAN_ADDRESSES = {"190.0.231.2"}
 
 
 def required_cycles(category):
@@ -145,32 +145,67 @@ def verify_netbox_state(client):
     }
 
 
-def cases(category):
+def cases(category, images=None):
     if category == "kvm":
-        items = [
-            ("kvm", image)
-            for image in ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
-        ]
+        supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
     else:
-        products = (
-            ["nextcloud", "n8n"] if category == "services" else ["hermes", "openclaw"]
-        )
-        items = [
-            (product, image)
-            for product in products
-            for image in ["ubuntu-2404", "almalinux-9"]
-        ]
+        supported_images = ["ubuntu-2404", "almalinux-9"]
+    selected_images = list(dict.fromkeys(images or supported_images))
+    if not selected_images or set(selected_images) - set(supported_images):
+        raise ValueError("MATRIX_IMAGES_INVALID")
+    products = (
+        ["kvm"]
+        if category == "kvm"
+        else ["nextcloud", "n8n"]
+        if category == "services"
+        else ["hermes", "openclaw"]
+    )
+    items = [(product, image) for product in products for image in selected_images]
     result = [
         {"product": product, "image": image, "plan": f"kvm-{plan}", "control": False}
         for product, image in items
         for plan in range(1, 5)
     ]
+    # Mantener tres tandas físicas de seis. Un filtro de imagen conserva todas
+    # las combinaciones requeridas y repite de forma balanceada hasta completar
+    # las 16 posiciones de matriz.
+    if len(result) < 16:
+        result = (result * ((16 + len(result) - 1) // len(result)))[:16]
+    else:
+        result = result[:16]
     controls = [dict(result[0], control=True), dict(result[-1], control=True)]
     if category == "services":
         # Controles explícitos para el contrato de acceso solo con contraseña.
         for case in controls:
             case["client_ssh_key"] = False
     return result + controls
+
+
+def allocate_matrix_names(category, planned, existing_names):
+    """Create short, readable hostnames and skip names already in API history."""
+    used = set(existing_names)
+    next_number = {}
+    names = []
+    for case in planned:
+        if category == "kvm":
+            prefix = "kvm-prueba"
+        elif category == "services":
+            prefix = f"kvm-service-{case['product']}"
+        elif category == "agents":
+            prefix = f"kvm-agent-{case['product']}"
+        else:
+            raise ValueError("MATRIX_CATEGORY_INVALID")
+
+        number = next_number.get(prefix, 1)
+        while True:
+            name = f"{prefix}-{number:03d}"
+            if name not in used:
+                break
+            number += 1
+        names.append(name)
+        used.add(name)
+        next_number[prefix] = number + 1
+    return names
 
 
 class Matrix:
@@ -230,10 +265,30 @@ class Matrix:
             except NetBoxError as error:
                 raise RuntimeError("NETBOX_" + error.code) from None
             self.record("netbox_verified", **netbox_state)
-            golden_images = require_expected_golden_images(
-                self.api("GET", "/v1/images")["images"],
-                self.proxmox.inventory(),
-                self.proxmox.vm_config,
+            selected_images = self.args.images or (
+                ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+                if self.args.category == "kvm"
+                else ["ubuntu-2404", "almalinux-9"]
+            )
+            catalog_images = self.api("GET", "/v1/images")["images"]
+            catalog_ids = {
+                row.get("image_id")
+                for row in catalog_images
+                if isinstance(row, dict)
+            }
+            if not set(selected_images).issubset(catalog_ids):
+                raise RuntimeError("MATRIX_IMAGE_NOT_IN_CATALOG")
+            selected_alma = [
+                image for image in selected_images if image in EXPECTED_ALMALINUX_IMAGES
+            ]
+            golden_images = (
+                require_expected_golden_images(
+                    catalog_images,
+                    self.proxmox.inventory(),
+                    self.proxmox.vm_config,
+                )
+                if selected_alma
+                else []
             )
             self.record("golden_images_verified", images=golden_images)
             profiles = self.api("GET", "/v1/network-profiles")["network_profiles"]
@@ -442,10 +497,7 @@ class Matrix:
         return result.stdout
 
     def create(self, index, case):
-        label = "kvm-" + case["image"] if case["product"] == "kvm" else (
-            ("service-" if self.args.category == "services" else "agent-") + case["product"]
-        )
-        name = f"prueba-{label}-c{self.args.cycle}-{self.args.run}-{index:02d}"
+        name = self.matrix_names[index - 1]
         password = secrets.token_urlsafe(32)
         body = {
             "name": name,
@@ -876,7 +928,25 @@ class Matrix:
         )
 
     def run(self):
-        planned = cases(self.args.category)
+        planned = cases(self.args.category, self.args.images)
+        existing_names = []
+        offset = 0
+        while True:
+            page = self.api(
+                "GET",
+                f"/v1/instances?limit=200&offset={offset}&include_deleted=true",
+            )
+            existing_names.extend(
+                row["name"]
+                for row in page.get("instances", [])
+                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            )
+            offset += len(page.get("instances", []))
+            if offset >= page.get("total", 0) or not page.get("instances"):
+                break
+        self.matrix_names = allocate_matrix_names(
+            self.args.category, planned, existing_names
+        )
         self.record(
             "start",
             category=self.args.category,
@@ -886,6 +956,14 @@ class Matrix:
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=16,
             controls=2,
+            images=self.args.images or None,
+            name_prefix=(
+                "kvm-prueba"
+                if self.args.category == "kvm"
+                else "kvm-service-<producto>"
+                if self.args.category == "services"
+                else "kvm-agent-<producto>"
+            ),
         )
         self.verify_network_profile()
         for offset in range(0, 18, 6):
@@ -942,6 +1020,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--run", required=True)
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument(
+        "--images",
+        nargs="+",
+        choices=["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"],
+        help="Limita la matriz a imágenes concretas y repite combinaciones hasta 16 casos.",
+    )
     args = parser.parse_args()
     if not 1 <= args.cycle <= required_cycles(args.category):
         parser.error(
