@@ -752,6 +752,25 @@ class Matrix:
             control=item["control"],
         )
 
+    def wait_for_service_worker_release(self, jobid, worker_id):
+        # A service worker records the terminal job state immediately before
+        # publishing its idle heartbeat. Poll that short handoff window instead
+        # of treating the expected heartbeat race as a failed matrix case.
+        for _ in range(30):
+            workers = self.api("GET", "/v1/service-workers").get("workers", [])
+            owner = next(
+                (worker for worker in workers if worker.get("worker_id") == worker_id),
+                None,
+            )
+            if owner is None:
+                raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+            if owner.get("status") not in {"idle", "running"}:
+                raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+            if owner.get("job_id") != jobid:
+                return
+            time.sleep(1)
+        raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+
     def wait_service(self, jobid):
         retry_attempted = False
         retryable_errors = {
@@ -770,17 +789,9 @@ class Matrix:
                 and job.get("error") in retryable_errors
             ):
                 worker_id = job.get("worker_id")
-                workers = self.api("GET", "/v1/service-workers").get("workers", [])
-                owner = next(
-                    (worker for worker in workers if worker.get("worker_id") == worker_id),
-                    None,
-                )
-                if (
-                    owner is None
-                    or owner.get("status") not in {"idle", "running"}
-                    or owner.get("job_id") == jobid
-                ):
+                if not worker_id:
                     raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+                self.wait_for_service_worker_release(jobid, worker_id)
                 response = self.api(
                     "POST",
                     "/v1/service-jobs/" + jobid + "/retry",
