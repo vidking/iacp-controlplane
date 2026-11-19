@@ -836,6 +836,69 @@ def test_reconcile_can_close_physical_uncertainty_after_instance_was_deleted(tmp
         assert response.json()["command"] == "reconcile"
 
 
+def test_deleted_power_reconciliation_requires_a_later_successful_destroy(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-reconcile-deleted-power"},
+            json=public_body("reconcile-deleted-power"),
+        )
+        instance_id = created.json()["instance_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='succeeded' WHERE operation_id=?",
+                (created.json()["operation_id"],),
+            )
+            db.execute(
+                "UPDATE instances SET status='ready', vmid=40000, power_state='running' WHERE instance_id=?",
+                (instance_id,),
+            )
+
+        power = client.post(
+            f"/v1/instances/{instance_id}/power/reboot",
+            headers={"Idempotency-Key": "reconcile-deleted-power-source"},
+        )
+        source_id = power.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='uncertain' WHERE operation_id=?",
+                (source_id,),
+            )
+            db.execute(
+                "UPDATE instances SET status='deleted', power_state='unknown' WHERE instance_id=?",
+                (instance_id,),
+            )
+
+        rejected = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reconcile-deleted-power-before-destroy"},
+        )
+        assert rejected.status_code == 409
+        assert "eliminación física" in rejected.json()["detail"]
+
+        with database() as db:
+            db.execute(
+                """
+                INSERT INTO operations(
+                  operation_id, command, action, status, payload_json,
+                  instance_id, stack, environment, created_at, finished_at
+                ) VALUES (
+                  'confirmed-destroy', 'destroy', 'destroy', 'succeeded', '{}',
+                  ?, 'mng01', 'lab', '9999-01-01T00:00:00Z', '9999-01-01T00:00:00Z'
+                )
+                """,
+                (instance_id,),
+            )
+
+        accepted = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reconcile-deleted-power-after-destroy"},
+        )
+        assert accepted.status_code == 202, accepted.text
+        assert accepted.json()["source_operation_id"] == source_id
+
+
 def test_power_state_reports_missing_permission_without_hiding_endpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:

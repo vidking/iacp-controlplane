@@ -1858,3 +1858,247 @@ def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, ex
     with database() as db:
         assert db.execute("SELECT status FROM instances WHERE instance_id='deleted-instance'").fetchone()['status'] == expected
         assert db.execute("SELECT status FROM operations WHERE operation_id='old-source'").fetchone()['status'] == ('failed' if released else 'uncertain')
+
+
+def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    from worker import main as worker_main
+
+    initialize()
+    source_payload = {
+        "command": "power",
+        "action": "power",
+        "instance_id": "deleted-power-instance",
+        "power_action": "reboot",
+    }
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'old-power', 'power', 'power', 'uncertain', ?,
+              'deleted-power-instance', 'mng01', '2026-01-01T00:00:00Z'
+            )
+            """,
+            (json.dumps(source_payload),),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at, finished_at
+            ) VALUES (
+              'later-destroy', 'destroy', 'destroy', 'succeeded', '{}',
+              'deleted-power-instance', 'mng01', '2026-01-02T00:00:00Z', '2026-01-02T00:00:01Z'
+            )
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'recovery-power', 'reconcile', 'reconcile', 'running', ?,
+              'deleted-power-instance', 'mng01', '2026-01-03T00:00:00Z'
+            )
+            """,
+            (json.dumps({
+                "command": "reconcile",
+                "action": "reconcile",
+                "instance_id": "deleted-power-instance",
+                "source_operation_id": "old-power",
+            }),),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (
+              'deleted-power-instance', 'old-power', 'deleted-power', 'fedora-45',
+              40239, 'mng01', 'deleted', 'unknown', '{}', '2026-01-01T00:00:00Z',
+              '2026-01-02T00:00:01Z'
+            )
+            """
+        )
+
+    observations = []
+
+    def confirm_absent(client, vmid, expected, **kwargs):
+        observations.append((vmid, expected, kwargs.get("name"), kwargs.get("node")))
+        return True
+
+    monkeypatch.setattr(worker_main, "reconcile_physical", confirm_absent)
+    monkeypatch.setattr(worker_main, "heartbeat", lambda *args, **kwargs: None)
+    worker_main.execute_reconcile(
+        "worker-test",
+        {
+            "operation_id": "recovery-power",
+            "payload_json": json.dumps({
+                "command": "reconcile",
+                "instance_id": "deleted-power-instance",
+                "source_operation_id": "old-power",
+            }),
+            "instance_id": "deleted-power-instance",
+        },
+        FakeProxmox(),
+    )
+
+    assert observations == [(40239, False, "deleted-power", "mng01")]
+    with database() as db:
+        source = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='old-power'"
+        ).fetchone()
+        recovery = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='recovery-power'"
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, power_state FROM instances WHERE instance_id='deleted-power-instance'"
+        ).fetchone()
+        event = db.execute(
+            "SELECT status FROM events WHERE operation_id='old-power' AND kind='operation.superseded_by_destroy'"
+        ).fetchone()
+    assert source["status"] == "failed"
+    assert "eliminación confirmada" in source["error"]
+    assert recovery["status"] == "succeeded" and recovery["error"] == ""
+    assert (instance["status"], instance["power_state"]) == ("deleted", "unknown")
+    assert event["status"] == "failed"
+
+
+def test_reconcile_supersedes_old_power_and_recovery_after_later_verified_lifecycle(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    from worker import main as worker_main
+
+    initialize()
+    source_payload = {
+        "command": "power",
+        "action": "power",
+        "instance_id": "active-power-instance",
+        "power_action": "reboot",
+    }
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'old-active-power', 'power', 'power', 'uncertain', ?,
+              'active-power-instance', 'mng01', '2026-01-01T00:00:00Z'
+            )
+            """,
+            (json.dumps(source_payload),),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at, finished_at
+            ) VALUES (
+              'confirmed-later-power', 'power', 'power', 'succeeded', ?,
+              'active-power-instance', 'mng01', '2026-01-02T00:00:00Z',
+              '2026-01-02T00:00:01Z'
+            )
+            """,
+            (json.dumps(source_payload),),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'old-recovery-attempt', 'reconcile', 'reconcile', 'uncertain', ?,
+              'active-power-instance', 'mng01', '2026-01-01T01:00:00Z'
+            )
+            """,
+            (json.dumps({
+                "command": "reconcile",
+                "instance_id": "active-power-instance",
+                "source_operation_id": "old-active-power",
+            }),),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'current-recovery-attempt', 'reconcile', 'reconcile', 'running', ?,
+              'active-power-instance', 'mng01', '2026-01-03T00:00:00Z'
+            )
+            """,
+            (json.dumps({
+                "command": "reconcile",
+                "instance_id": "active-power-instance",
+                "source_operation_id": "old-active-power",
+            }),),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (
+              'active-power-instance', 'old-active-power', 'active-power',
+              'ubuntu-2404', 40238, 'mng01', 'ready', 'running', '{}',
+              '2026-01-01T00:00:00Z', '2026-01-02T00:00:01Z'
+            )
+            """
+        )
+
+    identity_calls = []
+    monkeypatch.setattr(worker_main, "expected_preboot_for_spec", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        worker_main,
+        "verify_preboot_configuration",
+        lambda *args, **kwargs: {"power_state": "running"},
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "ensure_guest_identity_for_operation",
+        lambda *args, **kwargs: identity_calls.append(kwargs.get("started")),
+    )
+    monkeypatch.setattr(worker_main, "instance_password_was_provisioned", lambda *_: False)
+    monkeypatch.setattr(worker_main, "heartbeat", lambda *args, **kwargs: None)
+    worker_main.execute_reconcile(
+        "worker-test",
+        {
+            "operation_id": "current-recovery-attempt",
+            "payload_json": json.dumps({
+                "command": "reconcile",
+                "instance_id": "active-power-instance",
+                "source_operation_id": "old-active-power",
+            }),
+            "instance_id": "active-power-instance",
+        },
+        FakeProxmox(),
+    )
+
+    assert identity_calls == [True]
+    with database() as db:
+        source = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='old-active-power'"
+        ).fetchone()
+        old_recovery = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='old-recovery-attempt'"
+        ).fetchone()
+        recovery = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='current-recovery-attempt'"
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, power_state FROM instances WHERE instance_id='active-power-instance'"
+        ).fetchone()
+        event = db.execute(
+            "SELECT status FROM events WHERE operation_id='old-active-power' AND kind='operation.reconciled_by_later_lifecycle'"
+        ).fetchone()
+    assert source["status"] == "failed" and "posterior" in source["error"]
+    assert old_recovery["status"] == "failed"
+    assert recovery["status"] == "succeeded" and recovery["error"] == ""
+    assert (instance["status"], instance["power_state"]) == ("ready", "running")
+    assert event["status"] == "failed"

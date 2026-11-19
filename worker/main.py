@@ -1348,6 +1348,44 @@ def close_source_after_reconciliation(
         emit(source_id, "operation.reconciled", terminal_status, terminal_error)
 
 
+def close_superseded_reconcile_attempts(
+    instance_id: str, source_operation_id: str, detail: str
+) -> None:
+    """Close stale recovery attempts after their source has a confirmed successor."""
+
+    with database() as db:
+        rows = db.execute(
+            """
+            SELECT operation_id, payload_json FROM operations
+            WHERE instance_id=? AND command='reconcile' AND status='uncertain'
+            """,
+            (instance_id,),
+        ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if payload.get("source_operation_id") != source_operation_id:
+            continue
+        update_operation(
+            row["operation_id"],
+            status="failed",
+            phase="superseded",
+            finished_at=now(),
+            last_heartbeat=now(),
+            exit_code=1,
+            output=detail,
+            error="RECONCILIATION_SUPERSEDED_BY_CONFIRMED_LIFECYCLE",
+        )
+        emit(
+            row["operation_id"],
+            "operation.superseded_by_lifecycle",
+            "failed",
+            detail,
+        )
+
+
 def fail_present_source_after_identity_error(
     source_operation: dict,
     recovery_operation_id: str,
@@ -1466,10 +1504,134 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         emit(operation_id, "recovery.completed", "succeeded" if source_command == "destroy" else "failed")
         return
 
+    if identity.get("status") == "deleted" and source_command == "power":
+        absent = reconcile_physical(
+            client,
+            int(vmid),
+            False,
+            name=name,
+            node=node,
+            heartbeat_callback=lambda: heartbeat(
+                worker_id, "running", operation_id, phase="reconcile"
+            ),
+        )
+        if not absent:
+            raise ProxmoxError("DELETED_INSTANCE_PHYSICAL_RESOURCE_PRESENT", uncertain=True)
+        detail = "La VM está ausente tras una eliminación confirmada; la solicitud de energía quedó superada."
+        close_source_after_reconciliation(
+            source,
+            instance_id,
+            int(vmid),
+            node,
+            source_payload,
+            succeeded=False,
+            detail=detail,
+        )
+        emit(source["operation_id"], "operation.superseded_by_destroy", "failed", detail)
+        update_operation(
+            operation_id,
+            status="succeeded",
+            phase="completed",
+            finished_at=now(),
+            last_heartbeat=now(),
+            exit_code=0,
+            output=detail,
+            error="",
+        )
+        emit(operation_id, "recovery.completed", "succeeded", detail)
+        return
+
     if source_command == "power":
         action = source_payload.get("power_action")
         if action not in {"start", "shutdown", "reboot"}:
             raise RuntimeError("POWER_ACTION_INVALID")
+        with database() as db:
+            successor = db.execute(
+                """
+                SELECT operation_id FROM operations
+                WHERE instance_id=? AND command='power' AND status='succeeded'
+                  AND created_at > ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (instance_id, source.get("created_at") or ""),
+            ).fetchone()
+        if successor is not None:
+            spec = instance_spec(instance_id)
+            expected = expected_preboot_for_spec(
+                spec,
+                vmid=int(vmid),
+                node=node,
+                client=client,
+                stack=source.get("stack") or "mng01",
+                password_present=instance_password_was_provisioned(instance_id),
+            )
+            observed = verify_preboot_configuration(
+                operation_id,
+                client,
+                node=node,
+                vmid=int(vmid),
+                name=name,
+                expected=expected,
+                require_stopped=False,
+            )
+            power_state = observed.get("power_state")
+            if power_state not in {"running", "stopped"}:
+                raise ProxmoxError("POWER_STATE_UNCONFIRMED", uncertain=True)
+            if power_state == "running":
+                ensure_guest_identity_for_operation(
+                    worker_id,
+                    operation_id,
+                    client,
+                    stack=source.get("stack") or "mng01",
+                    node=node,
+                    vmid=int(vmid),
+                    name=name,
+                    instance_id=instance_id,
+                    spec=spec,
+                    started=True,
+                )
+            detail = (
+                "La operación histórica quedó superada por una operación posterior "
+                "confirmada; se verificaron la configuración y el estado físico actuales."
+            )
+            update_instance(
+                instance_id,
+                "ready",
+                vmid=int(vmid),
+                power_state=power_state,
+                node=node,
+            )
+            update_operation(
+                source["operation_id"],
+                status="failed",
+                phase="superseded",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=1,
+                output="",
+                error=detail,
+            )
+            emit(
+                source["operation_id"],
+                "operation.reconciled_by_later_lifecycle",
+                "failed",
+                detail,
+            )
+            close_superseded_reconcile_attempts(
+                instance_id, source["operation_id"], detail
+            )
+            update_operation(
+                operation_id,
+                status="succeeded",
+                phase="completed",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=0,
+                output=detail,
+                error="",
+            )
+            emit(operation_id, "recovery.completed", "succeeded", detail)
+            return
         observed = client.power_state(node, int(vmid), name)
         if action in {"start", "reboot"}:
             spec = instance_spec(instance_id)

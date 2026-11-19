@@ -612,7 +612,7 @@ def _insert_operation(
         source = None
         if source_id:
             source = db.execute(
-                "SELECT operation_id, instance_id, status, stack, command FROM operations WHERE operation_id=?",
+                "SELECT operation_id, instance_id, status, stack, command, created_at FROM operations WHERE operation_id=?",
                 (source_id,),
             ).fetchone()
             if source is None or source["instance_id"] != instance_id:
@@ -620,11 +620,15 @@ def _insert_operation(
             if source["status"] != "uncertain":
                 raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
         if target["status"] == "deleted" and (
-            source is None or source["command"] not in {"apply", "provision", "destroy"}
+            source is None or not _deleted_reconcile_source_allowed(db, instance_id, source)
         ):
             raise HTTPException(
                 status_code=409,
-                detail="la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
+                detail=(
+                    "una operación de energía solo puede cerrarse después de confirmar la eliminación física"
+                    if source is not None and source["command"] == "power"
+                    else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas"
+                ),
             )
         if target["status"] == "deleted" and source["status"] != "uncertain":
             raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
@@ -814,6 +818,26 @@ def create_provision(instance_id: str, plan_operation_id: str | None = None) -> 
     )
 
 
+def _deleted_reconcile_source_allowed(db, instance_id: str, source) -> bool:
+    command = source["command"]
+    if command in {"apply", "provision", "destroy"}:
+        return True
+    if command != "power":
+        return False
+    # A later successful destroy means the older power request can no longer
+    # affect a VM. The worker still confirms physical absence before closing it.
+    destroy = db.execute(
+        """
+        SELECT 1 FROM operations
+        WHERE instance_id=? AND command='destroy' AND status='succeeded'
+          AND created_at > ?
+        LIMIT 1
+        """,
+        (instance_id, source["created_at"]),
+    ).fetchone()
+    return destroy is not None
+
+
 def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict:
     body = {"instance_id": instance_id, "action": "destroy"}
 
@@ -974,10 +998,14 @@ def create_reconcile(
             raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
         if source["status"] != "uncertain":
             raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
-        if instance["status"] == "deleted" and source["command"] not in {"apply", "provision", "destroy"}:
+        if instance["status"] == "deleted" and not _deleted_reconcile_source_allowed(db, instance_id, source):
             raise HTTPException(
                 status_code=409,
-                detail="la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
+                detail=(
+                    "una operación de energía solo puede cerrarse después de confirmar la eliminación física"
+                    if source["command"] == "power"
+                    else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas"
+                ),
             )
         response, operation_id = _insert_operation(
             db,
