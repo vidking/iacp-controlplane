@@ -31,6 +31,101 @@ NEXTCLOUD_READY_SCRIPT = (
     "exit 1\n"
 )
 
+SERVICE_EGRESS_PREFLIGHT_SCRIPT = r'''import errno
+import socket
+import ssl
+import time
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+targets = [
+    (
+        "archive.ubuntu.com",
+        "https://archive.ubuntu.com/ubuntu/dists/noble/InRelease",
+        False,
+    ),
+    (
+        "security.ubuntu.com",
+        "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
+        False,
+    ),
+    ("registry-1.docker.io", "https://registry-1.docker.io/v2/", True),
+]
+pending = {host: (url, registry) for host, url, registry in targets}
+last_error = {}
+deadline = time.monotonic() + 120
+context = ssl.create_default_context()
+
+def category(error):
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, socket.gaierror):
+        return "DNS"
+    if isinstance(reason, ssl.SSLError):
+        return "TLS"
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "TIMEOUT"
+    if isinstance(reason, OSError) and reason.errno in {
+        errno.ENETUNREACH,
+        errno.EHOSTUNREACH,
+    }:
+        return "ROUTE"
+    if isinstance(reason, ConnectionRefusedError):
+        return "TCP"
+    return "HTTPS"
+
+while pending:
+    for host, (url, registry) in list(pending.items()):
+        try:
+            request = Request(url, headers={"Range": "bytes=0-0"})
+            with urlopen(request, timeout=5, context=context) as response:
+                if not 200 <= response.status < 300:
+                    last_error[host] = "HTTP"
+                    continue
+        except HTTPError as error:
+            challenge = error.headers.get("WWW-Authenticate", "")
+            if (
+                registry
+                and error.code == 401
+                and challenge.lower().startswith("bearer ")
+            ):
+                pass
+            else:
+                last_error[host] = "HTTP"
+                continue
+        except (
+            URLError,
+            ssl.SSLError,
+            socket.gaierror,
+            TimeoutError,
+            socket.timeout,
+        ) as error:
+            last_error[host] = category(error)
+            continue
+        del pending[host]
+    if pending and time.monotonic() < deadline:
+        time.sleep(5)
+
+if pending:
+    summary = ",".join(
+        f"{host}:{last_error.get(host, 'TIMEOUT')}" for host in pending
+    )
+    raise SystemExit("IACP_SERVICE_EGRESS_PREFLIGHT_FAILED:" + summary)
+
+print("IACP_SERVICE_EGRESS_PREFLIGHT_OK")
+'''
+
+
+def service_egress_preflight_task() -> dict:
+    """Check real DNS/TLS egress before APT or OCI downloads can stall."""
+
+    return {
+        "name": "Validar DNS y egress HTTPS antes de instalar dependencias",
+        "ansible.builtin.command": {
+            "argv": ["python3", "-c", SERVICE_EGRESS_PREFLIGHT_SCRIPT]
+        },
+        "changed_when": False,
+    }
+
 N8N_OWNER_SETUP_SCRIPT = """import {readFileSync} from 'node:fs';
 const account = JSON.parse(Buffer.from(readFileSync(0, 'utf8').trim(), 'base64').toString('utf8'));
 const base = 'http://127.0.0.1:5678/rest';
@@ -295,6 +390,7 @@ def execute(service, job, heartbeat):
                 },
             },
             ubuntu_https_sources_task(),
+            service_egress_preflight_task(),
             {
                 "name": "Instalar dependencias de Ubuntu 24.04",
                 "ansible.builtin.apt": {

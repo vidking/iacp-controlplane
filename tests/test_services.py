@@ -45,6 +45,40 @@ def test_ubuntu_apt_sources_are_upgraded_to_https_before_install():
     )
 
 
+@pytest.mark.no_database
+def test_service_egress_preflight_checks_verified_https_endpoints_with_bounded_wait():
+    from worker.service_executor import (
+        SERVICE_EGRESS_PREFLIGHT_SCRIPT,
+        service_egress_preflight_task,
+    )
+
+    compile(SERVICE_EGRESS_PREFLIGHT_SCRIPT, "service-egress-preflight", "exec")
+    assert (
+        "archive.ubuntu.com/ubuntu/dists/noble/InRelease"
+        in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    )
+    assert (
+        "security.ubuntu.com/ubuntu/dists/noble-security/InRelease"
+        in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    )
+    assert "registry-1.docker.io/v2/" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "ssl.create_default_context()" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "time.monotonic() + 120" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert 'return "ROUTE"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert 'return "TLS"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert 'return "DNS"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "challenge.lower().startswith(\"bearer \")" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "IACP_SERVICE_EGRESS_PREFLIGHT_FAILED:" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    task = service_egress_preflight_task()
+    assert task["name"] == "Validar DNS y egress HTTPS antes de instalar dependencias"
+    assert task["ansible.builtin.command"]["argv"] == [
+        "python3",
+        "-c",
+        SERVICE_EGRESS_PREFLIGHT_SCRIPT,
+    ]
+    assert task["changed_when"] is False
+
+
 def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
     from worker.service_executor import NEXTCLOUD_READY_SCRIPT
 
@@ -628,9 +662,22 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     for task in service_tasks
                     if task.get("name") == "Instalar dependencias de Ubuntu 24.04"
                 )
+                egress_preflight = next(
+                    task
+                    for task in service_tasks
+                    if task.get("name")
+                    == "Validar DNS y egress HTTPS antes de instalar dependencias"
+                )
                 assert service_tasks.index(https_sources) < service_tasks.index(
+                    egress_preflight
+                )
+                assert service_tasks.index(egress_preflight) < service_tasks.index(
                     package_install
                 )
+                egress_argv = egress_preflight["ansible.builtin.command"]["argv"]
+                assert egress_argv[:2] == ["python3", "-c"]
+                assert "archive.ubuntu.com" in egress_argv[2]
+                assert "registry-1.docker.io" in egress_argv[2]
                 assert not any("AlmaLinux" in task.get("name", "") for task in service_tasks)
             else:
                 assert [task.get("name") for task in service_tasks] == [
