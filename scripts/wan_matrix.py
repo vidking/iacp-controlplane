@@ -945,6 +945,34 @@ print(f"{jobs} {locks}")
             time.sleep(2)
         raise RuntimeError("OPERATION_TIMEOUT")
 
+    def wait_for_ssh_after_power_on(self, item, timeout=180):
+        """Espera a que el invitado acepte SSH y ambas credenciales funcionen."""
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((item["address"], 22), timeout=5):
+                    pass
+            except OSError:
+                time.sleep(2)
+                continue
+            try:
+                hostname = self.ssh(item, ["hostname"], timeout=20).strip()
+                assert hostname == item["name"], "SSH_HOSTNAME_MISMATCH"
+                hostname = self.ssh(
+                    item, ["hostname"], password=item["password"], timeout=20
+                ).strip()
+                assert hostname == item["name"], "SSH_PASSWORD_HOSTNAME_MISMATCH"
+                return
+            except RuntimeError as error:
+                if str(error).startswith(
+                    ("SSH_TRANSPORT_TIMEOUT_", "SSH_CONNECTION_REFUSED_")
+                ):
+                    time.sleep(2)
+                    continue
+                raise
+        raise RuntimeError("SSH_READINESS_TIMEOUT")
+
     def qga(self, vmid, argv, *, allowed_exitcodes=(0,)):
         result = self.proxmox.guest_agent_exec("mng01", vmid, argv)
         for _ in range(90):
@@ -1100,7 +1128,7 @@ print(f"{jobs} {locks}")
         )
         return result.returncode != 0
 
-    def ssh(self, item, argv, input=None, password=None):
+    def ssh(self, item, argv, input=None, password=None, timeout=240):
         if self.abort.is_set():
             raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
         if not item.get("client_ssh_key", True) and password is None:
@@ -1139,15 +1167,32 @@ print(f"{jobs} {locks}")
                 DISPLAY=":iacp",
                 IACP_MATRIX_PASSWORD=password,
             )
-        result = subprocess.run(
-            args,
-            input=input,
-            text=True,
-            capture_output=True,
-            timeout=240,
-            env=environment,
-            start_new_session=True,
-        )
+        try:
+            result = subprocess.run(
+                args,
+                input=input,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                env=environment,
+                start_new_session=True,
+            )
+        except subprocess.TimeoutExpired:
+            program = (
+                str(argv[0])
+                if argv and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", str(argv[0]))
+                else "unknown"
+            )
+            self.record(
+                "ssh_failure",
+                case=item.get("name", "unknown"),
+                program=program,
+                category="transport_timeout",
+                exit_code="timeout",
+            )
+            raise RuntimeError(
+                f"SSH_TRANSPORT_TIMEOUT_{program.upper()}_TIMEOUT"
+            ) from None
         if result.returncode:
             program = str(argv[0]) if argv and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", str(argv[0])) else "unknown"
             category = ssh_failure_category(result.returncode, result.stderr)
@@ -1716,8 +1761,7 @@ print(f"{jobs} {locks}")
         physical = self.proxmox.power_state("mng01", item["vmid"], item["name"])
         assert running["status"] == "ready" and running["power_state"] == "running"
         assert physical["power_state"] == "running"
-        assert self.ssh(item, ["hostname"]).strip() == item["name"]
-        assert self.ssh(item, ["hostname"], password=item["password"]).strip() == item["name"]
+        self.wait_for_ssh_after_power_on(item)
         if item["product"] != "kvm":
             self.application(item, True)
         self.check(item, "D04", "apagado y encendido ordenados mediante API")

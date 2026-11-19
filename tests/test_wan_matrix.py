@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.no_database
 
 from scripts.wan_matrix import (
+    Matrix,
     allocate_matrix_names,
     cases,
     matrix_netbox_tags,
@@ -162,6 +163,116 @@ def test_ssh_failure_category_keeps_transport_and_guest_errors_distinct():
     assert ssh_failure_category(255, "Connection timed out") == "transport_timeout"
     assert ssh_failure_category(255, "Permission denied") == "authentication_failed"
     assert ssh_failure_category(1, "remote program failed") == "remote_command_error"
+
+
+def test_matrix_waits_for_ssh_after_power_on_until_key_and_password_work(monkeypatch):
+    connection_attempts = 0
+    key_attempts = 0
+    password_attempts = 0
+    sleeps = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def connect(_address, timeout):
+        nonlocal connection_attempts
+        assert timeout == 5
+        connection_attempts += 1
+        if connection_attempts == 1:
+            raise OSError("connection refused")
+        return Connection()
+
+    def ssh(_item, _argv, password=None, timeout=240):
+        nonlocal key_attempts, password_attempts
+        assert timeout == 20
+        if password is None:
+            key_attempts += 1
+            if key_attempts == 1:
+                raise RuntimeError("SSH_TRANSPORT_TIMEOUT_HOSTNAME_255")
+        else:
+            password_attempts += 1
+        return "matrix-test-vm\n"
+
+    monkeypatch.setattr("scripts.wan_matrix.socket.create_connection", connect)
+    monkeypatch.setattr("scripts.wan_matrix.time.sleep", sleeps.append)
+    matrix = Matrix.__new__(Matrix)
+    matrix.ssh = ssh
+    item = {
+        "address": "190.0.231.10",
+        "name": "matrix-test-vm",
+        "password": "ephemeral-test-password",
+    }
+
+    matrix.wait_for_ssh_after_power_on(item, timeout=20)
+
+    assert connection_attempts == 3
+    assert key_attempts == 2
+    assert password_attempts == 1
+    assert sleeps == [2, 2]
+
+
+def test_matrix_does_not_retry_ssh_authentication_failure(monkeypatch):
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "scripts.wan_matrix.socket.create_connection",
+        lambda *_args, **_kwargs: Connection(),
+    )
+    matrix = Matrix.__new__(Matrix)
+    matrix.ssh = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("SSH_AUTHENTICATION_FAILED")
+    )
+    item = {
+        "address": "190.0.231.10",
+        "name": "matrix-test-vm",
+        "password": "ephemeral-test-password",
+    }
+
+    with pytest.raises(RuntimeError, match="SSH_AUTHENTICATION_FAILED"):
+        matrix.wait_for_ssh_after_power_on(item, timeout=20)
+
+
+def test_matrix_records_ssh_subprocess_timeout_as_safe_transport_failure(monkeypatch):
+    import subprocess
+    import threading
+
+    events = []
+    matrix = Matrix.__new__(Matrix)
+    matrix.abort = threading.Event()
+    matrix.askpass = "/tmp/unused-askpass"
+    matrix.record = lambda event, **data: events.append({"event": event, **data})
+
+    def timeout(*_args, **kwargs):
+        assert kwargs["timeout"] == 2
+        raise subprocess.TimeoutExpired("ssh", kwargs["timeout"])
+
+    monkeypatch.setattr("scripts.wan_matrix.subprocess.run", timeout)
+
+    with pytest.raises(RuntimeError, match="SSH_TRANSPORT_TIMEOUT_HOSTNAME_TIMEOUT"):
+        matrix.ssh(
+            {"address": "190.0.231.10", "name": "matrix-test-vm", "known": "/tmp/known", "client_key_path": "/tmp/key"},
+            ["hostname"],
+            timeout=2,
+        )
+
+    assert events == [
+        {
+            "event": "ssh_failure",
+            "case": "matrix-test-vm",
+            "program": "hostname",
+            "category": "transport_timeout",
+            "exit_code": "timeout",
+        }
+    ]
 
 
 def test_service_matrix_rejects_images_outside_its_catalog():
