@@ -13,6 +13,18 @@ from worker.service_recipes import render, RecipeError
 
 
 @pytest.mark.no_database
+def test_service_execution_timeout_allows_slow_wan_downloads(monkeypatch):
+    from worker.service_executor import service_execution_timeout_seconds
+
+    monkeypatch.delenv("IACP_SERVICE_EXECUTION_TIMEOUT", raising=False)
+    assert service_execution_timeout_seconds() == 10800
+    assert service_execution_timeout_seconds("3600") == 3600
+    assert service_execution_timeout_seconds("invalid") == 10800
+    assert service_execution_timeout_seconds("999999") == 21600
+    assert service_execution_timeout_seconds("30") == 10800
+
+
+@pytest.mark.no_database
 def test_ubuntu_apt_sources_are_upgraded_to_https_before_install():
     import re
 

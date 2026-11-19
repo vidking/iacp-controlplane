@@ -444,6 +444,11 @@ class Matrix:
         self.last_request = 0.0
         self.args = args
         self.profile = args.network_profile
+        self.service_timeout_seconds = int(
+            getattr(args, "service_timeout_seconds", 14400)
+        )
+        if not 60 <= self.service_timeout_seconds <= 21600:
+            raise ValueError("MATRIX_SERVICE_TIMEOUT_INVALID")
         self.env = read_env_file(args.env)
         if args.production:
             ipam_env = read_env_file(args.netbox_env)
@@ -910,7 +915,7 @@ print(f"{jobs} {locks}")
                 "exec",
                 "-i",
                 self.api_container,
-                "python",
+                "/app/.venv/bin/python",
                 "-",
             ],
             input=query,
@@ -1805,7 +1810,8 @@ print(f"{jobs} {locks}")
             "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_FAILED_APPLICATION_START",
             "SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_UNREACHABLE_APPLICATION_START",
         }
-        for _ in range(1200):
+        timeout_seconds = getattr(self, "service_timeout_seconds", 14400)
+        for _ in range(max(1, (timeout_seconds + 1) // 2)):
             job = self.api("GET", "/v1/service-jobs/" + jobid)
             if job["status"] == "succeeded":
                 return
@@ -1842,6 +1848,84 @@ print(f"{jobs} {locks}")
                 )
             time.sleep(2)
         raise RuntimeError("SERVICE_TIMEOUT")
+
+    def settle_service_batch(self, items, timeout=900):
+        """Wait for the whole service batch to stop before recovery or deletion."""
+
+        jobs = {item["job_id"]: item for item in items if item.get("job_id")}
+        items_by_job = dict(jobs)
+        deadline = time.monotonic() + timeout
+        terminal = {"succeeded", "failed", "uncertain", "blocked", "cancelled"}
+        states = {}
+        while jobs:
+            for job_id, item in list(jobs.items()):
+                job = self.api("GET", "/v1/service-jobs/" + job_id)
+                if job.get("status") in terminal:
+                    states[job_id] = job
+                    del jobs[job_id]
+            if not jobs:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("SERVICE_EXECUTION_STILL_ACTIVE")
+            time.sleep(2)
+
+        for job_id, job in states.items():
+            if job["status"] == "uncertain":
+                worker_id = job.get("worker_id")
+                if not worker_id:
+                    raise RuntimeError("SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED")
+                self.wait_for_service_worker_release(job_id, worker_id)
+                response = self.api(
+                    "POST",
+                    "/v1/service-jobs/" + job_id + "/cancel",
+                    {"previous_execution_stopped": True},
+                    key="matrix-recovery-cancel-" + job_id,
+                )
+                if response.get("status") != "cancelled":
+                    raise RuntimeError("SERVICE_RECOVERY_CANCEL_FAILED")
+                self.record(
+                    "service_recovery_cancelled",
+                    case=items_by_job.get(job_id, {}).get("name", "unknown"),
+                    job_id=job_id,
+                    previous_execution_stopped=True,
+                )
+            elif job["status"] in {"queued", "blocked"}:
+                response = self.api(
+                    "POST",
+                    "/v1/service-jobs/" + job_id + "/cancel",
+                    {},
+                    key="matrix-recovery-cancel-" + job_id,
+                )
+                if response.get("status") != "cancelled":
+                    raise RuntimeError("SERVICE_RECOVERY_CANCEL_FAILED")
+
+    def process_service_batch(self, items):
+        failures = []
+        for item in items:
+            if item["product"] == "kvm":
+                continue
+            try:
+                self.wait_service(item["job_id"])
+            except (RuntimeError, AssertionError) as error:
+                reason = (
+                    str(error)
+                    if type(error) in {RuntimeError, AssertionError}
+                    and re.fullmatch(r"[A-Z0-9_.:-]{1,120}", str(error))
+                    else type(error).__name__
+                )
+                failures.append((item, reason))
+                self.record("service_case_error", case=item["name"], error=reason)
+        if not failures:
+            return
+
+        self.settle_service_batch(items)
+        for item, _reason in failures:
+            item["service_failure"] = True
+        for item in items:
+            self.cleanup(item)
+        self.post_cleanup(items)
+        self.idle()
+        raise RuntimeError("SERVICE_BATCH_FAILED_AFTER_CLEANUP")
 
     def cleanup(self, item):
         before = self.api("GET", "/v1/instances/" + item["instance_id"])
@@ -1960,7 +2044,7 @@ print(json.dumps(result,sort_keys=True))
                 "exec",
                 "-i",
                 self.api_container,
-                "python",
+                "/app/.venv/bin/python",
                 "-",
                 json.dumps(targets),
             ],
@@ -2158,9 +2242,7 @@ print(json.dumps(result,sort_keys=True))
             if len(items) == 6:
                 assert peak == 6, "SIX_SIMULTANEOUS_NOT_OBSERVED"
             self.record("concurrency", simultaneous_peak=peak, batch_size=len(items))
-            for item in items:
-                if item["product"] != "kvm":
-                    self.wait_service(item["job_id"])
+            self.process_service_batch(items)
             self.parallel(self.verify, items)
             self.parallel(self.cleanup, items)
             self.post_cleanup(items)
@@ -2196,6 +2278,12 @@ if __name__ == "__main__":
         "--network-profile", choices=["lab_dhcp", "prod_static"], default="prod_static"
     )
     parser.add_argument("--run", required=True)
+    parser.add_argument(
+        "--service-timeout-seconds",
+        type=int,
+        default=14400,
+        help="Tiempo máximo por servicio para instalar dependencias e imágenes OCI (60–21600).",
+    )
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument(
         "--exact-cases",

@@ -135,6 +135,19 @@ class ServiceBlocked(RuntimeError):
     pass
 
 
+def service_execution_timeout_seconds(value: str | None = None) -> int:
+    """Keep slow package and OCI downloads bounded without failing at 30 minutes."""
+
+    raw = os.getenv("IACP_SERVICE_EXECUTION_TIMEOUT", "10800") if value is None else value
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return 10800
+    if seconds < 60:
+        return 10800
+    return min(seconds, 21600)
+
+
 def pin_release(service_id, release):
     import hashlib
     from api.db import database
@@ -621,11 +634,12 @@ def execute(service, job, heartbeat):
             import time
 
             started = time.monotonic()
+            execution_timeout = service_execution_timeout_seconds()
             timed_out = False
             try:
                 while process.poll() is None:
                     heartbeat()
-                    if time.monotonic() - started > 1800:
+                    if time.monotonic() - started > execution_timeout:
                         timed_out = True
                         break
                     time.sleep(2)

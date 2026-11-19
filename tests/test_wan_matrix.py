@@ -838,3 +838,75 @@ def test_wait_service_does_not_retry_when_original_worker_still_owns_job(monkeyp
     with pytest.raises(RuntimeError, match="SERVICE_PREVIOUS_EXECUTION_NOT_STOPPED"):
         matrix.wait_service(job_id)
     assert not any(path.endswith("/retry") for _, path in calls)
+
+
+def test_settle_service_batch_cancels_uncertain_only_after_worker_release():
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    job_id = "uncertain-service-job"
+    item = {"job_id": job_id, "name": "kvm-service-nextcloud-001"}
+    calls = []
+    records = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if method == "GET" and path == f"/v1/service-jobs/{job_id}":
+            return {"job_id": job_id, "status": "uncertain", "worker_id": "service-worker-2"}
+        if method == "POST" and path == f"/v1/service-jobs/{job_id}/cancel":
+            return {"job_id": job_id, "status": "cancelled"}
+        raise AssertionError(path)
+
+    matrix.api = api
+    matrix.wait_for_service_worker_release = lambda actual_job, worker: calls.append(
+        ("WORKER_RELEASED", actual_job, worker, None)
+    )
+    matrix.record = lambda event, **values: records.append((event, values))
+
+    matrix.settle_service_batch([item])
+
+    assert calls[1] == ("WORKER_RELEASED", job_id, "service-worker-2", None)
+    assert calls[2] == (
+        "POST",
+        f"/v1/service-jobs/{job_id}/cancel",
+        {"previous_execution_stopped": True},
+        f"matrix-recovery-cancel-{job_id}",
+    )
+    assert records[0][0] == "service_recovery_cancelled"
+    assert records[0][1]["case"] == item["name"]
+
+
+def test_failed_service_batch_cleans_every_instance_before_reporting_failure():
+    import pytest
+
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    items = [
+        {"name": "kvm-service-n8n-001", "product": "n8n", "job_id": "job-1"},
+        {"name": "kvm-service-nextcloud-001", "product": "nextcloud", "job_id": "job-2"},
+    ]
+    cleaned = []
+    events = []
+
+    def wait_service(job_id):
+        if job_id == "job-1":
+            raise RuntimeError("SERVICE_UNCERTAIN_TEST")
+
+    matrix.wait_service = wait_service
+    matrix.record = lambda event, **values: events.append((event, values))
+    matrix.settle_service_batch = lambda target: events.append(("settled", len(target)))
+    matrix.cleanup = lambda item: cleaned.append(item["name"])
+    matrix.post_cleanup = lambda target: events.append(("post_cleanup", len(target)))
+    matrix.idle = lambda: events.append(("idle", True))
+
+    with pytest.raises(RuntimeError, match="SERVICE_BATCH_FAILED_AFTER_CLEANUP"):
+        matrix.process_service_batch(items)
+
+    assert cleaned == [item["name"] for item in items]
+    assert [event[0] for event in events] == [
+        "service_case_error",
+        "settled",
+        "post_cleanup",
+        "idle",
+    ]
