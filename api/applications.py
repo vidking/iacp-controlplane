@@ -11,7 +11,7 @@ from api.service import (
     _resolve_public_request,
     now,
 )
-from api.service_catalog import enabled
+from api.service_catalog import enabled, supported_image_ids
 from api.service_models import ServiceCreateRequest
 from api.service_secrets import encrypt, installation_credentials
 from api.secrets import write_secret, delete_secret
@@ -215,9 +215,14 @@ def retry(job_id, key, stopped=False):
         if job["status"] == "uncertain" and not stopped:
             raise HTTPException(409, "PREVIOUS_EXECUTION_MUST_BE_STOPPED")
         service = db.execute(
-            "SELECT instance_id FROM service_instances WHERE service_id=?",
+            """SELECT s.instance_id, s.application_id, i.image
+            FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            WHERE s.service_id=?""",
             (job["service_id"],),
         ).fetchone()
+        if service["image"] not in supported_image_ids(service["application_id"]):
+            raise HTTPException(409, "SERVICE_IMAGE_RETIRED")
         active = db.execute(
             "SELECT 1 FROM operations WHERE instance_id=? AND status IN ('pending','running','planning','applying','destroying','powering','uncertain')",
             (service["instance_id"],),

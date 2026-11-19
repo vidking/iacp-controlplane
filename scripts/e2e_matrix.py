@@ -25,17 +25,16 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, build_opener
 
 
-E2E_STAGE = os.getenv("IACP_E2E_STAGE", "production")
-BASE_URL = os.getenv("IACP_E2E_BASE_URL", "https://iac.cyberfuel.com").rstrip("/")
-API_TOKEN = os.getenv("IACP_E2E_API_TOKEN") or os.getenv("IACP_API_TOKEN", "")
+TARGET_STAGE = os.getenv("IACP_E2E_TARGET_STAGE") or os.getenv("IACP_E2E_STAGE", "production")
+E2E_STAGE = TARGET_STAGE
+_INITIAL_TARGET_STAGE = TARGET_STAGE
+API_TOKEN = os.getenv("IACP_E2E_API_TOKEN", "")
 PROXMOX_ENDPOINT = (
     os.getenv("IACP_E2E_MNG_PROXMOX_ENDPOINT")
-    or os.getenv("IACP_PROXMOX_MNG_ENDPOINT")
     or os.getenv("IACP_E2E_PROXMOX_ENDPOINT", "")
 ).rstrip("/")
 PROXMOX_TOKEN = (
     os.getenv("IACP_E2E_MNG_PROXMOX_TOKEN")
-    or os.getenv("IACP_PROXMOX_MNG_API_TOKEN")
     or os.getenv("IACP_E2E_PROXMOX_TOKEN", "")
 )
 POOL_ID = os.getenv("IACP_E2E_POOL_ID", "iacp-lab")
@@ -43,8 +42,6 @@ PRIVATE_KEY = Path(os.getenv("IACP_E2E_SSH_PRIVATE_KEY", "/home/despinoza/.ssh/i
 PUBLIC_KEY = os.getenv("IACP_E2E_SSH_PUBLIC_KEY", "").strip()
 KEY_DIR = Path(os.getenv("IACP_E2E_KEY_DIR", "")) if os.getenv("IACP_E2E_KEY_DIR") else None
 MAX_WORKERS = int(os.getenv("IACP_E2E_MAX_WORKERS", "6"))
-VMID_MIN = int(os.getenv("IACP_E2E_VMID_MIN", "30000"))
-VMID_MAX = int(os.getenv("IACP_E2E_VMID_MAX", "39999"))
 OPERATION_TIMEOUT = int(os.getenv("IACP_E2E_OPERATION_TIMEOUT", "1800"))
 NETWORK_TIMEOUT = int(os.getenv("IACP_E2E_NETWORK_TIMEOUT", "360"))
 SSH_TIMEOUT = int(os.getenv("IACP_E2E_SSH_TIMEOUT", "360"))
@@ -67,7 +64,38 @@ STAGE_CONFIG = {
         "name_prefix": "prueba-kvm-dev",
     },
 }
-RUN_PREFIX = f"{STAGE_CONFIG.get(E2E_STAGE, STAGE_CONFIG['production'])['name_prefix']}-{RUN_ID}"
+_DEFAULT_STAGE = STAGE_CONFIG.get(TARGET_STAGE, STAGE_CONFIG["production"])
+DEFAULT_VMID_RANGE = _DEFAULT_STAGE["vmid_range"]
+VMID_MIN = int(os.getenv("IACP_E2E_VMID_MIN", str(DEFAULT_VMID_RANGE[0])))
+VMID_MAX = int(os.getenv("IACP_E2E_VMID_MAX", str(DEFAULT_VMID_RANGE[1])))
+BASE_URL = os.getenv("IACP_E2E_BASE_URL", _DEFAULT_STAGE["base_url"]).rstrip("/")
+RUN_PREFIX = "prueba-kvm-"
+
+
+def case_name(index: int) -> str:
+    if not 1 <= index <= 99:
+        raise E2EError("índice de caso fuera de rango")
+    return f"prueba-kvm-{index:02d}-{RUN_ID}"
+
+
+RUN_NAMES = tuple(case_name(index) for index in range(1, 17))
+
+
+def selected_stage() -> str:
+    """Resuelve el stage y conserva compatibilidad con consumidores del módulo."""
+
+    if TARGET_STAGE != _INITIAL_TARGET_STAGE:
+        return TARGET_STAGE
+    if E2E_STAGE != _INITIAL_TARGET_STAGE:
+        return E2E_STAGE
+    return TARGET_STAGE
+
+
+def selected_stage_config() -> dict:
+    stage = STAGE_CONFIG.get(selected_stage())
+    if stage is None:
+        raise E2EError("IACP_E2E_TARGET_STAGE debe ser production o develop")
+    return stage
 
 IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
@@ -109,23 +137,29 @@ def redact(value: object) -> str:
 
 
 def validate_execution_config() -> None:
-    stage = STAGE_CONFIG.get(E2E_STAGE)
-    if stage is None:
-        raise E2EError("IACP_E2E_STAGE debe ser production o develop")
+    stage_name = selected_stage()
+    stage = selected_stage_config()
     parsed = urlsplit(BASE_URL)
-    if (
-        parsed.scheme != "https"
-        or BASE_URL != stage["base_url"]
-        or parsed.netloc != urlsplit(stage["base_url"]).netloc
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-    ):
+    public_url = (
+        parsed.scheme == "https"
+        and BASE_URL == stage["base_url"]
+        and parsed.netloc == urlsplit(stage["base_url"]).netloc
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+    )
+    internal_dev_url = False
+    if stage_name == "develop" and parsed.scheme == "http" and parsed.port == 8080:
+        try:
+            internal_dev_url = ipaddress.ip_address(parsed.hostname or "").is_private
+        except ValueError:
+            internal_dev_url = False
+    if not (public_url or internal_dev_url):
         raise E2EError(
-            "IACP_E2E_BASE_URL debe coincidir exactamente con el host del stage seleccionado"
+            "IACP_E2E_BASE_URL debe coincidir exactamente con el host del stage permitido"
         )
     if not API_TOKEN:
-        raise E2EError("IACP_E2E_API_TOKEN es obligatorio para el stage seleccionado")
+        raise E2EError("IACP_E2E_API_TOKEN aislado es obligatorio para el stage seleccionado")
     if not PROXMOX_ENDPOINT.startswith("https://") or not PROXMOX_TOKEN:
         raise E2EError("las credenciales de lectura Proxmox del clúster MNG son obligatorias")
     if not re.fullmatch(r"\d{14}", RUN_ID):
@@ -134,9 +168,7 @@ def validate_execution_config() -> None:
         raise E2EError("la matriz física debe usar los seis aprovisionamientos simultáneos")
     if (VMID_MIN, VMID_MAX) != stage["vmid_range"]:
         lower, upper = stage["vmid_range"]
-        raise E2EError(
-            f"la matriz {E2E_STAGE} solo puede usar VMID {lower}–{upper}"
-        )
+        raise E2EError(f"la matriz {stage_name} solo puede usar VMID {lower}–{upper}")
     if NETWORK_PROFILE != "lab_dhcp":
         raise E2EError("esta matriz debe ejecutarse con IACP_E2E_NETWORK_PROFILE=lab_dhcp")
     if EVIDENCE_FILE is None:
@@ -170,7 +202,8 @@ def _operation_instance_name(operation: dict) -> str:
 
 
 def _is_run_operation(operation: dict) -> bool:
-    if _operation_instance_name(operation).startswith(RUN_PREFIX):
+    name = _operation_instance_name(operation)
+    if name in RUN_NAMES or (name.startswith(RUN_PREFIX) and RUN_ID in name):
         return True
     instance_id = operation.get("instance_id")
     with _RUN_INSTANCE_IDS_LOCK:
@@ -550,34 +583,72 @@ def wait_ssh(
     raise E2EError(f"SSH {mode} {last_ip} no estuvo disponible: {redact(last)}")
 
 
-def pool_contains(vmid: int) -> bool:
-    """Wait for Proxmox's pool and inventory views to converge after clone."""
-
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        payload = proxmox(f"/pools/{quote(POOL_ID, safe='')}")
-        if not isinstance(payload, dict):
-            raise E2EError(f"no se pudo verificar el pool {POOL_ID} en Proxmox")
-        members = payload.get("members") or []
-        if any(isinstance(member, dict) and str(member.get("vmid")) == str(vmid) for member in members):
-            return True
-        inventory = proxmox("/cluster/resources?type=vm")
-        if not isinstance(inventory, list):
-            raise E2EError("no se pudo verificar el inventario del clúster MNG")
-        for item in inventory:
-            if isinstance(item, dict) and str(item.get("vmid")) == str(vmid):
-                if item.get("pool") == POOL_ID:
-                    return True
-                break
-        time.sleep(3)
-    return False
+def _validate_vmid(vmid: int) -> None:
+    lower, upper = selected_stage_config()["vmid_range"]
+    if not lower <= int(vmid) <= upper:
+        raise E2EError(f"VMID {vmid} fuera del rango {lower}–{upper} de {selected_stage()}")
 
 
-def vm_exists(vmid: int) -> bool:
-    inventory = proxmox("/cluster/resources?type=vm")
-    if not isinstance(inventory, list):
-        raise E2EError("no se pudo verificar el inventario del clúster MNG")
-    return any(isinstance(item, dict) and int(item.get("vmid", -1)) == vmid for item in inventory)
+def vm_exists(vmid: int, node: str) -> bool:
+    """Consulta solo el recurso asignado, sin leer inventario global de MNG."""
+
+    _validate_vmid(vmid)
+    try:
+        payload = proxmox(
+            f"/nodes/{quote(node, safe='')}/qemu/{int(vmid)}/status/current"
+        )
+    except E2EError as error:
+        if error.status == 404:
+            return False
+        raise
+    return isinstance(payload, dict) and int(payload.get("vmid", vmid)) == int(vmid)
+
+
+def vm_identity_matches(vmid: int, node: str, expected_name: str) -> bool:
+    """Confirma identidad exacta mediante lecturas scopiadas al nodo y VMID."""
+
+    _validate_vmid(vmid)
+    try:
+        status = proxmox(
+            f"/nodes/{quote(node, safe='')}/qemu/{int(vmid)}/status/current"
+        )
+        config = proxmox(
+            f"/nodes/{quote(node, safe='')}/qemu/{int(vmid)}/config?current=1"
+        )
+    except E2EError as error:
+        if error.status == 404:
+            return False
+        raise
+    return (
+        isinstance(status, dict)
+        and int(status.get("vmid", vmid)) == int(vmid)
+        and isinstance(config, dict)
+        and config.get("name") == expected_name
+        and config.get("template", 0) in {0, "0", False, None}
+    )
+
+
+def verify_destroy_result(
+    instance_id: str, vmid: int, node: str, destroy_operation_id: str
+) -> str:
+    try:
+        if not vm_exists(vmid, node):
+            return "proxmox_404"
+    except E2EError as error:
+        if error.status != 403:
+            raise
+        current = instance(instance_id)
+        destroyed = api("GET", f"/v1/operations/{quote(destroy_operation_id, safe='')}")
+        if (
+            current.get("status") == "deleted"
+            and isinstance(destroyed, dict)
+            and operation_status(destroyed) == "completed"
+            and destroyed.get("command") == "destroy"
+            and destroyed.get("exit_code") == 0
+        ):
+            return "terraform_destroy_completed_proxmox_read_forbidden"
+        raise E2EError("destroy exitoso no quedó confirmado por la API") from error
+    raise E2EError(f"VMID {vmid} sigue presente en el nodo {node} después de destroy")
 
 
 def claim_live_ip(instance_id: str, ip: str) -> None:
@@ -614,9 +685,10 @@ def cleanup(instance_id: str | None, label: str) -> str:
         return "no-instance"
     try:
         current = instance(instance_id)
+        node = str(current.get("node") or "mng01")
         if current.get("status") == "deleted":
             vmid = current.get("vmid")
-            if vmid is not None and vm_exists(int(vmid)):
+            if vmid is not None and vm_exists(int(vmid), node):
                 return "cleanup-failed: VM física presente tras estado deleted"
             release_live_ip(instance_id)
             return "already-deleted"
@@ -649,7 +721,8 @@ def cleanup(instance_id: str | None, label: str) -> str:
         final = instance(instance_id)
         if final.get("status") != "deleted":
             raise E2EError(f"cleanup no dejó la instancia eliminada: {redact(final)}")
-        if vmid is not None and vm_exists(int(vmid)):
+        node = str(final.get("node") or node)
+        if vmid is not None and vm_exists(int(vmid), node):
             raise E2EError(f"cleanup dejó VMID {vmid} presente en Proxmox")
         release_live_ip(instance_id)
         return "destroyed"
@@ -663,7 +736,7 @@ def run_case(case: dict) -> dict:
     image = case["image"]
     plan = case["plan"]
     mode = case["mode"]
-    name = f"{RUN_PREFIX}-{case['index']:02d}-{image.replace('-', '')}-{plan}"
+    name = case_name(case["index"])
     if len(name) > 63:
         raise E2EError(f"nombre de prueba excede 63 caracteres: {len(name)}")
     password_chars = [secrets.choice(characters) for characters in _PASSWORD_CLASSES]
@@ -721,6 +794,7 @@ def run_case(case: dict) -> dict:
         wait_operation(create_operation)
         current = instance(instance_id)
         vmid = int(current["vmid"])
+        node = str(current.get("node") or "mng01")
         if not VMID_MIN <= vmid <= VMID_MAX:
             raise E2EError(f"VMID fuera de rango: {vmid}")
         if current.get("environment") != "lab":
@@ -733,8 +807,8 @@ def run_case(case: dict) -> dict:
             raise E2EError(f"perfil de red divergente: {redact(current)}")
         if (current.get("spec") or {}).get("tags") != body["tags"]:
             raise E2EError("los tags enviados no se conservaron en la instancia")
-        if not pool_contains(vmid):
-            raise E2EError(f"VMID {vmid} no pertenece a {POOL_ID}")
+        if not vm_identity_matches(vmid, node, name):
+            raise E2EError(f"VMID {vmid} no coincide con la identidad de {name} en {node}")
         stage_seconds["provision"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
         if not body["start_on_create"]:
@@ -807,8 +881,9 @@ def run_case(case: dict) -> dict:
         final = instance(instance_id)
         if final.get("status") != "deleted":
             raise E2EError(f"destroy no dejó la instancia eliminada: {redact(final)}")
-        if vm_exists(vmid):
-            raise E2EError(f"VMID {vmid} sigue presente en Proxmox")
+        destroy_verification = verify_destroy_result(
+            instance_id, vmid, node, destroy_operation
+        )
         deleted = True
         release_live_ip(instance_id)
         stage_seconds["destroy"] = round(time.monotonic() - stage_started, 3)
@@ -825,6 +900,8 @@ def run_case(case: dict) -> dict:
             "operation_ids": operation_ids,
             "status": "passed",
             "vmid": vmid,
+            "node": node,
+            "destroy_verification": destroy_verification,
             "ip": ip,
             "ping": ping_statuses,
             "duration_seconds": duration_seconds,
@@ -923,7 +1000,10 @@ def validate_catalog() -> None:
     images = api("GET", "/v1/images")
     actual_plans = [item.get("plan_id") for item in plans.get("plans", [])]
     actual_images = [item.get("image_id") for item in images.get("images", [])]
-    if actual_plans != list(PLANS) or actual_images != list(IMAGES):
+    expected_catalog_images = list(IMAGES)
+    if selected_stage() == "develop":
+        expected_catalog_images.extend(("fedora-45", "debian-13"))
+    if actual_plans != list(PLANS) or actual_images != expected_catalog_images:
         raise E2EError(f"catálogo inesperado planes={actual_plans} images={actual_images}")
     print(f"CATALOG PASS plans={','.join(actual_plans)} images={','.join(actual_images)}", flush=True)
     profiles = api("GET", "/v1/network-profiles")
@@ -932,11 +1012,7 @@ def validate_catalog() -> None:
     if not selected_profile or not selected_profile.get("enabled") or selected_profile.get("network_mode") != "dhcp":
         raise E2EError(f"perfil DHCP no disponible: {NETWORK_PROFILE}")
     print(f"NETWORK PROFILE PASS profile={NETWORK_PROFILE}", flush=True)
-    inventory = proxmox("/cluster/resources?type=vm")
-    pool = proxmox(f"/pools/{quote(POOL_ID, safe='')}")
-    if not isinstance(inventory, list) or not isinstance(pool, dict):
-        raise E2EError("no se pudo consultar el inventario y pool del clúster MNG")
-    print(f"MNG PASS pool={POOL_ID} inventory_vms={len(inventory)}", flush=True)
+    print("MNG PASS: identidad de cada VM se consultará por nodo y VMID asignados", flush=True)
     observability = api("GET", "/v1/observability")
     capacity = observability.get("max_concurrent") if isinstance(observability, dict) else None
     if capacity is None or int(capacity) != 6:
@@ -950,7 +1026,7 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
     report = {
         "run_id": RUN_ID,
         "base_url": BASE_URL,
-        "runtime_stage": STAGE_CONFIG[E2E_STAGE]["runtime_stage"],
+        "runtime_stage": selected_stage_config()["runtime_stage"],
         "environment": "lab",
         "cluster": "MNG",
         "vmid_range": [VMID_MIN, VMID_MAX],

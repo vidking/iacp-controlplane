@@ -100,13 +100,12 @@ def test_disabled_catalog_and_no_side_effects(client, monkeypatch):
         assert db.execute("SELECT COUNT(*) AS n FROM instances").fetchone()["n"] == 0
 
 
-def test_services_catalog_publishes_all_four_service_images_but_keeps_agent_scope(client):
+def test_services_catalog_selects_only_ubuntu_2404(client):
     catalog = {item["application_id"]: item for item in client.get("/v1/applications").json()}
-    service_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
-    for application in ("nextcloud", "n8n"):
-        assert catalog[application]["supported_image_ids"] == service_images
-    for application in ("hermes", "openclaw"):
-        assert catalog[application]["supported_image_ids"] == ["ubuntu-2404", "almalinux-9"]
+    assert set(catalog) == {"nextcloud", "n8n", "hermes", "openclaw"}
+    for application in catalog:
+        assert catalog[application]["image_id"] == "ubuntu-2404"
+        assert catalog[application]["supported_image_ids"] == ["ubuntu-2404"]
 
 
 def test_atomic_idempotent_order_and_encrypted_credentials(client):
@@ -320,7 +319,7 @@ def test_ansible_safe_callback_reports_redacted_failure_event(tmp_path):
                     "gather_facts": False,
                     "tasks": [
                         {
-                            "name": "Instalar dependencias de Ubuntu",
+                            "name": "Instalar dependencias de Ubuntu 24.04",
                             "ansible.builtin.command": {
                                 "argv": [
                                     "/bin/sh",
@@ -546,31 +545,28 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 },
             ]
             service_tasks = playbook[0]["tasks"][1]["block"]
-            alma_repo_tasks = [
-                task
-                for task in service_tasks
-                if task.get("name") == "Configurar repositorio Docker para AlmaLinux"
-            ]
-            alma_install_tasks = [
-                task
-                for task in service_tasks
-                if task.get("name") == "Instalar Docker en AlmaLinux"
-            ]
-            assert len(alma_repo_tasks) == 1
-            assert alma_repo_tasks[0]["ansible.builtin.get_url"] == {
-                "url": "https://download.docker.com/linux/alma/docker-ce.repo",
-                "dest": "/etc/yum.repos.d/docker-ce.repo",
-                "mode": "0644",
-                "validate_certs": True,
-            }
-            assert len(alma_install_tasks) == 1
-            assert alma_install_tasks[0]["ansible.builtin.dnf"]["name"] == [
-                "docker-ce",
-                "docker-ce-cli",
-                "containerd.io",
-                "docker-buildx-plugin",
-                "docker-compose-plugin",
-            ]
+            if expected_action == "install":
+                assert any(
+                    task.get("name") == "Validar Ubuntu Server 24.04"
+                    and task.get("ansible.builtin.assert", {}).get("that")
+                    == [
+                        "ansible_facts.distribution == 'Ubuntu'",
+                        "ansible_facts.distribution_version == '24.04'",
+                    ]
+                    for task in service_tasks
+                )
+                assert any(
+                    task.get("name") == "Instalar dependencias de Ubuntu 24.04"
+                    and task.get("ansible.builtin.apt", {}).get("name")
+                    == ["docker.io", "docker-compose-v2"]
+                    for task in service_tasks
+                )
+                assert not any("AlmaLinux" in task.get("name", "") for task in service_tasks)
+            else:
+                assert [task.get("name") for task in service_tasks] == [
+                    "Esperar cloud-init",
+                    "Retirar clave temporal",
+                ]
             image_pull_tasks = [
                 task
                 for task in service_tasks
@@ -745,23 +741,63 @@ def test_release_manifest_cannot_change_on_retry(client):
         pin_release(order["service_id"], {"images": {"app": "second"}})
 
 
-def test_services_allow_standard_images_and_ip_mode():
+def test_services_allow_only_ubuntu_2404_and_ip_mode():
     from api.service_models import ServiceCreateRequest
     from pydantic import ValidationError
-    for image in ['ubuntu-2404', 'ubuntu-2604', 'almalinux-9', 'almalinux-10']:
-        body = {'application_id':'nextcloud','instance':{'name':'ip-service','plan_id':'kvm-1','image_id':image,'network_profile':'prod_static','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'access_mode':'ip'}}
-        assert ServiceCreateRequest.model_validate(body).configuration.domain is None
-        body['instance']['network_profile']='lab_dhcp'
-        assert ServiceCreateRequest.model_validate(body).instance.network_profile == 'lab_dhcp'
-        body['configuration']['domain']='cloud.example.org'
-        with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(body)
-    agent={'application_id':'hermes','instance':{'name':'local-agent','plan_id':'kvm-1','image_id':'almalinux-9','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'agent_mode':'local'}}
-    assert ServiceCreateRequest.model_validate(agent).secrets.provider_api_key is None
-    agent['instance']['image_id']='almalinux-10'
-    with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
-    agent['instance']['image_id']='almalinux-9'
-    agent['configuration']['agent_mode']='connected'
-    with pytest.raises(ValidationError):ServiceCreateRequest.model_validate(agent)
+    body = {'application_id':'nextcloud','instance':{'name':'ip-service','plan_id':'kvm-1','image_id':'ubuntu-2404','network_profile':'lab_dhcp','access':{'ssh_public_keys':['ssh-ed25519 AAAAexample']}},'configuration':{'access_mode':'ip'}}
+    assert ServiceCreateRequest.model_validate(body).configuration.domain is None
+    body['configuration']['domain']='cloud.example.org'
+    with pytest.raises(ValidationError):
+        ServiceCreateRequest.model_validate(body)
+
+
+@pytest.mark.parametrize("application_id", ["nextcloud", "n8n", "hermes", "openclaw"])
+@pytest.mark.parametrize(
+    "image_id",
+    ["ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13"],
+)
+def test_service_requests_reject_every_non_ubuntu_2404_image(application_id, image_id):
+    from api.service_models import ServiceCreateRequest
+    from pydantic import ValidationError
+
+    configuration = {"access_mode": "ip"} if application_id in {"nextcloud", "n8n"} else {"agent_mode": "local"}
+    request = {
+        "application_id": application_id,
+        "instance": {
+            "name": f"service-{application_id}-{image_id}",
+            "plan_id": "kvm-1",
+            "image_id": image_id,
+            "access": {"root_password": "solo-prueba-local"},
+        },
+        "configuration": configuration,
+    }
+    with pytest.raises(ValidationError, match="imagen no está habilitada"):
+        ServiceCreateRequest.model_validate(request)
+
+
+def test_service_retry_rejects_historical_almalinux_instance(client):
+    order = create(client, "historical-alma-service", "create-historical-alma")
+    with database() as db:
+        db.execute(
+            "UPDATE instances SET image='almalinux-9' WHERE instance_id=?",
+            (order["instance_id"],),
+        )
+        db.execute(
+            "UPDATE service_jobs SET status='failed' WHERE job_id=?",
+            (order["job_id"],),
+        )
+    response = client.post(
+        f"/v1/service-jobs/{order['job_id']}/retry",
+        json={},
+        headers={"Idempotency-Key": "retry-historical-alma"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "SERVICE_IMAGE_RETIRED"
+    with database() as db:
+        status = db.execute(
+            "SELECT status FROM service_jobs WHERE job_id=?", (order["job_id"],)
+        ).fetchone()["status"]
+    assert status == "failed"
 
 
 def test_n8n_recipe_waits_for_database_and_migrations():

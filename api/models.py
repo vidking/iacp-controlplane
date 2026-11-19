@@ -97,7 +97,10 @@ class InstanceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(pattern=NAME_PATTERN)
-    image: str = Field(default="ubuntu-2404", pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10)$")
+    image: str = Field(
+        default="ubuntu-2404",
+        pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10|fedora-45|debian-13)$",
+    )
     vcpus: int = Field(default=2, ge=1, le=8)
     memory_mb: int = Field(default=2048, ge=512, le=16384)
     disk_gb: int = Field(default=20, ge=20, le=400)

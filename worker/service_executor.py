@@ -187,36 +187,21 @@ def execute(service, job, heartbeat):
         # El host lock evita dos Ansible simultáneos; las pérdidas de worker requieren revisión explícita.
         tasks += [
             {
-                "name": "Instalar dependencias de Ubuntu",
-                "when": "ansible_facts.os_family == 'Debian'",
+                "name": "Validar Ubuntu Server 24.04",
+                "ansible.builtin.assert": {
+                    "that": [
+                        "ansible_facts.distribution == 'Ubuntu'",
+                        "ansible_facts.distribution_version == '24.04'",
+                    ],
+                    "fail_msg": "SERVICE_OS_UNSUPPORTED",
+                },
+            },
+            {
+                "name": "Instalar dependencias de Ubuntu 24.04",
                 "ansible.builtin.apt": {
                     "name": ["docker.io", "docker-compose-v2"],
                     "state": "present",
                     "update_cache": True,
-                },
-            },
-            {
-                "name": "Configurar repositorio Docker para AlmaLinux",
-                "when": "ansible_facts.os_family == 'RedHat'",
-                "ansible.builtin.get_url": {
-                    "url": "https://download.docker.com/linux/alma/docker-ce.repo",
-                    "dest": "/etc/yum.repos.d/docker-ce.repo",
-                    "mode": "0644",
-                    "validate_certs": True,
-                },
-            },
-            {
-                "name": "Instalar Docker en AlmaLinux",
-                "when": "ansible_facts.os_family == 'RedHat'",
-                "ansible.builtin.dnf": {
-                    "name": [
-                        "docker-ce",
-                        "docker-ce-cli",
-                        "containerd.io",
-                        "docker-buildx-plugin",
-                        "docker-compose-plugin",
-                    ],
-                    "state": "present",
                 },
             },
             {

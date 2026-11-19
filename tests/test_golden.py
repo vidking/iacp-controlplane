@@ -118,3 +118,60 @@ def test_observe_rejects_hardware_difference_from_ubuntu_reference(golden_source
     raw["scsi0"] = raw["scsi0"].replace("discard=on", "cache=writeback,discard=on")
     with pytest.raises(ValueError, match="GOLDEN_HARDWARE_REFERENCE_MISMATCH"):
         observe_with(golden_source, monkeypatch)
+
+
+@pytest.mark.no_database
+@pytest.mark.parametrize(
+    ("image_id", "vmid"), [("fedora-45", 29005), ("debian-13", 29006)]
+)
+def test_observe_accepts_dev_fedora_and_debian_templates(golden_source, monkeypatch, image_id, vmid):
+    raw, _ = golden_source
+    raw = dict(raw)
+    raw.update(
+        name=f"iacp-{image_id}-golden",
+        tags=f"{image_id};golden-image;iacp;v20261118",
+        ostype="l26",
+        scsi0=f"DS_CYBERFUEL:base-{vmid}-disk-1,discard=on,iothread=1,size=20G",
+        scsi1=f"DS_CYBERFUEL:vm-{vmid}-cloudinit,media=cdrom",
+        efidisk0=f"DS_CYBERFUEL:base-{vmid}-disk-0,efitype=4m,pre-enrolled-keys=0,size=1M",
+    )
+    reference = dict(raw)
+    reference.update(
+        name="iacp-ubuntu-2404-golden",
+        tags="ubuntu-2404;iacp;golden-image",
+        scsi0="DS_CYBERFUEL:base-29000-disk-1,discard=on,iothread=1,size=20G",
+        scsi1="DS_CYBERFUEL:vm-29000-cloudinit,media=cdrom,size=4M",
+        efidisk0="DS_CYBERFUEL:base-29000-disk-0,efitype=4m,pre-enrolled-keys=0,size=1M",
+    )
+    entry = {
+        "source_node": "mng01",
+        "template_vm_id": vmid,
+        "tag": image_id,
+        "storage": "DS_CYBERFUEL",
+        "network_model": "virtio",
+    }
+    image_catalog = {
+        image_id: entry,
+        "ubuntu-2404": {
+            "source_node": "mng01",
+            "template_vm_id": 29000,
+            "tag": "ubuntu-2404",
+            "storage": "DS_CYBERFUEL",
+            "network_model": "virtio",
+        },
+    }
+    monkeypatch.setattr(golden, "catalog", lambda: image_catalog)
+
+    class Client:
+        def vm_config(self, node, observed_vmid):
+            assert node == "mng01"
+            if observed_vmid == vmid:
+                return raw
+            if observed_vmid == 29000:
+                return reference
+            pytest.fail(f"VMID de plantilla inesperado: {observed_vmid}")
+
+    observed = golden.observe(image_id, Client())
+    assert observed["template_vm_id"] == vmid
+    assert observed["ostype"] == "l26"
+    assert observed["cloudinit_interface"] == "scsi1"

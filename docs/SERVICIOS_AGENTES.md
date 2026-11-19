@@ -2,11 +2,25 @@
 
 ## Alcance y estado
 
+### Política vigente de sistema operativo — 2026-11-18
+
+Las nuevas provisiones de Nextcloud, n8n, Hermes y OpenClaw usan únicamente la
+Golden Image Ubuntu Server 24.04 (`ubuntu-2404`). La API rechaza Ubuntu 26.04,
+AlmaLinux, Fedora y Debian para altas de servicios; las KVM genéricas conservan
+su catálogo independiente. Los registros históricos de AlmaLinux se mantienen
+para consulta, lifecycle y eliminación; el reintento de instalación sobre esas
+instancias se bloquea con `SERVICE_IMAGE_RETIRED`.
+
+El catálogo implementado incluye Nextcloud, n8n, Hermes y OpenClaw. OpenCloud no
+está implementado y no se publica como aplicación. Los releases actuales están
+fijados por digest y su validación registrada es `local-docker`; los ensayos
+locales no se presentan como certificación física.
+
 Esta ampliación añade pedidos de VM + aplicación, una cola PostgreSQL independiente,
 un pool configurable de workers de servicios, sobres cifrados, recetas Ansible/Compose e identificación
 IPAM. El entorno sigue siendo `lab` en el clúster MNG. `prod_static` es un perfil de
-red, no habilita Platinum/PRX. No se han ejecutado despliegues físicos ni certificado
-imágenes de aplicación. La disponibilidad comercial no se deduce de las pruebas de código.
+red, no habilita Platinum/PRX. La disponibilidad comercial no se deduce de las
+pruebas de código; cada alcance conserva su evidencia y fecha en las adendas.
 
 Las seis plazas de infraestructura permanecen independientes de las plazas de
 servicios. `IACP_SERVICE_MAX_CONCURRENT` define la capacidad del pool y el manifiesto
@@ -100,7 +114,7 @@ idempotencia para evitar persistir una respuesta con secretos en texto claro.
 
 1. `GET /v1/applications`: catálogo separado de `/v1/images`.
 2. `POST /v1/service-instances`: `application_id`, `instance` con el contrato KVM
-   actual, `configuration` y `secrets`. Requiere Ubuntu 24.04 o AlmaLinux 9 e
+   actual, `configuration` y `secrets`. Requiere Ubuntu Server 24.04 e
    inicio automático. Para el acceso del cliente, acepta una clave SSH pública,
    una contraseña root o ambas; si se omite la clave, la contraseña root es
    necesaria. Añade una clave pública temporal interna y `app-<aplicación>`.
@@ -437,13 +451,10 @@ invitado. La clave privada de la CA permanece en el Control Plane. No existe aú
 renovación automática: este modo certifica el piloto y no equivale a un producto
 público con TLS confiable de forma predeterminada.
 
-Las recetas de Nextcloud y n8n admiten Ubuntu 24.04, Ubuntu 26.04, AlmaLinux 9 y
-AlmaLinux 10; los contenedores conservan los mismos digests. En AlmaLinux se instala
-Docker desde el repositorio oficial firmado para AlmaLinux y se mantiene SELinux,
-etiquetando los bind mounts necesarios. La verificación WAN observa interfaces,
-rutas y DNS del sistema operativo sin imponer Netplan a AlmaLinux. La matriz de
-servicios distribuye Ubuntu en el ciclo 1 y AlmaLinux en el ciclo 2, con ambas
-aplicaciones y los cuatro planes en cada ciclo.
+Las recetas y matrices anteriores incluyeron Ubuntu y AlmaLinux; la política
+vigente para nuevas provisiones queda registrada al inicio de este documento.
+Los contenedores mantienen sus digests fijados. La evidencia histórica de esas
+matrices no amplía la lista de imágenes habilitadas hoy.
 
 `configuration.agent_mode="local"` permite validar Hermes/OpenClaw sin credencial
 real de proveedor. El modo predeterminado `connected` sigue exigiendo modelo y
@@ -521,7 +532,7 @@ de los ensayos. No había operaciones activas ni inciertas; seis workers idle.
 ## Formulario de servicios en desarrollo
 
 En `/docs#create`, las tarjetas de producto permiten elegir KVM, Nextcloud y n8n. Para
-servicios solo muestra Ubuntu 24.04 y AlmaLinux 9. La contraseña root es la
+servicios solo muestra Ubuntu Server 24.04. La contraseña root es la
 credencial del sistema operativo y permite acceso SSH; la llave pública del
 cliente es opcional. Las credenciales web son independientes: Nextcloud entrega
 su usuario administrativo inicial una sola vez y n8n presenta su propio alta

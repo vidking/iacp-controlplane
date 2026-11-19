@@ -277,7 +277,7 @@ def test_atomic_post_timeout_does_not_allocate_again(monkeypatch):
     calls = []
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
-    record = {"id": 90, "address": "198.51.100.2/24", "comments": "iacp-instance=lost"}
+    record = {"id": 90, "address": "198.51.100.10/24", "comments": "iacp-instance=lost"}
     results = iter([None, record])
     monkeypatch.setattr(client, "owned_allocation", lambda *_: next(results))
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
@@ -363,8 +363,8 @@ def test_netbox_does_not_retry_a_rejection_without_evidence_of_occupation(monkey
 
 def test_netbox_duplicate_after_success_blocks_provisioning(monkeypatch):
     client = netbox_for_allocation(monkeypatch)
-    record = {"id": 90, "address": "198.51.100.2/24", "comments": "iacp-instance=ours"}
-    other = {"id": 91, "address": "198.51.100.2/32", "comments": "otro propietario"}
+    record = {"id": 90, "address": "198.51.100.10/24", "comments": "iacp-instance=ours"}
+    other = {"id": 91, "address": "198.51.100.10/32", "comments": "otro propietario"}
     calls = []
 
     def request(method, path, **_kwargs):

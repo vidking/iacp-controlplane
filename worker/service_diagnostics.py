@@ -8,9 +8,8 @@ import re
 TASK_CODES = {
     "Esperar cloud-init": "CLOUD_INIT",
     "Retirar clave temporal": "SSH_HANDOFF",
-    "Instalar dependencias de Ubuntu": "DOCKER_DEPENDENCIES",
-    "Configurar repositorio Docker para AlmaLinux": "DOCKER_REPOSITORY",
-    "Instalar Docker en AlmaLinux": "DOCKER_DEPENDENCIES",
+    "Validar Ubuntu Server 24.04": "SERVICE_OS",
+    "Instalar dependencias de Ubuntu 24.04": "DOCKER_DEPENDENCIES",
     "Iniciar Docker": "DOCKER_DAEMON",
     "Crear directorio": "SERVICE_DIRECTORY",
     "Crear datos": "SERVICE_DIRECTORY",

@@ -28,7 +28,7 @@ al completar la entrega.
 1. Consultar `GET /v1/applications`, `GET /v1/plans`, `GET /v1/images` y
    `GET /v1/network-profiles`. Presentar únicamente aplicaciones y recursos que
    la API devuelve como habilitados.
-2. El cliente elige Nextcloud o n8n, plan, Ubuntu 24.04 o AlmaLinux 9, nombre,
+2. El cliente elige Nextcloud o n8n, plan, Ubuntu Server 24.04, nombre,
    perfil de red y método de acceso al sistema. En el piloto, el modo web por IP
    usa una CA privada descargable; el modo por dominio requiere DNS preparado.
    En este contrato, `1.1.1.1` y `8.8.8.8` son resolvers de la KVM; no son

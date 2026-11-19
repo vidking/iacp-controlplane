@@ -12,11 +12,11 @@ El ejemplo está en `terraform.tfvars.example`.
 
 En la ruta normal de la API no se edita este `tfvars`: el worker genera
 `generated.auto.tfvars.json` desde la orden y la Golden Image observada. El
-catálogo visible para editar imágenes y templates es `catalog.json`.
-El stack de desarrollo selecciona explícitamente `catalog-dev.json` mediante
-`IACP_MNG_CATALOG`. Sus imágenes AlmaLinux apuntan a los VMID certificados
-29010/29011, que también están registrados en el catálogo estable; la matriz
-clona las plantillas sin modificarlas.
+catálogo visible para producción es `catalog.json`. El stack de desarrollo
+selecciona explícitamente `catalog-dev.json` mediante `IACP_MNG_CATALOG`.
+Además de las imágenes compartidas, el catálogo DEV incluye Fedora 45
+(VMID 29005) y Debian 13 (VMID 29006), ambos en `mng01` y `DS_CYBERFUEL`.
+Estos IDs no se agregan al catálogo estable hasta una promoción independiente.
 
 La red de laboratorio usa DHCP en `vmbr0` y no fija VLAN ni gateway. El worker
 lee de la Golden Image el CPU (`x86-64-v4`, flags, NUMA), el controlador de

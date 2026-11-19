@@ -19,10 +19,9 @@ const playwrightModule = process.env.IACP_PLAYWRIGHT_MODULE || "/home/despinoza/
 const { chromium } = require(playwrightModule);
 
 const BASE_URL = (process.env.IACP_E2E_BASE_URL || "https://iac.cyberfuel.com").replace(/\/$/, "");
-const API_TOKEN = process.env.IACP_E2E_API_TOKEN || process.env.IACP_API_TOKEN || "";
-const PROXMOX_ENDPOINT = (process.env.IACP_E2E_MNG_PROXMOX_ENDPOINT || process.env.IACP_PROXMOX_MNG_ENDPOINT || "").replace(/\/$/, "");
-const PROXMOX_TOKEN = process.env.IACP_E2E_MNG_PROXMOX_TOKEN || process.env.IACP_PROXMOX_MNG_API_TOKEN || "";
-const POOL_ID = process.env.IACP_E2E_POOL_ID || "iacp-lab";
+const API_TOKEN = process.env.IACP_E2E_API_TOKEN || "";
+const PROXMOX_ENDPOINT = (process.env.IACP_E2E_MNG_PROXMOX_ENDPOINT || "").replace(/\/$/, "");
+const PROXMOX_TOKEN = process.env.IACP_E2E_MNG_PROXMOX_TOKEN || "";
 const KEY_DIR = process.env.IACP_E2E_KEY_DIR || "";
 const PUBLIC_KEY = (process.env.IACP_E2E_SSH_PUBLIC_KEY || "").trim();
 const PRIVATE_KEY = process.env.IACP_E2E_SSH_PRIVATE_KEY || "/home/despinoza/.ssh/iacp-lab-kvm";
@@ -104,6 +103,16 @@ async function proxmox(endpoint) {
     Authorization: `PVEAPIToken=${PROXMOX_TOKEN}`,
   });
   return body?.data ?? body;
+}
+
+async function vmExists(vmid, node) {
+  try {
+    const status = await proxmox(`/nodes/${encodeURIComponent(node)}/qemu/${vmid}/status/current`);
+    return Number(status?.vmid ?? vmid) === Number(vmid);
+  } catch (error) {
+    if (/HTTP 404 /.test(error.message)) return false;
+    throw error;
+  }
 }
 
 function operationStatus(operation) {
@@ -417,13 +426,14 @@ async function runCase(page, testCase) {
     await waitOperation(createdCase.created.operation_id, instanceId, telemetry);
     const current = await api("GET", `/v1/instances/${instanceId}`);
     vmid = Number(current.vmid);
+    const node = String(current.node || "");
     if (vmid < 30000 || vmid > 39999) throw new E2EError(`VMID fuera de rango para iac.cyberfuel.com: ${vmid}`);
+    if (!node) throw new E2EError("la API no informó el nodo de la instancia");
     if (current.image_id !== testCase.image || current.plan_id !== testCase.plan) throw new E2EError("catálogo divergente");
     if (current.spec?.network_profile !== NETWORK_PROFILE) throw new E2EError(`perfil de red divergente: ${current.spec?.network_profile}`);
     if (JSON.stringify(current.spec?.tags) !== JSON.stringify(createdCase.body.tags)) throw new E2EError("tags divergentes en el detalle de la instancia");
-    const pool = await proxmox(`/pools/${encodeURIComponent(POOL_ID)}`);
-    const inPool = (pool.members || []).some((member) => String(member.vmid) === String(vmid));
-    if (!inPool) throw new E2EError(`VMID ${vmid} no pertenece a ${POOL_ID}`);
+    const config = await proxmox(`/nodes/${encodeURIComponent(node)}/qemu/${vmid}/config?current=1`);
+    if (config.name !== current.name || Number(config.template || 0) === 1) throw new E2EError("Proxmox mostró una identidad de VM divergente");
 
     if (!createdCase.startOnCreate) {
       const start = await clickPower(page, instanceId, "start", telemetry);
@@ -456,8 +466,7 @@ async function runCase(page, testCase) {
     deleted = true;
     const final = await api("GET", `/v1/instances/${instanceId}`);
     if (final.status !== "deleted") throw new E2EError(`destroy dejó estado ${final.status}`);
-    const inventory = await proxmox("/cluster/resources?type=vm");
-    if ((inventory || []).some((item) => Number(item.vmid) === vmid)) throw new E2EError(`VMID ${vmid} sigue presente en Proxmox`);
+    if (await vmExists(vmid, node)) throw new E2EError(`VMID ${vmid} sigue presente en Proxmox`);
     await page.evaluate(() => { window.location.hash = "#workers"; });
     await page.waitForTimeout(500);
     const workersText = await page.locator("#workers-table").innerText();

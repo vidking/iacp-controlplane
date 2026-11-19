@@ -10,7 +10,7 @@ from pydantic import (
     model_validator,
 )
 from api.models import InstanceCreateRequest
-from api.service_catalog import SUPPORTED_AGENT_IMAGE_IDS, SUPPORTED_SERVICE_IMAGE_IDS
+from api.service_catalog import supported_image_ids
 
 
 class ApplicationConfiguration(BaseModel):
@@ -61,11 +61,7 @@ class ServiceCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def compatible(self):
-        supported_images = (
-            SUPPORTED_SERVICE_IMAGE_IDS
-            if self.application_id in {"nextcloud", "n8n"}
-            else SUPPORTED_AGENT_IMAGE_IDS
-        )
+        supported_images = supported_image_ids(self.application_id)
         if (
             self.instance.image_id not in supported_images
             or not self.instance.start_on_create

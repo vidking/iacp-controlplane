@@ -230,8 +230,9 @@ completo en `/openapi.json` o léelo en `/redoc`.
 
 Consulta primero `GET /v1/applications` y usa solo una aplicación habilitada.
 Las pruebas actuales usan `lab_dhcp`, sin reserva NetBox ni IP pública. El
-servicio requiere Ubuntu 24.04 o AlmaLinux 9, una llave SSH del consumidor e
-inicio automático. Para TLS por IP, `configuration.access_mode` es `ip` y no se
+servicio requiere Ubuntu Server 24.04 (`ubuntu-2404`), una llave SSH del consumidor e
+inicio automático. AlmaLinux y las demás imágenes se rechazan para nuevas
+provisiones de servicios. Para TLS por IP, `configuration.access_mode` es `ip` y no se
 envía `domain`; para el modo dominio se requiere que el FQDN ya resuelva hacia
 la VM.
 

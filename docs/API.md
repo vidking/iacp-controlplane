@@ -29,6 +29,12 @@ resuelve ese entorno al clúster MNG y selecciona internamente un nodo. El cuerp
 no acepta selección de nodo, clúster, pool, VLAN, IP, gateway ni parámetros
 Terraform.
 
+En DEV, `GET /v1/images` incluye `fedora-45` (VMID 29005) y `debian-13`
+(VMID 29006) con los metadatos aditivos `distribution` y `version`. El catálogo
+estable de producción conserva sus imágenes actuales. Las aplicaciones publican
+por separado sus imágenes compatibles; los servicios aceptan únicamente
+`ubuntu-2404`.
+
 ## Crear una instancia
 
 `POST /v1/instances` devuelve `202 Accepted` y encola el aprovisionamiento

@@ -129,6 +129,67 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
         ]
 
 
+def test_dev_catalog_exposes_fedora_and_debian_with_all_compatible_plans(tmp_path, monkeypatch):
+    from pathlib import Path
+    from api.models import InstanceCreateRequest
+    from api.service import _resolve_public_request
+
+    catalog = Path(__file__).parents[1] / "terraform/environments/mng01/catalog-dev.json"
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_MNG_CATALOG", str(catalog))
+    monkeypatch.setenv("IACP_ENFORCE_WAN_ONLY", "0")
+    expected = {"fedora-45": (29005, "Fedora", "45"), "debian-13": (29006, "Debian", "13")}
+    with TestClient(app) as client:
+        images = client.get("/v1/images").json()["images"]
+        plans = client.get("/v1/plans").json()["plans"]
+    observed = {item["image_id"]: item for item in images}
+    for image_id, (vmid, distribution, version) in expected.items():
+        image = observed[image_id]
+        assert (image["template_vm_id"], image["distribution"], image["version"]) == (
+            vmid,
+            distribution,
+            version,
+        )
+        assert image["source_node"] == "mng01"
+        assert image["storage"] == "DS_CYBERFUEL"
+        assert image["tag"] == image_id
+        assert image["cloudinit_username"] == "root"
+        for plan in plans:
+            request = InstanceCreateRequest(
+                name=f"{image_id}-{plan['plan_id']}",
+                plan_id=plan["plan_id"],
+                image_id=image_id,
+                access={"root_password": "solo-prueba-local"},
+            )
+            _spec, resolved_plan, resolved_image, _password, environment = (
+                _resolve_public_request(request)
+            )
+            assert resolved_plan["plan_id"] == plan["plan_id"]
+            assert resolved_image["image_id"] == image_id
+            assert environment == "lab"
+
+
+def test_dev_catalog_rejects_undeclared_image_without_database_side_effects(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv(
+        "IACP_MNG_CATALOG",
+        str(Path(__file__).parents[1] / "terraform/environments/mng01/catalog-dev.json"),
+    )
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/instances",
+            json={**public_body("unknown-image"), "image_id": "debian-12"},
+            headers={"Idempotency-Key": "unknown-dev-image"},
+        )
+    assert response.status_code == 422
+    assert "image_id no disponible" in response.json()["detail"]
+    with database() as db:
+        assert db.execute("SELECT COUNT(*) AS n FROM instances").fetchone()["n"] == 0
+        assert db.execute("SELECT COUNT(*) AS n FROM operations").fetchone()["n"] == 0
+
+
 def test_environment_catalog_exposes_only_lab_and_resolves_to_mng(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_DEFAULT_ENVIRONMENT", "lab")
