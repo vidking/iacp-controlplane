@@ -1884,6 +1884,22 @@ def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp
             """,
             (json.dumps(source_payload),),
         )
+        for index in (2, 3):
+            payload = {**source_payload, "power_action": "start" if index == 2 else "reboot"}
+            db.execute(
+                """
+                INSERT INTO operations(
+                  operation_id, command, action, status, payload_json,
+                  instance_id, stack, created_at
+                ) VALUES (?, 'power', 'power', 'uncertain', ?,
+                  'deleted-power-instance', 'mng01', ?)
+                """,
+                (
+                    f"old-power-{index}",
+                    json.dumps(payload),
+                    f"2026-01-01T0{index}:00:00Z",
+                ),
+            )
         db.execute(
             """
             INSERT INTO operations(
@@ -1910,6 +1926,22 @@ def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp
                 "action": "reconcile",
                 "instance_id": "deleted-power-instance",
                 "source_operation_id": "old-power",
+            }),),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json,
+              instance_id, stack, created_at
+            ) VALUES (
+              'old-recovery-attempt', 'reconcile', 'reconcile', 'uncertain', ?,
+              'deleted-power-instance', 'mng01', '2026-01-03T00:00:00Z'
+            )
+            """,
+            (json.dumps({
+                "command": "reconcile",
+                "instance_id": "deleted-power-instance",
+                "source_operation_id": "old-power-2",
             }),),
         )
         db.execute(
@@ -1949,23 +1981,28 @@ def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp
 
     assert observations == [(40239, False, "deleted-power", "mng01")]
     with database() as db:
-        source = db.execute(
-            "SELECT status, error FROM operations WHERE operation_id='old-power'"
-        ).fetchone()
+        sources = db.execute(
+            "SELECT operation_id, status, error FROM operations WHERE instance_id='deleted-power-instance' AND command='power' ORDER BY operation_id"
+        ).fetchall()
         recovery = db.execute(
             "SELECT status, error FROM operations WHERE operation_id='recovery-power'"
+        ).fetchone()
+        old_recovery = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='old-recovery-attempt'"
         ).fetchone()
         instance = db.execute(
             "SELECT status, power_state FROM instances WHERE instance_id='deleted-power-instance'"
         ).fetchone()
-        event = db.execute(
-            "SELECT status FROM events WHERE operation_id='old-power' AND kind='operation.superseded_by_destroy'"
-        ).fetchone()
-    assert source["status"] == "failed"
-    assert "eliminación confirmada" in source["error"]
+        event_count = db.execute(
+            "SELECT COUNT(*) AS count FROM events WHERE kind='operation.superseded_by_destroy' AND status='failed'"
+        ).fetchone()["count"]
+    assert len(sources) == 3
+    assert all(row["status"] == "failed" for row in sources)
+    assert all("eliminación confirmada" in row["error"] for row in sources)
     assert recovery["status"] == "succeeded" and recovery["error"] == ""
+    assert old_recovery["status"] == "failed"
     assert (instance["status"], instance["power_state"]) == ("deleted", "unknown")
-    assert event["status"] == "failed"
+    assert event_count == 3
 
 
 def test_reconcile_supersedes_old_power_and_recovery_after_later_verified_lifecycle(

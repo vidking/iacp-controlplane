@@ -1517,17 +1517,49 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         )
         if not absent:
             raise ProxmoxError("DELETED_INSTANCE_PHYSICAL_RESOURCE_PRESENT", uncertain=True)
-        detail = "La VM está ausente tras una eliminación confirmada; la solicitud de energía quedó superada."
-        close_source_after_reconciliation(
-            source,
-            instance_id,
-            int(vmid),
-            node,
-            source_payload,
-            succeeded=False,
-            detail=detail,
+        with database() as db:
+            superseded = db.execute(
+                """
+                SELECT source.* FROM operations AS source
+                WHERE source.instance_id=? AND source.command='power'
+                  AND source.status='uncertain'
+                  AND EXISTS (
+                    SELECT 1 FROM operations AS destroy
+                    WHERE destroy.instance_id=source.instance_id
+                      AND destroy.command='destroy' AND destroy.status='succeeded'
+                      AND destroy.created_at > source.created_at
+                  )
+                ORDER BY source.created_at
+                """,
+                (instance_id,),
+            ).fetchall()
+        sources = [dict(row) for row in superseded]
+        if not any(row["operation_id"] == source["operation_id"] for row in sources):
+            raise RuntimeError("DELETED_POWER_SOURCE_NOT_SUPERSEDED")
+        detail = (
+            f"La VMID está ausente tras una eliminación confirmada; "
+            f"{len(sources)} solicitudes históricas de energía quedaron superadas."
         )
-        emit(source["operation_id"], "operation.superseded_by_destroy", "failed", detail)
+        for old_source in sources:
+            old_payload = json.loads(old_source.get("payload_json") or "{}")
+            close_source_after_reconciliation(
+                old_source,
+                instance_id,
+                int(vmid),
+                node,
+                old_payload,
+                succeeded=False,
+                detail=detail,
+            )
+            emit(
+                old_source["operation_id"],
+                "operation.superseded_by_destroy",
+                "failed",
+                detail,
+            )
+            close_superseded_reconcile_attempts(
+                instance_id, old_source["operation_id"], detail
+            )
         update_operation(
             operation_id,
             status="succeeded",
