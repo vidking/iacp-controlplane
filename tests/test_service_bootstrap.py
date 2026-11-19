@@ -305,6 +305,7 @@ def test_static_guest_readiness_requires_gateway_neighbor():
 
 
 def test_fedora_static_identity_uses_guest_agent_metadata_only(monkeypatch):
+    initialize()
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     monkeypatch.setattr(
         bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
@@ -349,6 +350,7 @@ def test_fedora_static_identity_uses_guest_agent_metadata_only(monkeypatch):
 def test_fedora_static_identity_fails_closed_without_expected_guest_ip(
     monkeypatch,
 ):
+    initialize()
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
     monkeypatch.setattr(
         bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
