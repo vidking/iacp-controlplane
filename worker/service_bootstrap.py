@@ -85,9 +85,9 @@ else:
  try:
   with socket.create_connection(('1.1.1.1',443),timeout=5):pass
  except OSError:pass
- neighbors=json.loads(run([ip,'-j','neigh','show','to',expected_gateway]))
  def gateway_ready(records,gateway,device):
   return any(record.get('dst')==gateway and record.get('dev')==device and record.get('lladdr') and set(record.get('state',[])).intersection({'REACHABLE','STALE','DELAY','PROBE','PERMANENT'}) for record in records)
+ neighbors=json.loads(run([ip,'-j','neigh','show','to',expected_gateway]))
  assert gateway_ready(neighbors,expected_gateway,device), 'IACP_GATEWAY_UNREACHABLE'
 def has_expected_dns(output):
  observed=set(re.findall(r'(?<![0-9.])[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}(?![0-9.])',output))
@@ -187,6 +187,17 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         pool_id=configured_pool_id(),
         heartbeat=heartbeat,
     )
+    if static and spec.get("image") == "fedora-45":
+        return _prepare_fedora_static_network(
+            client,
+            node=node,
+            vmid=vmid,
+            name=name,
+            instance_id=instance_id,
+            mac=mac,
+            expected_ip=spec["ipv4_cidr"].split("/", 1)[0],
+            heartbeat=heartbeat,
+        )
     # Solo se repiten lecturas: un POST exec incierto nunca se vuelve a enviar.
     deadline = time.monotonic() + 180
     while True:
@@ -296,3 +307,80 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
             (service["service_id"], json.dumps(binding), now()),
         )
     return binding
+
+
+def _prepare_fedora_static_network(
+    client,
+    *,
+    node: str,
+    vmid: int,
+    name: str,
+    instance_id: str,
+    mac: str,
+    expected_ip: str,
+    heartbeat,
+):
+    """Verify Fedora's static address from read-only Guest Agent metadata.
+
+    Fedora confines QEMU Guest Agent under SELinux. Its network inventory is
+    available, but running cloud-init/ip or reading SSH host keys from that
+    context is denied. Avoid those commands and bind the expected address to
+    the configured NIC MAC instead.
+    """
+
+    from ipaddress import ip_address
+
+    expected_address = ip_address(expected_ip)
+    if expected_address.version != 4 or expected_address.is_unspecified:
+        raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_INVALID")
+    deadline = time.monotonic() + 180
+    while True:
+        heartbeat()
+        try:
+            interfaces = client.guest_agent_interfaces(node, vmid)
+        except ProxmoxError as error:
+            if error.status in {401, 403}:
+                raise GuestIdentityError(
+                    "SERVICE_BOOTSTRAP_GUEST_AGENT_PERMISSION_REQUIRED"
+                ) from error
+            interfaces = []
+        matches = [
+            interface
+            for interface in interfaces
+            if str(interface.get("hardware-address", "")).lower() == mac
+        ]
+        if len(matches) > 1:
+            raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_INTERFACE_AMBIGUOUS")
+        if matches:
+            addresses = []
+            for entry in matches[0].get("ip-addresses") or []:
+                try:
+                    address = ip_address(str(entry.get("ip-address", "")))
+                except ValueError:
+                    continue
+                if address.version == 4 and not (
+                    address.is_loopback
+                    or address.is_link_local
+                    or address.is_multicast
+                    or address.is_unspecified
+                ):
+                    addresses.append(address)
+            if expected_address in addresses and all(
+                address == expected_address for address in addresses
+            ):
+                return {
+                    "instance_id": instance_id,
+                    "vmid": vmid,
+                    "node": node,
+                    "address": str(expected_address),
+                    "host_key": None,
+                    "domain": None,
+                    "dns_servers": ["1.1.1.1", "8.8.8.8"],
+                    "source": "qemu-guest-agent-network",
+                    "mode": "fedora-static-read-only",
+                }
+            if addresses and expected_address not in addresses:
+                raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_MISMATCH")
+        if time.monotonic() >= deadline:
+            raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_UNAVAILABLE")
+        time.sleep(2)

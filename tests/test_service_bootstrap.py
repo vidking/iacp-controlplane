@@ -304,6 +304,87 @@ def test_static_guest_readiness_requires_gateway_neighbor():
     assert not ready([{'dst':'190.0.231.1','dev':'eth1','state':['REACHABLE'],'lladdr':'aa:bb:cc:dd:ee:ff'}], '190.0.231.1','eth0')
 
 
+def test_fedora_static_identity_uses_guest_agent_metadata_only(monkeypatch):
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setattr(
+        bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
+    )
+    commands = []
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "fedora-static",
+            "net0": "virtio=" + MAC + ",bridge=vmbr3,firewall=0",
+            "ipconfig0": "ip=190.0.231.13/24,gw=190.0.231.1",
+        },
+        guest_agent_interfaces=lambda *_: [
+            {
+                "hardware-address": MAC,
+                "ip-addresses": [
+                    {"ip-address-type": "ipv4", "ip-address": "190.0.231.13"}
+                ],
+            }
+        ],
+        guest_agent_exec=lambda *_args: commands.append(_args),
+    )
+    result = bootstrap.prepare(
+        fake,
+        node="mng01",
+        vmid=40240,
+        name="fedora-static",
+        instance_id="fedora-instance",
+        spec={
+            "image": "fedora-45",
+            "network_profile": "prod_static",
+            "ipv4_cidr": "190.0.231.13/24",
+            "ipv4_gateway": "190.0.231.1",
+        },
+        heartbeat=lambda: None,
+    )
+    assert result["address"] == "190.0.231.13"
+    assert result["source"] == "qemu-guest-agent-network"
+    assert result["mode"] == "fedora-static-read-only"
+    assert commands == []
+
+
+def test_fedora_static_identity_fails_closed_without_expected_guest_ip(
+    monkeypatch,
+):
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setattr(
+        bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None
+    )
+    ticks = iter([0.0, 181.0])
+    monkeypatch.setattr(bootstrap.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _seconds: None)
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "fedora-static",
+            "net0": "virtio=" + MAC + ",bridge=vmbr3,firewall=0",
+            "ipconfig0": "ip=190.0.231.13/24,gw=190.0.231.1",
+        },
+        guest_agent_interfaces=lambda *_: [
+            {"hardware-address": MAC, "ip-addresses": []}
+        ],
+    )
+    with pytest.raises(
+        GuestIdentityError, match="SERVICE_BOOTSTRAP_STATIC_ADDRESS_UNAVAILABLE"
+    ):
+        bootstrap.prepare(
+            fake,
+            node="mng01",
+            vmid=40240,
+            name="fedora-static",
+            instance_id="fedora-instance",
+            spec={
+                "image": "fedora-45",
+                "network_profile": "prod_static",
+                "ipv4_cidr": "190.0.231.13/24",
+                "ipv4_gateway": "190.0.231.1",
+            },
+            heartbeat=lambda: None,
+        )
+
+
 def test_dhcp_bootstrap_refuses_tagged_nic(monkeypatch):
     initialize()
     fake=SimpleNamespace(vm_config=lambda *_:{'name':'dhcp-test','net0':'virtio='+MAC+',bridge=vmbr0,tag=9','ipconfig0':'ip=dhcp'})

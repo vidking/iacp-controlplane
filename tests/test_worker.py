@@ -1196,8 +1196,12 @@ def test_reconcile_starts_recovered_provision_vm_before_guest_identity(tmp_path,
     assert "provision.power.start.completed" in kinds
 
 
+@pytest.mark.parametrize(
+    "failure_code",
+    ["SERVICE_BOOTSTRAP_GUEST_FAILED", "STATIC_GATEWAY_UNREACHABLE"],
+)
 def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resources(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, failure_code
 ):
     from worker.guest_identity import GuestIdentityError
 
@@ -1266,7 +1270,7 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
         pytest.fail("una VM presente debe retener VMID e IP hasta su eliminación confirmada")
 
     def fail_identity(*_args, **_kwargs):
-        raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
+        raise GuestIdentityError(failure_code)
 
     monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", fail_identity)
     monkeypatch.setattr(
@@ -1310,7 +1314,7 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
         ]
 
     assert (source["status"], source["phase"]) == ("failed", "guest_identity_failed")
-    assert source["error"] == "SERVICE_BOOTSTRAP_GUEST_FAILED"
+    assert source["error"] == failure_code
     assert (recovery["status"], recovery["error"]) == (
         "failed",
         "RECONCILIATION_GUEST_IDENTITY_FAILED",
