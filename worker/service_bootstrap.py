@@ -214,6 +214,7 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
             time.sleep(1)
         raise GuestIdentityError("SERVICE_BOOTSTRAP_TIMEOUT")
 
+    prepared_image = spec.get("image") in {"almalinux-9", "almalinux-10"}
     arguments = [
         instance_id,
         mac,
@@ -221,12 +222,21 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         spec.get("ipv4_cidr") or "",
         spec.get("ipv4_gateway") or "",
     ]
-    status = guest_command(["/usr/bin/python3", "-c", PROGRAM] + arguments)
+    if prepared_image:
+        helper = "/usr/local/libexec/iacp-guest-bootstrap"
+        probe = guest_command(["/usr/bin/test", "-x", helper])
+        if probe.get("exitcode") != 0:
+            raise GuestIdentityError("IMAGE_BOOTSTRAP_REQUIRED")
+        status = guest_command([helper] + arguments)
+    else:
+        status = guest_command(["/usr/bin/python3", "-c", PROGRAM] + arguments)
     if status.get("exitcode") != 0:
         if "IACP_GATEWAY_UNREACHABLE" in str(status.get("err-data", "")):
             raise GuestIdentityError("STATIC_GATEWAY_UNREACHABLE")
         raise GuestIdentityError("SERVICE_BOOTSTRAP_GUEST_FAILED")
     observed = json.loads(status.get("out-data", "{}"))
+    if prepared_image and observed.get("bootstrap_protocol") != 1:
+        raise GuestIdentityError("IMAGE_BOOTSTRAP_PROTOCOL_MISMATCH")
     if (
         observed.get("instance_id") != instance_id
         or observed.get("mac_address") != mac

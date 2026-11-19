@@ -429,6 +429,93 @@ def test_service_bootstrap_uses_the_ubuntu_guest_identity_program(monkeypatch):
     ]
 
 
+def test_almalinux_requires_fixed_helper_instead_of_arbitrary_exec(monkeypatch):
+    initialize()
+    monkeypatch.setattr(bootstrap, "_wait_for_pool_membership", lambda *args, **kwargs: None)
+    commands = []
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {"name": "alma-test", "net0": "e1000=" + MAC + ",bridge=vmbr0", "ipconfig0": "ip=dhcp"},
+        guest_agent_interfaces=lambda *_: [],
+        guest_agent_exec=lambda _node, _vmid, argv: commands.append(argv) or {"pid": 10},
+        guest_agent_exec_status=lambda *_: {"exited": True, "exitcode": 1},
+    )
+    with pytest.raises(GuestIdentityError, match="IMAGE_BOOTSTRAP_REQUIRED"):
+        bootstrap.prepare(
+            fake,
+            node="mng01",
+            vmid=40012,
+            name="alma-test",
+            instance_id="alma-test",
+            spec={"image": "almalinux-9", "network_profile": "lab_dhcp", "prepare_identity": True},
+            heartbeat=lambda: None,
+        )
+    assert commands == [["/usr/bin/test", "-x", "/usr/local/libexec/iacp-guest-bootstrap"]]
+
+
+def test_almalinux_bootstrap_uses_only_the_authorized_helper(monkeypatch):
+    initialize()
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setattr(bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None)
+    commands = []
+    response = {
+        "bootstrap_protocol": 1,
+        "instance_id": "alma-static-test",
+        "mac_address": MAC,
+        "host_key": "ssh-ed25519 AAAAexample",
+        "dns_servers": ["1.1.1.1", "8.8.8.8"],
+    }
+
+    def execute(_node, _vmid, argv):
+        commands.append(argv)
+        return {"pid": len(commands)}
+
+    def result(_node, _vmid, _pid):
+        return {
+            "exited": True,
+            "exitcode": 0,
+            "out-data": json.dumps(response) if len(commands) == 2 else "",
+        }
+
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "alma-static-test",
+            "net0": "virtio=" + MAC + ",bridge=vmbr3",
+            "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
+        },
+        guest_agent_interfaces=lambda *_: [
+            {"hardware-address": MAC, "ip-addresses": [{"ip-address": "190.0.231.8"}]}
+        ],
+        guest_agent_exec=execute,
+        guest_agent_exec_status=result,
+    )
+    binding = bootstrap.prepare(
+        fake,
+        node="mng01",
+        vmid=40013,
+        name="alma-static-test",
+        instance_id="alma-static-test",
+        spec={
+            "image": "almalinux-9",
+            "network_profile": "prod_static",
+            "ipv4_cidr": "190.0.231.8/24",
+            "ipv4_gateway": "190.0.231.1",
+        },
+        heartbeat=lambda: None,
+    )
+    assert binding["address"] == "190.0.231.8"
+    assert commands == [
+        ["/usr/bin/test", "-x", "/usr/local/libexec/iacp-guest-bootstrap"],
+        [
+            "/usr/local/libexec/iacp-guest-bootstrap",
+            "alma-static-test",
+            MAC,
+            "static",
+            "190.0.231.8/24",
+            "190.0.231.1",
+        ],
+    ]
+
+
 @pytest.mark.parametrize(
     "resolved",
     [
