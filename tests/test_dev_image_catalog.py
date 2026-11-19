@@ -11,7 +11,7 @@ ROOT = Path(__file__).parents[1]
 
 
 @pytest.mark.no_database
-def test_dev_catalog_declares_unique_fedora_and_debian_templates_without_production_entries():
+def test_dev_and_production_catalogs_publish_the_same_fedora_and_debian_templates():
     dev = json.loads(
         (ROOT / "terraform/environments/mng01/catalog-dev.json").read_text()
     )
@@ -19,11 +19,12 @@ def test_dev_catalog_declares_unique_fedora_and_debian_templates_without_product
         (ROOT / "terraform/environments/mng01/catalog.json").read_text()
     )
     dev_images = {item["image_id"]: item for item in dev["images"]}
-    production_ids = {item["image_id"] for item in production["images"]}
+    production_images = {item["image_id"]: item for item in production["images"]}
 
     assert len(dev_images) == len(dev["images"])
-    assert "fedora-45" not in production_ids
-    assert "debian-13" not in production_ids
+    assert len(production_images) == len(production["images"])
+    assert dev["plans"] == production["plans"]
+    assert dev_images == production_images
     assert {
         image_id: (
             dev_images[image_id]["distribution"],
@@ -36,7 +37,7 @@ def test_dev_catalog_declares_unique_fedora_and_debian_templates_without_product
         "debian-13": ("Debian", "13", 29006),
     }
     for image_id in ("fedora-45", "debian-13"):
-        image = dev_images[image_id]
+        image = production_images[image_id]
         assert image["source_node"] == "mng01"
         assert image["storage"] == "DS_CYBERFUEL"
         assert image["tag"] == image_id
