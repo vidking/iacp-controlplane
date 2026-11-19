@@ -257,7 +257,13 @@ cat > service-request.json <<'JSON'
     "tags": ["prueba-servicio"],
     "start_on_create": true
   },
-  "configuration": {"access_mode": "ip"}
+  "configuration": {
+    "access_mode": "ip",
+    "owner_email": "admin@example.invalid",
+    "owner_first_name": "Admin",
+    "owner_last_name": "Cliente"
+  },
+  "secrets": {"owner_password": "REEMPLAZAR_POR_SECRETO_TEMPORAL"}
 }
 JSON
 chmod 600 service-request.json
@@ -271,8 +277,9 @@ curl --fail-with-body --silent --show-error \
 chmod 600 service-response.json
 ```
 
-Para Nextcloud, cambia `application_id` a `nextcloud` y usa un nombre como
-`prueba-service-nextcloud-manual-001`. Conserva un nombre distinto y una
+Para Nextcloud, cambia `application_id` a `nextcloud`, usa un nombre como
+`prueba-service-nextcloud-manual-001` y agrega `configuration.admin_user` más
+`secrets.admin_password` al cuerpo. Conserva un nombre distinto y una
 `Idempotency-Key` nueva para cada ensayo. Si el `POST` devuelve `202`, extrae
 los identificadores y consulta el estado; una aceptación no significa que la
 instalación terminó:
@@ -291,9 +298,10 @@ curl --fail-with-body --silent --show-error \
 
 Espera a que el trabajo indique `succeeded` y la aplicación llegue a
 `awaiting_customer`. n8n debe responder su readiness cuando PostgreSQL está
-conectado y migrado. Consulta una sola vez las credenciales de Nextcloud o las
-instrucciones de acceso inicial de n8n; la cuenta propietaria de n8n se crea en
-su propia interfaz. Guarda también la CA pública del piloto para TLS por IP; no
+conectado y migrado. Consulta una sola vez las credenciales de Nextcloud o n8n;
+si enviaste `owner_*`, el propietario de n8n se crea durante el bootstrap. Si
+omitiste esos campos, n8n mantiene su wizard de primer acceso. Guarda también la
+CA pública del piloto para TLS por IP; no
 publiques esos archivos ni su contenido en terminales compartidas o tickets:
 
 ```bash
@@ -309,10 +317,9 @@ curl --fail-with-body --silent --show-error \
 chmod 600 service-credentials.json iacp-pilot-ca.crt
 ```
 
-Verifica HTTPS y acceso SSH, inicia sesión en Nextcloud o crea el propietario
-de n8n en su pantalla de primer acceso y valida la aplicación. El proxy no
+Verifica HTTPS y acceso SSH, inicia sesión en Nextcloud o n8n y valida la aplicación. El proxy no
 solicita usuario y contraseña HTTP Basic. Después de guardar de forma segura
-las credenciales de Nextcloud o definir las propias de n8n, completa la entrega:
+las credenciales de aplicación, completa la entrega:
 
 ```bash
 curl --fail-with-body --silent --show-error \

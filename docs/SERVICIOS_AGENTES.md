@@ -117,7 +117,11 @@ idempotencia para evitar persistir una respuesta con secretos en texto claro.
    actual, `configuration` y `secrets`. Requiere Ubuntu Server 24.04 e
    inicio automático. Para el acceso del cliente, acepta una clave SSH pública,
    una contraseña root o ambas; si se omite la clave, la contraseña root es
-   necesaria. Añade una clave pública temporal interna y `app-<aplicación>`.
+   necesaria. Nextcloud admite `configuration.admin_user` y `secrets.admin_password`;
+   n8n admite `configuration.owner_email`, `owner_first_name`, `owner_last_name`
+   y `secrets.owner_password`. Las contraseñas se cifran en el Control Plane y
+   nunca aparecen en el ejemplo JSON/cURL de la GUI. Añade una clave pública
+   temporal interna y `app-<aplicación>`.
 3. `GET /v1/service-instances/{id}`: infraestructura y aplicación por separado.
 4. `GET /v1/service-jobs/{id}`: trabajo, generación, error y eventos.
 5. `POST /v1/service-jobs/{id}/retry`: reintento; para `uncertain` requiere
@@ -150,9 +154,38 @@ Ejemplo de pedido (marcadores, no credenciales reales):
     },
     "tags": ["cloud-cl-0001"], "start_on_create": true
   },
-  "configuration": {"domain": "cloud.cliente.example", "admin_user": "admin"}
+  "configuration": {"domain": "cloud.cliente.example", "admin_user": "cliente_admin"},
+  "secrets": {"admin_password": "SECRETO_TEMPORAL_DEL_CLIENTE"}
 }
 ```
+
+Para enviar la cuenta inicial de n8n, usa los campos del propietario nativo:
+
+```json
+{
+  "application_id": "n8n",
+  "instance": {
+    "name": "n8n-cl-0001", "plan_id": "kvm-2", "image_id": "ubuntu-2404",
+    "environment": "lab", "network_profile": "prod_static",
+    "access": {"ssh_public_keys": ["ssh-ed25519 CLAVE_PUBLICA_CLIENTE"]},
+    "tags": ["n8n-cl-0001"], "start_on_create": true
+  },
+  "configuration": {
+    "access_mode": "domain", "domain": "n8n.cliente.example",
+    "owner_email": "admin@cliente.example", "owner_first_name": "Admin",
+    "owner_last_name": "Cliente"
+  },
+  "secrets": {"owner_password": "SECRETO_TEMPORAL_DEL_CLIENTE"}
+}
+```
+
+Los campos de cuenta de aplicación son opcionales en el API para conservar
+compatibilidad con consumidores anteriores. La GUI de documentación los exige
+para nuevas altas de Nextcloud y n8n. Si se omite la contraseña de Nextcloud, se
+genera una aleatoria y se devuelve una sola vez en `POST /credentials`; si se
+omiten los campos del propietario de n8n, se conserva su wizard de primer acceso.
+Cuando se envían, `POST /credentials` devuelve esas credenciales una sola vez con
+`Cache-Control: no-store`; el consumidor debe conservarlas fuera de logs.
 
 Estados de aplicación: `waiting_vm`, `queued`, `installing`, `delivering`, `blocked`, `uncertain`,
 `awaiting_customer`, `delivered`, `cancelled`, `deleted`. El trabajo contiene la
@@ -163,12 +196,14 @@ Los errores de aplicación no destruyen la VM ni liberan su dirección.
 
 - **Nextcloud:** PostgreSQL, Redis, cron, Caddy y administrador inicial. Se comprueba
   instalación mediante `occ status` además de HTTPS y la comprobación revisada.
+  El usuario y la contraseña enviados por el cliente se aplican al bootstrap de
+  Nextcloud; el login está disponible al finalizar la instalación.
 - **n8n:** PostgreSQL y clave de cifrado estable. Caddy solo termina TLS y reenvía
   el tráfico a n8n; no agrega Basic Auth, para que el navegador no presente un
-  diálogo ajeno a la aplicación. En el primer acceso n8n solicita crear la cuenta
-  propietaria. El cliente define y conserva esas credenciales; después usa el
-  login de n8n. La API informa ese paso y no entrega una contraseña ficticia de
-  proxy. Confirmar licencia del modelo comercial.
+  diálogo ajeno a la aplicación. Si el cliente envía los campos `owner_*`, el
+  bootstrap crea y verifica la cuenta propietaria mediante el endpoint nativo
+  de n8n; si no los envía, permanece disponible el wizard de primer acceso.
+  Confirmar licencia del modelo comercial.
 - **Hermes:** configuración persistente y proveedor OpenRouter en esta receta v1.
   `configuration.model` y `secrets.provider_api_key` son obligatorios. Telegram es
   opcional y requiere token y `telegram_allowed_users` explícitos.

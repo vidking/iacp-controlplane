@@ -133,6 +133,16 @@
                   <label>Acceso web<select id="service-access-mode"><option value="ip">Por IP · certificado de la CA del piloto</option><option value="domain">Por dominio · certificado público</option></select><small>Por IP, instala la CA del piloto en tu equipo para validar HTTPS.</small></label>
                   <label id="service-domain-field" class="hidden">Dominio del servicio<input id="service-domain" placeholder="nube.ejemplo.com" autocomplete="off"><small>El dominio debe apuntar a la IP de la instancia antes de emitir el certificado público.</small></label>
                 </div>
+                <div id="nextcloud-gui-credentials" class="form-grid two-columns hidden">
+                  <label>Usuario administrador de Nextcloud<input id="nextcloud-admin-user" autocomplete="username" pattern="[a-z][a-z0-9_-]{0,31}" maxlength="32" placeholder="admin"><small>Esta cuenta se crea durante la instalación de Nextcloud.</small></label>
+                  <label>Contraseña de Nextcloud<input id="nextcloud-admin-password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="Mínimo 12 caracteres"><small>Se guarda cifrada y se entrega una vez mediante el endpoint de credenciales.</small></label>
+                </div>
+                <div id="n8n-gui-credentials" class="form-grid two-columns hidden">
+                  <label>Correo del propietario de n8n<input id="n8n-owner-email" type="email" autocomplete="email" maxlength="254" placeholder="admin@ejemplo.com"><small>Se crea como propietario inicial de n8n.</small></label>
+                  <label>Contraseña del propietario<input id="n8n-owner-password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="Mínimo 12 caracteres, mayúscula, minúscula y número"><small>n8n validará el acceso en el primer inicio.</small></label>
+                  <label>Nombre del propietario<input id="n8n-owner-first-name" autocomplete="given-name" maxlength="80" placeholder="Nombre"></label>
+                  <label>Apellido del propietario<input id="n8n-owner-last-name" autocomplete="family-name" maxlength="80" placeholder="Apellido"></label>
+                </div>
                 <div class="form-grid three-columns">
                   <label>Plan obligatorio<select id="plan" required><option value="">Consulta el catálogo</option></select><small id="plan-help">Los vCPU, memoria y disco provienen del plan certificado.</small></label>
                   <label>Sistema operativo obligatorio<select id="image" required><option value="">Consulta el catálogo</option></select><small id="image-help">La Golden Image se conserva sin mutaciones.</small></label>

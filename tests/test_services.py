@@ -12,6 +12,27 @@ from worker import services
 from worker.service_recipes import render, RecipeError
 
 
+@pytest.mark.no_database
+def test_ubuntu_apt_sources_are_upgraded_to_https_before_install():
+    import re
+
+    from worker.service_executor import ubuntu_https_sources_task
+
+    task = ubuntu_https_sources_task()
+    replace = task["ansible.builtin.replace"]
+    assert replace["path"] == "/etc/apt/sources.list.d/ubuntu.sources"
+    source = (
+        "URIs: http://archive.ubuntu.com/ubuntu\n"
+        "URIs: http://security.ubuntu.com/ubuntu\n"
+        "URIs: http://packages.example.invalid/repo\n"
+    )
+    assert re.sub(replace["regexp"], replace["replace"], source) == (
+        "URIs: https://archive.ubuntu.com/ubuntu\n"
+        "URIs: https://security.ubuntu.com/ubuntu\n"
+        "URIs: http://packages.example.invalid/repo\n"
+    )
+
+
 def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
     from worker.service_executor import NEXTCLOUD_READY_SCRIPT
 
@@ -468,6 +489,7 @@ def test_conflicting_idempotency_and_cancel_blocks_claim(client):
 
 
 def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
+    import base64
     import subprocess
     from api.service_secrets import installation_credentials, encrypt
     from worker import service_executor
@@ -545,6 +567,15 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 },
             ]
             service_tasks = playbook[0]["tasks"][1]["block"]
+            if application == "nextcloud" and expected_action == "install":
+                compose = json.loads((control.parent / "payload/compose.yaml").read_text())
+                admin_environment = compose["services"]["app"]["environment"]
+                assert admin_environment["NEXTCLOUD_ADMIN_USER"] == "cliente_admin"
+                assert admin_environment["NEXTCLOUD_ADMIN_PASSWORD"] == "nextcloud-local-test-password"
+                config_copy = next(
+                    task for task in service_tasks if task.get("name") == "Escribir configuración"
+                )
+                assert config_copy["no_log"] is True
             if expected_action == "install":
                 assert any(
                     task.get("name") == "Validar Ubuntu Server 24.04"
@@ -559,7 +590,34 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     task.get("name") == "Instalar dependencias de Ubuntu 24.04"
                     and task.get("ansible.builtin.apt", {}).get("name")
                     == ["docker.io", "docker-compose-v2"]
+                    and task.get("ansible.builtin.apt", {}).get("lock_timeout") == 600
+                    and task.get("ansible.builtin.apt", {}).get(
+                        "update_cache_retries"
+                    )
+                    == 3
+                    and task.get("retries") == 3
                     for task in service_tasks
+                )
+                assert any(
+                    task.get("name") == "Usar HTTPS en los repositorios estándar de Ubuntu"
+                    and task.get("ansible.builtin.replace", {}).get("path")
+                    == "/etc/apt/sources.list.d/ubuntu.sources"
+                    and "URIs: https://\\1.ubuntu.com/ubuntu"
+                    == task.get("ansible.builtin.replace", {}).get("replace")
+                    for task in service_tasks
+                )
+                https_sources = next(
+                    task
+                    for task in service_tasks
+                    if task.get("name") == "Usar HTTPS en los repositorios estándar de Ubuntu"
+                )
+                package_install = next(
+                    task
+                    for task in service_tasks
+                    if task.get("name") == "Instalar dependencias de Ubuntu 24.04"
+                )
+                assert service_tasks.index(https_sources) < service_tasks.index(
+                    package_install
                 )
                 assert not any("AlmaLinux" in task.get("name", "") for task in service_tasks)
             else:
@@ -615,6 +673,23 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             else:
                 assert trusted_domain_tasks == []
                 assert trusted_domain_checks == []
+            owner_setup_tasks = [
+                task
+                for task in service_tasks
+                if task.get("name") == "Configurar propietario inicial de n8n"
+            ]
+            if application == "n8n" and expected_action == "install":
+                assert len(owner_setup_tasks) == 1
+                assert owner_setup_tasks[0]["no_log"] is True
+                owner_command = owner_setup_tasks[0]["ansible.builtin.command"]
+                assert "owner/setup" in owner_command["argv"][-1]
+                assert "local-n8n-password" not in json.dumps(owner_command["argv"])
+                owner_input = json.loads(
+                    base64.b64decode(owner_command["stdin"])
+                )
+                assert owner_input["password"] == "local-n8n-password"
+            else:
+                assert owner_setup_tasks == []
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(
@@ -653,6 +728,10 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             )
         )
         secrets = installation_credentials() | {"provider_api_key": "test-key"}
+        if application == "n8n":
+            secrets["owner_password"] = "local-n8n-password"
+        elif application == "nextcloud":
+            secrets["admin_password"] = "nextcloud-local-test-password"
         service = {
             "service_id": "service-1",
             "instance_id": "instance-1",
@@ -663,7 +742,10 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             "configuration_json": json.dumps(
                 {
                     "domain": "cloud.example.org",
-                    "admin_user": "admin",
+                    "admin_user": "cliente_admin",
+                    "owner_email": "owner@example.invalid",
+                    "owner_first_name": "Prueba",
+                    "owner_last_name": "Local",
                     "model": "test/model",
                 }
             ),
@@ -852,6 +934,149 @@ def test_n8n_access_instructions_do_not_return_proxy_credentials(client, monkeyp
     assert response.json()['owner_setup_required'] is True
     assert 'crear la cuenta propietaria' in response.json()['access_instructions']
     assert 'onboarding_password' not in response.json()
+
+
+def test_nextcloud_gui_credentials_are_applied_encrypted_and_delivered_once(client, monkeypatch):
+    request = body('prueba-nextcloud-gui-credentials')
+    request['configuration'] = {'access_mode': 'ip', 'admin_user': 'cliente_admin'}
+    request['secrets'] = {'admin_password': 'Nextcloud-Ficticio-2026'}
+    response = client.post(
+        '/v1/service-instances',
+        json=request,
+        headers={'Idempotency-Key': 'nextcloud-gui-credentials'},
+    )
+    assert response.status_code == 202, response.text
+    order = response.json()
+    assert 'Nextcloud-Ficticio-2026' not in response.text
+    with database() as db:
+        row = db.execute(
+            'SELECT configuration_json, secrets_encrypted FROM service_instances WHERE service_id=?',
+            (order['service_id'],),
+        ).fetchone()
+        stored = decrypt(row['secrets_encrypted'])
+        assert json.loads(row['configuration_json'])['admin_user'] == 'cliente_admin'
+        assert stored['admin_password'] == 'Nextcloud-Ficticio-2026'
+        assert 'Nextcloud-Ficticio-2026' not in row['secrets_encrypted']
+    ready(order['instance_id'])
+    monkeypatch.setattr(services, 'execute', lambda *_: None)
+    services.process('service-worker-test', services.claim('service-worker-test'))
+    credentials = client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials"
+    )
+    assert credentials.status_code == 200
+    assert credentials.json() == {
+        'admin_user': 'cliente_admin',
+        'admin_password': 'Nextcloud-Ficticio-2026',
+    }
+    assert credentials.headers['cache-control'] == 'no-store'
+    assert client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials"
+    ).status_code == 409
+
+
+def test_n8n_owner_credentials_are_applied_encrypted_and_delivered_once(client, monkeypatch):
+    request = body('prueba-n8n-owner-credentials')
+    request['application_id'] = 'n8n'
+    request['configuration'] = {
+        'access_mode': 'ip',
+        'owner_email': 'owner@example.invalid',
+        'owner_first_name': 'Prueba',
+        'owner_last_name': 'Local',
+    }
+    request['secrets'] = {'owner_password': 'N8n-Ficticio-2026'}
+    response = client.post(
+        '/v1/service-instances',
+        json=request,
+        headers={'Idempotency-Key': 'n8n-owner-credentials'},
+    )
+    assert response.status_code == 202, response.text
+    order = response.json()
+    assert 'N8n-Ficticio-2026' not in response.text
+    with database() as db:
+        row = db.execute(
+            'SELECT secrets_encrypted FROM service_instances WHERE service_id=?',
+            (order['service_id'],),
+        ).fetchone()
+        assert decrypt(row['secrets_encrypted'])['owner_password'] == 'N8n-Ficticio-2026'
+        assert 'N8n-Ficticio-2026' not in row['secrets_encrypted']
+    assert 'N8n-Ficticio-2026' not in client.get(
+        f"/v1/service-instances/{order['service_id']}"
+    ).text
+    ready(order['instance_id'])
+    monkeypatch.setattr(services, 'execute', lambda *_: None)
+    services.process('service-worker-test', services.claim('service-worker-test'))
+    credentials = client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials"
+    )
+    assert credentials.status_code == 200
+    assert credentials.json() == {
+        'owner_email': 'owner@example.invalid',
+        'owner_first_name': 'Prueba',
+        'owner_last_name': 'Local',
+        'owner_password': 'N8n-Ficticio-2026',
+        'owner_setup_required': False,
+    }
+    assert credentials.headers['cache-control'] == 'no-store'
+    assert client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials"
+    ).status_code == 409
+
+
+@pytest.mark.no_database
+def test_public_service_schema_documents_application_gui_credentials():
+    from api.service_models import ServiceCreateRequest
+
+    schema = ServiceCreateRequest.model_json_schema()["$defs"]
+    configuration = schema["ApplicationConfiguration"]["properties"]
+    secrets = schema["ApplicationSecrets"]["properties"]
+    assert {"owner_email", "owner_first_name", "owner_last_name"}.issubset(
+        configuration
+    )
+    assert "admin_user" in configuration
+    assert "Nextcloud" in secrets["admin_password"]["description"]
+    assert "n8n" in secrets["owner_password"]["description"]
+    for field in ("admin_password", "owner_password"):
+        password_schema = secrets[field]["anyOf"][0]
+        assert password_schema["format"] == "password"
+        assert password_schema["writeOnly"] is True
+        assert password_schema["minLength"] == 12
+
+
+@pytest.mark.no_database
+def test_n8n_gui_credentials_require_all_fields_and_supported_password():
+    from api.service_models import ServiceCreateRequest
+    from pydantic import ValidationError
+
+    request = body('invalid-n8n-gui-credentials')
+    request['application_id'] = 'n8n'
+    request['configuration'] = {'access_mode': 'ip', 'owner_email': 'owner@example.invalid'}
+    request['secrets'] = {'owner_password': 'short'}
+    with pytest.raises(ValidationError):
+        ServiceCreateRequest.model_validate(request)
+
+
+@pytest.mark.no_database
+def test_n8n_owner_task_keeps_password_out_of_process_arguments():
+    import base64
+    from worker.service_executor import n8n_owner_setup_task
+
+    password = 'N8n-Ficticio-2026'
+    task = n8n_owner_setup_task(
+        ['docker', 'compose', '--project-directory', '/tmp/service-test'],
+        {
+            'owner_email': 'owner@example.invalid',
+            'owner_first_name': 'Prueba',
+            'owner_last_name': 'Local',
+        },
+        {'owner_password': password},
+    )
+    command = task['ansible.builtin.command']
+    assert password not in json.dumps(command['argv'])
+    assert password not in command['stdin']
+    assert json.loads(base64.b64decode(command['stdin']))['password'] == password
+    assert 'owner/setup' in command['argv'][-1]
+    assert '/login' in command['argv'][-1]
+    assert task['no_log'] is True
 
 
 def test_uncertain_cancellation_requires_explicit_stopped_confirmation(client):

@@ -6,8 +6,12 @@ from scripts.wan_matrix import (
     allocate_matrix_names,
     cases,
     matrix_netbox_tags,
+    matrix_runtime,
+    nextcloud_request_token,
+    require_kvm_capacity,
     require_four_idle_service_workers,
     required_cycles,
+    ssh_failure_category,
     verify_netbox_state,
     wan_nic_config,
 )
@@ -67,6 +71,99 @@ def test_service_matrix_can_run_ubuntu_only_without_waiting_for_almalinux():
     )
 
 
+def test_service_certification_exact_cases_are_eight_unique_ubuntu_services():
+    matrix = cases("services", images=["ubuntu-2404"], include_controls=False)
+    assert len(matrix) == 8
+    assert all(case["image"] == "ubuntu-2404" and not case["control"] for case in matrix)
+    assert [(case["product"], case["plan"]) for case in matrix] == [
+        (product, f"kvm-{plan}")
+        for product in ("n8n", "nextcloud")
+        for plan in range(1, 5)
+    ]
+
+
+def test_fedora_kvm_matrix_repeats_four_plans_across_six_worker_batches():
+    matrix = cases("kvm", images=["fedora-45"])
+    assert len(matrix) == 18
+    cases_only = [case for case in matrix if not case["control"]]
+    assert len(cases_only) == 16
+    assert {case["image"] for case in matrix} == {"fedora-45"}
+    assert {case["plan"] for case in cases_only} == {
+        "kvm-1",
+        "kvm-2",
+        "kvm-3",
+        "kvm-4",
+    }
+    assert all(sum(case["plan"] == f"kvm-{plan}" for case in cases_only) == 4 for plan in range(1, 5))
+    assert sum(case["control"] for case in matrix) == 2
+    assert [len(matrix[index : index + 6]) for index in range(0, len(matrix), 6)] == [6, 6, 6]
+
+
+@pytest.mark.parametrize("image", ["fedora-45", "debian-13"])
+def test_exact_kvm_matrix_runs_six_at_a_time_and_covers_all_four_plans(image):
+    matrix = cases("kvm", images=[image], include_controls=False)
+    assert len(matrix) == 16
+    assert {case["image"] for case in matrix} == {image}
+    assert {case["plan"] for case in matrix} == {
+        "kvm-1",
+        "kvm-2",
+        "kvm-3",
+        "kvm-4",
+    }
+    assert all(
+        sum(case["plan"] == f"kvm-{plan}" for case in matrix) == 4
+        for plan in range(1, 5)
+    )
+    assert [len(matrix[index : index + 6]) for index in range(0, len(matrix), 6)] == [6, 6, 4]
+    assert not any(case["control"] for case in matrix)
+    plan_memory = {"kvm-1": 2, "kvm-2": 4, "kvm-3": 8, "kvm-4": 16}
+    assert [
+        sum(plan_memory[case["plan"]] for case in matrix[index : index + 6])
+        for index in (0, 6, 12)
+    ] == [44, 44, 32]
+
+
+def test_kvm_capacity_requires_six_worker_memory_and_storage_reserve():
+    capacity = require_kvm_capacity(
+        [{"node": "mng01", "status": "online", "mem": 20 * 1024**3, "maxmem": 100 * 1024**3}],
+        {"avail": 2000 * 1024**3},
+    )
+    assert capacity["required_memory_gib"] == 48
+    assert capacity["required_storage_gib"] == 1200
+
+    with pytest.raises(RuntimeError, match="KVM_MEMORY_CAPACITY_INSUFFICIENT"):
+        require_kvm_capacity(
+            [{"node": "mng01", "status": "online", "mem": 60 * 1024**3, "maxmem": 100 * 1024**3}],
+            {"avail": 2000 * 1024**3},
+        )
+    with pytest.raises(RuntimeError, match="KVM_STORAGE_CAPACITY_INSUFFICIENT"):
+        require_kvm_capacity(
+            [{"node": "mng01", "status": "online", "mem": 20 * 1024**3, "maxmem": 100 * 1024**3}],
+            {"avail": 1000 * 1024**3},
+        )
+
+
+def test_nextcloud_request_token_parser_handles_hidden_input_and_data_attribute():
+    token, shape = nextcloud_request_token(
+        '<form><input value="temporary" type="hidden" name="requesttoken"></form>'
+    )
+    assert token == "temporary"
+    assert shape["forms"] == 1
+    assert shape["input_names"] == ["requesttoken"]
+
+    token, shape = nextcloud_request_token(
+        '<body data-requesttoken="temporary-body-token"><form></form></body>'
+    )
+    assert token == "temporary-body-token"
+    assert shape["request_token_attributes"] == ["data-requesttoken"]
+
+
+def test_ssh_failure_category_keeps_transport_and_guest_errors_distinct():
+    assert ssh_failure_category(255, "Connection timed out") == "transport_timeout"
+    assert ssh_failure_category(255, "Permission denied") == "authentication_failed"
+    assert ssh_failure_category(1, "remote program failed") == "remote_command_error"
+
+
 def test_service_matrix_rejects_images_outside_its_catalog():
     with pytest.raises(ValueError, match="MATRIX_IMAGES_INVALID"):
         cases("services", images=["ubuntu-2204"])
@@ -105,8 +202,71 @@ def test_matrix_netbox_tag_is_the_short_vm_name():
 
 def test_wan_matrix_repeats_kvm_combinations_four_times_for_64_vms():
     assert required_cycles("kvm") == 4
-    assert required_cycles("services") == 2
+    assert required_cycles("services") == 4
     assert required_cycles("agents") == 2
+
+
+def test_service_gui_matrix_covers_32_cases_over_four_cycles():
+    cycles = [
+        cases("services", images=["ubuntu-2404"], cycle=cycle, include_controls=False)
+        for cycle in range(1, 5)
+    ]
+    assert all(len(cycle) == 8 for cycle in cycles)
+    combined = [case for cycle in cycles for case in cycle]
+    assert len(combined) == 32
+    assert all(
+        sum(case["product"] == product and case["plan"] == plan for case in combined)
+        == 4
+        for product in ("n8n", "nextcloud")
+        for plan in (f"kvm-{number}" for number in range(1, 5))
+    )
+
+
+def test_production_matrix_requires_production_stage_and_vmid_range():
+    env = {
+        "IACP_RUNTIME_STAGE": "production",
+        "IACP_VMID_MIN": "30000",
+        "IACP_VMID_MAX": "39999",
+    }
+    assert matrix_runtime(env, production=True) == {
+        "base_url": "https://iac.cyberfuel.com",
+        "vmid_range": (30000, 39999),
+        "api_container": "iacp-controlplane-prod-v1-api-1",
+        "project": "iacp-controlplane-prod-v1",
+    }
+    with pytest.raises(RuntimeError, match="PRODUCTION_STAGE_OR_VMID_RANGE_MISMATCH"):
+        matrix_runtime({**env, "IACP_VMID_MIN": "40000"}, production=True)
+
+
+def test_matrix_retry_after_seconds_and_http_date_are_respected():
+    from datetime import UTC, datetime, timedelta
+
+    from email.utils import format_datetime
+
+    from scripts.wan_matrix import retry_after_delay
+
+    now = datetime(2026, 11, 19, 1, 0, tzinfo=UTC)
+    assert retry_after_delay({"Retry-After": "5"}, 0, now=now, jitter=lambda: 0) == 5
+    date = format_datetime(now + timedelta(seconds=9), usegmt=True)
+    assert retry_after_delay({"Retry-After": date}, 0, now=now, jitter=lambda: 0) == 9
+    assert retry_after_delay({"Retry-After": "invalid"}, 2, now=now, jitter=lambda: 0) == 4
+
+
+def test_envfile_reader_parses_private_values_without_interpolation(tmp_path):
+    from scripts.envfile import read_env_file
+
+    env_file = tmp_path / "dev.env"
+    env_file.write_text(
+        "# comentario\nexport TOKEN=abc=xyz\nQUOTED='a # b'\nDOUBLE=\"literal $VALUE\\nsecond\"\nPLAIN=value # nota\nUNSET\n",
+        encoding="utf-8",
+    )
+    assert read_env_file(env_file) == {
+        "TOKEN": "abc=xyz",
+        "QUOTED": "a # b",
+        "DOUBLE": "literal $VALUE\nsecond",
+        "PLAIN": "value",
+        "UNSET": None,
+    }
 
 
 def test_service_matrix_can_target_new_ubuntu_and_alma_images():
@@ -335,11 +495,19 @@ def test_parallel_failure_contains_future_mutations():
     import pytest
 
     from scripts.wan_matrix import Matrix
+
     matrix=object.__new__(Matrix)
     matrix.abort=threading.Event()
-    def fail(_):raise RuntimeError('FALLO_CONTROLADO')
-    with pytest.raises(RuntimeError):matrix.parallel(fail,range(6))
+    completed=[]
+    matrix.record=lambda *args, **kwargs: None
+    items=[{"name":str(index)} for index in range(6)]
+    def fail(item):
+        completed.append(item["name"])
+        raise RuntimeError('FALLO_CONTROLADO')
+    with pytest.raises(RuntimeError, match="MATRIX_PARALLEL_CASE_FAILURE"):
+        matrix.parallel(fail,items)
     assert matrix.abort.is_set()
+    assert sorted(completed)==[str(index) for index in range(6)]
 
 
 def test_record_keeps_matrix_running_when_ssh_output_closes(tmp_path, monkeypatch):

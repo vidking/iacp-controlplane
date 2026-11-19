@@ -307,6 +307,16 @@
     $("image").innerHTML = images.map((image) => `<option value="${escapeHtml(image.image_id)}">${escapeHtml(image.image_id)} · Golden ${image.template_vm_id}</option>`).join("");
     $("image").value = images.some((image) => image.image_id === currentImage) ? currentImage : images[0]?.image_id || "";
     $("service-configuration").classList.toggle("hidden", !service);
+    const nextcloud = product === "nextcloud";
+    const n8n = product === "n8n";
+    $("nextcloud-gui-credentials").classList.toggle("hidden", !nextcloud);
+    $("n8n-gui-credentials").classList.toggle("hidden", !n8n);
+    ["nextcloud-admin-user", "nextcloud-admin-password"].forEach((id) => {
+      $(id).required = nextcloud;
+    });
+    ["n8n-owner-email", "n8n-owner-password", "n8n-owner-first-name", "n8n-owner-last-name"].forEach((id) => {
+      $(id).required = n8n;
+    });
     const domain = service && $("service-access-mode").value === "domain";
     $("service-domain-field").classList.toggle("hidden", !domain);
     $("service-domain").required = domain;
@@ -898,7 +908,18 @@
     if ($("application").value === "kvm") return body;
     const configuration = { access_mode: $("service-access-mode").value };
     if (configuration.access_mode === "domain") configuration.domain = $("service-domain").value.trim().toLowerCase();
-    return { application_id: $("application").value, instance: { ...body, start_on_create: true }, configuration };
+    const applicationId = $("application").value;
+    const secrets = {};
+    if (applicationId === "nextcloud") {
+      configuration.admin_user = $("nextcloud-admin-user").value.trim();
+      secrets.admin_password = $("nextcloud-admin-password").value;
+    } else if (applicationId === "n8n") {
+      configuration.owner_email = $("n8n-owner-email").value.trim().toLowerCase();
+      configuration.owner_first_name = $("n8n-owner-first-name").value.trim();
+      configuration.owner_last_name = $("n8n-owner-last-name").value.trim();
+      secrets.owner_password = $("n8n-owner-password").value;
+    }
+    return { application_id: applicationId, instance: { ...body, start_on_create: true }, configuration, secrets };
   }
 
   function redactCreateBody(body) {
@@ -906,6 +927,11 @@
     const instance = printable.instance || printable;
     if (instance.access && Object.prototype.hasOwnProperty.call(instance.access, "root_password")) {
       instance.access.root_password = "<REDACTED>";
+    }
+    if (printable.secrets) {
+      Object.keys(printable.secrets).forEach((name) => {
+        if (printable.secrets[name]) printable.secrets[name] = "<REDACTED>";
+      });
     }
     return printable;
   }

@@ -138,6 +138,20 @@ def _private_env(tmp_path):
     return path
 
 
+def test_private_environment_uses_stdlib_parser_without_interpolation(tmp_path):
+    path = tmp_path / "runtime.env"
+    path.write_text(
+        "# entorno privado\nTOKEN='literal $VALUE'\nEMPTY=\nexport ENDPOINT=https://api.example.invalid\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    assert go_live._private_environment(path) == {
+        "TOKEN": "literal $VALUE",
+        "EMPTY": "",
+        "ENDPOINT": "https://api.example.invalid",
+    }
+
+
 def test_production_configuration_passes_policy(tmp_path):
     summary = go_live._check_policy(_manifest(), _configuration(), _private_env(tmp_path))
     assert summary["backend"] == "s3"

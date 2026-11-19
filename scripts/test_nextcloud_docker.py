@@ -51,9 +51,10 @@ def main():
             "encryption_key": secrets.token_urlsafe(36),
             "gateway_token": secrets.token_urlsafe(36),
         }
+        admin_user = "cliente_admin"
         compose, files = render(
             "nextcloud",
-            {"domain": "127.0.0.1", "access_mode": "ip", "admin_user": "admin"},
+            {"domain": "127.0.0.1", "access_mode": "ip", "admin_user": admin_user},
             credentials,
             release,
         )
@@ -110,10 +111,10 @@ def main():
             homepage = page_body.decode(errors="replace").lower()
             assert page_status == 200, "NEXTCLOUD_LOGIN_PAGE_UNAVAILABLE"
             assert "untrusted domain" not in homepage and "dominio del que no se confía" not in homepage, "NEXTCLOUD_UNTRUSTED_HOSTNAME"
-            token = base64.b64encode(("admin:" + password).encode()).decode()
-            path = "/remote.php/dav/files/admin/iacp-validation.txt"
+            path = f"/remote.php/dav/files/{admin_user}/iacp-validation.txt"
 
-            def request(method, data=None):
+            def request(method, data=None, *, user=admin_user, secret=password):
+                token = base64.b64encode((user + ":" + secret).encode()).decode()
                 req = Request(url + path, data=data, method=method, headers={
                     "Authorization": "Basic " + token,
                     "Host": "127.0.0.1",
@@ -138,6 +139,12 @@ def main():
             written, _ = request("PUT", payload)
             assert written in {201, 204}, "WEBDAV_WRITE_FAILED"
             assert request("GET")[1] == payload, "WEBDAV_READ_FAILED"
+            try:
+                request("GET", user=admin_user, secret=secrets.token_urlsafe(32))
+            except HTTPError as response:
+                assert response.code == 401, "NEXTCLOUD_INVALID_PASSWORD_STATUS"
+            else:
+                raise AssertionError("NEXTCLOUD_ACCEPTED_INVALID_PASSWORD")
             run(command + ["restart", "app"])
             for _ in range(300):
                 try:
@@ -159,6 +166,9 @@ def main():
                 "scope": "Docker local con imágenes fijadas; no certificación de SO ni de MNG",
                 "nextcloud_version": release["version"],
                 "database": "PostgreSQL",
+                "customer_admin_username": admin_user,
+                "customer_admin_authentication": "PASS",
+                "invalid_password_rejection": "PASS",
                 "https_ip_ca": "PASS",
                 "webdav_write_read": "PASS",
                 "occ_installed": "PASS",

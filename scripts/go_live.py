@@ -122,10 +122,13 @@ def _extra_host_map(service: dict) -> dict[str, str]:
 
 
 def _private_environment(path: Path) -> dict:
-    from dotenv import dotenv_values
+    try:
+        from scripts.envfile import read_env_file
+    except ModuleNotFoundError:
+        from envfile import read_env_file
     if not path.is_file() or (path.stat().st_mode & 0o777) != 0o600:
         raise GateError("El entorno de referencia debe existir y tener permisos 600")
-    return dict(dotenv_values(path, interpolate=False))
+    return read_env_file(path)
 
 
 def _check_development_credentials(data: dict, env_file: Path, config: dict) -> None:

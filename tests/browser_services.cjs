@@ -24,7 +24,8 @@ const server = http.createServer((request, response) => {
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let created = false, retrieved = false, delivered = false, deleted = false, powerState = 'running', credentialPosts = 0, deletePosts = 0;
     let payload, deliveryKey;
-    const service = () => ({ service_id: 'service-test', instance_id: 'instance-test', name: 'prueba-service-n8n', application_id: 'n8n', status: deleted ? 'deleted' : delivered ? 'delivered' : 'awaiting_customer', infrastructure_status: deleted ? 'deleted' : 'ready', power_state: powerState, vmid: 40000, credentials_available: !retrieved, access_url: 'https://192.0.2.10/', configuration: {access_mode: 'ip'}, jobs: [{status:'succeeded',phase:'completed'}] });
+    const payloads = [];
+    const service = () => ({ service_id: 'service-test', instance_id: 'instance-test', name: `prueba-service-${payload?.application_id || 'n8n'}`, application_id: payload?.application_id || 'n8n', status: deleted ? 'deleted' : delivered ? 'delivered' : 'awaiting_customer', infrastructure_status: deleted ? 'deleted' : 'ready', power_state: powerState, vmid: 40000, credentials_available: !retrieved, access_url: 'https://192.0.2.10/', configuration: {access_mode: 'ip'}, jobs: [{status:'succeeded',phase:'completed'}] });
     const instance = {instance_id:'instance-test',name:'prueba-service-n8n',status:'ready',vmid:40000,image_id:'ubuntu-2404',spec:{}};
     page.on('dialog', dialog => dialog.accept());
     await page.route('**/v1/**', async route => {
@@ -34,7 +35,7 @@ const server = http.createServer((request, response) => {
       else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000],['ubuntu-2604',29001],['almalinux-9',29010],['almalinux-10',29011],['fedora-45',29005],['debian-13',29006]].map(([image_id,template_vm_id]) => ({image_id,template_vm_id}))};
       else if (pathname === '/v1/network-profiles') body = {network_profiles:[{profile_id:'lab_dhcp',enabled:true}],active_profile:'lab_dhcp'};
       else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404']}));
-      else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; payload = request.postDataJSON(); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }
+      else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; deleted = false; delivered = false; retrieved = false; powerState = 'running'; payload = request.postDataJSON(); payloads.push(payload); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }
       else if (pathname === '/v1/service-instances/service-test' && request.method() === 'DELETE') { deleted=true; deletePosts+=1; body={operation_id:'operation-delete-test'}; }
       else if (pathname === '/v1/service-instances') body = {services:created && !deleted ? [service()] : [],total:created && !deleted ? 1 : 0};
       else if (pathname === '/v1/service-instances/service-test') body = service();
@@ -55,20 +56,32 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('#services-panel').evaluate(element => element.open),false);
     await page.locator('#services-panel > summary').click();
     assert.equal(await page.locator('#services-panel').evaluate(element => element.open),true);
-    assert.equal(await page.locator('#image option').count(),4);
+    assert.equal(await page.locator('#image option').count(),6);
     assert.equal(await page.locator('[data-application-id="nextcloud"]').isEnabled(),true);
     assert.equal(await page.locator('[data-application-id="n8n"]').isEnabled(),true);
     await page.locator('[data-application-id="nextcloud"]').click();
     assert.equal(await page.locator('[data-application-id="nextcloud"]').getAttribute('aria-pressed'),'true');
-    assert.equal(await page.locator('#image option').count(),4);
+    assert.equal(await page.locator('#image option').count(),1);
+    assert.equal(await page.locator('#nextcloud-gui-credentials').isVisible(),true);
+    assert.equal(await page.locator('#nextcloud-admin-user').evaluate(field => field.required),true);
+    await page.locator('#nextcloud-admin-user').fill('cliente_admin');
+    await page.locator('#nextcloud-admin-password').fill('Nextcloud-Ficticio-2026');
+    await page.locator('#root-password').fill('password-ficticio-123');
+    assert.match(await page.locator('#json-preview').textContent(),/"admin_user": "cliente_admin"/);
+    assert.match(await page.locator('#json-preview').textContent(),/"admin_password": "<REDACTED>"/);
+    assert.equal((await page.locator('#json-preview').textContent()).includes('Nextcloud-Ficticio-2026'),false);
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
     assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
     assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
     assert.match(await page.locator('#ssh-key-help').textContent(),/ya definiste contraseña root.*no necesitas una llave SSH/i);
     await page.locator('[data-application-id="n8n"]').click();
     assert.equal(await page.locator('[data-application-id="n8n"]').getAttribute('aria-pressed'),'true');
-    assert.equal(await page.locator('#image option').count(),4);
-    await page.locator('#image').selectOption('ubuntu-2604');
+    assert.equal(await page.locator('#image option').count(),1);
+    assert.equal(await page.locator('#n8n-gui-credentials').isVisible(),true);
+    await page.locator('#n8n-owner-email').fill('owner@example.invalid');
+    await page.locator('#n8n-owner-first-name').fill('Prueba');
+    await page.locator('#n8n-owner-last-name').fill('Local');
+    await page.locator('#n8n-owner-password').fill('N8n-Ficticio-2026');
     assert.equal(await page.locator('#ssh-key').getAttribute('required'),null);
     assert.equal(await page.locator('#ssh-key').evaluate(field => field.required),false);
     assert.match(await page.locator('#root-password-label').textContent(),/contraseña root.*obligatoria/i);
@@ -78,10 +91,12 @@ const server = http.createServer((request, response) => {
     await page.locator('#name').fill('prueba-service-n8n');
     await page.locator('#root-password').fill('password-ficticio-123');
     assert.equal((await page.locator('#json-preview').textContent()).includes('password-ficticio'),false);
+    assert.equal((await page.locator('#json-preview').textContent()).includes('N8n-Ficticio-2026'),false);
     await page.locator('#create-form').evaluate(form => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector('#create-button').disabled === false);
     assert.equal(payload.application_id,'n8n'); assert.equal(payload.instance.image_id,'ubuntu-2404');
-    assert.deepEqual(payload.configuration,{access_mode:'ip'});
+    assert.deepEqual(payload.configuration,{access_mode:'ip',owner_email:'owner@example.invalid',owner_first_name:'Prueba',owner_last_name:'Local'});
+    assert.equal(payload.secrets.owner_password,'N8n-Ficticio-2026');
     assert.deepEqual(payload.instance.access.ssh_public_keys,[]);
     assert.equal(payload.instance.access.root_password,'password-ficticio-123');
     assert.equal(payload.instance.start_on_create,true);
@@ -118,8 +133,20 @@ const server = http.createServer((request, response) => {
     await page.locator('#services-panel > summary').click();
     assert.equal(await page.locator('#services-panel').evaluate(element => element.open),false);
     await page.locator('[data-application-id="kvm"]').click();
-    assert.equal(await page.locator('#image option').count(),4);
+    assert.equal(await page.locator('#image option').count(),6);
+    await page.locator('[data-application-id="nextcloud"]').click();
+    await page.locator('#nextcloud-admin-user').fill('cliente_admin');
+    await page.locator('#nextcloud-admin-password').fill('Nextcloud-Ficticio-2026');
+    await page.locator('#name').fill('prueba-service-nextcloud');
+    assert.equal((await page.locator('#json-preview').textContent()).includes('Nextcloud-Ficticio-2026'),false);
+    assert.equal((await page.locator('#curl-preview').textContent()).includes('Nextcloud-Ficticio-2026'),false);
+    await page.locator('#create-form').evaluate(form => form.requestSubmit());
+    await page.waitForFunction(() => document.querySelector('#create-button').disabled === false);
+    assert.equal(payloads.length,2);
+    assert.equal(payloads[1].application_id,'nextcloud');
+    assert.deepEqual(payloads[1].configuration,{access_mode:'ip',admin_user:'cliente_admin'});
+    assert.equal(payloads[1].secrets.admin_password,'Nextcloud-Ficticio-2026');
     assert.deepEqual(errors,[]);
-    console.log('PASS: catálogo KVM/servicios, sección plegable, administración, contrato n8n, redacción y entrega. API simulada; no certificación física.');
+    console.log('PASS: catálogo KVM/servicios, formularios Nextcloud/n8n, contratos de credenciales, redacción y entrega. API simulada; no certificación física.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode=1; }).finally(() => server.close());

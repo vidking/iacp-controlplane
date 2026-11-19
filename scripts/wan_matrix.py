@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Matriz de red del piloto dev: seis inyecciones y contención ante incertidumbre.
+"""Matriz física de red para servicios; producción requiere --production explícito.
 
-Ejecutar en el Control Plane con su entorno privado, nunca contra producción.
 La evidencia no contiene credenciales ni salidas de aplicación sin filtrar.
 """
 
@@ -10,30 +9,43 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 import hashlib
+import html
+import http.cookiejar
 import json
 import os
+import random
 import re
 import secrets
 import shlex
+import shutil
 import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-from datetime import UTC, datetime, timezone
+from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
-from dotenv import dotenv_values
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from api.catalog import PROD_STATIC_FIRST_HOST, PROD_STATIC_LAST_HOST, PROD_STATIC_PREFIX
+from scripts.envfile import read_env_file
+from api.catalog import (
+    PROD_STATIC_FIRST_HOST,
+    PROD_STATIC_LAST_HOST,
+    PROD_STATIC_PREFIX,
+    image_by_id,
+    plan_by_id,
+)
 from worker.netbox import NetBoxClient, NetBoxError
 from worker.proxmox import ProxmoxClient
 
@@ -47,7 +59,9 @@ def required_cycles(category):
     """KVM certification repeats each of its 16 combinations four times."""
     if category == "kvm":
         return 4
-    if category in {"services", "agents"}:
+    if category == "services":
+        return 4
+    if category == "agents":
         return 2
     raise ValueError("MATRIX_CATEGORY_INVALID")
 
@@ -145,22 +159,63 @@ def verify_netbox_state(client):
     }
 
 
-def cases(category, images=None, cycle=1):
+def require_kvm_capacity(nodes, storage, *, memory_gib=48, disk_gib=1200):
+    """Keep a reserve above the heaviest six worker Fedora/Debian batch."""
+
+    node = next(
+        (row for row in nodes if isinstance(row, dict) and row.get("node") == "mng01"),
+        None,
+    )
+    if not node or node.get("status") != "online":
+        raise RuntimeError("KVM_TARGET_NODE_NOT_READY")
+    try:
+        free_memory = int(node["maxmem"]) - int(node["mem"])
+        available_storage = int(storage["avail"])
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError("KVM_CAPACITY_UNAVAILABLE") from None
+    required_memory = memory_gib * 1024**3
+    required_storage = disk_gib * 1024**3
+    if free_memory < required_memory:
+        raise RuntimeError("KVM_MEMORY_CAPACITY_INSUFFICIENT")
+    if available_storage < required_storage:
+        raise RuntimeError("KVM_STORAGE_CAPACITY_INSUFFICIENT")
+    return {
+        "node": "mng01",
+        "free_memory_gib": round(free_memory / 1024**3, 2),
+        "required_memory_gib": memory_gib,
+        "available_storage_gib": round(available_storage / 1024**3, 2),
+        "required_storage_gib": disk_gib,
+    }
+
+
+def cases(category, images=None, cycle=1, *, include_controls=True):
     if category == "kvm":
-        supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+        supported_images = [
+            "ubuntu-2404",
+            "ubuntu-2604",
+            "almalinux-9",
+            "almalinux-10",
+            "fedora-45",
+            "debian-13",
+        ]
+        default_images = supported_images[:-2]
     elif category == "services":
         supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+        default_images = supported_images
     else:
         supported_images = ["ubuntu-2404", "almalinux-9"]
-    selected_images = list(dict.fromkeys(images or supported_images))
+        default_images = supported_images
+    selected_images = list(dict.fromkeys(images or default_images))
     if not selected_images or set(selected_images) - set(supported_images):
         raise ValueError("MATRIX_IMAGES_INVALID")
-    if category == "services" and cycle not in {1, 2}:
+    if category == "services" and cycle not in {1, 2, 3, 4}:
         raise ValueError("MATRIX_CYCLE_INVALID")
     if category == "services" and len(selected_images) == 4:
         selected_images = selected_images[:2] if cycle == 1 else selected_images[2:]
     products = (
-        ["kvm"]
+        ["n8n", "nextcloud"]
+        if category == "services" and not include_controls
+        else ["kvm"]
         if category == "kvm"
         else ["nextcloud", "n8n"]
         if category == "services"
@@ -172,6 +227,36 @@ def cases(category, images=None, cycle=1):
         for product, image in items
         for plan in range(1, 5)
     ]
+    if not include_controls:
+        if not result:
+            raise ValueError("MATRIX_CASES_EMPTY")
+        if category == "kvm" and len(result) < 16:
+            if len(result) == 4:
+                by_plan = {case["plan"]: case for case in result}
+                result = [
+                    by_plan[plan]
+                    for plan in (
+                        "kvm-4",
+                        "kvm-4",
+                        "kvm-1",
+                        "kvm-1",
+                        "kvm-2",
+                        "kvm-2",
+                        "kvm-4",
+                        "kvm-4",
+                        "kvm-1",
+                        "kvm-1",
+                        "kvm-2",
+                        "kvm-2",
+                        "kvm-3",
+                        "kvm-3",
+                        "kvm-3",
+                        "kvm-3",
+                    )
+                ]
+            else:
+                result = (result * ((16 + len(result) - 1) // len(result)))[:16]
+        return result
     # Mantener tres tandas físicas de seis. Un filtro de imagen conserva todas
     # las combinaciones requeridas y repite de forma balanceada hasta completar
     # las 16 posiciones de matriz.
@@ -187,6 +272,103 @@ def cases(category, images=None, cycle=1):
         for case in controls:
             case["client_ssh_key"] = False
     return result + controls
+
+
+def retry_after_delay(headers, attempt, *, now=None, jitter=None):
+    """Respeta Retry-After y agrega jitter a reintentos idempotentes."""
+
+    now = now or datetime.now(UTC)
+    jitter = jitter or random.random
+    fallback = 2**attempt
+    raw = headers.get("Retry-After") if headers else None
+    delay = fallback
+    if raw:
+        try:
+            delay = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(str(raw))
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=UTC)
+                delay = max(0.0, (retry_at - now).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                delay = fallback
+    return delay + jitter() * min(0.5, max(0.05, delay * 0.1))
+
+
+class _NextcloudTokenParser(HTMLParser):
+    """Read login CSRF tokens without retaining or logging page contents."""
+
+    TOKEN_NAMES = {"requesttoken", "csrf-token", "csrf_token"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.forms = 0
+        self.input_names = set()
+        self.request_token_attributes = set()
+        self.meta_names = set()
+        self.token = None
+
+    def handle_starttag(self, tag, attributes):
+        tag = tag.lower()
+        attrs = {key.lower(): value for key, value in attributes if key}
+        if tag == "form":
+            self.forms += 1
+        if tag == "input":
+            name = (attrs.get("name") or "").lower()
+            if name:
+                self.input_names.add(name)
+            if name in self.TOKEN_NAMES and attrs.get("value"):
+                self.token = self.token or attrs["value"]
+        if tag == "meta":
+            name = (attrs.get("name") or "").lower()
+            if name:
+                self.meta_names.add(name)
+            if name in self.TOKEN_NAMES and attrs.get("content"):
+                self.token = self.token or attrs["content"]
+        for name, value in attrs.items():
+            if name in {"data-requesttoken", "data-csrf-token", "data-csrf_token"}:
+                self.request_token_attributes.add(name)
+                if value:
+                    self.token = self.token or value
+
+
+def nextcloud_request_token(source):
+    parser = _NextcloudTokenParser()
+    parser.feed(source)
+    token = parser.token
+    if not token:
+        # Some Nextcloud releases render the token in OC's bootstrap object.
+        for pattern in (
+            r"[\"'](?:requesttoken|csrf[-_]token)[\"']\s*:\s*[\"']([^\"']+)",
+            r"\b(?:requesttoken|csrf[-_]token)\s*=\s*[\"']([^\"']+)",
+        ):
+            match = re.search(pattern, source, re.IGNORECASE)
+            if match:
+                token = html.unescape(match.group(1))
+                break
+    shape = {
+        "forms": parser.forms,
+        "input_names": sorted(parser.input_names)[:30],
+        "request_token_attributes": sorted(parser.request_token_attributes),
+        "meta_names": sorted(parser.meta_names)[:30],
+    }
+    return token, shape
+
+
+def ssh_failure_category(returncode, stderr):
+    message = (stderr or "").lower()
+    if returncode == 255:
+        if "timed out" in message:
+            return "transport_timeout"
+        if "connection refused" in message:
+            return "connection_refused"
+        if "permission denied" in message:
+            return "authentication_failed"
+        if "host key verification failed" in message:
+            return "host_key_rejected"
+        return "transport_error"
+    return "remote_command_error"
 
 
 def allocate_matrix_names(category, planned, existing_names):
@@ -216,6 +398,36 @@ def allocate_matrix_names(category, planned, existing_names):
     return names
 
 
+def matrix_runtime(env, production=False):
+    """Bind a physical matrix to one stack and its non-overlapping VMID range."""
+
+    if production:
+        if (
+            env.get("IACP_RUNTIME_STAGE") != "production"
+            or env.get("IACP_VMID_MIN") != "30000"
+            or env.get("IACP_VMID_MAX") != "39999"
+        ):
+            raise RuntimeError("PRODUCTION_STAGE_OR_VMID_RANGE_MISMATCH")
+        return {
+            "base_url": "https://iac.cyberfuel.com",
+            "vmid_range": (30000, 39999),
+            "api_container": "iacp-controlplane-prod-v1-api-1",
+            "project": "iacp-controlplane-prod-v1",
+        }
+    if (
+        env.get("IACP_RUNTIME_STAGE") != "develop"
+        or env.get("IACP_VMID_MIN") != "40000"
+        or env.get("IACP_VMID_MAX") != "49999"
+    ):
+        raise RuntimeError("DEVELOP_STAGE_OR_VMID_RANGE_MISMATCH")
+    return {
+        "base_url": "https://dev-iac.cyberfuel.com",
+        "vmid_range": (40000, 49999),
+        "api_container": "iacp-controlplane-dev-v1-api-1",
+        "project": "iacp-controlplane-dev-v1",
+    }
+
+
 def matrix_netbox_tags(name):
     """Use the VM name as the human-visible NetBox test tag."""
     if not re.fullmatch(
@@ -232,27 +444,52 @@ class Matrix:
         self.last_request = 0.0
         self.args = args
         self.profile = args.network_profile
-        self.env = dotenv_values(args.env, interpolate=False)
-        assert self.env["IACP_RUNTIME_STAGE"] == "develop"
-        assert (
-            self.env["IACP_VMID_MIN"] == "40000"
-            and self.env["IACP_VMID_MAX"] == "49999"
-        )
-        self.base = "https://dev-iac.cyberfuel.com"
+        self.env = read_env_file(args.env)
+        if args.production:
+            ipam_env = read_env_file(args.netbox_env)
+            shared_ipam = {
+                key: value
+                for key, value in ipam_env.items()
+                if key.startswith("IACP_NETBOX_") and value is not None
+            }
+            if not shared_ipam.get("IACP_NETBOX_TOKEN") or not shared_ipam.get(
+                "IACP_NETBOX_URL"
+            ):
+                raise RuntimeError("DEVELOP_NETBOX_CREDENTIALS_REQUIRED")
+            # El usuario autorizó usar el token de NetBox que ya reside en el
+            # Control Plane de Dev. Solo vive en memoria del runner; prod.env
+            # y la configuración del runtime no se modifican.
+            self.env.update(shared_ipam)
+        target = matrix_runtime(self.env, production=args.production)
+        if args.production and self.profile != "prod_static":
+            raise RuntimeError("PRODUCTION_MATRIX_REQUIRES_PROD_STATIC")
+        if args.production and args.category != "services":
+            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_IS_SERVICES_ONLY")
+        if args.production and (
+            self.env.get("IACP_SERVICES_ENABLED") != "1"
+            or self.env.get("IACP_SERVICE_EXECUTION_ENABLED") != "1"
+            or self.env.get("IACP_PROD_STATIC_ENABLED") != "1"
+            or self.env.get("IACP_PROD_STATIC_BRIDGE") != WAN_BRIDGE
+        ):
+            raise RuntimeError("PRODUCTION_SERVICE_OR_WAN_GATE_CLOSED")
+        self.base = target["base_url"]
+        self.vmid_range = target["vmid_range"]
+        self.api_container = target["api_container"]
+        self.project = target["project"]
         self.token = self.env["IACP_API_TOKEN"]
         assert 1 <= args.cycle <= required_cycles(args.category)
         self.static_bridge = WAN_BRIDGE if self.profile == "prod_static" else "vmbr0"
         self.folder = args.evidence.resolve()
         self.folder.mkdir(mode=0o700, parents=False, exist_ok=False)
-        self.key = self.folder / "client_key"
-        subprocess.run(
-            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)],
-            check=True,
-        )
-        self.askpass = self.folder / "askpass"
+        self.key_directory = Path(tempfile.mkdtemp(prefix="iacp-service-cert-"))
+        self.key_directory.chmod(0o700)
+        self.secrets = []
+        self.created_items = []
+        self.created_lock = threading.Lock()
+        self.run_started_at = datetime.now(UTC).isoformat()
+        self.askpass = self.key_directory / "askpass"
         self.askpass.write_text("#!/bin/sh\nprintf '%s\\n' \"$IACP_MATRIX_PASSWORD\"\n")
         self.askpass.chmod(0o700)
-        self.public = self.key.with_suffix(".pub").read_text().strip()
         self.log = self.folder / "results.jsonl"
         original = socket.getaddrinfo
         socket.getaddrinfo = lambda host, *a, **kw: original(
@@ -268,6 +505,48 @@ class Matrix:
         )
 
     def verify_network_profile(self):
+        plans_response = self.api("GET", "/v1/plans")
+        plans = (
+            plans_response
+            if isinstance(plans_response, list)
+            else plans_response.get("plans", [])
+        )
+        plans_by_id = {
+            row.get("plan_id"): row for row in plans if isinstance(row, dict)
+        }
+        local_plans = {
+            f"kvm-{number}": plan_by_id(f"kvm-{number}") for number in range(1, 5)
+        }
+        if any(
+            not plans_by_id.get(plan_id)
+            or any(
+                plans_by_id[plan_id].get(field) != definition.get(field)
+                for field in ("vcpus", "memory_mb", "disk_gb")
+            )
+            for plan_id, definition in local_plans.items()
+            if definition
+        ) or any(definition is None for definition in local_plans.values()):
+            raise RuntimeError("MATRIX_PLAN_NOT_IN_CATALOG")
+        if self.args.category == "services":
+            app_response = self.api("GET", "/v1/applications")
+            apps = (
+                app_response
+                if isinstance(app_response, list)
+                else app_response.get("applications", [])
+            )
+            by_id = {
+                row.get("application_id"): row
+                for row in apps
+                if isinstance(row, dict)
+            }
+            for application in ("nextcloud", "n8n"):
+                row = by_id.get(application, {})
+                if (
+                    not row.get("enabled")
+                    or row.get("image_id") != "ubuntu-2404"
+                    or row.get("supported_image_ids") != ["ubuntu-2404"]
+                ):
+                    raise RuntimeError("MATRIX_SERVICE_CATALOG_MISMATCH")
         if self.profile == "prod_static":
             self.static_bridge = wan_nic_config(self.env)
             ipam_environment = {
@@ -295,6 +574,15 @@ class Matrix:
             }
             if not set(selected_images).issubset(catalog_ids):
                 raise RuntimeError("MATRIX_IMAGE_NOT_IN_CATALOG")
+            if "ubuntu-2404" in selected_images:
+                self.verify_ubuntu_template(catalog_images)
+            if self.args.exact_cases and self.args.category == "kvm":
+                capacity = require_kvm_capacity(
+                    self.proxmox.nodes(),
+                    self.proxmox.storage_status("mng01", "DS_CYBERFUEL"),
+                )
+                self.record("kvm_capacity_verified", **capacity)
+                self.verify_requested_templates(catalog_images, selected_images)
             selected_alma = [
                 image for image in selected_images if image in EXPECTED_ALMALINUX_IMAGES
             ]
@@ -318,6 +606,167 @@ class Matrix:
                 bridge=WAN_BRIDGE,
             )
 
+    def verify_requested_templates(self, catalog_images, selected_images):
+        selected = [
+            image_id
+            for image_id in selected_images
+            if image_id in {"fedora-45", "debian-13"}
+        ]
+        inventory = self.proxmox.inventory()
+        for image_id in selected:
+            expected = image_by_id(image_id)
+            published = next(
+                (
+                    row
+                    for row in catalog_images
+                    if isinstance(row, dict) and row.get("image_id") == image_id
+                ),
+                None,
+            )
+            if (
+                not expected
+                or not published
+                or published.get("template_vm_id") != expected.get("template_vm_id")
+                or published.get("source_node") != "mng01"
+                or published.get("storage") != "DS_CYBERFUEL"
+                or published.get("cloudinit_username") != "root"
+            ):
+                raise RuntimeError("KVM_GOLDEN_CATALOG_MISMATCH")
+            vmid = int(expected["template_vm_id"])
+            vm = next(
+                (
+                    row
+                    for row in inventory
+                    if isinstance(row, dict) and int(row.get("vmid", 0)) == vmid
+                ),
+                None,
+            )
+            if not vm or vm.get("node") != "mng01" or vm.get("status") != "stopped":
+                raise RuntimeError("KVM_GOLDEN_INVENTORY_MISMATCH")
+            config = self.proxmox.vm_config("mng01", vmid)
+            root_disk = str(config.get("scsi0", ""))
+            cloudinit_disk = str(config.get("scsi1", "")).lower()
+            if (
+                config.get("template") not in {1, "1", True}
+                or "enabled=1" not in str(config.get("agent", ""))
+                or not root_disk.startswith("DS_CYBERFUEL:")
+                or "cloudinit" not in cloudinit_disk
+            ):
+                raise RuntimeError("KVM_GOLDEN_TEMPLATE_INVALID")
+        self.record(
+            "kvm_templates_verified",
+            images=[{"image_id": image_id, "template_vm_id": image_by_id(image_id)["template_vm_id"]} for image_id in selected],
+        )
+
+    def verify_ubuntu_template(self, catalog_images):
+        image = image_by_id("ubuntu-2404")
+        local_plans = {
+            f"kvm-{number}": plan_by_id(f"kvm-{number}") for number in range(1, 5)
+        }
+        published = next(
+            (row for row in catalog_images if row.get("image_id") == "ubuntu-2404"),
+            None,
+        )
+        if (
+            not image
+            or not published
+            or image.get("template_vm_id") != 29000
+            or image.get("source_node") != "mng01"
+            or image.get("storage") != "DS_CYBERFUEL"
+            or image.get("cloudinit_username") != "root"
+            or published.get("template_vm_id") != 29000
+            or published.get("source_node") != "mng01"
+            or published.get("storage") != "DS_CYBERFUEL"
+        ):
+            raise RuntimeError("UBUNTU_GOLDEN_CATALOG_MISMATCH")
+        inventory = self.proxmox.inventory()
+        vm = next(
+            (row for row in inventory if int(row.get("vmid", 0)) == 29000), None
+        )
+        if not vm or vm.get("node") != "mng01" or vm.get("status") != "stopped":
+            raise RuntimeError("UBUNTU_GOLDEN_INVENTORY_MISMATCH")
+        config = self.proxmox.vm_config("mng01", 29000)
+        root_disk = next(
+            (
+                config.get(key, "")
+                for key in ("scsi0", "virtio0", "sata0")
+                if config.get(key)
+            ),
+            "",
+        )
+        root_size = re.search(r"(?:^|,)size=(\d+)G(?:,|$)", root_disk)
+        cloudinit = any(
+            str(config.get(key, "")).lower().startswith(
+                image["storage"].lower() + ":"
+            )
+            and "cloudinit" in str(config.get(key, "")).lower()
+            for key in ("ide2", "scsi1", "sata1", "virtio1")
+        )
+        if (
+            config.get("template") not in {1, "1", True}
+            or config.get("ostype") != "l26"
+            or config.get("bios") != "ovmf"
+            or config.get("machine") != "q35"
+            or "enabled=1" not in config.get("agent", "")
+            or not root_disk.startswith("DS_CYBERFUEL:")
+            or not root_size
+            or int(root_size.group(1)) < image["minimum_disk_gb"]
+            or not cloudinit
+        ):
+            raise RuntimeError("UBUNTU_GOLDEN_HARDWARE_OR_CLOUDINIT_MISMATCH")
+        node = next(
+            (row for row in self.proxmox.nodes() if row.get("node") == "mng01"), None
+        )
+        storage = self.proxmox.storage_status("mng01", image["storage"])
+        requested_cases = cases(
+            "services",
+            images=self.args.images,
+            cycle=self.args.cycle,
+            include_controls=not self.args.exact_cases,
+        )
+        batch = requested_cases[:6]
+        required_memory = sum(
+            plan_by_id(case["plan"])["memory_mb"] for case in batch
+        )
+        required_cores = sum(plan_by_id(case["plan"])["vcpus"] for case in batch)
+        required_disk_gb = sum(
+            plan_by_id(case["plan"])["disk_gb"] for case in batch
+        )
+        if (
+            not node
+            or node.get("status") != "online"
+            or int(node.get("maxcpu", 0)) < required_cores
+            or int(node.get("maxmem", 0)) - int(node.get("mem", 0))
+            < (required_memory + 16_384) * 1024 * 1024
+            or str(storage.get("active", "")).lower() not in {"1", "true"}
+            or str(storage.get("enabled", "")).lower() not in {"1", "true"}
+            or int(storage.get("avail", 0)) < required_disk_gb * 1_100_000_000
+        ):
+            raise RuntimeError("MNG_STATIC_BATCH_CAPACITY_INSUFFICIENT")
+        for plan_id, definition in local_plans.items():
+            if (
+                definition["vcpus"] < image["minimum_vcpus"]
+                or definition["memory_mb"] < image["minimum_memory_mb"]
+                or definition["disk_gb"] < image["minimum_disk_gb"]
+            ):
+                raise RuntimeError("UBUNTU_PLAN_BELOW_IMAGE_MINIMUM")
+        self.record(
+            "ubuntu_template_verified",
+            image_id="ubuntu-2404",
+            template_vm_id=29000,
+            node="mng01",
+            storage="DS_CYBERFUEL",
+            template=True,
+            cloud_init=True,
+            guest_agent=True,
+            bios="ovmf",
+            machine="q35",
+            batch_vcpus=required_cores,
+            batch_memory_mb=required_memory,
+            batch_disk_gb=required_disk_gb,
+            storage_avail_gb=round(int(storage["avail"]) / 1_000_000_000, 1),
+        )
+
     def record(self, event, **data):
         with self.log.open("a") as f:
             f.write(
@@ -336,6 +785,15 @@ class Matrix:
             # La evidencia persistente es autoritativa; perder SSH no debe detener
             # pruebas ni dejar recursos físicos sin la fase de limpieza.
             sys.stdout = open(os.devnull, "w")
+
+    def check(self, item, check_id, evidence):
+        self.record(
+            "check",
+            case=item["name"],
+            check_id=check_id,
+            status="PASS",
+            evidence=evidence,
+        )
 
     def api(self, method, path, body=None, key=None, raw=False):
         headers = {
@@ -366,24 +824,62 @@ class Matrix:
                     return f.read() if raw else json.load(f)
             except HTTPError as e:
                 if e.code == 429 and (method == "GET" or key) and attempt < 3:
-                    time.sleep(2**attempt)
+                    delay = retry_after_delay(e.headers, attempt)
+                    self.record(
+                        "api_retry",
+                        method=method,
+                        endpoint=path.split("?")[0],
+                        status=429,
+                        attempt=attempt + 1,
+                        delay_seconds=round(delay, 2),
+                        retry_after=e.headers.get("Retry-After"),
+                    )
+                    time.sleep(delay)
                     continue
                 raise RuntimeError(
                     f"API_{e.code}_{method}_{path.split('/')[2]}"
                 ) from None
+            except (URLError, TimeoutError, ConnectionError):
+                if (method == "GET" or key) and attempt < 3:
+                    delay = retry_after_delay({}, attempt)
+                    self.record(
+                        "api_retry",
+                        method=method,
+                        endpoint=path.split("?")[0],
+                        status="transport_error",
+                        attempt=attempt + 1,
+                        delay_seconds=round(delay, 2),
+                    )
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(
+                    f"API_TRANSPORT_{method}_{path.split('/')[2]}"
+                ) from None
 
     def parallel(self, function, items):
-        def guarded(item):
-            if self.abort.is_set():
-                raise RuntimeError("MATRIX_CONTAINMENT_ACTIVE")
-            try:
-                return function(item)
-            except Exception:
-                self.abort.set()
-                raise
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            return list(pool.map(guarded, items))
+            futures = {pool.submit(function, item): item for item in items}
+            results = {}
+            failures = []
+            for future in concurrent.futures.as_completed(futures):
+                item = futures[future]
+                try:
+                    results[item["name"]] = future.result()
+                except Exception as error:
+                    code = (
+                        str(error)
+                        if type(error) in {AssertionError, RuntimeError}
+                        and re.fullmatch(r"[A-Z0-9_.:-]{1,100}", str(error))
+                        else type(error).__name__
+                    )
+                    self.record("case_error", case=item["name"], error=code)
+                    failures.append((item["name"], isinstance(error, AssertionError)))
+        if failures:
+            self.abort.set()
+            if all(is_assertion for _, is_assertion in failures):
+                raise AssertionError("MATRIX_PARALLEL_CASE_FAILURE")
+            raise RuntimeError("MATRIX_PARALLEL_CASE_FAILURE")
+        return [results[item["name"]] for item in items]
 
     def idle(self):
         state = self.api("GET", "/v1/observability")
@@ -401,6 +897,42 @@ class Matrix:
         ), "SIX_WORKERS_REQUIRED"
         service_state = self.api("GET", "/v1/service-workers")
         require_four_idle_service_workers(service_state)
+        query = """
+from api.db import database
+with database() as db:
+    jobs=db.execute("SELECT COUNT(*) AS n FROM service_jobs WHERE status IN ('queued','running','uncertain')").fetchone()['n']
+    locks=db.execute("SELECT COUNT(*) AS n FROM pg_locks WHERE locktype='advisory'").fetchone()['n']
+print(f"{jobs} {locks}")
+"""
+        checked = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                self.api_container,
+                "python",
+                "-",
+            ],
+            input=query,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        if checked.returncode:
+            raise RuntimeError("SERVICE_QUEUE_PREFLIGHT_FAILED")
+        try:
+            active_jobs, advisory_locks = map(int, checked.stdout.split())
+        except (ValueError, TypeError):
+            raise RuntimeError("SERVICE_QUEUE_PREFLIGHT_FAILED") from None
+        if active_jobs or advisory_locks:
+            raise RuntimeError("SERVICE_QUEUE_NOT_IDLE")
+        self.record(
+            "quiescence",
+            infrastructure_workers=len(state["workers"]),
+            service_workers=len(service_state["workers"]),
+            active_service_jobs=active_jobs,
+            advisory_locks=advisory_locks,
+        )
         return state
 
     def wait_operation(self, job):
@@ -413,12 +945,12 @@ class Matrix:
             time.sleep(2)
         raise RuntimeError("OPERATION_TIMEOUT")
 
-    def qga(self, vmid, argv):
+    def qga(self, vmid, argv, *, allowed_exitcodes=(0,)):
         result = self.proxmox.guest_agent_exec("mng01", vmid, argv)
         for _ in range(90):
             state = self.proxmox.guest_agent_exec_status("mng01", vmid, result["pid"])
             if state.get("exited"):
-                assert state.get("exitcode") == 0, "QGA_COMMAND_FAILED"
+                assert state.get("exitcode") in allowed_exitcodes, "QGA_COMMAND_FAILED"
                 return state.get("out-data", "")
             time.sleep(1)
         raise RuntimeError("QGA_TIMEOUT")
@@ -443,6 +975,32 @@ class Matrix:
             assert nic.get("bridge") == "vmbr0"
             assert "tag=" not in config["net0"] and config["ipconfig0"] == "ip=dhcp"
         known = self.folder / ("known-" + str(vmid))
+        if item["image"] == "fedora-45":
+            mac = config["net0"].split(",")[0].split("=", 1)[1].lower()
+            addresses = [
+                str(entry.get("ip-address", ""))
+                for interface in self.proxmox.guest_agent_interfaces("mng01", vmid)
+                if str(interface.get("hardware-address", "")).lower() == mac
+                for entry in interface.get("ip-addresses", [])
+                if entry.get("ip-address-type") == "ipv4"
+            ]
+            assert addresses == [item["address"]], "FEDORA_GUEST_AGENT_ADDRESS_MISMATCH"
+            scanned = subprocess.run(
+                ["ssh-keyscan", "-T", "10", "-t", "ed25519", item["address"]],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            known_hosts = [
+                line
+                for line in scanned.stdout.splitlines()
+                if line and not line.startswith("#") and " ssh-ed25519 " in line
+            ]
+            assert scanned.returncode == 0 and known_hosts, "FEDORA_SSH_KEYSCAN_FAILED"
+            known.write_text("\n".join(known_hosts) + "\n")
+            item["known"] = str(known)
+            item["host_key_source"] = "ssh-keyscan; autenticación posterior con clave efímera"
+            return
         if item["image"] in {"almalinux-9", "almalinux-10"}:
             mac = config["net0"].split(",")[0].split("=", 1)[1].lower()
             observed = json.loads(self.qga(vmid, [
@@ -460,6 +1018,87 @@ class Matrix:
         assert re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+", hostkey), "SSH_HOST_KEY_INVALID"
         known.write_text(item["address"] + " " + hostkey + "\n")
         item["known"] = str(known)
+
+    def hardware(self, item, instance):
+        image = image_by_id(item["image"])
+        plan = plan_by_id(item["plan"])
+        assert image, "SERVICE_IMAGE_NOT_IN_CATALOG"
+        assert plan, "SERVICE_PLAN_NOT_IN_CATALOG"
+        assert instance.get("image_id") == item["image"]
+        assert instance.get("plan_id") == item["plan"]
+        assert instance.get("node") == "mng01"
+        assert instance.get("status") == "ready"
+        config = self.proxmox.vm_config("mng01", item["vmid"])
+        template = self.proxmox.vm_config("mng01", image["template_vm_id"])
+        assert config.get("name") == item["name"] and not config.get("template")
+        assert int(config.get("cores", 0)) == plan["vcpus"], "VM_CPU_MISMATCH"
+        assert int(config.get("memory", 0)) == plan["memory_mb"], "VM_MEMORY_MISMATCH"
+        assert config.get("bios") == template.get("bios"), "VM_FIRMWARE_MISMATCH"
+        assert config.get("machine") == template.get("machine"), "VM_MACHINE_MISMATCH"
+        disk = next(
+            (
+                config.get(key, "")
+                for key in ("scsi0", "virtio0", "sata0")
+                if config.get(key)
+            ),
+            "",
+        )
+        size = re.search(r"(?:^|,)size=(\d+)G(?:,|$)", disk)
+        assert size and int(size.group(1)) == plan["disk_gb"], "VM_DISK_SIZE_MISMATCH"
+        assert disk.startswith(image["storage"] + ":"), "VM_STORAGE_MISMATCH"
+        assert "enabled=1" in config.get("agent", ""), "VM_GUEST_AGENT_DISABLED"
+        events = self.api(
+            "GET",
+            "/v1/events?operation_id=" + item["operation_id"] + "&sort=asc&limit=500",
+        ).get("events", [])
+        assert any(
+            row.get("kind") in {"golden.observed", "image.validated"}
+            and row.get("status") == "ok"
+            and row.get("detail") == item["image"]
+            for row in events
+        ), "GOLDEN_IMAGE_CLONE_NOT_PROVEN"
+        self.check(
+            item,
+            "A03",
+            f"evento golden.observed de {item['image']}/{image['template_vm_id']}; CPU, RAM, disco, firmware, red, QGA y DS_CYBERFUEL verificados",
+        )
+
+    def reject_ssh_password(self, item, password):
+        args = [
+            "ssh",
+            "-o",
+            "BatchMode=no",
+            "-o",
+            "PreferredAuthentications=password",
+            "-o",
+            "PubkeyAuthentication=no",
+            "-o",
+            "NumberOfPasswordPrompts=1",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "UserKnownHostsFile=" + item["known"],
+            "-o",
+            "ConnectTimeout=15",
+            "root@" + item["address"],
+            "true",
+        ]
+        environment = os.environ.copy()
+        environment.update(
+            SSH_ASKPASS=str(self.askpass),
+            SSH_ASKPASS_REQUIRE="force",
+            DISPLAY=":iacp",
+            IACP_MATRIX_PASSWORD=password,
+        )
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
+            start_new_session=True,
+        )
+        return result.returncode != 0
 
     def ssh(self, item, argv, input=None, password=None):
         if self.abort.is_set():
@@ -479,7 +1118,7 @@ class Matrix:
             "-o",
             "IdentitiesOnly=yes",
             "-i",
-            str(self.key),
+            str(item["client_key_path"]),
             "root@" + item["address"],
             shlex.join(argv),
         ]
@@ -510,12 +1149,34 @@ class Matrix:
             start_new_session=True,
         )
         if result.returncode:
-            raise RuntimeError("SSH_COMMAND_FAILED")
+            program = str(argv[0]) if argv and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", str(argv[0])) else "unknown"
+            category = ssh_failure_category(result.returncode, result.stderr)
+            self.record(
+                "ssh_failure",
+                case=item.get("name", "unknown"),
+                program=program,
+                category=category,
+                exit_code=result.returncode,
+            )
+            raise RuntimeError(
+                f"SSH_{category.upper()}_{program.upper()}_{abs(result.returncode)}"
+            )
         return result.stdout
 
     def create(self, index, case):
         name = self.matrix_names[index - 1]
         password = secrets.token_urlsafe(32)
+        application_user = None
+        application_email = None
+        application_password = None
+        key_file = self.key_directory / f"client-{index:02d}"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key_file)],
+            check=True,
+        )
+        self.secrets.append(key_file.read_text())
+        public_key = key_file.with_suffix(".pub").read_text().strip()
+        self.secrets.append(password)
         body = {
             "name": name,
             "plan_id": case["plan"],
@@ -523,7 +1184,7 @@ class Matrix:
             "environment": "lab",
             "network_profile": self.profile,
             "access": {
-                "ssh_public_keys": [self.public] if case.get("client_ssh_key", True) else [],
+                "ssh_public_keys": [public_key] if case.get("client_ssh_key", True) else [],
                 "root_password": password,
             },
             # NetBox should identify a test allocation by its readable VM
@@ -532,24 +1193,56 @@ class Matrix:
             "start_on_create": True,
         }
         if case["product"] == "kvm":
-            result = self.api("POST", "/v1/instances", body, name)
+            endpoint = "/v1/instances"
         else:
             config = (
                 {"access_mode": "ip"}
                 if case["product"] in {"nextcloud", "n8n"}
                 else {"agent_mode": "local"}
             )
-            result = self.api(
-                "POST",
-                "/v1/service-instances",
-                {
+            application_password = secrets.token_urlsafe(32) + "Aa9!"
+            self.secrets.append(application_password)
+            application_secrets = {}
+            if case["product"] == "nextcloud":
+                application_user = f"cliente{index:03d}"
+                config["admin_user"] = application_user
+                application_secrets["admin_password"] = application_password
+            elif case["product"] == "n8n":
+                application_email = f"e2e{self.args.run}{index:03d}@example.invalid"
+                config.update(
+                    {
+                        "owner_email": application_email,
+                        "owner_first_name": "Prueba",
+                        "owner_last_name": "Servicio",
+                    }
+                )
+                application_secrets["owner_password"] = application_password
+            endpoint = "/v1/service-instances"
+            body = {
                     "application_id": case["product"],
                     "instance": body,
                     "configuration": config,
-                },
-                name,
-            )
-        item = dict(case, **result, name=name, password=password)
+                    "secrets": application_secrets,
+                }
+        result = self.api("POST", endpoint, body, name)
+        item = dict(
+            case,
+            **result,
+            name=name,
+            password=password,
+            application_user=application_user,
+            application_email=application_email,
+            application_password=application_password,
+            client_key_path=str(key_file),
+        )
+        with self.created_lock:
+            self.created_items.append(item)
+        replay = self.api("POST", endpoint, body, name)
+        assert all(result.get(key) == replay.get(key) for key in ("instance_id", "operation_id")), "IDEMPOTENCY_REPLAY_MISMATCH"
+        if case["product"] != "kvm":
+            assert result.get("service_id") == replay.get("service_id"), "IDEMPOTENCY_SERVICE_REPLAY_MISMATCH"
+        self.check(item, "A01", "GET /v1/images, /v1/applications y /v1/plans; imagen y plan habilitados")
+        self.check(item, "A02", "POST JSON admitido; replay idempotente devuelve la misma instancia y operación")
         return item
 
     def web(
@@ -582,11 +1275,101 @@ class Matrix:
         except HTTPError as error:
             return error.code, error.read(), error.headers
 
-    def n8n_owner_auth(self, item, setup_owner):
-        email = f"prueba-n8n-{item['vmid']}@example.invalid"
-        if setup_owner:
+    def nextcloud_gui_login(self, item, *, invalid_password=False):
+        """Envía el formulario real de login y verifica una sesión autenticada."""
+
+        context = ssl.create_default_context(cafile=str(item["ca"]))
+        cookies = http.cookiejar.CookieJar()
+        opener = build_opener(
+            HTTPSHandler(context=context), HTTPCookieProcessor(cookies)
+        )
+        root = "https://" + item["address"]
+        login_url = root + "/login"
+
+        def read_page(request):
+            try:
+                with opener.open(request, timeout=60) as response:
+                    return response.status, response.read(), response.geturl()
+            except HTTPError as error:
+                return error.code, error.read(), error.geturl()
+
+        status, page, _ = read_page(Request(login_url))
+        assert status == 200, "NEXTCLOUD_LOGIN_PAGE_UNAVAILABLE"
+        source = page.decode("utf-8", errors="replace")
+        token, page_shape = nextcloud_request_token(source)
+        if not token:
+            self.record(
+                "nextcloud_login_form_diagnostic",
+                case=item["name"],
+                **page_shape,
+            )
+            raise AssertionError("NEXTCLOUD_GUI_CSRF_TOKEN_MISSING")
+        credentials = item["credentials"]
+        password = credentials["admin_password"] + ("X" if invalid_password else "")
+        payload = urlencode(
+            {
+                "user": credentials["admin_user"],
+                "password": password,
+                "requesttoken": token,
+            }
+        ).encode()
+        request = Request(
+            login_url,
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": login_url,
+                "Origin": root,
+            },
+        )
+        login_status, _, landing = read_page(request)
+        path = urlsplit(landing).path.lower()
+        if invalid_password:
+            assert login_status in {200, 302, 303, 401, 403} and "login" in path, (
+                "NEXTCLOUD_GUI_INVALID_PASSWORD_ACCEPTED"
+            )
+            self.check(item, "C06", "formulario GUI Nextcloud rechaza contraseña incorrecta")
+            return
+        assert login_status == 200 and "login" not in path, "NEXTCLOUD_GUI_LOGIN_FAILED"
+        dashboard_status, body, dashboard_url = read_page(
+            Request(root + "/index.php/apps/files/")
+        )
+        assert (
+            dashboard_status == 200
+            and "login" not in urlsplit(dashboard_url).path.lower()
+            and b"files" in body.lower()
+        ), (
+            "NEXTCLOUD_GUI_SESSION_NOT_AUTHENTICATED"
+        )
+        self.check(item, "C04", "login GUI Nextcloud crea sesión autenticada en Archivos")
+
+    def wait_application_ready(self, item, timeout=600):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if item["product"] == "nextcloud":
+                    status, body, _ = self.web(item, "/status.php", basic_auth=False)
+                    ready = status == 200 and json.loads(body).get("installed") is True
+                else:
+                    status, body, _ = self.web(
+                        item, "/healthz/readiness", basic_auth=False
+                    )
+                    ready = status == 200 and json.loads(body).get("status") == "ok"
+                if ready:
+                    return
+            except (OSError, ValueError, TimeoutError):
+                pass
+            time.sleep(2)
+        raise RuntimeError("SERVICE_READINESS_TIMEOUT")
+
+    def n8n_owner_auth(self, item, setup_owner, check_invalid=True):
+        credentials = item.get("credentials", {})
+        email = credentials.get("owner_email") or f"prueba-n8n-{item['vmid']}@example.invalid"
+        if setup_owner and not credentials.get("owner_password"):
             item["n8n_owner_password"] = secrets.token_urlsafe(32) + "Aa9!"
-        password = item.get("n8n_owner_password")
+            self.secrets.append(item["n8n_owner_password"])
+        password = credentials.get("owner_password") or item.get("n8n_owner_password")
         assert password, "N8N_OWNER_PASSWORD_NOT_PRESERVED"
         if setup_owner:
             status, body, _ = self.web(
@@ -615,7 +1398,7 @@ class Matrix:
         cookies = response_headers.get_all("Set-Cookie", [])
         cookie = "; ".join(value.split(";", 1)[0] for value in cookies)
         assert cookie, "N8N_OWNER_SESSION_MISSING"
-        if setup_owner:
+        if check_invalid:
             status, _, _ = self.web(
                 item,
                 "/rest/login",
@@ -623,7 +1406,8 @@ class Matrix:
                 json.dumps({"emailOrLdapLoginId": email, "password": password + "X"}).encode(),
                 basic_auth=False,
             )
-            assert status == 401, "N8N_INVALID_PASSWORD_ACCEPTED"
+            assert status in {401, 403}, "N8N_INVALID_PASSWORD_ACCEPTED"
+            self.check(item, "C06", "n8n rechaza credencial administrativa incorrecta")
         status, body, _ = self.web(
             item,
             "/rest/workflows?skip=0&take=10",
@@ -634,22 +1418,70 @@ class Matrix:
             workflow.get("id") == "iacpValidation"
             for workflow in json.loads(body).get("data", [])
         ), "N8N_OWNER_WORKFLOW_ACCESS_FAILED"
+        self.check(item, "C04", "login n8n y sesión administrativa autenticada")
+
+    def containers_running(self, item):
+        expected = (
+            {"app", "postgres", "redis", "cron", "caddy"}
+            if item["product"] == "nextcloud"
+            else {"app", "postgres", "caddy"}
+        )
+        root = "/opt/iacp-services/" + item["service_id"]
+        output = self.ssh(
+            item,
+            [
+                "docker",
+                "compose",
+                "--project-directory",
+                root,
+                "ps",
+                "--services",
+                "--status",
+                "running",
+            ],
+        )
+        assert expected.issubset(set(output.splitlines())), "SERVICE_CONTAINERS_NOT_RUNNING"
+        self.check(item, "C02", "todos los contenedores esperados están ejecutándose")
 
     def application(self, item, after_reboot=False):
         product = item["product"]
         root = "/opt/iacp-services/" + item["service_id"]
         base = ["docker", "compose", "--project-directory", root]
+        self.wait_application_ready(item)
+        self.containers_running(item)
         if product == "nextcloud":
-            path = "/remote.php/dav/files/admin/iacp-persistence.txt"
+            user = item["credentials"]["admin_user"]
+            folder = f"/remote.php/dav/files/{user}/iacp-certification"
+            path = folder + "/iacp-persistence.txt"
             if not after_reboot:
-                self.web(item, path, "PUT", b"iacp-persistence")
-            assert self.web(item, path)[1] == b"iacp-persistence"
+                page_status, _, _ = self.web(item, "/login", basic_auth=False)
+                assert page_status == 200, "NEXTCLOUD_GUI_UNAVAILABLE"
+                self.check(item, "C03", "GUI Nextcloud responde por HTTPS con CA y SAN IP válidos")
+                self.nextcloud_gui_login(item)
+                self.nextcloud_gui_login(item, invalid_password=True)
+                created, _, _ = self.web(item, folder, "MKCOL")
+                assert created == 201, "NEXTCLOUD_FOLDER_CREATE_FAILED"
+            if not after_reboot:
+                status, _, _ = self.web(item, path, "PUT", b"iacp-persistence")
+                assert status in {201, 204}, "NEXTCLOUD_UPLOAD_FAILED"
+            status, downloaded, _ = self.web(item, path)
+            checksum = hashlib.sha256(downloaded).hexdigest()
+            assert status == 200 and checksum == hashlib.sha256(b"iacp-persistence").hexdigest(), "NEXTCLOUD_FILE_CHECKSUM_MISMATCH"
+            item["nextcloud_checksum"] = checksum
+            if not after_reboot:
+                self.check(item, "C04", "WebDAV autentica al usuario administrador")
+                self.check(item, "C05", "archivo sintético descargado con checksum SHA-256 verificado")
+                self.check(item, "D01", "archivo persistente escrito y comprobado")
+            elif item.get("nextcloud_checksum") == checksum:
+                self.check(item, "D05", "archivo y checksum permanecen tras reinicio")
         elif product == "n8n":
             readiness, body, _ = self.web(
                 item, "/healthz/readiness", basic_auth=False
             )
             assert readiness == 200 and json.loads(body).get("status") == "ok", "N8N_NOT_READY"
             assert self.web(item, "/", basic_auth=False)[0] == 200
+            if not after_reboot:
+                self.check(item, "C03", "GUI n8n responde por HTTPS con validación de CA y SAN IP")
             if not after_reboot:
                 workflow = {
                     "id": "iacpValidation",
@@ -714,7 +1546,15 @@ class Matrix:
             assert "iacpValidation" in output and "true" in output, (
                 "N8N_WORKFLOW_FAILED"
             )
-            self.n8n_owner_auth(item, setup_owner=not after_reboot)
+            if not after_reboot:
+                self.check(item, "C05", "workflow sintético n8n ejecutado y resultado confirmado")
+                self.check(item, "D01", "workflow de prueba persistido en el volumen de datos")
+            self.n8n_owner_auth(
+                item,
+                setup_owner=bool(item["credentials"].get("owner_setup_required"))
+                and not after_reboot,
+                check_invalid=not after_reboot,
+            )
         elif product == "hermes":
             self.ssh(item, base + ["exec", "-T", "app", "hermes", "config", "check"])
         else:
@@ -733,7 +1573,21 @@ class Matrix:
     def verify(self, item):
         instance = self.api("GET", "/v1/instances/" + item["instance_id"])
         item["vmid"] = instance["vmid"]
-        assert 40000 <= item["vmid"] <= 49999
+        assert self.vmid_range[0] <= item["vmid"] <= self.vmid_range[1]
+        self.hardware(item, instance)
+        self.check(item, "A06", "la API publica estado READY, nodo mng01 e instancia encendida")
+        if item["image"] == "fedora-45":
+            self.check(item, "A04", "la clave configurada por Cloud-Init autentica por SSH; SELinux restringe cloud-init status vía Guest Agent")
+        else:
+            cloud = json.loads(
+                self.qga(
+                    item["vmid"],
+                    ["/usr/bin/cloud-init", "status", "--long", "--format", "json"],
+                    allowed_exitcodes=(0, 2),
+                )
+            )
+            assert cloud.get("status") == "done" and cloud.get("errors") == [], "CLOUD_INIT_NOT_COMPLETE"
+            self.check(item, "A04", "Cloud-Init informa done sin errores mediante Guest Agent")
         allocation = instance["network_allocation"]
         if self.profile == "prod_static":
             assert (
@@ -758,26 +1612,45 @@ class Matrix:
             assert len(addresses) == 1, "DHCP_ADDRESS_AMBIGUOUS"
             item["address"] = addresses[0]
         self.binding(item)
+        self.check(item, "A05", "Guest Agent, IPAM, NIC, gateway e identidad SSH coinciden")
         assert self.ssh(item, ["hostname"]).strip() == item["name"]
+        self.check(item, "B01", "autenticación SSH Ed25519 válida")
         assert (
             self.ssh(item, ["hostname"], password=item["password"]).strip()
             == item["name"]
         )
+        self.check(item, "B02", "autenticación SSH con la credencial de root configurada")
+        assert self.reject_ssh_password(item, item["password"] + "X"), "SSH_INVALID_PASSWORD_ACCEPTED"
+        self.check(item, "B03", "SSH rechaza una credencial incorrecta")
         self.ssh(
             item,
             [
                 "sh",
                 "-c",
-                "set -e; ip route show default | grep -q default; getent hosts example.com >/dev/null; curl --fail --silent --show-error --max-time 30 https://example.com/ >/dev/null",
+                "set -e; ip route show default | grep -q default; "
+                "for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do "
+                "getent ahostsv4 registry-1.docker.io >/dev/null && exit 0; "
+                "sleep 2; done; exit 1",
             ],
         )
+        self.check(item, "A05", "ruta por defecto y resolución DNS de registry OCI disponibles")
         self.ssh(
             item, ["sh", "-c", "printf iacp-persistence > /root/iacp-validation.txt"]
         )
+        self.check(item, "D01", "marcador sintético de persistencia escrito en el sistema")
         if item["product"] != "kvm":
             item["credentials"] = self.api(
                 "POST", "/v1/service-instances/" + item["service_id"] + "/credentials"
             )
+            if item["credentials"].get("admin_password"):
+                self.secrets.append(item["credentials"]["admin_password"])
+            if item["product"] == "nextcloud":
+                assert item["credentials"].get("admin_user") == item["application_user"]
+                assert item["credentials"].get("admin_password") == item["application_password"]
+            elif item["product"] == "n8n":
+                assert item["credentials"].get("owner_email") == item["application_email"]
+                assert item["credentials"].get("owner_password") == item["application_password"]
+                self.secrets.append(item["credentials"]["owner_password"])
             if item["product"] in {"nextcloud", "n8n"}:
                 ca = self.folder / ("ca-" + str(item["vmid"]) + ".crt")
                 ca.write_bytes(
@@ -795,6 +1668,11 @@ class Matrix:
                 key="delivery-" + item["name"],
             )
             self.wait_service(delivery["job_id"])
+            self.check(item, "C01", "bootstrap del servicio completado por el worker y entrega canónica registrada")
+            root = "/opt/iacp-services/" + item["service_id"]
+            self.ssh(item, ["docker", "compose", "--project-directory", root, "restart"])
+            self.application(item, True)
+            self.check(item, "D02", "contenedores reiniciados y servicio volvió a responder")
         self.wait_operation(
             self.api(
                 "POST",
@@ -802,12 +1680,15 @@ class Matrix:
                 key="reboot-" + item["name"],
             )
         )
+        self.check(item, "D03", "reinicio de la KVM completado mediante API")
         for attempt in range(60):
             try:
                 assert (
                     self.ssh(item, ["cat", "/root/iacp-validation.txt"])
                     == "iacp-persistence"
                 )
+                assert self.ssh(item, ["hostname"], password=item["password"]).strip() == item["name"]
+                self.check(item, "B04", "clave SSH y contraseña siguen válidas tras reinicio")
                 if item["product"] != "kvm":
                     self.application(item, True)
                 break
@@ -815,6 +1696,33 @@ class Matrix:
                 if attempt == 59:
                     raise
                 time.sleep(3)
+        shutdown = self.api(
+            "POST",
+            "/v1/instances/" + item["instance_id"] + "/power/shutdown",
+            key="lifecycle-shutdown-" + item["name"],
+        )
+        self.wait_operation(shutdown)
+        stopped = self.api("GET", "/v1/instances/" + item["instance_id"])
+        assert stopped["power_state"] == "stopped" and stopped["status"] == "stopped"
+        physical = self.proxmox.power_state("mng01", item["vmid"], item["name"])
+        assert physical["power_state"] == "stopped"
+        started = self.api(
+            "POST",
+            "/v1/instances/" + item["instance_id"] + "/power/start",
+            key="lifecycle-start-" + item["name"],
+        )
+        self.wait_operation(started)
+        running = self.api("GET", "/v1/instances/" + item["instance_id"])
+        physical = self.proxmox.power_state("mng01", item["vmid"], item["name"])
+        assert running["status"] == "ready" and running["power_state"] == "running"
+        assert physical["power_state"] == "running"
+        assert self.ssh(item, ["hostname"]).strip() == item["name"]
+        assert self.ssh(item, ["hostname"], password=item["password"]).strip() == item["name"]
+        if item["product"] != "kvm":
+            self.application(item, True)
+        self.check(item, "D04", "apagado y encendido ordenados mediante API")
+        self.check(item, "D05", "accesos y datos del servicio continúan después de apagado/encendido")
+        self.check(item, "D06", "estado API y estado físico Proxmox coinciden")
         self.record(
             "verified",
             name=item["name"],
@@ -892,6 +1800,14 @@ class Matrix:
         raise RuntimeError("SERVICE_TIMEOUT")
 
     def cleanup(self, item):
+        before = self.api("GET", "/v1/instances/" + item["instance_id"])
+        assert (
+            before.get("name") == item["name"]
+            and before.get("vmid") == item["vmid"]
+            and before.get("image_id") == item["image"]
+            and before.get("plan_id") == item["plan"]
+            and before.get("status") == "ready"
+        ), "DELETE_IDENTITY_NOT_CONFIRMED"
         self.wait_operation(
             self.api(
                 "POST",
@@ -899,30 +1815,27 @@ class Matrix:
                 key="shutdown-" + item["name"],
             )
         )
-        self.wait_operation(
-            self.api(
-                "DELETE",
-                "/v1/instances/" + item["instance_id"],
-                key="delete-" + item["name"],
-            )
+        delete_path = (
+            "/v1/service-instances/" + item["service_id"]
+            if item["product"] != "kvm"
+            else "/v1/instances/" + item["instance_id"]
         )
+        deleted_operation = self.api(
+            "DELETE", delete_path, key="delete-" + item["name"]
+        )
+        item["delete_operation_id"] = deleted_operation["operation_id"]
+        self.wait_operation(deleted_operation)
+        self.check(item, "E01", "instancia eliminada por DELETE canónico")
         assert not any(
             int(v.get("vmid", 0)) == item["vmid"] for v in self.proxmox.inventory()
         )
+        self.check(item, "E02", "VM ausente del inventario Proxmox del clúster MNG")
         state = self.api("GET", "/v1/instances/" + item["instance_id"])
         assert state["status"] == "deleted"
+        self.check(item, "E03", "API conserva auditoría y estado deleted para la identidad probada")
         if self.profile == "lab_dhcp":
             assert state["network_allocation"] is None
-            self.record(
-                "PASS",
-                name=item["name"],
-                product=item["product"],
-                image=item["image"],
-                plan=item["plan"],
-                control=item["control"],
-                vmid=item["vmid"],
-                network_profile=self.profile,
-            )
+            self.check(item, "E04", "no había reserva IPAM que liberar en lab_dhcp")
             return
         assert state["network_allocation"]["status"] == "released"
         # La misma dirección debe quedar ausente de NetBox, sin tocar registros ajenos.
@@ -936,18 +1849,178 @@ class Matrix:
         )
         with urlopen(req, timeout=30) as f:
             assert json.load(f)["count"] == 0
+        self.check(item, "E04", "IP liberada en API y ausente de NetBox")
+        events = self.api(
+            "GET",
+            "/v1/events?operation_id=" + item["delete_operation_id"] + "&sort=asc&limit=100",
+        ).get("events", [])
+        assert any(
+            row.get("kind") in {"logical.delete.completed", "instance.delete.completed"}
+            and row.get("status") == "succeeded"
+            for row in events
+        ), "DELETE_AUDIT_EVENT_MISSING"
+        self.check(item, "E06", "operación y evento de auditoría DELETE registrados")
+
+    def post_cleanup(self, items):
+        targets = [
+            {
+                "instance_id": item["instance_id"],
+                "vmid": item["vmid"],
+                "operation_id": item["operation_id"],
+            }
+            for item in items
+        ]
+        script = """
+import json,sys
+from pathlib import Path
+from api.db import database
+targets=json.loads(sys.argv[1])
+def state_summary(root,vmid):
+    if not root:return {'checked':False,'resources':None,'target_present':None}
+    paths=list(Path(root).rglob('terraform.tfstate')) if Path(root).exists() else []
+    if not paths:return {'checked':False,'resources':None,'target_present':None}
+    resources=[]
+    def collect(module):
+        resources.extend(module.get('resources',[]))
+        for child in module.get('child_modules',[]):collect(child)
+    for path in paths:
+        data=json.loads(path.read_text())
+        if data.get('resources'):resources.extend(data['resources'])
+        if data.get('outputs') is not None and data.get('terraform_version'):
+            root_module=(data.get('values') or {}).get('root_module')
+            if root_module:collect(root_module)
+    present=False
+    for resource in resources:
+        values=resource.get('instances',[{}])[0].get('attributes',{}) if resource.get('instances') else resource.get('values',{})
+        candidate=values.get('vm_id',values.get('vmid')) if isinstance(values,dict) else None
+        if str(candidate)==str(vmid):present=True
+    return {'checked':True,'resources':len(resources),'target_present':present}
+result={'instances':[]}
+with database() as db:
+    result['active_operations']=db.execute("SELECT COUNT(*) AS n FROM operations WHERE status IN ('pending','running','planning','planned','applying','destroying','powering','uncertain')").fetchone()['n']
+    result['active_service_jobs']=db.execute("SELECT COUNT(*) AS n FROM service_jobs WHERE status IN ('queued','running','uncertain')").fetchone()['n']
+    result['advisory_locks']=db.execute("SELECT COUNT(*) AS n FROM pg_locks WHERE locktype='advisory'").fetchone()['n']
+    for target in targets:
+        lease=db.execute("SELECT status FROM vmid_leases WHERE vmid=?",(target['vmid'],)).fetchone()
+        instance=db.execute("SELECT operation_id,status FROM instances WHERE instance_id=?",(target['instance_id'],)).fetchone()
+        active=db.execute("SELECT COUNT(*) AS n FROM operations WHERE instance_id=? AND status IN ('pending','running','planning','planned','applying','destroying','powering','uncertain')",(target['instance_id'],)).fetchone()['n']
+        jobs=db.execute("SELECT COUNT(*) AS n FROM service_jobs j JOIN service_instances s ON s.service_id=j.service_id WHERE s.instance_id=? AND j.status IN ('queued','running','uncertain')",(target['instance_id'],)).fetchone()['n']
+        workspace=db.execute("SELECT workspace_path FROM operations WHERE operation_id=?",(target['operation_id'],)).fetchone()
+        tf=state_summary(workspace['workspace_path'] if workspace else None,target['vmid'])
+        result['instances'].append({'instance_id':target['instance_id'],'vmid':target['vmid'],'lease_status':lease['status'] if lease else None,'instance_status':instance['status'] if instance else None,'active_operations':active,'active_service_jobs':jobs,'terraform':tf})
+print(json.dumps(result,sort_keys=True))
+"""
+        result = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                self.api_container,
+                "python",
+                "-",
+                json.dumps(targets),
+            ],
+            input=script,
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode:
+            raise RuntimeError("POST_DELETE_STATE_QUERY_FAILED")
+        summary = json.loads(result.stdout)
+        assert summary["active_operations"] == 0, "POST_DELETE_OPERATIONS_ACTIVE"
+        assert summary["active_service_jobs"] == 0, "POST_DELETE_SERVICE_JOBS_ACTIVE"
+        assert summary["advisory_locks"] == 0, "POST_DELETE_ADVISORY_LOCKS_ACTIVE"
+        for item, state in zip(items, summary["instances"], strict=True):
+            assert state["lease_status"] == "released", "VMID_LEASE_NOT_RELEASED"
+            assert state["instance_status"] == "deleted"
+            assert state["active_operations"] == 0 and state["active_service_jobs"] == 0
+            assert state["terraform"]["checked"]
+            assert state["terraform"]["resources"] == 0
+            assert not state["terraform"]["target_present"]
+            self.check(item, "E03", "lease VMID liberado y state Terraform sin recursos activos")
+            self.check(item, "E05", "sin operaciones o trabajos huérfanos; locks advisory en cero")
         self.record(
-            "PASS",
-            name=item["name"],
-            product=item["product"],
-            image=item["image"],
-            plan=item["plan"],
-            control=item["control"],
-            vmid=item["vmid"],
+            "post_cleanup",
+            instance_count=len(items),
+            active_operations=summary["active_operations"],
+            active_service_jobs=summary["active_service_jobs"],
+            advisory_locks=summary["advisory_locks"],
+            terraform_active_resources=sum(
+                row["terraform"]["resources"] for row in summary["instances"]
+            ),
         )
 
+    def verify_secrets_absent(self, items):
+        for path in self.folder.rglob("*"):
+            if not path.is_file():
+                continue
+            contents = path.read_bytes()
+            if any(secret.encode() in contents for secret in self.secrets):
+                raise RuntimeError("TEST_SECRET_FOUND_IN_EVIDENCE")
+        listed = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "--quiet",
+                "--filter",
+                "label=com.docker.compose.project=" + self.project,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        containers = listed.stdout.split()
+        if listed.returncode or not containers:
+            raise RuntimeError("RUNTIME_LOG_SCAN_UNAVAILABLE")
+        for container in containers:
+            logs = subprocess.run(
+                ["docker", "logs", "--since", self.run_started_at, container],
+                capture_output=True,
+                timeout=120,
+            )
+            if logs.returncode:
+                raise RuntimeError("TEST_LOG_SCAN_UNAVAILABLE")
+            if any(secret.encode() in logs.stdout or secret.encode() in logs.stderr for secret in self.secrets):
+                raise RuntimeError("TEST_SECRET_FOUND_IN_RUNTIME_LOG")
+        for item in items:
+            self.check(item, "B05", "credenciales efímeras ausentes de logs y evidencias")
+
+    def close(self):
+        shutil.rmtree(self.key_directory, ignore_errors=True)
+
     def run(self):
-        planned = cases(self.args.category, self.args.images, self.args.cycle)
+        planned = cases(
+            self.args.category,
+            self.args.images,
+            self.args.cycle,
+            include_controls=not self.args.exact_cases,
+        )
+        if self.args.exact_cases:
+            exact_services = (
+                self.args.category == "services"
+                and self.args.images == ["ubuntu-2404"]
+                and self.profile == "prod_static"
+                and len(planned) == 8
+            )
+            exact_kvm = (
+                self.args.category == "kvm"
+                and self.args.images in (["fedora-45"], ["debian-13"])
+                and self.profile == "prod_static"
+                and len(planned) == 16
+                and all(
+                    sum(case["plan"] == f"kvm-{plan}" for case in planned) == 4
+                    for plan in range(1, 5)
+                )
+            )
+            if not (exact_services or exact_kvm):
+                raise RuntimeError("EXACT_MATRIX_CASES_INVALID")
+        if self.args.production and (
+            not self.args.exact_cases
+            or self.args.category != "services"
+            or self.args.images != ["ubuntu-2404"]
+        ):
+            raise RuntimeError("PRODUCTION_MATRIX_REQUIRES_EXACT_UBUNTU_SERVICES")
         existing_names = []
         offset = 0
         while True:
@@ -973,8 +2046,8 @@ class Matrix:
             cycle=self.args.cycle,
             revision=self.env["IACP_IMAGE_TAG"],
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            cases=16,
-            controls=2,
+            cases=sum(not case["control"] for case in planned),
+            controls=sum(bool(case["control"]) for case in planned),
             images=sorted({case["image"] for case in planned}),
             name_prefix=(
                 "kvm-prueba"
@@ -985,13 +2058,33 @@ class Matrix:
             ),
         )
         self.verify_network_profile()
-        for offset in range(0, 18, 6):
+        if self.args.preflight_only:
+            self.idle()
+            self.record(
+                "PREFLIGHT",
+                result="PASS",
+                production=self.args.production,
+                no_instances_created=True,
+            )
+            return
+        indexed = list(enumerate(planned))
+        if self.args.production and self.args.cycle == 1:
+            pilot_indexes = (0, next(i for i, item in enumerate(planned) if item["product"] == "nextcloud"))
+            pilot_batches = [
+                [(index, dict(planned[index], pilot=True))]
+                for index in pilot_indexes
+            ]
+            remaining = [pair for pair in indexed if pair[0] not in pilot_indexes]
+            batches = pilot_batches + [remaining[index : index + 6] for index in range(0, len(remaining), 6)]
+        else:
+            batches = [indexed[index : index + 6] for index in range(0, len(indexed), 6)]
+        for batch in batches:
             self.idle()
             with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
                 items = list(
                     pool.map(
                         lambda pair: self.create(*pair),
-                        enumerate(planned[offset : offset + 6], start=offset + 1),
+                        [(index + 1, case) for index, case in batch],
                     )
                 )
             self.record(
@@ -1016,20 +2109,41 @@ class Matrix:
                 time.sleep(1)
             else:
                 raise RuntimeError("BATCH_TIMEOUT")
-            assert peak == 6, "SIX_SIMULTANEOUS_NOT_OBSERVED"
-            self.record("concurrency", simultaneous_peak=peak)
+            expected_peak = min(6, len(items))
+            assert peak == expected_peak, "BATCH_CONCURRENCY_NOT_OBSERVED"
+            if len(items) == 6:
+                assert peak == 6, "SIX_SIMULTANEOUS_NOT_OBSERVED"
+            self.record("concurrency", simultaneous_peak=peak, batch_size=len(items))
             for item in items:
                 if item["product"] != "kvm":
                     self.wait_service(item["job_id"])
             self.parallel(self.verify, items)
             self.parallel(self.cleanup, items)
-        self.idle()
-        self.record("COMPLETE", result="PASS", cases=16, controls=2)
+            self.post_cleanup(items)
+            self.idle()
+        self.verify_secrets_absent(self.created_items)
+        self.record(
+            "COMPLETE",
+            result="PASS",
+            cases=sum(not case["control"] for case in planned),
+            controls=sum(bool(case["control"]) for case in planned),
+        )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", type=Path, default=Path("/etc/iacp/stacks/dev.env"))
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Apunta exclusivamente a iac.cyberfuel.com con prod.env y Prod_Static; requiere autorización operativa.",
+    )
+    parser.add_argument(
+        "--netbox-env",
+        type=Path,
+        default=Path("/etc/iacp/stacks/dev.env"),
+        help="Origen del token NetBox compartido autorizado para la matriz de producción.",
+    )
     parser.add_argument(
         "--category", choices=["kvm", "services", "agents"], required=True
     )
@@ -1040,15 +2154,25 @@ if __name__ == "__main__":
     parser.add_argument("--run", required=True)
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument(
+        "--exact-cases",
+        action="store_true",
+        help="Ejecuta el alcance exacto: ocho servicios Ubuntu o 16 KVM de Fedora/Debian, sin controles extra.",
+    )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Comprueba stack, seis workers, servicios, catálogo, MNG, WAN e IPAM sin crear recursos.",
+    )
+    parser.add_argument(
         "--images",
         nargs="+",
-        choices=["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"],
+        choices=["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13"],
         help="Limita la matriz a imágenes concretas; servicios separa Ubuntu y AlmaLinux por ciclo.",
     )
     args = parser.parse_args()
     if not 1 <= args.cycle <= required_cycles(args.category):
         parser.error(
-            "KVM admite ciclos 1–4; servicios y agentes admiten ciclos 1–2"
+            "KVM y servicios admiten ciclos 1–4; agentes admiten ciclos 1–2"
         )
     if not args.run.isdigit() or len(args.run) > 14:
         parser.error("run debe ser una marca numérica de hasta 14 dígitos")
@@ -1058,9 +2182,15 @@ if __name__ == "__main__":
     except Exception as error:
         # No serializar errores arbitrarios: pueden contener credenciales HTTP.
         matrix.record(
-            "BLOCKED",
+            "FAIL" if isinstance(error, AssertionError) else "BLOCKED",
             reason=str(error)
             if type(error) in {AssertionError, RuntimeError}
             else type(error).__name__,
+            created_instances=[
+                {k: item.get(k) for k in ("name", "instance_id", "operation_id", "vmid", "status")}
+                for item in matrix.created_items
+            ],
         )
         sys.exit(1)
+    finally:
+        matrix.close()

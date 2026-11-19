@@ -52,11 +52,15 @@ def create(request: ServiceCreateRequest, key: str | None):
     def builder(db):
         service_id, job_id, operation_id = (str(uuid.uuid4()) for _ in range(3))
         credentials = installation_credentials()
-        credentials.update(body["secrets"])
+        credentials.update(
+            {name: value for name, value in body["secrets"].items() if value is not None}
+        )
         if request.application_id == "n8n":
-            # n8n inicializa su propio propietario en la interfaz; no se crea ni
-            # se entrega una contraseña de proxy que el usuario no puede usar ahí.
+            # La receta crea el propietario nativo cuando el cliente lo envía.
+            # Los pedidos antiguos conservan el onboarding interactivo de n8n.
             credentials.pop("admin_password", None)
+        elif request.application_id == "nextcloud" and request.secrets.admin_password:
+            credentials["admin_password"] = request.secrets.admin_password.get_secret_value()
         try:
             envelope = encrypt(credentials)
         except (OSError, ValueError, RuntimeError):
@@ -295,14 +299,24 @@ def credentials(service_id):
                 "admin_password": secrets["admin_password"],
             }
         elif row["application_id"] == "n8n":
-            result = {
-                "owner_setup_required": True,
-                "access_instructions": (
-                    "Abre la URL del servicio. En el primer acceso, n8n solicita "
-                    "crear la cuenta propietaria; después podrás iniciar sesión "
-                    "con las credenciales que definas allí."
-                ),
-            }
+            configuration = json.loads(row["configuration_json"])
+            if secrets.get("owner_password"):
+                result = {
+                    "owner_email": configuration["owner_email"],
+                    "owner_first_name": configuration["owner_first_name"],
+                    "owner_last_name": configuration["owner_last_name"],
+                    "owner_password": secrets["owner_password"],
+                    "owner_setup_required": False,
+                }
+            else:
+                result = {
+                    "owner_setup_required": True,
+                    "access_instructions": (
+                        "Abre la URL del servicio. En el primer acceso, n8n solicita "
+                        "crear la cuenta propietaria; después podrás iniciar sesión "
+                        "con las credenciales que definas allí."
+                    ),
+                }
         elif row["application_id"] == "openclaw":
             result = {"gateway_token": secrets["gateway_token"], "access": "ssh"}
         else:

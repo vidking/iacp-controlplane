@@ -1,5 +1,6 @@
 """Ejecutor Ansible. Los bindings SSH y releases son entradas del operador, no del consumidor."""
 
+import base64
 import json
 import os
 import re
@@ -30,6 +31,56 @@ NEXTCLOUD_READY_SCRIPT = (
     "exit 1\n"
 )
 
+N8N_OWNER_SETUP_SCRIPT = """import {readFileSync} from 'node:fs';
+const account = JSON.parse(Buffer.from(readFileSync(0, 'utf8').trim(), 'base64').toString('utf8'));
+const base = 'http://127.0.0.1:5678/rest';
+async function post(path, value) {
+  const response = await fetch(base + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(value),
+  });
+  let body = {};
+  try { body = await response.json(); } catch {}
+  return {status: response.status, body: body.data ?? body};
+}
+const setup = await post('/owner/setup', {
+  email: account.email,
+  firstName: account.firstName,
+  lastName: account.lastName,
+  password: account.password,
+});
+if (setup.status === 200 && setup.body.email === account.email) {
+  console.log('IACP_N8N_OWNER_CREATED');
+  process.exit(0);
+}
+// Si el worker reanuda después de que n8n creó la cuenta, verificar el login
+// convierte la repetición en idempotente sin revelar la causa ni la respuesta.
+const login = await post('/login', {
+  emailOrLdapLoginId: account.email,
+  password: account.password,
+});
+if (login.status === 200 && login.body.email === account.email) {
+  console.log('IACP_N8N_OWNER_VERIFIED');
+  process.exit(0);
+}
+console.error('IACP_N8N_OWNER_SETUP_FAILED');
+process.exit(1);
+"""
+
+
+def ubuntu_https_sources_task() -> dict:
+    """Use authenticated HTTPS for the standard Ubuntu Noble repositories."""
+
+    return {
+        "name": "Usar HTTPS en los repositorios estándar de Ubuntu",
+        "ansible.builtin.replace": {
+            "path": "/etc/apt/sources.list.d/ubuntu.sources",
+            "regexp": r"(?m)^URIs: http://(archive|security)\.ubuntu\.com/ubuntu$",
+            "replace": r"URIs: https://\1.ubuntu.com/ubuntu",
+        },
+    }
+
 
 def nextcloud_status_argv(base: list[str]) -> list[str]:
     """Espera a que OCC informe instalación sin analizar JSON intermedio inválido."""
@@ -44,6 +95,40 @@ def nextcloud_status_argv(base: list[str]) -> list[str]:
         "-ec",
         NEXTCLOUD_READY_SCRIPT,
     ]
+
+
+def n8n_owner_setup_task(base: list[str], configuration: dict, secrets: dict) -> dict:
+    """Crear y verificar el usuario propietario nativo de n8n sin exponerlo en argv/logs."""
+
+    return {
+        "name": "Configurar propietario inicial de n8n",
+        "ansible.builtin.command": {
+            "argv": base
+            + [
+                "exec",
+                "-T",
+                "app",
+                "node",
+                "--input-type=module",
+                "-e",
+                N8N_OWNER_SETUP_SCRIPT,
+            ],
+            "stdin": base64.b64encode(
+                json.dumps(
+                    {
+                        "email": configuration["owner_email"],
+                        "firstName": configuration["owner_first_name"],
+                        "lastName": configuration["owner_last_name"],
+                        "password": secrets["owner_password"],
+                    }
+                ).encode()
+            ).decode(),
+        },
+        "register": "n8n_owner_setup",
+        "changed_when": "'IACP_N8N_OWNER_CREATED' in n8n_owner_setup.stdout",
+        "failed_when": "n8n_owner_setup.rc != 0",
+        "no_log": True,
+    }
 
 
 class ServiceBlocked(RuntimeError):
@@ -196,13 +281,21 @@ def execute(service, job, heartbeat):
                     "fail_msg": "SERVICE_OS_UNSUPPORTED",
                 },
             },
+            ubuntu_https_sources_task(),
             {
                 "name": "Instalar dependencias de Ubuntu 24.04",
                 "ansible.builtin.apt": {
                     "name": ["docker.io", "docker-compose-v2"],
                     "state": "present",
                     "update_cache": True,
+                    "update_cache_retries": 3,
+                    "update_cache_retry_max_delay": 30,
+                    "lock_timeout": 600,
                 },
+                "register": "service_packages",
+                "until": "service_packages is succeeded",
+                "retries": 3,
+                "delay": 10,
             },
             {
                 "name": "Iniciar Docker",
@@ -304,6 +397,8 @@ def execute(service, job, heartbeat):
                 **command(base + ["up", "-d", "--wait", "--wait-timeout", "300"]),
             }
         ]
+        if service["application_id"] == "n8n" and secrets.get("owner_password"):
+            tasks.append(n8n_owner_setup_task(base, configuration, secrets))
         if service["application_id"] == "nextcloud":
             tasks.append(
                 {
