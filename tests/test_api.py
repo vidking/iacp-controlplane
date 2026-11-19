@@ -126,6 +126,8 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
             ("ubuntu-2604", 29001),
             ("almalinux-9", 29010),
             ("almalinux-10", 29011),
+            ("fedora-45", 29005),
+            ("debian-13", 29006),
         ]
 
 

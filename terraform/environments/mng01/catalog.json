@@ -52,6 +52,32 @@
       "minimum_vcpus": 1,
       "minimum_memory_mb": 2048,
       "minimum_disk_gb": 20
+    },
+    {
+      "image_id": "fedora-45",
+      "distribution": "Fedora",
+      "version": "45",
+      "template_vm_id": 29005,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "fedora-45",
+      "cloudinit_username": "root",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 2048,
+      "minimum_disk_gb": 20
+    },
+    {
+      "image_id": "debian-13",
+      "distribution": "Debian",
+      "version": "13",
+      "template_vm_id": 29006,
+      "source_node": "mng01",
+      "storage": "DS_CYBERFUEL",
+      "tag": "debian-13",
+      "cloudinit_username": "root",
+      "minimum_vcpus": 1,
+      "minimum_memory_mb": 2048,
+      "minimum_disk_gb": 20
     }
   ]
 }

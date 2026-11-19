@@ -14,9 +14,9 @@ En la ruta normal de la API no se edita este `tfvars`: el worker genera
 `generated.auto.tfvars.json` desde la orden y la Golden Image observada. El
 catálogo visible para producción es `catalog.json`. El stack de desarrollo
 selecciona explícitamente `catalog-dev.json` mediante `IACP_MNG_CATALOG`.
-Además de las imágenes compartidas, el catálogo DEV incluye Fedora 45
-(VMID 29005) y Debian 13 (VMID 29006), ambos en `mng01` y `DS_CYBERFUEL`.
-Estos IDs no se agregan al catálogo estable hasta una promoción independiente.
+Ambos catálogos publican las mismas seis imágenes; Fedora 45 (VMID 29005) y
+Debian 13 (VMID 29006) están en `mng01` y `DS_CYBERFUEL`. Los rangos VMID de
+aprovisionamiento se mantienen separados por configuración de cada stack.
 
 La red de laboratorio usa DHCP en `vmbr0` y no fija VLAN ni gateway. El worker
 lee de la Golden Image el CPU (`x86-64-v4`, flags, NUMA), el controlador de
