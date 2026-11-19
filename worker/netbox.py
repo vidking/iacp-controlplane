@@ -109,18 +109,24 @@ def settings() -> NetBoxSettings:
     # endpoint and must not become part of resource paths.
     if base_url.endswith("/status"):
         base_url = base_url[: -len("/status")].rstrip("/")
+    expected_network = ip_network(PROD_STATIC_PREFIX)
     excluded_raw = os.getenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "").strip()
-    if not excluded_raw and os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop":
-        excluded_raw = "190.0.231.2"
+    runtime_stage = os.getenv("IACP_RUNTIME_STAGE", "").strip().lower()
     try:
         excluded_addresses = frozenset(
             ip_address(value.strip())
             for value in excluded_raw.split(",")
             if value.strip()
         )
+        if runtime_stage in {"develop", "production"}:
+            # Hosts .2 and .11 are reserved from the shared static WAN pool.
+            # Keep the defaults in code so a stack env-file omission cannot
+            # make production allocate an address that development excludes.
+            excluded_addresses = excluded_addresses | frozenset(
+                expected_network.network_address + host for host in (2, 11)
+            )
     except ValueError as error:
         raise NetBoxError("IPAM_CONFIGURATION_INVALID") from error
-    expected_network = ip_network(PROD_STATIC_PREFIX)
     if any(
         not isinstance(address, IPv4Address) or address not in expected_network
         for address in excluded_addresses

@@ -36,78 +36,93 @@ NEXTCLOUD_READY_SCRIPT = (
 )
 
 SERVICE_EGRESS_PREFLIGHT_SCRIPT = r'''import errno
+import http.client
 import socket
 import ssl
+import subprocess
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 targets = [
-    (
-        "archive.ubuntu.com",
-        "https://archive.ubuntu.com/ubuntu/dists/noble/InRelease",
-        False,
-    ),
-    (
-        "security.ubuntu.com",
-        "https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease",
-        False,
-    ),
-    ("registry-1.docker.io", "https://registry-1.docker.io/v2/", True),
+    ("archive.ubuntu.com", "/ubuntu/dists/noble/InRelease", False),
+    ("security.ubuntu.com", "/ubuntu/dists/noble-security/InRelease", False),
+    ("registry-1.docker.io", "/v2/", True),
 ]
-pending = {host: (url, registry) for host, url, registry in targets}
-last_error = {}
-deadline = time.monotonic() + 120
+DNS_TIMEOUT_SECONDS = 3
+MAX_ATTEMPTS = 2
 context = ssl.create_default_context()
 
-def category(error):
-    reason = error.reason if isinstance(error, URLError) else error
-    if isinstance(reason, socket.gaierror):
-        return "DNS"
-    if isinstance(reason, ssl.SSLError):
-        return "TLS"
-    if isinstance(reason, (TimeoutError, socket.timeout)):
-        return "TIMEOUT"
-    if isinstance(reason, OSError) and reason.errno in {
-        errno.ENETUNREACH,
-        errno.EHOSTUNREACH,
-    }:
-        return "ROUTE"
-    if isinstance(reason, ConnectionRefusedError):
-        return "TCP"
-    return "HTTPS"
-
-while pending:
-    for host, (url, registry) in list(pending.items()):
+def resolve_ipv4(host):
+    try:
+        result = subprocess.run(
+            ["getent", "ahostsv4", host],
+            capture_output=True,
+            text=True,
+            timeout=DNS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "DNS_TIMEOUT"
+    except OSError:
+        return None, "DNS"
+    if result.returncode != 0:
+        return None, "DNS"
+    for line in result.stdout.splitlines():
+        address = line.split(maxsplit=1)[0] if line.split() else ""
         try:
-            request = Request(url, headers={"Range": "bytes=0-0"})
-            with urlopen(request, timeout=5, context=context) as response:
-                if not 200 <= response.status < 300:
-                    last_error[host] = "HTTP"
-                    continue
-        except HTTPError as error:
-            challenge = error.headers.get("WWW-Authenticate", "")
+            socket.inet_pton(socket.AF_INET, address)
+        except OSError:
+            continue
+        return address, ""
+    return None, "DNS"
+
+def https_probe(host, path, address, registry):
+    try:
+        raw = socket.create_connection((address, 443), timeout=5)
+        with context.wrap_socket(raw, server_hostname=host) as connection:
+            connection.settimeout(5)
+            request = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                "Range: bytes=0-0\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode("ascii")
+            connection.sendall(request)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            challenge = response.getheader("WWW-Authenticate", "")
+            if 200 <= response.status < 300:
+                return ""
             if (
                 registry
-                and error.code == 401
+                and response.status == 401
                 and challenge.lower().startswith("bearer ")
             ):
-                pass
-            else:
-                last_error[host] = "HTTP"
-                continue
-        except (
-            URLError,
-            ssl.SSLError,
-            socket.gaierror,
-            TimeoutError,
-            socket.timeout,
-        ) as error:
-            last_error[host] = category(error)
-            continue
-        del pending[host]
-    if pending and time.monotonic() < deadline:
-        time.sleep(5)
+                return ""
+            return "HTTP"
+    except ssl.SSLError:
+        return "TLS"
+    except (TimeoutError, socket.timeout):
+        return "TIMEOUT"
+    except OSError as error:
+        if error.errno in {errno.ENETUNREACH, errno.EHOSTUNREACH}:
+            return "ROUTE"
+        if isinstance(error, ConnectionRefusedError):
+            return "TCP"
+        return "HTTPS"
+
+last_error = {}
+pending = {host: (path, registry) for host, path, registry in targets}
+for attempt in range(MAX_ATTEMPTS):
+    for host, (path, registry) in list(pending.items()):
+        address, error = resolve_ipv4(host)
+        if not error:
+            error = https_probe(host, path, address, registry)
+        if error:
+            last_error[host] = error
+        else:
+            del pending[host]
+    if pending and attempt + 1 < MAX_ATTEMPTS:
+        time.sleep(1)
 
 if pending:
     summary = ",".join(
@@ -120,12 +135,20 @@ print("IACP_SERVICE_EGRESS_PREFLIGHT_OK")
 
 
 def service_egress_preflight_task() -> dict:
-    """Check real DNS/TLS egress before APT or OCI downloads can stall."""
+    """Check DNS/TLS egress with bounded resolver and process timeouts."""
 
     return {
         "name": "Validar DNS y egress HTTPS antes de instalar dependencias",
         "ansible.builtin.command": {
-            "argv": ["python3", "-c", SERVICE_EGRESS_PREFLIGHT_SCRIPT]
+            "argv": [
+                "timeout",
+                "--signal=TERM",
+                "--kill-after=5s",
+                "90s",
+                "python3",
+                "-c",
+                SERVICE_EGRESS_PREFLIGHT_SCRIPT,
+            ]
         },
         "changed_when": False,
     }

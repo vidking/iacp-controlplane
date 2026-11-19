@@ -26,6 +26,9 @@ TASK_CODES = {
     "Verificar Nextcloud": "NEXTCLOUD_VERIFICATION",
     "Verificación funcional revisada": "APPLICATION_FUNCTIONAL",
     "Verificar HTTPS": "HTTPS_VALIDATION",
+    "Validar DNS y egress HTTPS antes de instalar dependencias": (
+        "SERVICE_EGRESS_PREFLIGHT"
+    ),
     "Adquirir exclusión remota": "REMOTE_LOCK",
     "Liberar exclusión remota": "REMOTE_LOCK",
     "Esperar conectividad SSH": "SSH_CONNECTIVITY",
@@ -76,6 +79,8 @@ def safe_execution_error(
             # This is the first pre-task. No service mutation has started yet.
             if code == "SSH_CONNECTIVITY":
                 return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SSH_CONNECTIVITY"
+            if event == "FAILED" and code == "SERVICE_EGRESS_PREFLIGHT":
+                return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SERVICE_EGRESS_PREFLIGHT"
             if event == "FAILED" and code == "APPLICATION_IMAGE_PULL":
                 return "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
             return f"SERVICE_EXECUTION_UNCERTAIN:ANSIBLE_{event}_{code}"

@@ -45,12 +45,29 @@ def test_development_netbox_settings_exclude_unreliable_wan_address(monkeypatch)
     monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example/api")
     monkeypatch.setenv("IACP_NETBOX_TOKEN", "token-for-test")
     assert settings().excluded_addresses == frozenset(
-        {ip_address("190.0.231.2")}
+        {ip_address("190.0.231.2"), ip_address("190.0.231.11")}
     )
 
     monkeypatch.setenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "")
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
-    assert settings().excluded_addresses == frozenset()
+    assert settings().excluded_addresses == frozenset(
+        {ip_address("190.0.231.2"), ip_address("190.0.231.11")}
+    )
+
+
+def test_netbox_reserved_wan_exclusions_are_merged_with_stack_configuration(monkeypatch):
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
+    monkeypatch.setenv("IACP_NETBOX_EXCLUDED_ADDRESSES", "190.0.231.50")
+    monkeypatch.setenv("IACP_NETBOX_URL", "https://netbox.example/api")
+    monkeypatch.setenv("IACP_NETBOX_TOKEN", "token-for-test")
+
+    assert settings().excluded_addresses == frozenset(
+        {
+            ip_address("190.0.231.2"),
+            ip_address("190.0.231.11"),
+            ip_address("190.0.231.50"),
+        }
+    )
 
 
 def test_netbox_never_allocates_a_development_excluded_address(monkeypatch):

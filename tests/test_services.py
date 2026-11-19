@@ -53,30 +53,79 @@ def test_service_egress_preflight_checks_verified_https_endpoints_with_bounded_w
     )
 
     compile(SERVICE_EGRESS_PREFLIGHT_SCRIPT, "service-egress-preflight", "exec")
-    assert (
-        "archive.ubuntu.com/ubuntu/dists/noble/InRelease"
-        in SERVICE_EGRESS_PREFLIGHT_SCRIPT
-    )
-    assert (
-        "security.ubuntu.com/ubuntu/dists/noble-security/InRelease"
-        in SERVICE_EGRESS_PREFLIGHT_SCRIPT
-    )
-    assert "registry-1.docker.io/v2/" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "archive.ubuntu.com" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "/ubuntu/dists/noble/InRelease" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "security.ubuntu.com" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "/ubuntu/dists/noble-security/InRelease" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "registry-1.docker.io" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert '"/v2/", True' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert "ssl.create_default_context()" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
-    assert "time.monotonic() + 120" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "subprocess.run(" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "timeout=DNS_TIMEOUT_SECONDS" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "DNS_TIMEOUT_SECONDS = 3" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "MAX_ATTEMPTS = 2" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert (
+        "socket.create_connection((address, 443), timeout=5)"
+        in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    )
+    assert "server_hostname=host" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "http.client.HTTPResponse(connection)" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert 'return None, "DNS_TIMEOUT"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert 'return "ROUTE"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert 'return "TLS"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
-    assert 'return "DNS"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert 'return None, "DNS"' in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert "challenge.lower().startswith(\"bearer \")" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert "IACP_SERVICE_EGRESS_PREFLIGHT_FAILED:" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     task = service_egress_preflight_task()
     assert task["name"] == "Validar DNS y egress HTTPS antes de instalar dependencias"
     assert task["ansible.builtin.command"]["argv"] == [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        "90s",
         "python3",
         "-c",
         SERVICE_EGRESS_PREFLIGHT_SCRIPT,
     ]
     assert task["changed_when"] is False
+
+
+@pytest.mark.no_database
+def test_service_egress_preflight_stops_when_dns_lookup_hangs():
+    import sys
+    import time
+
+    from worker.service_executor import SERVICE_EGRESS_PREFLIGHT_SCRIPT
+
+    script = SERVICE_EGRESS_PREFLIGHT_SCRIPT.replace(
+        "DNS_TIMEOUT_SECONDS = 3", "DNS_TIMEOUT_SECONDS = 0.05"
+    ).replace("MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 1")
+    script = script.replace(
+        "import subprocess\n",
+        "import subprocess\n"
+        "_real_subprocess_run = subprocess.run\n"
+        "def _test_subprocess_run(arguments, **options):\n"
+        "    if arguments and arguments[0] == 'getent':\n"
+        "        arguments = ['/usr/bin/sleep', '10']\n"
+        "    return _real_subprocess_run(arguments, **options)\n"
+        "subprocess.run = _test_subprocess_run\n",
+        1,
+    )
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "archive.ubuntu.com:DNS_TIMEOUT" in result.stderr
+    assert "security.ubuntu.com:DNS_TIMEOUT" in result.stderr
+    assert "registry-1.docker.io:DNS_TIMEOUT" in result.stderr
+    assert time.monotonic() - started < 3
 
 
 @pytest.mark.no_database
@@ -389,6 +438,22 @@ def test_safe_image_pull_failure_is_retryable_without_marking_uncertain():
     )
     assert error == "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_APPLICATION_IMAGE_PULL"
     assert "private-value" not in error
+
+
+@pytest.mark.no_database
+def test_safe_egress_preflight_failure_is_classified_before_mutating_service():
+    from worker.service_diagnostics import safe_execution_error, task_code
+
+    task_name = "Validar DNS y egress HTTPS antes de instalar dependencias"
+    assert task_code(task_name) == "SERVICE_EGRESS_PREFLIGHT"
+    error = safe_execution_error(
+        "IACP_TASK:SERVICE_EGRESS_PREFLIGHT\n"
+        "IACP_FAILED:SERVICE_EGRESS_PREFLIGHT\n"
+        "DNS server details are redacted\n",
+        return_code=2,
+    )
+    assert error == "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SERVICE_EGRESS_PREFLIGHT"
+    assert "DNS server details" not in error
 
 
 @pytest.mark.no_database
@@ -713,9 +778,16 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     package_install
                 )
                 egress_argv = egress_preflight["ansible.builtin.command"]["argv"]
-                assert egress_argv[:2] == ["python3", "-c"]
-                assert "archive.ubuntu.com" in egress_argv[2]
-                assert "registry-1.docker.io" in egress_argv[2]
+                assert egress_argv[:6] == [
+                    "timeout",
+                    "--signal=TERM",
+                    "--kill-after=5s",
+                    "90s",
+                    "python3",
+                    "-c",
+                ]
+                assert "archive.ubuntu.com" in egress_argv[6]
+                assert "registry-1.docker.io" in egress_argv[6]
                 assert not any("AlmaLinux" in task.get("name", "") for task in service_tasks)
             else:
                 assert [task.get("name") for task in service_tasks] == [
