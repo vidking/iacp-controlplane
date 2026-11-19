@@ -63,7 +63,8 @@ def test_service_egress_preflight_checks_verified_https_endpoints_with_bounded_w
     assert "subprocess.run(" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert "timeout=DNS_TIMEOUT_SECONDS" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert "DNS_TIMEOUT_SECONDS = 3" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
-    assert "MAX_ATTEMPTS = 2" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "MAX_ATTEMPTS = 3" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
+    assert "random.uniform(0, 0.5)" in SERVICE_EGRESS_PREFLIGHT_SCRIPT
     assert (
         "socket.create_connection((address, 443), timeout=5)"
         in SERVICE_EGRESS_PREFLIGHT_SCRIPT
@@ -99,7 +100,7 @@ def test_service_egress_preflight_stops_when_dns_lookup_hangs():
 
     script = SERVICE_EGRESS_PREFLIGHT_SCRIPT.replace(
         "DNS_TIMEOUT_SECONDS = 3", "DNS_TIMEOUT_SECONDS = 0.05"
-    ).replace("MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 1")
+    ).replace("MAX_ATTEMPTS = 3", "MAX_ATTEMPTS = 1")
     script = script.replace(
         "import subprocess\n",
         "import subprocess\n"

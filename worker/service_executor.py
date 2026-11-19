@@ -37,6 +37,7 @@ NEXTCLOUD_READY_SCRIPT = (
 
 SERVICE_EGRESS_PREFLIGHT_SCRIPT = r'''import errno
 import http.client
+import random
 import socket
 import ssl
 import subprocess
@@ -48,7 +49,7 @@ targets = [
     ("registry-1.docker.io", "/v2/", True),
 ]
 DNS_TIMEOUT_SECONDS = 3
-MAX_ATTEMPTS = 2
+MAX_ATTEMPTS = 3
 context = ssl.create_default_context()
 
 def resolve_ipv4(host):
@@ -122,7 +123,7 @@ for attempt in range(MAX_ATTEMPTS):
         else:
             del pending[host]
     if pending and attempt + 1 < MAX_ATTEMPTS:
-        time.sleep(1)
+        time.sleep((2**attempt) + random.uniform(0, 0.5))
 
 if pending:
     summary = ",".join(

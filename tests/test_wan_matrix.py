@@ -760,6 +760,54 @@ def test_wait_service_retries_initial_ssh_failure_after_worker_release(monkeypat
     )
 
 
+def test_wait_service_retries_egress_preflight_failure_after_worker_release(monkeypatch):
+    import scripts.wan_matrix as wan_matrix
+
+    matrix = object.__new__(wan_matrix.Matrix)
+    job_id = "egress-preflight-job"
+    states = iter(
+        [
+            {
+                "job_id": job_id,
+                "status": "failed",
+                "error": "SERVICE_EXECUTION_FAILED:ANSIBLE_FAILED_SERVICE_EGRESS_PREFLIGHT",
+                "worker_id": "service-worker-1",
+            },
+            {"job_id": job_id, "status": "succeeded", "error": ""},
+        ]
+    )
+    calls = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if path == f"/v1/service-jobs/{job_id}":
+            return next(states)
+        if path == "/v1/service-workers":
+            return {
+                "workers": [
+                    {
+                        "worker_id": "service-worker-1",
+                        "status": "idle",
+                        "job_id": None,
+                    }
+                ]
+            }
+        if path == f"/v1/service-jobs/{job_id}/retry":
+            return {"job_id": job_id, "status": "queued"}
+        raise AssertionError(path)
+
+    matrix.api = api
+    matrix.record = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _seconds: None)
+    matrix.wait_service(job_id)
+    assert any(
+        call[:2] == ("POST", f"/v1/service-jobs/{job_id}/retry")
+        and call[2] == {"previous_execution_stopped": True}
+        and call[3] == f"matrix-service-retry-{job_id}"
+        for call in calls
+    )
+
+
 def test_wait_service_waits_for_worker_heartbeat_before_retry(monkeypatch):
     import scripts.wan_matrix as wan_matrix
 
