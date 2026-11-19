@@ -897,6 +897,7 @@ def test_failed_service_batch_cleans_every_instance_before_reporting_failure():
     matrix.record = lambda event, **values: events.append((event, values))
     matrix.settle_service_batch = lambda target: events.append(("settled", len(target)))
     matrix.cleanup = lambda item: cleaned.append(item["name"])
+    matrix.parallel = lambda function, target: [function(item) for item in target]
     matrix.post_cleanup = lambda target: events.append(("post_cleanup", len(target)))
     matrix.idle = lambda: events.append(("idle", True))
 
@@ -910,3 +911,87 @@ def test_failed_service_batch_cleans_every_instance_before_reporting_failure():
         "post_cleanup",
         "idle",
     ]
+
+
+def test_cleanup_hydrates_vmid_and_static_ip_from_exact_instance(monkeypatch):
+    import io
+
+    import scripts.wan_matrix as wan_matrix
+    from scripts.wan_matrix import Matrix
+
+    service_id = "service-test-id"
+    instance_id = "instance-test-id"
+    operation_id = "delete-operation-id"
+    calls = []
+    checks = []
+    before = {
+        "instance_id": instance_id,
+        "name": "kvm-service-nextcloud-001",
+        "vmid": 30042,
+        "image_id": "ubuntu-2404",
+        "plan_id": "kvm-3",
+        "status": "ready",
+        "network_allocation": {
+            "profile": "prod_static",
+            "status": "allocated",
+            "address": "190.0.231.25/24",
+            "gateway": "190.0.231.1",
+        },
+    }
+    after = {**before, "status": "deleted", "network_allocation": {"status": "released"}}
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if method == "GET" and path == f"/v1/instances/{instance_id}":
+            return before if sum(call[0] == "GET" and call[1] == path for call in calls) == 1 else after
+        if method == "GET" and path == f"/v1/service-instances/{service_id}":
+            return {
+                "service_id": service_id,
+                "instance_id": instance_id,
+                "application_id": "nextcloud",
+            }
+        if method == "POST" and path.endswith("/power/shutdown"):
+            return {"operation_id": "shutdown-operation-id"}
+        if method == "DELETE" and path == f"/v1/service-instances/{service_id}":
+            return {"operation_id": operation_id}
+        if method == "GET" and path.startswith("/v1/events?"):
+            return {"events": [{"kind": "logical.delete.completed", "status": "succeeded"}]}
+        raise AssertionError(path)
+
+    class EmptyNetBoxResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def urlopen(request, timeout):
+        assert timeout == 30
+        assert "address=190.0.231.25/24" in request.full_url
+        return EmptyNetBoxResponse(b'{"count": 0}')
+
+    monkeypatch.setattr(wan_matrix, "urlopen", urlopen)
+    matrix = object.__new__(Matrix)
+    matrix.api = api
+    matrix.vmid_range = (30000, 39999)
+    matrix.profile = "prod_static"
+    matrix.env = {"IACP_NETBOX_TOKEN": "test-only", "IACP_NETBOX_URL": "https://netbox.example.invalid"}
+    matrix.wait_operation = lambda _operation: None
+    matrix.proxmox = type("Proxmox", (), {"inventory": lambda _self: []})()
+    matrix.check = lambda item, code, detail: checks.append((item["name"], code, detail))
+    item = {
+        "name": "kvm-service-nextcloud-001",
+        "product": "nextcloud",
+        "service_id": service_id,
+        "instance_id": instance_id,
+        "operation_id": "create-operation-id",
+        "image": "ubuntu-2404",
+        "plan": "kvm-3",
+    }
+
+    matrix.cleanup(item)
+
+    assert item["vmid"] == 30042
+    assert item["address"] == "190.0.231.25"
+    assert ("DELETE", f"/v1/service-instances/{service_id}", None, f"delete-{item['name']}") in calls
+    assert {code for _name, code, _detail in checks} == {"E01", "E02", "E03", "E04", "E06"}

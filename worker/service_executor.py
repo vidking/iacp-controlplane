@@ -17,16 +17,20 @@ from worker.service_diagnostics import (
 )
 
 
+NEXTCLOUD_READY_MAX_SECONDS = 20 * 60
+NEXTCLOUD_READY_POLL_SECONDS = 5
+NEXTCLOUD_READY_ATTEMPTS = NEXTCLOUD_READY_MAX_SECONDS // NEXTCLOUD_READY_POLL_SECONDS
+
 NEXTCLOUD_READY_SCRIPT = (
     "set -eu\n"
     "attempt=0\n"
-    "while [ \"$attempt\" -lt 60 ]; do\n"
+    f"while [ \"$attempt\" -lt {NEXTCLOUD_READY_ATTEMPTS} ]; do\n"
     "  if php occ status --output=json 2>/dev/null | grep -Eq '\"installed\"[[:space:]]*:[[:space:]]*true[[:space:]]*([,}])'; then\n"
     "    printf 'IACP_NEXTCLOUD_INSTALLED\\n'\n"
     "    exit 0\n"
     "  fi\n"
     "  attempt=$((attempt + 1))\n"
-    "  sleep 5\n"
+    f"  sleep {NEXTCLOUD_READY_POLL_SECONDS}\n"
     "done\n"
     "exit 1\n"
 )
@@ -178,7 +182,7 @@ def ubuntu_https_sources_task() -> dict:
 
 
 def nextcloud_status_argv(base: list[str]) -> list[str]:
-    """Espera a que OCC informe instalación sin analizar JSON intermedio inválido."""
+    """Espera hasta 20 minutos a que OCC confirme la instalación de Nextcloud."""
 
     return base + [
         "exec",

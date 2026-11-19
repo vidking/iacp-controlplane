@@ -1921,21 +1921,52 @@ print(f"{jobs} {locks}")
         self.settle_service_batch(items)
         for item, _reason in failures:
             item["service_failure"] = True
-        for item in items:
-            self.cleanup(item)
+        # Attempt every exact test instance even if one cleanup fails. The
+        # parallel helper collects failures only after all submitted cleanups
+        # have completed, avoiding a leaked sibling VM on the first error.
+        self.parallel(self.cleanup, items)
         self.post_cleanup(items)
         self.idle()
         raise RuntimeError("SERVICE_BATCH_FAILED_AFTER_CLEANUP")
 
     def cleanup(self, item):
         before = self.api("GET", "/v1/instances/" + item["instance_id"])
+        vmid = before.get("vmid")
+        if item.get("vmid") is not None:
+            assert vmid == item["vmid"], "DELETE_IDENTITY_NOT_CONFIRMED"
+        assert isinstance(vmid, int) and self.vmid_range[0] <= vmid <= self.vmid_range[1], (
+            "DELETE_VMID_NOT_ASSIGNED"
+        )
+        item["vmid"] = vmid
         assert (
             before.get("name") == item["name"]
-            and before.get("vmid") == item["vmid"]
             and before.get("image_id") == item["image"]
             and before.get("plan_id") == item["plan"]
             and before.get("status") == "ready"
         ), "DELETE_IDENTITY_NOT_CONFIRMED"
+        allocation = before.get("network_allocation")
+        if self.profile == "prod_static":
+            assert (
+                isinstance(allocation, dict)
+                and allocation.get("profile") == "prod_static"
+                and allocation.get("status") == "allocated"
+                and allocation.get("gateway") == "190.0.231.1"
+                and isinstance(allocation.get("address"), str)
+            ), "DELETE_IP_ALLOCATION_NOT_CONFIRMED"
+            address = allocation["address"].split("/")[0]
+            assert address.startswith("190.0.231."), "DELETE_IP_ALLOCATION_NOT_CONFIRMED"
+            if item.get("address") is not None:
+                assert item["address"] == address, "DELETE_IDENTITY_NOT_CONFIRMED"
+            item["address"] = address
+        if item.get("product") != "kvm":
+            service = self.api(
+                "GET", "/v1/service-instances/" + item["service_id"]
+            )
+            assert (
+                service.get("service_id") == item["service_id"]
+                and service.get("instance_id") == item["instance_id"]
+                and service.get("application_id") == item["product"]
+            ), "DELETE_SERVICE_IDENTITY_NOT_CONFIRMED"
         self.wait_operation(
             self.api(
                 "POST",

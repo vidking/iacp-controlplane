@@ -79,6 +79,7 @@ def test_service_egress_preflight_checks_verified_https_endpoints_with_bounded_w
     assert task["changed_when"] is False
 
 
+@pytest.mark.no_database
 def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
     from worker.service_executor import NEXTCLOUD_READY_SCRIPT
 
@@ -110,6 +111,43 @@ sleep() {{ :; }}
     assert result.returncode == 0
     assert result.stdout == "IACP_NEXTCLOUD_INSTALLED\n"
     assert state.read_text() == "3"
+
+
+@pytest.mark.no_database
+def test_nextcloud_install_wait_allows_more_than_sixty_readiness_checks(tmp_path):
+    from worker.service_executor import (
+        NEXTCLOUD_READY_ATTEMPTS,
+        NEXTCLOUD_READY_POLL_SECONDS,
+        NEXTCLOUD_READY_SCRIPT,
+    )
+
+    state = tmp_path / "attempt"
+    state.write_text("0")
+    setup = f"""
+php() {{
+  IFS= read -r status_calls < "$IACP_TEST_ATTEMPT"
+  if [ "$status_calls" -lt 65 ]; then
+    printf '{{"installed": false}}\\n'
+  else
+    printf '{{"installed": true}}\\n'
+  fi
+  status_calls=$((status_calls + 1))
+  printf '%s' "$status_calls" > "$IACP_TEST_ATTEMPT"
+}}
+sleep() {{ [ "$1" = "{NEXTCLOUD_READY_POLL_SECONDS}" ]; }}
+"""
+    result = subprocess.run(
+        ["sh", "-ec", setup + NEXTCLOUD_READY_SCRIPT],
+        capture_output=True,
+        text=True,
+        env=os.environ | {"IACP_TEST_ATTEMPT": str(state)},
+        timeout=10,
+    )
+
+    assert NEXTCLOUD_READY_ATTEMPTS == 240
+    assert result.returncode == 0
+    assert result.stdout == "IACP_NEXTCLOUD_INSTALLED\n"
+    assert state.read_text() == "66"
 
 
 def body(name="service-demo"):
