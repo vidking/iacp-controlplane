@@ -16,6 +16,7 @@ from scripts.purge_e2e_run import (
 )
 from scripts import e2e_matrix
 
+pytestmark = pytest.mark.no_database
 
 RUN_ID = "20261103123456"
 
