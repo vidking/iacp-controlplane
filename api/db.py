@@ -33,22 +33,28 @@ def _connection_options() -> str | dict[str, Any]:
     }
 
 
-def _postgres_sql(statement: str) -> str:
-    """Translate the repository's qmark parameters to psycopg parameters."""
+def _postgres_sql(statement: str, *, escape_percent: bool = True) -> str:
+    """Traduce los parámetros qmark del repositorio al formato de psycopg.
+
+    Con parámetros, psycopg interpreta cada ``%`` como marcador; por eso un
+    ``%`` literal (por ejemplo, en ``LIKE 'abc%'``) se escapa como ``%%``.
+    Los ``?`` dentro de literales entre comillas se conservan.
+    """
 
     if statement.strip().upper() == "BEGIN IMMEDIATE":
         return "BEGIN"
     output: list[str] = []
     quote: str | None = None
-    escaped = False
     for character in statement:
+        if character == "%" and escape_percent:
+            output.append("%%")
+            continue
         if quote:
             output.append(character)
-            if character == quote and not escaped:
+            if character == quote:
+                # SQL estándar duplica la comilla para escaparla (''); el
+                # cierre y la reapertura inmediata producen el mismo texto.
                 quote = None
-            escaped = character == "\\" and not escaped
-            if character != "\\":
-                escaped = False
             continue
         if character in {"'", '"'}:
             quote = character
@@ -66,7 +72,7 @@ class DatabaseConnection:
     def __init__(self, connection: psycopg.Connection):
         self._connection = connection
 
-    def execute(self, statement: str, parameters: Any = ()):
+    def execute(self, statement: str, parameters: Any = None):
         # SQLite BEGIN IMMEDIATE serializaba los claims y la asignación de
         # VMID. Reproducimos esa sección crítica entre procesos PostgreSQL
         # con un advisory transaction lock; sin él, seis workers podrían
@@ -74,6 +80,10 @@ class DatabaseConnection:
         if statement.strip().upper() == "BEGIN IMMEDIATE":
             self._connection.execute("BEGIN")
             return self._connection.execute("SELECT pg_advisory_xact_lock(104, 101)")
+        if not parameters:
+            # Sin parámetros psycopg no interpreta marcadores; un ``%``
+            # literal debe llegar intacto al servidor.
+            return self._connection.execute(_postgres_sql(statement, escape_percent=False))
         return self._connection.execute(_postgres_sql(statement), parameters)
 
     def executemany(self, statement: str, parameters: Any):
@@ -293,11 +303,11 @@ def prune_history() -> dict[str, int]:
         event_result = db.execute(
             """
             DELETE FROM events
-            WHERE occurred_at < %s
+            WHERE occurred_at < ?
               AND operation_id IN (
                 SELECT operation_id FROM operations
                 WHERE status IN ('succeeded', 'failed', 'uncertain')
-                  AND finished_at IS NOT NULL AND finished_at < %s
+                  AND finished_at IS NOT NULL AND finished_at < ?
               )
             """,
             (cutoff, cutoff),
@@ -305,13 +315,13 @@ def prune_history() -> dict[str, int]:
         idempotency_result = db.execute(
             """
             DELETE FROM idempotency_keys
-            WHERE created_at < %s
+            WHERE created_at < ?
               AND (
                 operation_id IS NULL
                 OR operation_id IN (
                   SELECT operation_id FROM operations
                   WHERE status IN ('succeeded', 'failed', 'uncertain')
-                    AND finished_at IS NOT NULL AND finished_at < %s
+                    AND finished_at IS NOT NULL AND finished_at < ?
                 )
               )
             """,
@@ -321,7 +331,7 @@ def prune_history() -> dict[str, int]:
             """
             DELETE FROM operations
             WHERE status IN ('succeeded', 'failed', 'uncertain')
-              AND finished_at IS NOT NULL AND finished_at < %s
+              AND finished_at IS NOT NULL AND finished_at < ?
             """,
             (cutoff,),
         )

@@ -1,0 +1,80 @@
+# Revisión integral del código — 2026-11-19
+
+## Alcance
+
+- Base: `origin/main` en `5eae7c8` (el `main` local estaba 65 commits detrás).
+- Rama: `mejoras/revision-integral-20261119`.
+- Revisión estática y pruebas en la estación de trabajo, con un PostgreSQL
+  17.6 efímero local. **No** se tocó el IACP Control Plane (VM 104), el
+  clúster MNG, Platinum/PRX, volúmenes, secretos ni operaciones reales.
+- Dictamen: correcciones de código **integradas en la rama, no desplegadas ni
+  certificadas**. Antes de promoverlas se requiere revisión de PR y el
+  procedimiento vigente de `scripts/iacpctl` / `scripts/go_live.py`.
+
+## Inventario de servicios
+
+Cada Compose (`compose.yaml` de desarrollo y
+`deploy/portainer/docker-compose.yml` de producción) define **12 servicios**:
+
+| Servicio | Cantidad | Perfil | Función |
+| --- | ---: | --- | --- |
+| `postgres` | 1 | siempre | Estado, cola, leases, idempotencia |
+| `api` | 1 | siempre | FastAPI `/v1`, portal `/docs` y consola |
+| `worker-1` … `worker-6` | 6 | siempre | Terraform / Proxmox / lifecycle |
+| `service-worker-1`, `-2` | 2 | `services` | Instalación de aplicaciones |
+| `service-worker-3`, `-4` | 2 | `service-workers-3-4` | Capacidad adicional de servicios |
+
+Sin perfiles activos se ejecutan 8 contenedores. El catálogo de aplicaciones
+publica 4 (`nextcloud`, `n8n`, `hermes`, `openclaw`), todas deshabilitadas
+por defecto.
+
+## Línea base
+
+- `pytest` sin base de datos: 112 PASS y 301 omitidas.
+- `pytest` con PostgreSQL efímero: 413 PASS.
+- `ruff` (E, F, W, B, S, SIM, PL): sin errores `F`; 47 avisos de estilo o
+  seguridad revisados de forma manual.
+
+## Defectos corregidos
+
+| # | Severidad | Ubicación | Defecto | Corrección |
+| --- | --- | --- | --- | --- |
+| 1 | Alta | `worker/main.py` `run_commands` | Terraform corría con `stdout/stderr=PIPE`, pero las tuberías no se leían hasta que terminaba. Con más de ~64 KiB de salida el proceso quedaba bloqueado hasta el timeout (1800 s) y se mataba, incluso durante `apply`/`destroy`, lo que dejaba la operación en `uncertain`. Reproducido: un proceso instantáneo con 300 KB terminó en `TimeoutError`. | La salida se vuelca a `tempfile.TemporaryFile`; se conservan el truncado y la redacción del secreto. |
+| 2 | Media (latente) | `api/db.py` `_postgres_sql` | El `%` literal no se escapaba y `execute()` usaba `parameters=()`, por lo que `SELECT 'a%b'` fallaba con `ProgrammingError`. `prune_history` mezclaba `%s` nativo con el dialecto `?`. | Escapado de `%` cuando hay parámetros, `parameters=None` por defecto y `prune_history` con `?`. Se simplificó el manejo de comillas. |
+| 3 | Media | `api/main.py` `authorize` | El token Bearer se comparaba con `!=`, que no es de tiempo constante. | `hmac.compare_digest` sobre bytes UTF-8. |
+| 4 | Baja | `worker/main.py` `_recovery_operation_exists` | `payload_json LIKE '%id%'` recorría todo el texto y coincidía con subcadenas o con otros campos. | Comparación exacta `payload_json::jsonb ->> 'source_operation_id'`. |
+| 5 | Baja | `api/main.py` | `@app.on_event("startup")` está obsoleto en FastAPI. | Migrado a `lifespan`. |
+
+Las pruebas están en `tests/test_revision_integral.py`. Resultado final:
+**420 PASS** con PostgreSQL efímero.
+
+## Mejoras recomendadas (no aplicadas)
+
+1. **Conexiones PostgreSQL:** `database()` abre una conexión nueva por
+   consulta. Seis workers en reposo consultan cada 0,5 s (unas 12 conexiones
+   por segundo), y cada worker ocupado envía un heartbeat por segundo. Se
+   recomienda reutilizar conexiones (`psycopg_pool`) o espaciar los heartbeats
+   durante Terraform, ya que el umbral de caducidad es de 900 s. La rama
+   `origin/mejoras/revision-20261115`, no integrada, aborda parte de esto y
+   debería rebasarse sobre `main`.
+2. **Healthcheck de workers:** ningún worker ni service-worker tiene
+   `healthcheck` en Compose; la salud solo se observa por `/v1/workers`.
+3. **Contención de cerrojos:** `worker/services.py` ejecuta `recover()` con
+   `BEGIN IMMEDIATE` (advisory lock `104,101`) en cada iteración, el mismo
+   cerrojo que el claim de los workers de infraestructura. El umbral de 900 s
+   está fijo en el código.
+4. **Bucles sin contención de errores:** un fallo transitorio de PostgreSQL en
+   `claim()`, `recover()` o en el heartbeat de reposo termina el proceso del
+   worker. Docker lo reinicia, pero se pierde el contexto.
+5. **Duplicación en Compose:** los 10 bloques de worker son casi idénticos;
+   un ancla YAML `x-worker` reduciría la deriva entre entornos. Requiere
+   validar `go_live.py` antes de cambiarlo.
+6. **Columnas en `update_operation(**values)`:** interpola nombres de columna
+   sin lista permitida; hoy solo recibe claves internas, pero conviene
+   restringirlas.
+7. **Credenciales de servicio:** `installation_credentials` usa
+   `uuid4().hex`; `secrets.token_urlsafe` es la primitiva idiomática.
+8. **Secreto huérfano:** si falla el `UPDATE`/`COMMIT` de idempotencia después
+   de `write_secret`, el archivo de contraseña queda en el volumen.
+9. **NetBox:** `IACP_NETBOX_VERIFY_TLS=false` desactiva la verificación TLS;
+   conviene registrar una advertencia en el arranque cuando se usa.
