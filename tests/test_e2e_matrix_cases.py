@@ -18,7 +18,7 @@ def test_develop_cubre_48_casos_seis_imagenes_ambos_modos(monkeypatch):
     combinations = {(case["image"], case["plan"], case["mode"]) for case in cases}
     assert combinations == {
         (image, plan, mode)
-        for image in e2e_matrix.IMAGES + e2e_matrix.DEVELOP_EXTRA_IMAGES
+        for image in e2e_matrix.IMAGES
         for plan in e2e_matrix.PLANS
         for mode in ("password", "key")
     }
@@ -39,12 +39,14 @@ def test_inicio_explicito_y_automatico_no_dependen_del_modo(monkeypatch):
     }
 
 
-def test_production_conserva_las_imagenes_publicadas(monkeypatch):
+def test_production_cubre_tambien_las_seis_imagenes(monkeypatch):
     monkeypatch.setattr(e2e_matrix, "TARGET_STAGE", "production")
     cases = e2e_matrix.build_matrix_cases()
 
-    assert len(cases) == 32
-    assert {case["image"] for case in cases} == set(e2e_matrix.IMAGES)
+    assert len(cases) == 48
+    assert {case["image"] for case in cases} == {
+        "ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13",
+    }
 
 
 def test_nombres_de_corrida_cubren_todos_los_casos():

@@ -198,9 +198,12 @@ def cases(category, images=None, cycle=1, *, include_controls=True):
             "fedora-45",
             "debian-13",
         ]
-        default_images = supported_images[:-2]
+        # Las seis Golden Images publicadas en el catálogo MNG.
+        default_images = supported_images
     elif category == "services":
-        supported_images = ["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10"]
+        # Política de producción y desarrollo: las aplicaciones solo se
+        # aprovisionan sobre Ubuntu 24.04 (SUPPORTED_SERVICE_IMAGE_IDS).
+        supported_images = ["ubuntu-2404"]
         default_images = supported_images
     else:
         supported_images = ["ubuntu-2404", "almalinux-9"]
@@ -210,8 +213,6 @@ def cases(category, images=None, cycle=1, *, include_controls=True):
         raise ValueError("MATRIX_IMAGES_INVALID")
     if category == "services" and cycle not in {1, 2, 3, 4}:
         raise ValueError("MATRIX_CYCLE_INVALID")
-    if category == "services" and len(selected_images) == 4:
-        selected_images = selected_images[:2] if cycle == 1 else selected_images[2:]
     products = (
         ["n8n", "nextcloud"]
         if category == "services" and not include_controls
@@ -262,6 +263,9 @@ def cases(category, images=None, cycle=1, *, include_controls=True):
     # las 16 posiciones de matriz.
     if len(result) < 16:
         result = (result * ((16 + len(result) - 1) // len(result)))[:16]
+    elif len(result) > 16 and category == "kvm":
+        # Seis imágenes × cuatro planes: 24 casos en cuatro tandas de seis.
+        pass
     elif len(result) > 16:
         raise ValueError("MATRIX_IMAGE_SELECTION_REQUIRES_TWO_IMAGES_PER_CYCLE")
     else:
@@ -2331,7 +2335,7 @@ if __name__ == "__main__":
         "--images",
         nargs="+",
         choices=["ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13"],
-        help="Limita la matriz a imágenes concretas; servicios separa Ubuntu y AlmaLinux por ciclo.",
+        help="Limita la matriz a imágenes concretas; los servicios solo admiten ubuntu-2404.",
     )
     args = parser.parse_args()
     if not 1 <= args.cycle <= required_cycles(args.category):
