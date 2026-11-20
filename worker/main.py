@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -62,13 +63,16 @@ def stale_operation_seconds() -> float:
 
 
 def _recovery_operation_exists(db, source_operation_id: str) -> bool:
+    # Comparación exacta del campo JSON: un LIKE '%id%' recorría el texto de
+    # cada payload y podía coincidir con el identificador en otro campo.
     return db.execute(
         """
         SELECT 1 FROM operations
-        WHERE command='reconcile' AND payload_json LIKE ?
+        WHERE command='reconcile'
+          AND payload_json::jsonb ->> 'source_operation_id' = ?
         LIMIT 1
         """,
-        (f"%{source_operation_id}%",),
+        (source_operation_id,),
     ).fetchone() is not None
 
 
@@ -714,24 +718,31 @@ def run_commands(
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
         while True:
-            process = subprocess.Popen(
-                args,
-                cwd=workspace,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=environment,
-            )
-            while process.poll() is None:
-                if time.monotonic() > deadline:
-                    process.kill()
-                    process.wait(timeout=10)
-                    raise TimeoutError("Terraform excedió el tiempo configurado")
-                heartbeat(worker_id, "running", operation_id, phase=phase)
-                time.sleep(1)
-            stdout, stderr = process.communicate()
-            stdout = stdout or ""
-            stderr = stderr or ""
+            # La salida se vuelca a archivos temporales y no a PIPE: el bucle
+            # de supervisión no lee las tuberías mientras el proceso corre, y
+            # una salida mayor que el búfer del pipe (~64 KiB) bloquearía a
+            # Terraform hasta vencer el timeout, incluso durante un apply.
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout_file, \
+                    tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_file:
+                process = subprocess.Popen(
+                    args,
+                    cwd=workspace,
+                    text=True,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    env=environment,
+                )
+                while process.poll() is None:
+                    if time.monotonic() > deadline:
+                        process.kill()
+                        process.wait(timeout=10)
+                        raise TimeoutError("Terraform excedió el tiempo configurado")
+                    heartbeat(worker_id, "running", operation_id, phase=phase)
+                    time.sleep(1)
+                stdout_file.seek(0)
+                stderr_file.seek(0)
+                stdout = stdout_file.read()
+                stderr = stderr_file.read()
             output.append(operation_output(stdout, password))
             errors.append(operation_output(stderr, password))
             if process.returncode == 0:

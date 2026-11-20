@@ -1,5 +1,7 @@
+import hmac
 import os
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
@@ -55,7 +57,16 @@ tags_metadata = [
     {"name": "health", "description": "Estado técnico del API."},
 ]
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Sustituye a @app.on_event("startup"), obsoleto en FastAPI. startup()
+    # se define más abajo y se resuelve al iniciar la aplicación.
+    startup()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="IACP Control Plane",
     version="1.0.0",
     description=(
@@ -144,11 +155,17 @@ def authorize(
     configured = os.getenv("IACP_API_TOKEN", "").strip()
     if _require_api_token() and not configured:
         raise HTTPException(status_code=503, detail="API token no configurado")
-    if configured and (credentials is None or credentials.credentials != configured):
+    if configured and (
+        credentials is None
+        or not hmac.compare_digest(
+            credentials.credentials.encode("utf-8"), configured.encode("utf-8")
+        )
+    ):
+        # compare_digest evita filtrar por tiempo de respuesta cuántos
+        # caracteres iniciales del token coinciden.
         raise HTTPException(status_code=401, detail="invalid token")
 
 
-@app.on_event("startup")
 def startup() -> None:
     initialize()
     prune_history()
