@@ -67,12 +67,33 @@ x-runtime-environment: &runtime-environment
   IACP_NETBOX_TIMEOUT: ${IACP_NETBOX_TIMEOUT:-15}
   IACP_NETBOX_RETRY_ATTEMPTS: ${IACP_NETBOX_RETRY_ATTEMPTS:-3}
 
+x-logging: &default-logging
+  # Rotación de logs: sin límite, json-file crece hasta llenar el disco de
+  # la VM 104 durante matrices largas o pruebas de estrés.
+  driver: json-file
+  options:
+    max-size: ${IACP_LOG_MAX_SIZE:-20m}
+    max-file: "${IACP_LOG_MAX_FILE:-5}"
+
+x-worker-health: &worker-health
+  # Una lectura del último heartbeat; no ejecuta DDL ni toma locks.
+  healthcheck:
+    test: ["CMD", "python", "-m", "worker.healthcheck"]
+    interval: 30s
+    timeout: 10s
+    start_period: 60s
+    retries: 3
+  # SIGTERM deja de reclamar trabajo y permite terminar la operación en curso.
+  stop_grace_period: ${IACP_WORKER_STOP_GRACE_PERIOD:-120s}
+  logging: *default-logging
+
 x-worker-environment: &worker-environment
   <<: *runtime-environment
   IACP_WASABI_ACCESS_KEY_ID: ${IACP_WASABI_ACCESS_KEY_ID:-}
   IACP_WASABI_SECRET_ACCESS_KEY: ${IACP_WASABI_SECRET_ACCESS_KEY:-}
 
 x-worker-common: &worker-common
+  <<: *worker-health
   image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
   restart: unless-stopped
   init: true
@@ -99,6 +120,9 @@ services:
   postgres:
     image: postgres:17.6
     restart: unless-stopped
+    logging: *default-logging
+    # PostgreSQL necesita tiempo para un checkpoint limpio al detenerse.
+    stop_grace_period: 60s
     networks:
       - internal
     environment:
@@ -116,6 +140,7 @@ services:
   api:
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
     restart: unless-stopped
+    logging: *default-logging
     init: true
     read_only: true
     tmpfs:
@@ -184,6 +209,7 @@ services:
     command: ["python", "-m", "worker.main", "--worker-id", "worker-6"]
 
   service-worker-1:
+    <<: *worker-health
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
     profiles: [services]
     restart: unless-stopped
@@ -216,6 +242,7 @@ services:
     networks: [internal, egress]
 
   service-worker-2:
+    <<: *worker-health
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
     profiles: [services]
     restart: unless-stopped
@@ -248,6 +275,7 @@ services:
     networks: [internal, egress]
 
   service-worker-3:
+    <<: *worker-health
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
     profiles: [service-workers-3-4]
     restart: unless-stopped
@@ -280,6 +308,7 @@ services:
     networks: [internal, egress]
 
   service-worker-4:
+    <<: *worker-health
     image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
     profiles: [service-workers-3-4]
     restart: unless-stopped
