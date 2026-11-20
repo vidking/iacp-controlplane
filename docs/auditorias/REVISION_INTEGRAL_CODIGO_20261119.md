@@ -188,3 +188,69 @@ servicio, 0 advisory locks y 0 recursos Terraform. Evidencia:
   preparación de las Golden Images.
 - Nueva dependencia `psycopg-pool==3.2.6`. Cada proceso mantiene un pool de
   hasta 5 conexiones (11 procesos por stack, máximo 55).
+
+## Promoción a producción y Golden Images AlmaLinux — 2026-11-20
+
+### Producción
+
+| Paso | Revisión | Resultado |
+| --- | --- | --- |
+| Promoción 1 (`iacpctl` preflight/deploy/verify) | `a4cd7ff` | PASS; respaldo `prod-5eae7c8.env` |
+| Promoción 2 (`iacpctl` preflight/deploy/verify) | `7c1290a` (`main`) | PASS; respaldo `prod-a4cd7ff.env` |
+
+La ruta de Traefik ya apuntaba a `iacp-controlplane-api-prod:8080`; `activate`
+no aplicaba. Entre `a4cd7ff` y `7c1290a` solo cambian los arneses de matrices
+y la fábrica de copias; el código de API, worker y Terraform es el certificado
+en dev (`9b70d77`).
+
+### Hallazgo: AlmaLinux no podía aprovisionarse con `prod_static`
+
+Producción solo publica `prod_static`. Con red estática, NetworkManager de
+AlmaLinux corre con `dns=none` y cloud-init escribe los DNS en
+`/etc/resolv.conf`. El helper `iacp-guest-bootstrap` horneado en 29010/29011
+(18-nov 07:17, `c759d5e5…`) era anterior al fallback a `resolv.conf`
+(`24072aa`) y fallaba siempre con `SERVICE_BOOTSTRAP_GUEST_FAILED`. El defecto
+ya existía en `5eae7c8`.
+
+Corrección:
+
+1. Helper regenerado desde `main` con `scripts/prepare_almalinux_bootstrap.py`
+   (`c5f087d3…`, protocolo 1) e instalado con su `install.sh` por SSH en las
+   candidatas 29016/29017. SELinux siguió Enforcing y el helper quedó
+   etiquetado `virt_qemu_ga_unconfined_exec_t`.
+2. Sellado: llaves, estado IACP, concesiones, `cloud-init clean`, root
+   bloqueado y credenciales temporales de Proxmox retiradas.
+3. Corte en `mng01` con dev y producción en reposo: respaldo de las originales
+   en 29018/29019, borrado de 29010/29011, clon completo de las candidatas en
+   29010/29011 con nombre oficial, etiqueta `v20261120` y conversión a
+   plantilla. `golden.observe` aprobó ambas.
+4. Tras la certificación se eliminaron 29016–29019. Los catálogos no cambiaron.
+
+La fábrica `prepare_golden_copies.py` no completó la preparación: instala
+paquetes y limpia mediante QEMU Guest Agent, que SELinux confina
+(`virt_qemu_ga_t`), y la ejecución de `dnf` devolvió HTTP 596. Se corrigieron
+dos carreras de primer arranque (NIC y DHCP); la vía por agente queda
+pendiente de rediseño (SSH).
+
+### Matrices
+
+| Corrida | Stage | Alcance | Resultado |
+| --- | --- | --- | --- |
+| `20261120083744` | dev, `prod_static`, plantillas antiguas | 6 imágenes (abortada) | FAIL 16/18: AlmaLinux 9 con el helper antiguo |
+| `20261120090626` | dev, `prod_static`, plantillas nuevas | AlmaLinux 9 ×8 + AlmaLinux 10 ×8 | **PASS 16/16** |
+| `20261120091428` | **producción**, `prod_static`, `7c1290a` | AlmaLinux 9 ×8 + AlmaLinux 10 ×8 | **PASS 16/16** |
+
+Cada caso cubre los 4 planes, contraseña y llave de root, inicio explícito y
+automático, IP SSH igual a la asignación IPAM, persistencia tras reboot y
+stop/start, y destroy con la VMID ausente. Ambas corridas tuvieron un pico de
+6 workers y 0 contención.
+
+### Pendientes declarados
+
+- La matriz KVM de 48 en producción y la de aplicaciones en producción no se
+  ejecutaron; el alcance acordado para producción fue AlmaLinux 16/16.
+- Ubuntu 26.04, Fedora 45 y Debian 13 con `prod_static` no tienen
+  certificación completa (la corrida de 48 estáticos se detuvo tras 6/6
+  Ubuntu 24.04).
+- Actualizaciones de paquetes al aprovisionar sin conflicto con QEMU Guest
+  Agent: diseño pendiente.
