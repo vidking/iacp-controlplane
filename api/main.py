@@ -7,13 +7,15 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Literal
 
+import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from psycopg_pool import PoolTimeout
 
-from api.db import database, initialize, prune_history
+from api.db import database, initialize, prune_history, schema_ready
 from api import applications
 from api.service_catalog import catalog as application_catalog
 from api.service_models import ApplicationConnectionRequest, RecoveryRequest, ServiceCreateRequest
@@ -77,6 +79,19 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+# PostgreSQL no disponible (reinicio, failover o pool agotado) es una
+# condición transitoria: 503 con Retry-After permite que los clientes
+# reintenten en vez de interpretar un 500 como fallo definitivo.
+@app.exception_handler(psycopg.OperationalError)
+@app.exception_handler(PoolTimeout)
+async def database_unavailable(_request: Request, _error: Exception):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "database temporarily unavailable", "error_code": "DATABASE_UNAVAILABLE"},
+        headers={"Retry-After": "5", "Cache-Control": "no-store"},
+    )
 
 
 def _max_body_bytes() -> int:
@@ -259,7 +274,14 @@ def live():
 
 @app.get("/health/ready", tags=["health"])
 def ready():
-    initialize()
+    # Solo lectura: el esquema se crea en startup(); repetir el DDL en cada
+    # sonda de readiness tomaba el advisory lock global de los workers.
+    try:
+        ok = schema_ready()
+    except Exception:
+        ok = False
+    if not ok:
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
     return {"status": "ready"}
 
 

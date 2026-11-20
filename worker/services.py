@@ -8,7 +8,7 @@ from api.db import database, initialize
 from api.service import now
 from api.service_catalog import enabled
 from api.protection import is_protected_vmid
-from worker.resilience import Backoff, report, retry_until_ready
+from worker.resilience import STOP, Backoff, identify_process, report, retry_until_ready
 from worker.service_executor import (
     execute,
     ServiceBlocked,
@@ -179,7 +179,7 @@ def run(worker_id, *, iterations=None):
     backoff = Backoff(5.0, 60.0)
     retry_until_ready(worker_id, "inicialización", initialize, backoff)
     completed = 0
-    while iterations is None or completed < iterations:
+    while (iterations is None or completed < iterations) and not STOP.requested:
         completed += 1
         stage = "recuperación"
         try:
@@ -203,4 +203,7 @@ def run(worker_id, *, iterations=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--worker-id", required=True)
-    run(parser.parse_args().worker_id)
+    worker_id = parser.parse_args().worker_id
+    identify_process(worker_id)
+    STOP.install(worker_id)
+    run(worker_id)

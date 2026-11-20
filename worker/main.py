@@ -1,7 +1,9 @@
 import argparse
+import contextvars
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -25,7 +27,7 @@ from worker.preboot import (
     save_expectation as save_preboot_expectation,
 )
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
-from worker.resilience import Backoff, report, retry_until_ready
+from worker.resilience import STOP, Backoff, identify_process, report, retry_until_ready
 
 
 def now() -> str:
@@ -332,6 +334,44 @@ UPDATABLE_OPERATION_COLUMNS = frozenset({
 })
 
 
+class OperationFencedError(RuntimeError):
+    """El worker perdió la propiedad de su operación (heartbeat obsoleto).
+
+    ``recover_stale_operations`` ya la cerró como ``uncertain`` y encoló una
+    reconciliación; las escrituras tardías del worker original no deben
+    sobrescribir ese resultado ni el estado de la instancia.
+    """
+
+
+# Operación que ejecuta este proceso: (worker_id, operation_id).
+_FENCE: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar("iacp_fence", default=None)
+_FENCED_SQL = (
+    "EXISTS (SELECT 1 FROM events WHERE events.operation_id = ? AND events.kind = 'recovery.required')"
+)
+
+
+def _fenced_operation_for(operation_id: str | None) -> str | None:
+    fence = _FENCE.get()
+    if fence is None or operation_id is None or fence[1] != operation_id:
+        return None
+    return fence[1]
+
+
+def _raise_fenced(db, operation_id: str) -> None:
+    worker_id = (_FENCE.get() or ("", ""))[0]
+    db.execute(
+        "INSERT INTO events(operation_id, kind, status, occurred_at, detail) VALUES (?, 'operation.fenced', 'uncertain', ?, ?)",
+        (operation_id, now(), f"Escritura tardía de {worker_id} rechazada; la operación ya fue recuperada."),
+    )
+    raise OperationFencedError(f"operación {operation_id} recuperada por heartbeat obsoleto")
+
+
+def ensure_operation_owned(db, operation_id: str | None) -> None:
+    fenced = _fenced_operation_for(operation_id)
+    if fenced and db.execute(f"SELECT {_FENCED_SQL} AS fenced", (fenced,)).fetchone()["fenced"]:
+        _raise_fenced(db, fenced)
+
+
 def update_operation(operation_id: str, **values) -> None:
     if not values:
         return
@@ -340,6 +380,16 @@ def update_operation(operation_id: str, **values) -> None:
         raise ValueError(f"columnas de operations no permitidas: {sorted(unknown)}")
     assignments = ", ".join(f"{name}=?" for name in values)
     with database() as db:
+        if _fenced_operation_for(operation_id):
+            # Compare-and-set: la escritura solo aplica si la recuperación
+            # automática no tomó la operación; se evalúa en la misma sentencia.
+            result = db.execute(
+                f"UPDATE operations SET {assignments} WHERE operation_id=? AND NOT {_FENCED_SQL}",
+                (*values.values(), operation_id, operation_id),
+            )
+            if result.rowcount == 0:
+                ensure_operation_owned(db, operation_id)
+            return
         db.execute(
             f"UPDATE operations SET {assignments} WHERE operation_id=?",
             (*values.values(), operation_id),
@@ -357,6 +407,9 @@ def update_instance(
     if not instance_id:
         return
     with database() as db:
+        fence = _FENCE.get()
+        if fence is not None:
+            ensure_operation_owned(db, fence[1])
         if vmid is None and node is None:
             db.execute(
                 "UPDATE instances SET status=?, updated_at=? WHERE instance_id=?",
@@ -703,6 +756,49 @@ def local_variables(spec: dict) -> dict:
     }
 
 
+# Variables que Terraform no necesita y que no debe heredar: credenciales de
+# PostgreSQL, del API de IACP, de NetBox, de Wasabi y tokens duplicados. El
+# provider de Proxmox recibe su token por PROXMOX_VE_API_TOKEN.
+_TERRAFORM_ENV_ALLOW = frozenset({"PROXMOX_VE_API_TOKEN", "PROXMOX_VE_ENDPOINT"})
+_TERRAFORM_ENV_DENY_PREFIXES = ("PG", "AWS_", "WASABI_", "NETBOX_", "IACP_NETBOX", "IACP_WASABI")
+_TERRAFORM_ENV_DENY_MARKERS = ("TOKEN", "PASSWORD", "SECRET", "ACCESS_KEY", "DATABASE_URL")
+
+
+def terraform_environment() -> dict[str, str]:
+    environment = {}
+    for name, value in os.environ.items():
+        upper = name.upper()
+        if upper in _TERRAFORM_ENV_ALLOW or upper.startswith("TF_"):
+            environment[name] = value
+            continue
+        if upper.startswith(_TERRAFORM_ENV_DENY_PREFIXES):
+            continue
+        if any(marker in upper for marker in _TERRAFORM_ENV_DENY_MARKERS):
+            continue
+        environment[name] = value
+    return environment
+
+
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    """Detiene Terraform y sus providers; ``kill()`` dejaba providers huérfanos."""
+
+    grace = max(1.0, float(os.getenv("IACP_TERRAFORM_KILL_GRACE_SECONDS", "20")))
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        process.terminate()
+    try:
+        process.wait(timeout=grace)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        process.kill()
+    process.wait(timeout=10)
+
+
 def run_commands(
     worker_id: str,
     operation_id: str,
@@ -715,7 +811,7 @@ def run_commands(
     deadline = time.monotonic() + int(os.getenv("IACP_TERRAFORM_TIMEOUT", "1800"))
     output: list[str] = []
     errors: list[str] = []
-    environment = os.environ.copy()
+    environment = terraform_environment()
     plugin_cache = os.getenv("IACP_TERRAFORM_PLUGIN_CACHE_DIR", "").strip()
     if plugin_cache:
         environment["TF_PLUGIN_CACHE_DIR"] = plugin_cache
@@ -746,13 +842,29 @@ def run_commands(
                     stdout=stdout_file,
                     stderr=stderr_file,
                     env=environment,
+                    # Grupo de procesos propio: el timeout detiene también
+                    # los providers que Terraform lanza como hijos.
+                    start_new_session=True,
                 )
+                heartbeat_every = max(1.0, float(os.getenv("IACP_COMMAND_HEARTBEAT_SECONDS", "5")))
+                last_heartbeat = 0.0
                 while process.poll() is None:
                     if time.monotonic() > deadline:
-                        process.kill()
-                        process.wait(timeout=10)
+                        _terminate_process_group(process)
                         raise TimeoutError("Terraform excedió el tiempo configurado")
-                    heartbeat(worker_id, "running", operation_id, phase=phase)
+                    # Un heartbeat por segundo y worker eran ~6 escrituras/s
+                    # con seis applies en paralelo; cada 5 s basta frente al
+                    # umbral de 900 s de operación obsoleta.
+                    if time.monotonic() - last_heartbeat >= heartbeat_every:
+                        try:
+                            heartbeat(worker_id, "running", operation_id, phase=phase)
+                            last_heartbeat = time.monotonic()
+                        except Exception as error:  # noqa: BLE001
+                            # Una caída breve de PostgreSQL no debe abandonar
+                            # un apply en curso; se reintenta en la siguiente
+                            # vuelta y la reconciliación cubre el resto.
+                            report(worker_id, "heartbeat", error, heartbeat_every)
+                            last_heartbeat = time.monotonic()
                     time.sleep(1)
                 stdout_file.seek(0)
                 stderr_file.seek(0)
@@ -2535,7 +2647,7 @@ def run(worker_id: str, *, iterations: int | None = None) -> None:
     )
     last_idle_heartbeat = 0.0
     completed = 0
-    while iterations is None or completed < iterations:
+    while (iterations is None or completed < iterations) and not STOP.requested:
         completed += 1
         stage = "claim"
         try:
@@ -2547,7 +2659,11 @@ def run(worker_id: str, *, iterations: int | None = None) -> None:
             operation = claim(worker_id)
             if operation:
                 stage = "ejecución"
-                execute(worker_id, operation)
+                token = _FENCE.set((worker_id, operation["operation_id"]))
+                try:
+                    execute(worker_id, operation)
+                finally:
+                    _FENCE.reset(token)
                 last_idle_heartbeat = time.monotonic()
             else:
                 now_monotonic = time.monotonic()
@@ -2566,4 +2682,7 @@ def run(worker_id: str, *, iterations: int | None = None) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--worker-id", required=True)
-    run(parser.parse_args().worker_id)
+    worker_id = parser.parse_args().worker_id
+    identify_process(worker_id)
+    STOP.install(worker_id)
+    run(worker_id)

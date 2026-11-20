@@ -9,10 +9,46 @@ operación que pierde su heartbeat se recupera como ``uncertain``.
 
 from __future__ import annotations
 
+import os
+import signal
 import sys
 import time
 import traceback
 from typing import Callable
+
+
+class StopRequest:
+    """Apagado ordenado: SIGTERM deja de reclamar trabajo nuevo.
+
+    La operación en curso termina con normalidad (Terraform corre en su
+    propia sesión y no recibe la señal). Si supera ``stop_grace_period``,
+    Docker envía SIGKILL y la operación queda para reconciliación física,
+    que es el comportamiento seguro ya existente.
+    """
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def install(self, worker_id: str) -> None:
+        def handle(signum, _frame):
+            self.requested = True
+            print(
+                f"[{worker_id}] señal {signal.Signals(signum).name}: no se reclaman operaciones nuevas",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, handle)
+
+
+STOP = StopRequest()
+
+
+def identify_process(worker_id: str) -> None:
+    """Nombre visible en pg_stat_activity para diagnosticar locks por worker."""
+
+    os.environ.setdefault("IACP_DB_APPLICATION_NAME", f"iacp-{worker_id}"[:63])
 
 
 class Backoff:
