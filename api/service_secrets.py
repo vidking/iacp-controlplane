@@ -2,7 +2,7 @@
 
 import json
 import os
-import uuid
+import secrets
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
@@ -38,8 +38,8 @@ def installation_credentials() -> dict:
         )
         .decode()
         + " iacp-installer",
-        "admin_password": uuid.uuid4().hex + uuid.uuid4().hex,
-        "database_password": uuid.uuid4().hex + uuid.uuid4().hex,
-        "encryption_key": uuid.uuid4().hex + uuid.uuid4().hex,
-        "gateway_token": uuid.uuid4().hex + uuid.uuid4().hex,
+        "admin_password": secrets.token_hex(32),
+        "database_password": secrets.token_hex(32),
+        "encryption_key": secrets.token_hex(32),
+        "gateway_token": secrets.token_hex(32),
     }

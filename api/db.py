@@ -7,12 +7,16 @@ históricos de SQLite ni datos del runtime anterior.
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import make_conninfo
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 
 def _connection_options() -> str | dict[str, Any]:
@@ -33,22 +37,28 @@ def _connection_options() -> str | dict[str, Any]:
     }
 
 
-def _postgres_sql(statement: str) -> str:
-    """Translate the repository's qmark parameters to psycopg parameters."""
+def _postgres_sql(statement: str, *, escape_percent: bool = True) -> str:
+    """Traduce los parámetros qmark del repositorio al formato de psycopg.
+
+    Con parámetros, psycopg interpreta cada ``%`` como marcador; por eso un
+    ``%`` literal (por ejemplo, en ``LIKE 'abc%'``) se escapa como ``%%``.
+    Los ``?`` dentro de literales entre comillas se conservan.
+    """
 
     if statement.strip().upper() == "BEGIN IMMEDIATE":
         return "BEGIN"
     output: list[str] = []
     quote: str | None = None
-    escaped = False
     for character in statement:
+        if character == "%" and escape_percent:
+            output.append("%%")
+            continue
         if quote:
             output.append(character)
-            if character == quote and not escaped:
+            if character == quote:
+                # SQL estándar duplica la comilla para escaparla (''); el
+                # cierre y la reapertura inmediata producen el mismo texto.
                 quote = None
-            escaped = character == "\\" and not escaped
-            if character != "\\":
-                escaped = False
             continue
         if character in {"'", '"'}:
             quote = character
@@ -66,7 +76,7 @@ class DatabaseConnection:
     def __init__(self, connection: psycopg.Connection):
         self._connection = connection
 
-    def execute(self, statement: str, parameters: Any = ()):
+    def execute(self, statement: str, parameters: Any = None):
         # SQLite BEGIN IMMEDIATE serializaba los claims y la asignación de
         # VMID. Reproducimos esa sección crítica entre procesos PostgreSQL
         # con un advisory transaction lock; sin él, seis workers podrían
@@ -74,6 +84,10 @@ class DatabaseConnection:
         if statement.strip().upper() == "BEGIN IMMEDIATE":
             self._connection.execute("BEGIN")
             return self._connection.execute("SELECT pg_advisory_xact_lock(104, 101)")
+        if not parameters:
+            # Sin parámetros psycopg no interpreta marcadores; un ``%``
+            # literal debe llegar intacto al servidor.
+            return self._connection.execute(_postgres_sql(statement, escape_percent=False))
         return self._connection.execute(_postgres_sql(statement), parameters)
 
     def executemany(self, statement: str, parameters: Any):
@@ -86,6 +100,8 @@ class DatabaseConnection:
 
 
 def connect() -> DatabaseConnection:
+    """Conexión dedicada fuera del pool (diagnóstico y herramientas)."""
+
     options = _connection_options()
     if isinstance(options, dict):
         connection = psycopg.connect(**options, autocommit=True, row_factory=dict_row)
@@ -95,13 +111,95 @@ def connect() -> DatabaseConnection:
     return DatabaseConnection(connection)
 
 
+def _env_number(name: str, default: float, minimum: float) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _pool_conninfo() -> str:
+    options = _connection_options()
+    if isinstance(options, dict):
+        return make_conninfo(**{key: str(value) for key, value in options.items()})
+    if "connect_timeout" in options:
+        return options
+    return make_conninfo(
+        options, connect_timeout=str(int(_env_number("IACP_DB_CONNECT_TIMEOUT", 5, 1)))
+    )
+
+
+def _configure_connection(connection: psycopg.Connection) -> None:
+    connection.execute("SET TIME ZONE 'UTC'")
+
+
+_POOL: ConnectionPool | None = None
+_POOL_KEY: tuple | None = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool() -> ConnectionPool:
+    """Pool por proceso; se recrea si cambia la configuración de conexión.
+
+    Antes cada consulta abría una conexión nueva (autenticación y SET TIME
+    ZONE incluidos): un listado de 50 instancias abría 50 conexiones y cada
+    heartbeat de los diez workers abría otra.
+    """
+
+    global _POOL, _POOL_KEY
+    conninfo = _pool_conninfo()
+    key = (os.getpid(), conninfo)
+    with _POOL_LOCK:
+        if _POOL is not None and _POOL_KEY == key:
+            return _POOL
+        previous = _POOL
+        _POOL = ConnectionPool(
+            conninfo,
+            min_size=int(_env_number("IACP_DB_POOL_MIN_SIZE", 1, 0)),
+            max_size=int(_env_number("IACP_DB_POOL_MAX_SIZE", 5, 1)),
+            kwargs={"autocommit": True, "row_factory": dict_row},
+            configure=_configure_connection,
+            # Valida cada conexión antes de entregarla: un reinicio de
+            # PostgreSQL no debe propagarse como error a la primera consulta.
+            check=ConnectionPool.check_connection,
+            timeout=_env_number("IACP_DB_POOL_TIMEOUT", 10, 1),
+            max_idle=_env_number("IACP_DB_POOL_MAX_IDLE", 300, 30),
+            max_lifetime=_env_number("IACP_DB_POOL_MAX_LIFETIME", 1800, 60),
+            name="iacp",
+            open=True,
+        )
+        _POOL_KEY = key
+    if previous is not None and previous.name == "iacp":
+        try:
+            previous.close(timeout=5)
+        except Exception:
+            pass
+    return _POOL
+
+
+def close_pool() -> None:
+    global _POOL, _POOL_KEY
+    with _POOL_LOCK:
+        pool, _POOL, _POOL_KEY = _POOL, None, None
+    if pool is not None:
+        pool.close(timeout=5)
+
+
 @contextmanager
 def database():
-    connection = connect()
+    pool = _pool()
+    connection = pool.getconn()
     try:
-        yield connection
+        yield DatabaseConnection(connection)
     finally:
-        connection.close()
+        # Misma semántica que cerrar una conexión dedicada: una transacción
+        # que no llegó a COMMIT se revierte y no se reutiliza su estado.
+        try:
+            if not connection.closed and connection.info.transaction_status != TransactionStatus.IDLE:
+                connection.rollback()
+        except Exception:
+            pass
+        pool.putconn(connection)
 
 
 _SCHEMA = (
@@ -293,11 +391,11 @@ def prune_history() -> dict[str, int]:
         event_result = db.execute(
             """
             DELETE FROM events
-            WHERE occurred_at < %s
+            WHERE occurred_at < ?
               AND operation_id IN (
                 SELECT operation_id FROM operations
                 WHERE status IN ('succeeded', 'failed', 'uncertain')
-                  AND finished_at IS NOT NULL AND finished_at < %s
+                  AND finished_at IS NOT NULL AND finished_at < ?
               )
             """,
             (cutoff, cutoff),
@@ -305,13 +403,13 @@ def prune_history() -> dict[str, int]:
         idempotency_result = db.execute(
             """
             DELETE FROM idempotency_keys
-            WHERE created_at < %s
+            WHERE created_at < ?
               AND (
                 operation_id IS NULL
                 OR operation_id IN (
                   SELECT operation_id FROM operations
                   WHERE status IN ('succeeded', 'failed', 'uncertain')
-                    AND finished_at IS NOT NULL AND finished_at < %s
+                    AND finished_at IS NOT NULL AND finished_at < ?
                 )
               )
             """,
@@ -321,7 +419,7 @@ def prune_history() -> dict[str, int]:
             """
             DELETE FROM operations
             WHERE status IN ('succeeded', 'failed', 'uncertain')
-              AND finished_at IS NOT NULL AND finished_at < %s
+              AND finished_at IS NOT NULL AND finished_at < ?
             """,
             (cutoff,),
         )

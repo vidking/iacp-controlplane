@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,7 @@ from worker.preboot import (
     save_expectation as save_preboot_expectation,
 )
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
+from worker.resilience import Backoff, report, retry_until_ready
 
 
 def now() -> str:
@@ -62,13 +64,16 @@ def stale_operation_seconds() -> float:
 
 
 def _recovery_operation_exists(db, source_operation_id: str) -> bool:
+    # Comparación exacta del campo JSON: un LIKE '%id%' recorría el texto de
+    # cada payload y podía coincidir con el identificador en otro campo.
     return db.execute(
         """
         SELECT 1 FROM operations
-        WHERE command='reconcile' AND payload_json LIKE ?
+        WHERE command='reconcile'
+          AND payload_json::jsonb ->> 'source_operation_id' = ?
         LIMIT 1
         """,
-        (f"%{source_operation_id}%",),
+        (source_operation_id,),
     ).fetchone() is not None
 
 
@@ -316,9 +321,23 @@ def emit(operation_id: str, kind: str, status: str, detail: str = "") -> None:
         )
 
 
+# Columnas que un worker puede actualizar. Los nombres se interpolan en el
+# SQL, así que no se aceptan claves fuera de esta lista.
+UPDATABLE_OPERATION_COLUMNS = frozenset({
+    "command", "action", "status", "payload_json", "plan_id", "stack",
+    "commercial_context_json", "environment", "instance_id", "vmid",
+    "target_node", "secret_path", "workspace_path", "plan_path",
+    "plan_operation_id", "worker_id", "started_at", "finished_at",
+    "last_heartbeat", "phase", "attempt_count", "exit_code", "output", "error",
+})
+
+
 def update_operation(operation_id: str, **values) -> None:
     if not values:
         return
+    unknown = set(values) - UPDATABLE_OPERATION_COLUMNS
+    if unknown:
+        raise ValueError(f"columnas de operations no permitidas: {sorted(unknown)}")
     assignments = ", ".join(f"{name}=?" for name in values)
     with database() as db:
         db.execute(
@@ -714,24 +733,31 @@ def run_commands(
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
         while True:
-            process = subprocess.Popen(
-                args,
-                cwd=workspace,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=environment,
-            )
-            while process.poll() is None:
-                if time.monotonic() > deadline:
-                    process.kill()
-                    process.wait(timeout=10)
-                    raise TimeoutError("Terraform excedió el tiempo configurado")
-                heartbeat(worker_id, "running", operation_id, phase=phase)
-                time.sleep(1)
-            stdout, stderr = process.communicate()
-            stdout = stdout or ""
-            stderr = stderr or ""
+            # La salida se vuelca a archivos temporales y no a PIPE: el bucle
+            # de supervisión no lee las tuberías mientras el proceso corre, y
+            # una salida mayor que el búfer del pipe (~64 KiB) bloquearía a
+            # Terraform hasta vencer el timeout, incluso durante un apply.
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout_file, \
+                    tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_file:
+                process = subprocess.Popen(
+                    args,
+                    cwd=workspace,
+                    text=True,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    env=environment,
+                )
+                while process.poll() is None:
+                    if time.monotonic() > deadline:
+                        process.kill()
+                        process.wait(timeout=10)
+                        raise TimeoutError("Terraform excedió el tiempo configurado")
+                    heartbeat(worker_id, "running", operation_id, phase=phase)
+                    time.sleep(1)
+                stdout_file.seek(0)
+                stderr_file.seek(0)
+                stdout = stdout_file.read()
+                stderr = stderr_file.read()
             output.append(operation_output(stdout, password))
             errors.append(operation_output(stderr, password))
             if process.returncode == 0:
@@ -2496,31 +2522,45 @@ def execute(worker_id: str, operation: dict) -> None:
         heartbeat(worker_id, "idle")
 
 
-def run(worker_id: str) -> None:
-    initialize()
-    heartbeat(worker_id, "starting")
-    recover_stale_operations()
+def run(worker_id: str, *, iterations: int | None = None) -> None:
+    poll_interval = max(0.1, float(os.getenv("IACP_WORKER_POLL_SECONDS", "0.5")))
+    backoff = Backoff(poll_interval)
+    retry_until_ready(worker_id, "inicialización", initialize, backoff)
+    retry_until_ready(worker_id, "heartbeat inicial", lambda: heartbeat(worker_id, "starting"), backoff)
+    retry_until_ready(worker_id, "recuperación inicial", recover_stale_operations, backoff)
     recovery_scan_interval = max(5.0, float(os.getenv("IACP_RECOVERY_SCAN_SECONDS", "15")))
     last_recovery_scan = time.monotonic()
     idle_heartbeat_interval = max(
         1.0, float(os.getenv("IACP_WORKER_IDLE_HEARTBEAT_SECONDS", "15"))
     )
-    poll_interval = max(0.1, float(os.getenv("IACP_WORKER_POLL_SECONDS", "0.5")))
     last_idle_heartbeat = 0.0
-    while True:
-        if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
-            recover_stale_operations()
-            last_recovery_scan = time.monotonic()
-        operation = claim(worker_id)
-        if operation:
-            execute(worker_id, operation)
-            last_idle_heartbeat = time.monotonic()
-        else:
-            now_monotonic = time.monotonic()
-            if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
-                heartbeat(worker_id, "idle")
-                last_idle_heartbeat = now_monotonic
-            time.sleep(poll_interval)
+    completed = 0
+    while iterations is None or completed < iterations:
+        completed += 1
+        stage = "claim"
+        try:
+            if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
+                stage = "recuperación"
+                recover_stale_operations()
+                last_recovery_scan = time.monotonic()
+            stage = "claim"
+            operation = claim(worker_id)
+            if operation:
+                stage = "ejecución"
+                execute(worker_id, operation)
+                last_idle_heartbeat = time.monotonic()
+            else:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
+                    stage = "heartbeat"
+                    heartbeat(worker_id, "idle")
+                    last_idle_heartbeat = now_monotonic
+                time.sleep(poll_interval)
+            backoff.success()
+        except Exception as error:  # noqa: BLE001 - se contiene y se reintenta
+            delay = backoff.failure()
+            report(worker_id, stage, error, delay)
+            time.sleep(delay)
 
 
 if __name__ == "__main__":
