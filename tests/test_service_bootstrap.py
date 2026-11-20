@@ -716,3 +716,78 @@ def test_cloud_init_json_handles_wait_output_and_rejects_real_errors():
     status['errors'] = ['Fallo de configuración']
     with pytest.raises(AssertionError):
         namespace['cloud_ready'](SimpleNamespace(returncode=1, stdout=json.dumps(status)))
+
+
+def test_almalinux_dhcp_tolera_errores_transitorios_de_lectura_del_agente(monkeypatch):
+    """Matriz dev 20261120040951: un 500 transitorio en exec-status abortaba el start."""
+    from worker.proxmox import ProxmoxError
+
+    initialize()
+    monkeypatch.setattr(bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _: None)
+    commands = []
+    status_calls = {"n": 0}
+    interface_calls = {"n": 0}
+    response = {
+        "bootstrap_protocol": 1,
+        "instance_id": "alma-dhcp-test",
+        "mac_address": MAC,
+        "host_key": "ssh-ed25519 AAAAexample",
+        "dns_servers": ["1.1.1.1", "8.8.8.8"],
+        "ipv4": "192.0.2.30",
+    }
+
+    def execute(_node, _vmid, argv):
+        commands.append(argv)
+        return {"pid": len(commands)}
+
+    def result(_node, _vmid, _pid):
+        status_calls["n"] += 1
+        if status_calls["n"] in {1, 3}:
+            raise ProxmoxError("POWER_PROXMOX_UNAVAILABLE", 500)
+        return {"exited": True, "exitcode": 0, "out-data": json.dumps(response) if len(commands) == 2 else ""}
+
+    def interfaces(*_):
+        interface_calls["n"] += 1
+        if interface_calls["n"] == 2:
+            raise ProxmoxError("POWER_PROXMOX_UNAVAILABLE", 500)
+        return [{"hardware-address": MAC, "ip-addresses": [{"ip-address": "192.0.2.30"}]}]
+
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {"name": "alma-dhcp-test", "net0": "virtio=" + MAC + ",bridge=vmbr0", "ipconfig0": "ip=dhcp"},
+        guest_agent_interfaces=interfaces,
+        guest_agent_exec=execute,
+        guest_agent_exec_status=result,
+    )
+    binding = bootstrap.prepare(
+        fake, node="mng01", vmid=40014, name="alma-dhcp-test", instance_id="alma-dhcp-test",
+        spec={"image": "almalinux-9", "network_profile": "lab_dhcp", "prepare_identity": True},
+        heartbeat=lambda: None,
+    )
+    assert binding["address"] == "192.0.2.30"
+    # Cada POST exec se envía una sola vez; solo se repiten lecturas.
+    assert len(commands) == 2
+
+
+def test_lectura_del_agente_con_permiso_denegado_no_se_reintenta(monkeypatch):
+    from worker.proxmox import ProxmoxError
+
+    initialize()
+    monkeypatch.setattr(bootstrap, "_wait_for_pool_membership", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _: None)
+
+    def denied(*_):
+        raise ProxmoxError("POWER_PERMISSION_DENIED", 403)
+
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {"name": "alma-dhcp-test", "net0": "virtio=" + MAC + ",bridge=vmbr0", "ipconfig0": "ip=dhcp"},
+        guest_agent_interfaces=lambda *_: [],
+        guest_agent_exec=lambda *_: {"pid": 1},
+        guest_agent_exec_status=denied,
+    )
+    with pytest.raises(GuestIdentityError, match="GUEST_IDENTITY_PERMISSION_REQUIRED"):
+        bootstrap.prepare(
+            fake, node="mng01", vmid=40014, name="alma-dhcp-test", instance_id="alma-dhcp-test",
+            spec={"image": "almalinux-9", "network_profile": "lab_dhcp", "prepare_identity": True},
+            heartbeat=lambda: None,
+        )

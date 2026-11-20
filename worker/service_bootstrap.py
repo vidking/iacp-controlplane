@@ -219,7 +219,17 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             heartbeat()
-            status = client.guest_agent_exec_status(node, vmid, pid)
+            try:
+                status = client.guest_agent_exec_status(node, vmid, pid)
+            except ProxmoxError as error:
+                # exec-status es una lectura repetible. Durante el arranque
+                # temprano (cloud-init, NetworkManager) el Guest Agent puede
+                # responder 500 o timeout de forma transitoria; abortar en el
+                # primer error convertía un arranque sano en fallo.
+                if error.status in {401, 403}:
+                    raise GuestIdentityError("GUEST_IDENTITY_PERMISSION_REQUIRED") from error
+                time.sleep(1)
+                continue
             if status.get("exited"):
                 return status
             time.sleep(1)
@@ -261,7 +271,15 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
     while True:
         heartbeat()
         addresses = []
-        for interface in client.guest_agent_interfaces(node, vmid):
+        try:
+            interfaces = client.guest_agent_interfaces(node, vmid)
+        except ProxmoxError as error:
+            # Lectura repetible: un error transitorio del agente equivale a
+            # "todavía sin dirección" y se reintenta hasta el plazo.
+            if error.status in {401, 403}:
+                raise GuestIdentityError("GUEST_IDENTITY_PERMISSION_REQUIRED") from error
+            interfaces = []
+        for interface in interfaces:
             if str(interface.get("hardware-address", "")).lower() != mac:
                 continue
             for entry in interface.get("ip-addresses", []):
