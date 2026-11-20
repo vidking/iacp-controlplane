@@ -523,9 +523,20 @@ class Factory:
             time.sleep(2)
         raise RuntimeError("FACTORY_GUEST_AGENT_UNAVAILABLE")
 
-    def ensure_initial_dhcp(self, vmid, mac):
-        interfaces = self.client.guest_agent_interfaces("mng01", vmid)
-        interface_name = guest_interface_name(interfaces, mac)
+    def ensure_initial_dhcp(self, vmid, mac, timeout=180):
+        # En el primer arranque de un clon AlmaLinux el agente puede responder
+        # antes de que exista eth0 (p. ej. durante el relabel de SELinux y su
+        # reinicio). Se espera a la NIC en vez de abortar en la primera lectura.
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                interfaces = self.client.guest_agent_interfaces("mng01", vmid)
+                interface_name = guest_interface_name(interfaces, mac)
+                break
+            except (ProxmoxError, RuntimeError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(2)
         has_ipv4 = any(
             entry.get("ip-address-type") == "ipv4"
             and usable_guest_ipv4(entry.get("ip-address"))
@@ -908,6 +919,10 @@ def main():
             "error_type": type(error).__name__,
             "phase": factory.state.get("current_phase"),
         }
+        if isinstance(error, RuntimeError) and re.fullmatch(r"[A-Z0-9_:,.-]{3,200}", str(error)):
+            # Los RuntimeError de la fábrica son códigos propios sin secretos.
+            factory.state["error_code"] = str(error)
+            failure["error_code"] = str(error)
         if isinstance(error, ProxmoxError):
             factory.state["error_code"] = str(error)
             factory.state["http_status"] = error.status
