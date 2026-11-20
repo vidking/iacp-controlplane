@@ -158,9 +158,9 @@ def public_instance_status(row) -> str:
     return PUBLIC_INSTANCE_STATUS.get(raw_status, raw_status)
 
 
-def _active_instance_operation(db, instance_id: str):
+def _active_instance_operation(db, instance_id: str, *, allow_queued_service: bool = False):
     from api.applications import guard_instance
-    guard_instance(db, instance_id)
+    guard_instance(db, instance_id, allow_queued=allow_queued_service)
     placeholders = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
     return db.execute(
         f"""
@@ -645,7 +645,9 @@ def _insert_operation(
         raise HTTPException(status_code=422, detail="la operacion no tiene instancia objetivo")
 
     if request.command in {Command.apply, Command.destroy, Command.power, Command.reconcile} and instance_id:
-        active = _active_instance_operation(db, instance_id)
+        active = _active_instance_operation(
+            db, instance_id, allow_queued_service=request.command == Command.reconcile
+        )
         if active is not None:
             raise HTTPException(
                 status_code=409,
@@ -946,7 +948,7 @@ def create_reconcile(
 
     def builder(db):
         from api.applications import guard_instance
-        guard_instance(db, instance_id)
+        guard_instance(db, instance_id, allow_queued=True)
         instance = db.execute(
             "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
         ).fetchone()

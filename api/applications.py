@@ -25,11 +25,16 @@ def require_enabled():
         raise HTTPException(503, "SERVICES_DISABLED")
 
 
-def guard_instance(db, instance_id: str):
+def guard_instance(db, instance_id: str, *, allow_queued: bool = False):
+    # allow_queued: un job en cola no se ejecuta mientras la instancia tenga
+    # una operación activa o uncertain (ver worker.services.claim). Bloquear
+    # la reconciliación por él producía un bloqueo mutuo: reconcile exigía
+    # que no hubiera jobs y el retry del job exigía que no hubiera uncertain.
+    statuses = "('running','uncertain')" if allow_queued else ACTIVE
     row = db.execute(
         f"""SELECT j.job_id FROM service_jobs j
         JOIN service_instances s ON s.service_id=j.service_id
-        WHERE s.instance_id=? AND j.status IN {ACTIVE} LIMIT 1""",
+        WHERE s.instance_id=? AND j.status IN {statuses} LIMIT 1""",
         (instance_id,),
     ).fetchone()
     if row:
