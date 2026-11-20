@@ -537,19 +537,36 @@ class Factory:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(2)
-        has_ipv4 = any(
-            entry.get("ip-address-type") == "ipv4"
-            and usable_guest_ipv4(entry.get("ip-address"))
-            for interface in interfaces
-            if str(interface.get("hardware-address", "")).lower() == mac.lower()
-            for entry in interface.get("ip-addresses", [])
-        )
-        if not has_ipv4:
-            self.qga(
-                vmid,
-                ["/usr/bin/nmcli", "device", "connect", interface_name],
-                timeout=180,
+        def has_ipv4(rows):
+            return any(
+                entry.get("ip-address-type") == "ipv4"
+                and usable_guest_ipv4(entry.get("ip-address"))
+                for interface in rows
+                if str(interface.get("hardware-address", "")).lower() == mac.lower()
+                for entry in interface.get("ip-addresses", [])
             )
+
+        # NetworkManager activa la NIC por DHCP por sí solo unos segundos
+        # después. Forzar `nmcli device connect` desde el agente confinado por
+        # SELinux puede fallar aunque el DHCP vaya a completarse; solo se
+        # intenta si la dirección no aparece, y su fallo no es concluyente:
+        # addresses() sigue siendo la compuerta final.
+        dhcp_deadline = time.monotonic() + 60
+        while not has_ipv4(interfaces) and time.monotonic() < dhcp_deadline:
+            time.sleep(2)
+            try:
+                interfaces = self.client.guest_agent_interfaces("mng01", vmid)
+            except ProxmoxError:
+                interfaces = []
+        if not has_ipv4(interfaces):
+            try:
+                self.qga(
+                    vmid,
+                    ["/usr/bin/nmcli", "device", "connect", interface_name],
+                    timeout=180,
+                )
+            except RuntimeError:
+                pass
         return self.addresses(vmid, mac)
 
     def prepare_copy(self, version):
