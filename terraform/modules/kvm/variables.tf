@@ -230,6 +230,13 @@ variable "cloudinit_username" {
   }
 }
 
+variable "cloudinit_package_upgrade" {
+  description = "Ejecutar package_upgrade de cloud-init en el primer arranque. Desactivado: la actualización concurrente reinicia qemu-guest-agent durante la validación de identidad."
+  type        = bool
+  nullable    = false
+  default     = false
+}
+
 variable "ssh_public_keys" {
   description = "Claves SSH públicas autorizadas dentro de la VM."
   type        = list(string)

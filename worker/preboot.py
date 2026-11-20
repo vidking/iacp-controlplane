@@ -63,6 +63,9 @@ def expectation(
         "node": node,
         "vmid": int(vmid),
         "password_present": password_present,
+        # Las expectativas anteriores no traen esta clave: sus VMs ya pasaron
+        # el primer arranque y no deben quedar bloqueadas en un power start.
+        "cloudinit_upgrade_disabled": True,
         "image": {
             "ostype": golden.get("ostype"),
             "balloon_mb": golden.get("balloon_mb", 0),
@@ -259,6 +262,11 @@ def mismatches(
     if dns_servers:
         check("nameserver", str(config.get("nameserver") or "").split() == list(dns_servers))
     check("cloudinit_user", config.get("ciuser") == instance.get("cloudinit_username"))
+    # Proxmox omite `ciupgrade` cuando conserva su valor por defecto (1); la
+    # VM solo puede encenderse si la actualización del primer arranque quedó
+    # desactivada de forma explícita.
+    if expected.get("cloudinit_upgrade_disabled"):
+        check("cloudinit_upgrade_disabled", str(config.get("ciupgrade", "1")) == "0")
     password_present = expected.get("password_present")
     if password_present is not None:
         check("cloudinit_password", bool(config.get("cipassword")) == bool(password_present))
