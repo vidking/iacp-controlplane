@@ -127,3 +127,25 @@ def test_conserva_vm_con_lease_de_otra_instancia(tmp_path, entorno):
     client = FakeClient(RECORD)
     assert worker_main.remove_orphan_vm(client, "op-prov", "inst-1", 40510, _state(tmp_path, None)) is False
     assert client.deleted == []
+
+
+def test_cierra_reconcile_superado_cuando_el_origen_termino():
+    initialize()
+    with database() as db:
+        for operation_id, command, status, payload in (
+            ("origen", "destroy", "succeeded", "{}"),
+            ("intento-viejo", "reconcile", "uncertain", '{"source_operation_id": "origen"}'),
+            ("origen-abierto", "destroy", "uncertain", "{}"),
+            ("intento-vigente", "reconcile", "uncertain", '{"source_operation_id": "origen-abierto"}'),
+        ):
+            db.execute(
+                "INSERT INTO operations(operation_id, command, action, status, payload_json, stack, created_at) VALUES (?, ?, ?, ?, ?, 'mng01', 'x')",
+                (operation_id, command, command, status, payload),
+            )
+    assert worker_main.close_resolved_reconcile_attempts() == 1
+    with database() as db:
+        rows = {r["operation_id"]: (r["status"], r["phase"]) for r in db.execute("SELECT operation_id, status, phase FROM operations")}
+    assert rows["intento-viejo"] == ("failed", "superseded")
+    assert rows["intento-vigente"][0] == "uncertain"
+    assert rows["origen-abierto"][0] == "uncertain"
+    assert worker_main.close_resolved_reconcile_attempts() == 0
