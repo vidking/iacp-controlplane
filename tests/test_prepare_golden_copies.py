@@ -253,3 +253,53 @@ def test_initial_dhcp_still_fails_closed_without_nic(monkeypatch):
     factory.client = SimpleNamespace(guest_agent_interfaces=lambda *_: [])
     with pytest.raises(RuntimeError, match="GOLDEN_GUEST_NIC_NOT_FOUND"):
         factory.ensure_initial_dhcp(29016, "bc:24:11:42:14:30")
+
+
+@pytest.mark.no_database
+def test_initial_dhcp_waits_for_automatic_lease_before_nmcli(monkeypatch):
+    from types import SimpleNamespace
+
+    import scripts.prepare_golden_copies as factory_module
+
+    mac = "bc:24:11:42:14:30"
+    nic = {"name": "eth0", "hardware-address": mac, "ip-addresses": []}
+    leased = dict(nic, **{"ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "192.168.3.127"}]})
+    observations = iter([[nic], [nic], [leased]])
+    current = {"value": None}
+
+    def interfaces(_node, _vmid):
+        current["value"] = next(observations, current["value"])
+        return current["value"]
+
+    monkeypatch.setattr(factory_module.time, "sleep", lambda _seconds: None)
+    factory = factory_module.Factory.__new__(factory_module.Factory)
+    factory.client = SimpleNamespace(guest_agent_interfaces=interfaces)
+    factory.qga = lambda *args, **kwargs: pytest.fail("nmcli no debe forzarse si el DHCP automático completa")
+    assert factory.ensure_initial_dhcp(29016, mac) == "192.168.3.127"
+
+
+@pytest.mark.no_database
+def test_initial_dhcp_tolerates_nmcli_failure_when_lease_arrives(monkeypatch):
+    from types import SimpleNamespace
+
+    import scripts.prepare_golden_copies as factory_module
+
+    mac = "bc:24:11:42:14:30"
+    nic = {"name": "eth0", "hardware-address": mac, "ip-addresses": []}
+    leased = dict(nic, **{"ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "192.168.3.127"}]})
+    state = {"nmcli": False}
+    clock = iter(range(0, 100000, 30))
+
+    def interfaces(_node, _vmid):
+        return [leased] if state["nmcli"] else [nic]
+
+    def qga(*_args, **_kwargs):
+        state["nmcli"] = True
+        raise RuntimeError("FACTORY_GUEST_EXEC_FAILED")
+
+    monkeypatch.setattr(factory_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(factory_module.time, "sleep", lambda _seconds: None)
+    factory = factory_module.Factory.__new__(factory_module.Factory)
+    factory.client = SimpleNamespace(guest_agent_interfaces=interfaces)
+    factory.qga = qga
+    assert factory.ensure_initial_dhcp(29016, mac) == "192.168.3.127"
