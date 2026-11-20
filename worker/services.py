@@ -8,6 +8,7 @@ from api.db import database, initialize
 from api.service import now
 from api.service_catalog import enabled
 from api.protection import is_protected_vmid
+from worker.resilience import Backoff, report, retry_until_ready
 from worker.service_executor import (
     execute,
     ServiceBlocked,
@@ -174,16 +175,29 @@ def process(worker_id, job):
     heartbeat(worker_id)
 
 
-def run(worker_id):
-    initialize()
-    while True:
-        recover()
-        job = claim(worker_id)
-        if job:
-            process(worker_id, job)
-        else:
-            heartbeat(worker_id)
-            time.sleep(5)
+def run(worker_id, *, iterations=None):
+    backoff = Backoff(5.0, 60.0)
+    retry_until_ready(worker_id, "inicialización", initialize, backoff)
+    completed = 0
+    while iterations is None or completed < iterations:
+        completed += 1
+        stage = "recuperación"
+        try:
+            recover()
+            stage = "claim"
+            job = claim(worker_id)
+            if job:
+                stage = "ejecución"
+                process(worker_id, job)
+            else:
+                stage = "heartbeat"
+                heartbeat(worker_id)
+                time.sleep(5)
+            backoff.success()
+        except Exception as error:  # noqa: BLE001 - se contiene y se reintenta
+            delay = backoff.failure()
+            report(worker_id, stage, error, delay)
+            time.sleep(delay)
 
 
 if __name__ == "__main__":

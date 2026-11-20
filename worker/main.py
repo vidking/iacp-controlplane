@@ -25,6 +25,7 @@ from worker.preboot import (
     save_expectation as save_preboot_expectation,
 )
 from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
+from worker.resilience import Backoff, report, retry_until_ready
 
 
 def now() -> str:
@@ -320,9 +321,23 @@ def emit(operation_id: str, kind: str, status: str, detail: str = "") -> None:
         )
 
 
+# Columnas que un worker puede actualizar. Los nombres se interpolan en el
+# SQL, así que no se aceptan claves fuera de esta lista.
+UPDATABLE_OPERATION_COLUMNS = frozenset({
+    "command", "action", "status", "payload_json", "plan_id", "stack",
+    "commercial_context_json", "environment", "instance_id", "vmid",
+    "target_node", "secret_path", "workspace_path", "plan_path",
+    "plan_operation_id", "worker_id", "started_at", "finished_at",
+    "last_heartbeat", "phase", "attempt_count", "exit_code", "output", "error",
+})
+
+
 def update_operation(operation_id: str, **values) -> None:
     if not values:
         return
+    unknown = set(values) - UPDATABLE_OPERATION_COLUMNS
+    if unknown:
+        raise ValueError(f"columnas de operations no permitidas: {sorted(unknown)}")
     assignments = ", ".join(f"{name}=?" for name in values)
     with database() as db:
         db.execute(
@@ -2507,31 +2522,45 @@ def execute(worker_id: str, operation: dict) -> None:
         heartbeat(worker_id, "idle")
 
 
-def run(worker_id: str) -> None:
-    initialize()
-    heartbeat(worker_id, "starting")
-    recover_stale_operations()
+def run(worker_id: str, *, iterations: int | None = None) -> None:
+    poll_interval = max(0.1, float(os.getenv("IACP_WORKER_POLL_SECONDS", "0.5")))
+    backoff = Backoff(poll_interval)
+    retry_until_ready(worker_id, "inicialización", initialize, backoff)
+    retry_until_ready(worker_id, "heartbeat inicial", lambda: heartbeat(worker_id, "starting"), backoff)
+    retry_until_ready(worker_id, "recuperación inicial", recover_stale_operations, backoff)
     recovery_scan_interval = max(5.0, float(os.getenv("IACP_RECOVERY_SCAN_SECONDS", "15")))
     last_recovery_scan = time.monotonic()
     idle_heartbeat_interval = max(
         1.0, float(os.getenv("IACP_WORKER_IDLE_HEARTBEAT_SECONDS", "15"))
     )
-    poll_interval = max(0.1, float(os.getenv("IACP_WORKER_POLL_SECONDS", "0.5")))
     last_idle_heartbeat = 0.0
-    while True:
-        if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
-            recover_stale_operations()
-            last_recovery_scan = time.monotonic()
-        operation = claim(worker_id)
-        if operation:
-            execute(worker_id, operation)
-            last_idle_heartbeat = time.monotonic()
-        else:
-            now_monotonic = time.monotonic()
-            if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
-                heartbeat(worker_id, "idle")
-                last_idle_heartbeat = now_monotonic
-            time.sleep(poll_interval)
+    completed = 0
+    while iterations is None or completed < iterations:
+        completed += 1
+        stage = "claim"
+        try:
+            if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
+                stage = "recuperación"
+                recover_stale_operations()
+                last_recovery_scan = time.monotonic()
+            stage = "claim"
+            operation = claim(worker_id)
+            if operation:
+                stage = "ejecución"
+                execute(worker_id, operation)
+                last_idle_heartbeat = time.monotonic()
+            else:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_idle_heartbeat >= idle_heartbeat_interval:
+                    stage = "heartbeat"
+                    heartbeat(worker_id, "idle")
+                    last_idle_heartbeat = now_monotonic
+                time.sleep(poll_interval)
+            backoff.success()
+        except Exception as error:  # noqa: BLE001 - se contiene y se reintenta
+            delay = backoff.failure()
+            report(worker_id, stage, error, delay)
+            time.sleep(delay)
 
 
 if __name__ == "__main__":
