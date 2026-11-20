@@ -1016,6 +1016,123 @@ def reconcile_physical(
     return False
 
 
+def terraform_state_tracks_vmid(workspace: str | None, vmid: int) -> bool | None:
+    """Indica si el state local registra la VM; ``None`` si no se puede probar."""
+
+    if not workspace:
+        return None
+    path = os.path.join(workspace, "terraform.tfstate")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    resources = state.get("resources")
+    if not isinstance(resources, list):
+        return None
+    for resource in resources:
+        if not isinstance(resource, dict) or resource.get("type") != "proxmox_virtual_environment_vm":
+            continue
+        for instance in resource.get("instances") or []:
+            attributes = (instance or {}).get("attributes") or {}
+            observed = attributes.get("vm_id")
+            # Una instancia sin vm_id legible no permite descartar la VM.
+            if observed is None or int(observed) == int(vmid):
+                return True
+    return False
+
+
+def remove_orphan_vm(
+    client: ProxmoxClient,
+    operation_id: str,
+    instance_id: str | None,
+    vmid: int,
+    workspace: str | None,
+    *,
+    heartbeat_callback=None,
+) -> bool:
+    """Elimina una VM que quedó fuera del state de Terraform.
+
+    Si un provision falla entre la clonación y la configuración, la VM existe
+    con el nombre de la instancia pero el state no la registra; ``terraform
+    destroy`` no hace nada y cada reconciliación vuelve a ``uncertain`` sin
+    converger. Solo se elimina cuando todas las guardas demuestran que la VM
+    es de esta instancia; ante cualquier duda se conserva (fail-closed).
+    """
+
+    reasons: list[str] = []
+    if terraform_state_tracks_vmid(workspace, vmid) is not False:
+        reasons.append("state_no_demuestra_huerfana")
+    minimum = int(os.getenv("IACP_VMID_MIN", "40001"))
+    maximum = int(os.getenv("IACP_VMID_MAX", "49999"))
+    if not minimum <= int(vmid) <= maximum or is_protected_vmid(vmid):
+        reasons.append("vmid_fuera_de_rango_o_protegida")
+    identity = instance_identity(instance_id)
+    record = physical_record(client, vmid, heartbeat_callback=heartbeat_callback)
+    if record is None:
+        return True
+    node = str(record.get("node") or "")
+    try:
+        pool = configured_pool_id()
+    except ValueError:
+        pool = ""
+    if not identity.get("name") or record.get("name") != identity.get("name"):
+        reasons.append("nombre_distinto")
+    if not pool or record.get("pool") != pool:
+        reasons.append("pool_distinto")
+    if identity.get("node") and node != identity.get("node"):
+        reasons.append("nodo_distinto")
+    if record.get("template"):
+        reasons.append("es_template")
+    if record.get("status") != "stopped":
+        reasons.append("vm_no_detenida")
+    with database() as db:
+        lease = db.execute(
+            """
+            SELECT 1 FROM vmid_leases l JOIN operations o ON o.operation_id = l.operation_id
+            WHERE l.vmid = ? AND o.instance_id = ?
+            LIMIT 1
+            """,
+            (int(vmid), instance_id),
+        ).fetchone()
+    if lease is None:
+        reasons.append("lease_de_otra_instancia")
+    if reasons:
+        emit(operation_id, "destroy.orphan.retained", "uncertain", ",".join(reasons))
+        return False
+    client.permissions(node, int(vmid), mutate=True)
+    config = client.vm_config(node, int(vmid))
+    if config.get("name") != identity.get("name") or config.get("template"):
+        emit(operation_id, "destroy.orphan.retained", "uncertain", "config_distinta")
+        return False
+    emit(operation_id, "destroy.orphan.started", "running", f"VMID {vmid} fuera del state de Terraform")
+    task = client._request(
+        "DELETE",
+        f"/nodes/{node}/qemu/{int(vmid)}?purge=1&destroy-unreferenced-disks=1",
+        None,
+        uncertain=True,
+    )
+    deadline = time.monotonic() + max(30.0, float(os.getenv("IACP_POWER_TIMEOUT", "180")))
+    while isinstance(task, str) and task and time.monotonic() < deadline:
+        if heartbeat_callback is not None:
+            heartbeat_callback()
+        status = client.get(f"/nodes/{node}/tasks/{task}/status", uncertain=True) or {}
+        if status.get("status") == "stopped":
+            if status.get("exitstatus") != "OK":
+                emit(operation_id, "destroy.orphan.failed", "uncertain", str(status.get("exitstatus"))[:200])
+                return False
+            break
+        time.sleep(2)
+    removed = reconcile_physical(client, int(vmid), False, heartbeat_callback=heartbeat_callback)
+    emit(
+        operation_id,
+        "destroy.orphan.completed" if removed else "destroy.orphan.failed",
+        "succeeded" if removed else "uncertain",
+        f"VMID {vmid}",
+    )
+    return removed
+
+
 def instance_identity(instance_id: str | None) -> dict:
     if not instance_id:
         return {}
@@ -1983,6 +2100,37 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         return
 
     if source_command == "destroy":
+        source_stack = source.get("stack") or "mng01"
+        source_workspace = (
+            os.path.join(source["workspace_path"], source_stack_directory(source_stack))
+            if source.get("workspace_path")
+            else None
+        )
+        if source_stack == "mng01" and remove_orphan_vm(
+            client,
+            operation_id,
+            instance_id,
+            int(vmid),
+            source_workspace,
+            heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="reconcile"),
+        ):
+            detail = "VM huérfana fuera del state de Terraform eliminada con identidad verificada."
+            close_source_after_reconciliation(
+                source, instance_id, int(vmid), node, source_payload,
+                succeeded=True,
+                detail=detail,
+            )
+            update_operation(
+                operation_id,
+                status="succeeded",
+                finished_at=now(),
+                last_heartbeat=now(),
+                exit_code=0,
+                output=detail,
+                error="",
+            )
+            emit(operation_id, "recovery.completed", "succeeded")
+            return
         raise ProxmoxError("RECONCILIATION_REQUIRED", uncertain=True)
 
     close_source_after_reconciliation(
@@ -2445,6 +2593,16 @@ def execute(worker_id: str, operation: dict) -> None:
                 name=identity.get("name"),
                 node=target_node or identity.get("node"),
                 heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase=phase),
+            ) and not (
+                command == "destroy"
+                and remove_orphan_vm(
+                    client,
+                    operation_id,
+                    instance_id,
+                    int(vmid),
+                    workspace,
+                    heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase=phase),
+                )
             ):
                 raise RuntimeError(
                     f"reconciliacion fisica fallida: VMID {vmid} no coincide con {expected}"
