@@ -280,3 +280,19 @@ def test_stop_request_deja_de_reclamar(monkeypatch):
     finally:
         resilience.STOP.requested = False
     assert claims == ["worker-1"]
+
+
+def test_postgresql_no_disponible_responde_503_reintentable(monkeypatch):
+    import psycopg
+    from psycopg_pool import PoolTimeout
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for error in (psycopg.OperationalError("conexión perdida"), PoolTimeout("pool agotado")):
+            def unavailable(*args, error=error, **kwargs):
+                raise error
+
+            monkeypatch.setattr("api.main.list_operation_rows", unavailable)
+            response = client.get("/v1/operations")
+            assert response.status_code == 503
+            assert response.headers["Retry-After"] == "5"
+            assert response.json()["error_code"] == "DATABASE_UNAVAILABLE"

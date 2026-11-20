@@ -149,9 +149,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    # Varios procesos: el JSON de los listados es CPU-bound y un solo proceso
+    # saturaba con 20 clientes concurrentes. La API no guarda estado en memoria.
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "${IACP_API_WORKERS:-3}", "--timeout-graceful-shutdown", "20"]
+    stop_grace_period: 30s
     environment:
       <<: *runtime-environment
+      IACP_DB_POOL_MAX_SIZE: ${IACP_API_DB_POOL_MAX_SIZE:-10}
       IACP_API_TOKEN: ${IACP_API_TOKEN:?Definir IACP_API_TOKEN}
       IACP_BUILD_REVISION: ${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}
       IACP_REQUIRE_API_TOKEN: "1"
