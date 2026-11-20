@@ -122,3 +122,69 @@ Las expectativas anteriores no exigen la marca, para no bloquear el
   (`scripts/prepare_golden_copies.py`).
 - Fedora 45 y Debian 13 están publicadas en el catálogo dev, pero la matriz no
   las cubre.
+
+## Certificación de desarrollo previa a `main` — 2026-11-20
+
+Criterio acordado: actualizar `main` solo con la matriz KVM 48/48 PASS y la
+matriz de aplicaciones 16/16 PASS sobre la misma revisión desplegada. Ambas se
+ejecutaron en el stack dev del IACP Control Plane (VM 104) contra el clúster
+MNG, nodo `mng01`, con seis aprovisionamientos simultáneos.
+
+| Matriz | Corrida | Revisión | Resultado |
+| --- | --- | --- | --- |
+| KVM 48 (previa) | `20261120070143` | `0acbd8e` | PASS 48/48 |
+| KVM 48 (aprobación) | `20261120072512` | `9b70d77` | **PASS 48/48** |
+| Aplicaciones | `20261120074421` | `9b70d77` | **PASS 16/16 + 2/2 controles** |
+
+**KVM 48:** 6 imágenes (Ubuntu 24.04/26.04, AlmaLinux 9/10, Fedora 45 y
+Debian 13) × 4 planes × 2 modos de acceso de root (24 con contraseña y 24 con
+llave SSH). Cada caso cubre aprovisionamiento con replay idempotente, inicio
+explícito o automático, SSH, llave presente en `authorized_keys`, token de
+persistencia, reboot, SSH y persistencia, apagado, encendido, SSH y
+persistencia, apagado final, destroy y ausencia física de la VMID. Resultado
+`PASS` y contención `False`. Duración: 18,1 min. Por caso: p50 126 s y p95
+148 s.
+
+**Aplicaciones:** 8 n8n y 8 Nextcloud en Ubuntu 24.04, planes kvm-1 a kvm-4
+(dos por producto), y 2 controles con acceso solo por contraseña. Red WAN
+`prod_static` en `vmbr3` con IPs reservadas en NetBox `190.0.231.0/24`. Los
+18 casos ejecutaron los 29 checks A01–E06: 693 checks PASS y ninguno fallido.
+Entre ellos: SSH con llave (B01), con contraseña (B02), rechazo de una
+contraseña incorrecta (B03), acceso tras el reinicio (B04), ausencia de
+credenciales en la evidencia (B05), GUI por HTTPS con CA y SAN IP (C03),
+login y WebDAV (C04), datos sintéticos con checksum o ejecución de workflow
+(C05), reinicio de contenedores (D02), reboot (D03), apagado y encendido
+(D04), persistencia (D01 y D05) y coherencia entre el estado API y el estado
+Proxmox (D06). Tras cada tanda de seis: 0 operaciones activas, 0 trabajos de
+servicio, 0 advisory locks y 0 recursos Terraform. Evidencia:
+`/opt/iacp/evidence/wan-servicios-ubuntu-20261120074421/` en la VM 104.
+
+### Alcance del dictamen
+
+- PASS de integración y certificación en **desarrollo** para `9b70d77`.
+  Los commits posteriores en `devops/features` solo modifican documentación;
+  el runtime certificado es el mismo.
+- No es un GO de producción: `iac.cyberfuel.com` sigue en `5eae7c8`.
+
+### Plan de promoción a producción (no ejecutado)
+
+1. Revisar el PR o la fusión `devops/features` → `main` y fijar el SHA candidato.
+2. Construir la imagen del SHA desde `git archive`, publicarla o precargarla
+   en el IACP Control Plane (VM 104) y verificar SHA-256 e ID de imagen.
+3. Respaldar `prod.env` y `manifest-prod.json` con el SHA anterior; actualizar
+   solo `IACP_IMAGE_TAG` e `image_tag`.
+4. Ejecutar `iacpctl preflight`, `deploy --preloaded-images`, `verify` y
+   `activate` sobre `manifest-prod.json`, con producción en reposo: 0
+   operaciones activas o inciertas y seis workers idle.
+5. Ejecutar la matriz KVM de 48 en el rango 30000–39999 y la de aplicaciones
+   (`--production --exact-cases`) con credenciales de ensayo autorizadas.
+6. Plan de reversión: restaurar los respaldos del paso 3 y volver a
+   desplegar el SHA anterior con `iacpctl`.
+
+### Cambios operativos que la promoción debe considerar
+
+- `initialization.upgrade = false`: las VMs nuevas no ejecutan `dnf` ni `apt`
+  upgrade en el primer arranque. Los parches deben incorporarse en la
+  preparación de las Golden Images.
+- Nueva dependencia `psycopg-pool==3.2.6`. Cada proceso mantiene un pool de
+  hasta 5 conexiones (11 procesos por stack, máximo 55).
