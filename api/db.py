@@ -7,12 +7,16 @@ históricos de SQLite ni datos del runtime anterior.
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import make_conninfo
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 
 def _connection_options() -> str | dict[str, Any]:
@@ -96,6 +100,8 @@ class DatabaseConnection:
 
 
 def connect() -> DatabaseConnection:
+    """Conexión dedicada fuera del pool (diagnóstico y herramientas)."""
+
     options = _connection_options()
     if isinstance(options, dict):
         connection = psycopg.connect(**options, autocommit=True, row_factory=dict_row)
@@ -105,13 +111,95 @@ def connect() -> DatabaseConnection:
     return DatabaseConnection(connection)
 
 
+def _env_number(name: str, default: float, minimum: float) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _pool_conninfo() -> str:
+    options = _connection_options()
+    if isinstance(options, dict):
+        return make_conninfo(**{key: str(value) for key, value in options.items()})
+    if "connect_timeout" in options:
+        return options
+    return make_conninfo(
+        options, connect_timeout=str(int(_env_number("IACP_DB_CONNECT_TIMEOUT", 5, 1)))
+    )
+
+
+def _configure_connection(connection: psycopg.Connection) -> None:
+    connection.execute("SET TIME ZONE 'UTC'")
+
+
+_POOL: ConnectionPool | None = None
+_POOL_KEY: tuple | None = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool() -> ConnectionPool:
+    """Pool por proceso; se recrea si cambia la configuración de conexión.
+
+    Antes cada consulta abría una conexión nueva (autenticación y SET TIME
+    ZONE incluidos): un listado de 50 instancias abría 50 conexiones y cada
+    heartbeat de los diez workers abría otra.
+    """
+
+    global _POOL, _POOL_KEY
+    conninfo = _pool_conninfo()
+    key = (os.getpid(), conninfo)
+    with _POOL_LOCK:
+        if _POOL is not None and _POOL_KEY == key:
+            return _POOL
+        previous = _POOL
+        _POOL = ConnectionPool(
+            conninfo,
+            min_size=int(_env_number("IACP_DB_POOL_MIN_SIZE", 1, 0)),
+            max_size=int(_env_number("IACP_DB_POOL_MAX_SIZE", 5, 1)),
+            kwargs={"autocommit": True, "row_factory": dict_row},
+            configure=_configure_connection,
+            # Valida cada conexión antes de entregarla: un reinicio de
+            # PostgreSQL no debe propagarse como error a la primera consulta.
+            check=ConnectionPool.check_connection,
+            timeout=_env_number("IACP_DB_POOL_TIMEOUT", 10, 1),
+            max_idle=_env_number("IACP_DB_POOL_MAX_IDLE", 300, 30),
+            max_lifetime=_env_number("IACP_DB_POOL_MAX_LIFETIME", 1800, 60),
+            name="iacp",
+            open=True,
+        )
+        _POOL_KEY = key
+    if previous is not None and previous.name == "iacp":
+        try:
+            previous.close(timeout=5)
+        except Exception:
+            pass
+    return _POOL
+
+
+def close_pool() -> None:
+    global _POOL, _POOL_KEY
+    with _POOL_LOCK:
+        pool, _POOL, _POOL_KEY = _POOL, None, None
+    if pool is not None:
+        pool.close(timeout=5)
+
+
 @contextmanager
 def database():
-    connection = connect()
+    pool = _pool()
+    connection = pool.getconn()
     try:
-        yield connection
+        yield DatabaseConnection(connection)
     finally:
-        connection.close()
+        # Misma semántica que cerrar una conexión dedicada: una transacción
+        # que no llegó a COMMIT se revierte y no se reutiliza su estado.
+        try:
+            if not connection.closed and connection.info.transaction_status != TransactionStatus.IDLE:
+                connection.rollback()
+        except Exception:
+            pass
+        pool.putconn(connection)
 
 
 _SCHEMA = (

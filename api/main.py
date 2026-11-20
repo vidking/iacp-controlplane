@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
@@ -79,12 +79,38 @@ app = FastAPI(
 )
 
 
+def _max_body_bytes() -> int:
+    try:
+        return max(1024, int(os.getenv("IACP_MAX_REQUEST_BODY_BYTES", str(256 * 1024))))
+    except ValueError:
+        return 256 * 1024
+
+
 @app.middleware("http")
 async def add_build_revision_header(request: Request, call_next):
+    # Los contratos /v1 son JSON pequeños; un cuerpo mayor se rechaza antes de
+    # leerlo para no consumir memoria del proceso compartido.
+    length = request.headers.get("content-length")
+    if length is not None:
+        try:
+            declared = int(length)
+        except ValueError:
+            return JSONResponse({"detail": "Content-Length inválido"}, status_code=400)
+        if declared > _max_body_bytes():
+            return JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, status_code=413)
     response = await call_next(request)
     revision = os.getenv("IACP_BUILD_REVISION", "").strip()
     if revision:
         response.headers["X-IACP-Build-Revision"] = revision
+    path = request.url.path
+    if path.startswith("/v1/") or path.startswith("/health/"):
+        # Respuestas operativas y de credenciales: ningún intermediario ni
+        # navegador debe almacenarlas. JSON no necesita cargar recursos.
+        response.headers["Cache-Control"] = "no-store"
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+        )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
     return response
 
 CONSOLE_DIR = Path(__file__).parent / "static" / "console"
