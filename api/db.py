@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -118,19 +118,49 @@ def _env_number(name: str, default: float, minimum: float) -> float:
         return default
 
 
+def _session_options() -> dict[str, str]:
+    """Parámetros libpq de resiliencia que no sobrescriben los explícitos.
+
+    Los keepalives TCP detectan una conexión muerta (reinicio o corte de red
+    de PostgreSQL) sin esperar al timeout del kernel; ``application_name``
+    permite identificar en ``pg_stat_activity`` qué proceso retiene un lock.
+    """
+
+    return {
+        "keepalives": "1",
+        "keepalives_idle": str(int(_env_number("IACP_DB_KEEPALIVES_IDLE", 30, 1))),
+        "keepalives_interval": str(int(_env_number("IACP_DB_KEEPALIVES_INTERVAL", 10, 1))),
+        "keepalives_count": str(int(_env_number("IACP_DB_KEEPALIVES_COUNT", 3, 1))),
+        "application_name": os.getenv("IACP_DB_APPLICATION_NAME", "").strip()
+        or f"iacp-{os.getenv('IACP_WORKER_ID', 'api')}"[:63],
+    }
+
+
 def _pool_conninfo() -> str:
     options = _connection_options()
     if isinstance(options, dict):
-        return make_conninfo(**{key: str(value) for key, value in options.items()})
-    if "connect_timeout" in options:
-        return options
-    return make_conninfo(
-        options, connect_timeout=str(int(_env_number("IACP_DB_CONNECT_TIMEOUT", 5, 1)))
-    )
+        base = make_conninfo(**{key: str(value) for key, value in options.items()})
+    elif "connect_timeout" in options:
+        base = options
+    else:
+        base = make_conninfo(
+            options, connect_timeout=str(int(_env_number("IACP_DB_CONNECT_TIMEOUT", 5, 1)))
+        )
+    present = set(conninfo_to_dict(base))
+    extra = {key: value for key, value in _session_options().items() if key not in present}
+    return make_conninfo(base, **extra) if extra else base
 
 
 def _configure_connection(connection: psycopg.Connection) -> None:
     connection.execute("SET TIME ZONE 'UTC'")
+    # Una transacción olvidada (excepción entre BEGIN y COMMIT en un proceso
+    # que no vuelve a usar la conexión) retendría el advisory lock global y
+    # bloquearía claims y asignación de VMID de todos los workers.
+    idle_ms = int(_env_number("IACP_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", 60000, 0))
+    connection.execute(f"SET idle_in_transaction_session_timeout = {idle_ms}")
+    statement_ms = int(_env_number("IACP_DB_STATEMENT_TIMEOUT_MS", 0, 0))
+    if statement_ms:
+        connection.execute(f"SET statement_timeout = {statement_ms}")
 
 
 _POOL: ConnectionPool | None = None
@@ -328,6 +358,10 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS idx_instances_vmid ON instances(vmid)",
     "CREATE INDEX IF NOT EXISTS idx_instances_status_power ON instances(status, power_state, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_instances_plan_id ON instances(plan_id)",
+    # Índices aditivos para listados paginados y prefetch de los listados.
+    "CREATE INDEX IF NOT EXISTS idx_instances_created_at ON instances(created_at DESC, instance_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_operations_created_at ON operations(created_at DESC, operation_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_instances_active_name ON instances(name) WHERE status <> 'deleted'",
     "CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_keys(created_at)",
     """
     CREATE TABLE IF NOT EXISTS ip_allocations (
@@ -363,6 +397,25 @@ _SCHEMA = (
 )
 
 
+SCHEMA_VERSION = 3
+
+
+def schema_ready() -> bool:
+    """Readiness de solo lectura: no ejecuta DDL ni toma locks.
+
+    ``initialize()`` ejecuta unas 60 sentencias DDL bajo el advisory lock
+    global; llamarlo desde ``/health/ready`` cada 10 s competía con los
+    claims y la asignación de VMID de los workers.
+    """
+
+    with database() as db:
+        row = db.execute(
+            "SELECT 1 AS ok FROM schema_migrations WHERE version >= ? LIMIT 1",
+            (SCHEMA_VERSION,),
+        ).fetchone()
+    return row is not None
+
+
 def initialize() -> None:
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -373,7 +426,7 @@ def initialize() -> None:
             db.execute(statement)
         db.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?) ON CONFLICT(version) DO NOTHING",
-            (3, datetime.now(timezone.utc).isoformat()),
+            (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
         )
         db.execute("COMMIT")
 

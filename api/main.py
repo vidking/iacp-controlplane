@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
-from api.db import database, initialize, prune_history
+from api.db import database, initialize, prune_history, schema_ready
 from api import applications
 from api.service_catalog import catalog as application_catalog
 from api.service_models import ApplicationConnectionRequest, RecoveryRequest, ServiceCreateRequest
@@ -259,7 +259,14 @@ def live():
 
 @app.get("/health/ready", tags=["health"])
 def ready():
-    initialize()
+    # Solo lectura: el esquema se crea en startup(); repetir el DDL en cada
+    # sonda de readiness tomaba el advisory lock global de los workers.
+    try:
+        ok = schema_ready()
+    except Exception:
+        ok = False
+    if not ok:
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
     return {"status": "ready"}
 
 
