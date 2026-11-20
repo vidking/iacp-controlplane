@@ -199,6 +199,47 @@ def recover_stale_operations() -> int:
     return recovered
 
 
+def close_resolved_reconcile_attempts() -> int:
+    """Cierra intentos de reconcile uncertain cuyo origen ya quedó resuelto.
+
+    Si un reintento posterior confirmó el resultado del origen (succeeded o
+    failed), el intento anterior no tiene nada que reconciliar; quedarse en
+    uncertain bloqueaba matrices y gates que exigen cero inciertas.
+    """
+
+    with database() as db:
+        rows = db.execute(
+            """
+            SELECT r.operation_id, src.operation_id AS source_id, src.status AS source_status
+            FROM operations r
+            JOIN operations src
+              ON src.operation_id = r.payload_json::jsonb ->> 'source_operation_id'
+            WHERE r.command = 'reconcile' AND r.status = 'uncertain'
+              AND src.status IN ('succeeded', 'failed')
+            """
+        ).fetchall()
+    closed = 0
+    for row in rows:
+        detail = f"El origen {row['source_id']} ya terminó en {row['source_status']}; este intento quedó superado."
+        with database() as db:
+            result = db.execute(
+                """
+                UPDATE operations
+                SET status='failed', phase='superseded', finished_at=?, last_heartbeat=?,
+                    exit_code=1, output=?, error='RECONCILIATION_SUPERSEDED_BY_CONFIRMED_LIFECYCLE'
+                WHERE operation_id=? AND status='uncertain'
+                """,
+                (now(), now(), detail, row["operation_id"]),
+            )
+            if result.rowcount:
+                db.execute(
+                    "INSERT INTO events(operation_id, kind, status, occurred_at, detail) VALUES (?, 'operation.superseded_by_lifecycle', 'failed', ?, ?)",
+                    (row["operation_id"], now(), detail),
+                )
+                closed += 1
+    return closed
+
+
 DETERMINISTIC_ERROR_MARKERS = (
     "ssh public key validation",
     "invalid public key",
@@ -2812,6 +2853,7 @@ def run(worker_id: str, *, iterations: int | None = None) -> None:
             if time.monotonic() - last_recovery_scan >= recovery_scan_interval:
                 stage = "recuperación"
                 recover_stale_operations()
+                close_resolved_reconcile_attempts()
                 last_recovery_scan = time.monotonic()
             stage = "claim"
             operation = claim(worker_id)
