@@ -92,6 +92,16 @@ Todas las corridas terminaron con 0 errores.
 | Carga interna con `3c641bc` | `/health/ready` 1287 rps (p95 49 ms); `/v1/instances?limit=200` 665 rps (p95 45 ms); `/v1/operations?limit=200` 107,5 rps (p95 367 ms; antes 44 rps y 815 ms); 0 errores |
 | Carga externa a través de Traefik | 429 por diseño: el middleware `request-rate` limita a 10 rps promedio con ráfaga de 20 por IP, más `inflight` de 40 |
 
+### Reconciliación de las operaciones `uncertain` ajenas en dev
+
+Las 2 operaciones bloqueaban el preflight de la matriz (que exige 0
+`uncertain`) y venían de la corrida QA `qa-261120-*`.
+
+| Instancia | Hallazgo | Resultado |
+| --- | --- | --- |
+| `qa-261120-kvm-kvm3-almalinux-9` (VMID 40510) | El provision falló entre la clonación y la configuración y dejó la VM **fuera del state de Terraform** (0 recursos), con los tags de la plantilla. `terraform destroy` no hacía nada y cada reconciliación volvía a `uncertain` sin converger. | **Corregido en código** (`e85c66f`): destroy y reconcile eliminan la VM huérfana por la API de Proxmox solo con identidad demostrada. Las guardas exigen que el state no la registre, VMID en rango y no protegida, mismo nombre, pool y nodo, que no sea template, que esté detenida y que el lease sea de la misma instancia. La reconciliación `9c101102` terminó `completed`, con evento `destroy.orphan.completed` y VMID ausente en MNG. Recuperación automática. |
+| `qa-261120-app-hermes-kvm4` (VMID 40531) | **Bloqueo mutuo de guardas.** La reconciliación de infraestructura responde 409 `SERVICE_OPERATION_ACTIVE` por un job de servicio `queued` (`waiting_vm`). El reintento del servicio responde 409 `INFRASTRUCTURE_OPERATION_ACTIVE` por la operación `uncertain`. | BLOCKED: requiere cancelar el job de servicio de la instancia QA, lo que necesita autorización. Pendiente de diseño: permitir reconciliar la infraestructura cuando el único job de servicio está `queued`/`waiting_vm`. |
+
 ## 4. Procedimiento de recuperación ante desastres
 
 Respaldo, con el stack en reposo de preferencia:
@@ -126,7 +136,8 @@ Los respaldos contienen la contraseña root dentro de los states (marcada
 | Prioridad | Pendiente | Plan |
 | --- | --- | --- |
 | P0 | Programar los respaldos | Timer systemd en la VM 104 (dev y prod, diario, más uno antes de cada `deploy`) y copia cifrada fuera de la VM (Wasabi con SSE o equivalente). Requiere autorización. |
-| P0 | Matriz física sobre la versión candidata | Matriz KVM 48 y de aplicaciones 16 en dev. Bloqueada hasta reconciliar las 2 operaciones `uncertain` ajenas (`qa-261120-*`). |
+| P0 | Matriz física sobre la versión candidata | Matriz KVM 48 y de aplicaciones 16 en dev con `e85c66f`. Queda 1 operación `uncertain` (Hermes 40531) bloqueada por la guarda de servicios. |
+| P1 | Bloqueo mutuo entre guardas de servicio e infraestructura | Permitir `reconcile` de infraestructura si el job de servicio está `queued`/`waiting_vm`, ya que no se está ejecutando. |
 | P1 | Ensayo de fallo físico en dev | Reiniciar PostgreSQL y luego un worker durante un apply. Resultado esperado: reconciliación sin duplicados y `operation.fenced` si el worker revive. |
 | P1 | Rate limit del borde | Decidir un límite para integradores autenticados (por ejemplo, otro `sourceCriterion` o allowlist del CRM) antes de pruebas de estrés externas. |
 | P1 | Promoción a producción | Mismo SHA tras PASS en dev; respaldo y `backup-verify` de prod antes de `deploy`. |
