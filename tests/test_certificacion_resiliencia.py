@@ -296,3 +296,21 @@ def test_postgresql_no_disponible_responde_503_reintentable(monkeypatch):
             assert response.status_code == 503
             assert response.headers["Retry-After"] == "5"
             assert response.json()["error_code"] == "DATABASE_UNAVAILABLE"
+
+
+def test_listados_serializados_igual_que_fastapi():
+    from fastapi.encoders import jsonable_encoder
+
+    with TestClient(app) as client:
+        for index in range(3):
+            client.post("/v1/instances", json=public_body(f"serial-{index}"))
+        for path, builder in (
+            ("/v1/operations?limit=200", lambda: service.list_operations(limit=200)),
+            ("/v1/instances?limit=200", lambda: service.list_instances(limit=200)),
+        ):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "application/json"
+            assert response.json() == jsonable_encoder(builder())
+        events = client.get("/v1/events?limit=5").json()
+        assert events["events"] and events["limit"] == 5
