@@ -78,3 +78,47 @@ Las pruebas están en `tests/test_revision_integral.py`. Resultado final:
    de `write_secret`, el archivo de contraseña queda en el volumen.
 9. **NetBox:** `IACP_NETBOX_VERIFY_TLS=false` desactiva la verificación TLS;
    conviene registrar una advertencia en el arranque cuando se usa.
+
+## Ensayos físicos en desarrollo — 2026-11-20
+
+Alcance: stack `iacp-controlplane-dev-v1` del IACP Control Plane (VM 104),
+`dev-iac.cyberfuel.com`, clúster MNG, nodo `mng01`, VMID 40000–49999. La
+matriz física se ejecutó con seis aprovisionamientos simultáneos y compuertas
+de runtime en reposo. Producción (`iac.cyberfuel.com`) permaneció en `5eae7c8`,
+sin cambios. La evidencia privada está en `/opt/iacp/evidence/iac-dev-mng/<run>/`
+y `/etc/iacp/certification/dev-<sha>-*/` dentro de la VM 104.
+
+| Corrida | Revisión | Resultado | Observación |
+| --- | --- | --- | --- |
+| `20261120040951` | `14c9c8e` | FAIL 10/12 (abortada tras la oleada 2) | 2 AlmaLinux 9 con `power start` explícito: `POWER_SERVICE_UNAVAILABLE`. Las VMs se eliminaron por la API. |
+| `20261120054847` | `b7dc1dc` | FAIL 8/12 (abortada tras la oleada 2) | Reintentar lecturas del Guest Agent (`6a32c1c`) convirtió el fallo en `SERVICE_BOOTSTRAP_TIMEOUT` `uncertain` en los 4 AlmaLinux 9. Recuperación manual controlada: reconcile `completed`, apagado y destroy por la API; VMID ausentes en MNG. `6a32c1c` revertido en `4b15f60`. |
+| `20261120062759` | `0acbd8e` | **PASS 16/16** | Ubuntu 24.04/26.04 y AlmaLinux 9/10, planes kvm-1…kvm-4, contraseña y llave, inicio explícito y automático. Pico de 6 workers; 16 instancias `deleted` y VMID ausentes. |
+
+### Causa raíz AlmaLinux 9
+
+Proxmox activa `ciupgrade` por defecto y el user-data generado incluye
+`package_upgrade: true`. En el primer arranque, `dnf` actualizó
+`qemu-guest-agent` (10.1.0-24.el9_9.1); el `%postun` del RPM reinició el
+servicio y systemd terminó su cgroup, incluido el helper
+`iacp-guest-bootstrap` lanzado por QGA. El agente nuevo no reconoce el pid y
+`exec-status` falla de forma permanente (HTTP 596). Evidencia por SSH en la
+VMID 40320: reinicio de qemu-ga a las 05:51:51 UTC, sin marcador
+`/var/lib/iacp` y cloud-init `done`. El acceso confinado del agente
+(`virt_qemu_ga_t`) no permite ejecutar `cloud-init` ni leer `/var/lib/cloud`;
+esas observaciones no indican ausencia de cloud-init.
+
+Corrección `d74396a`: `initialization.upgrade = false` en el módulo `kvm` y
+compuerta preboot `ciupgrade=0` para las expectativas nuevas (fail-closed).
+Las expectativas anteriores no exigen la marca, para no bloquear el
+`power start` de VMs existentes. Prueba de humo previa (VMID 40325):
+`ciupgrade: 0`, cero reinicios de qemu-ga y marcador de identidad presente.
+
+### Dictamen y pendientes
+
+- Integración en desarrollo: PASS para `0acbd8e` en la matriz de 16 casos.
+- No equivale a certificación integral ni a promoción a producción.
+- Decisión pendiente: sin actualización en el primer arranque, los parches de
+  seguridad deben incorporarse en la preparación de las Golden Images
+  (`scripts/prepare_golden_copies.py`).
+- Fedora 45 y Debian 13 están publicadas en el catálogo dev, pero la matriz no
+  las cubre.
