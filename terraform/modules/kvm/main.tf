@@ -59,6 +59,11 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   initialization {
     datastore_id = var.cloudinit_datastore_id
+    # Proxmox activa por defecto `ciupgrade` (package_upgrade en el primer
+    # arranque). La actualización de qemu-guest-agent reinicia el agente y
+    # mata los procesos que IACP ejecuta por QGA para validar la identidad.
+    # Las Golden Images se actualizan en su propia preparación.
+    upgrade = var.cloudinit_package_upgrade
 
     ip_config {
       ipv4 {

@@ -104,6 +104,7 @@ def contract():
         "ipconfig0": "gw=190.0.231.1,ip=190.0.231.7/24",
         "nameserver": "1.1.1.1 8.8.8.8",
         "ciuser": "root",
+        "ciupgrade": 0,
         "cipassword": "opaque-secret-value",
         "sshkeys": "ssh-ed25519%20AAAAexample%20equipo",
     }
@@ -136,6 +137,8 @@ def test_preboot_gate_accepts_complete_matching_stopped_vm(contract):
         ("cloudinit_interface", lambda c: c.pop("scsi1")),
         ("cloudinit_password", lambda c: c.pop("cipassword")),
         ("cloudinit_ssh_keys", lambda c: c.update(sshkeys="ssh-ed25519%20different")),
+        ("cloudinit_upgrade_disabled", lambda c: c.pop("ciupgrade")),
+        ("cloudinit_upgrade_disabled", lambda c: c.update(ciupgrade=1)),
     ],
 )
 def test_preboot_gate_rejects_any_request_or_image_mismatch(contract, field, mutate):
@@ -236,3 +239,14 @@ def test_expectation_file_is_private_and_contains_no_password(contract, tmp_path
     assert path.stat().st_mode & 0o777 == 0o600
     assert "opaque-secret-value" not in persisted
     assert expected["password_present"] is True
+
+
+def test_preboot_no_bloquea_vms_previas_sin_marca_de_upgrade(contract):
+    """Una expectativa anterior al cambio no exige ciupgrade=0 en un power start."""
+    expected, config = contract
+    legacy = {key: value for key, value in expected.items() if key != "cloudinit_upgrade_disabled"}
+    config = dict(config)
+    config.pop("ciupgrade")
+    kwargs = {"vmid": 40123, "node": "mng01", "name": "preboot-nextcloud", "power_state": "stopped"}
+    assert preboot.mismatches(config, legacy, **kwargs) == []
+    assert preboot.mismatches(config, expected, **kwargs) == ["cloudinit_upgrade_disabled"]
