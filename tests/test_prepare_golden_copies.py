@@ -208,3 +208,48 @@ def test_disk_resize_uses_proxmox_put_and_matches_ubuntu_hardware():
     assert result["scsihw"] == "virtio-scsi-single"
     assert result["net0"].startswith("virtio=")
     assert_hardware_parity(reference, result)
+
+
+@pytest.mark.no_database
+def test_initial_dhcp_waits_for_nic_during_first_boot(monkeypatch):
+    """Clon AlmaLinux: el agente responde antes de que exista eth0 (relabel)."""
+    from types import SimpleNamespace
+
+    import scripts.prepare_golden_copies as factory_module
+
+    mac = "bc:24:11:42:14:30"
+    observations = iter([
+        [{"name": "lo", "hardware-address": "00:00:00:00:00:00"}],
+        [{"name": "lo", "hardware-address": "00:00:00:00:00:00"}],
+        [{"name": "eth0", "hardware-address": mac.upper(),
+          "ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "192.168.3.127"}]}],
+    ])
+    current = {"value": None}
+
+    def interfaces(_node, _vmid):
+        try:
+            current["value"] = next(observations)
+        except StopIteration:
+            pass
+        return current["value"]
+
+    monkeypatch.setattr(factory_module.time, "sleep", lambda _seconds: None)
+    factory = factory_module.Factory.__new__(factory_module.Factory)
+    factory.client = SimpleNamespace(guest_agent_interfaces=interfaces)
+    factory.qga = lambda *args, **kwargs: pytest.fail("no debe forzar nmcli si ya hay IPv4")
+    assert factory.ensure_initial_dhcp(29016, mac) == "192.168.3.127"
+
+
+@pytest.mark.no_database
+def test_initial_dhcp_still_fails_closed_without_nic(monkeypatch):
+    from types import SimpleNamespace
+
+    import scripts.prepare_golden_copies as factory_module
+
+    clock = iter(range(0, 1000, 50))
+    monkeypatch.setattr(factory_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(factory_module.time, "sleep", lambda _seconds: None)
+    factory = factory_module.Factory.__new__(factory_module.Factory)
+    factory.client = SimpleNamespace(guest_agent_interfaces=lambda *_: [])
+    with pytest.raises(RuntimeError, match="GOLDEN_GUEST_NIC_NOT_FOUND"):
+        factory.ensure_initial_dhcp(29016, "bc:24:11:42:14:30")
