@@ -78,7 +78,8 @@ def case_name(index: int) -> str:
     return f"prueba-kvm-{index:02d}-{RUN_ID}"
 
 
-RUN_NAMES = tuple(case_name(index) for index in range(1, 17))
+MAX_CASES = 48
+RUN_NAMES = tuple(case_name(index) for index in range(1, MAX_CASES + 1))
 
 
 def selected_stage() -> str:
@@ -98,7 +99,44 @@ def selected_stage_config() -> dict:
     return stage
 
 IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
+DEVELOP_EXTRA_IMAGES = ("fedora-45", "debian-13")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
+# Cada combinación imagen × plan se prueba con contraseña de root y con llave
+# SSH de root; antes se alternaba un solo modo por combinación.
+ACCESS_MODES = ("password", "key")
+PERSISTENCE_FILE = "/root/.iacp-e2e-persistencia"
+
+
+def matrix_images() -> tuple[str, ...]:
+    """Imágenes publicadas que la matriz debe cubrir en el stage seleccionado."""
+
+    if selected_stage() == "develop":
+        return IMAGES + DEVELOP_EXTRA_IMAGES
+    return IMAGES
+
+
+def build_matrix_cases() -> list[dict]:
+    cases = []
+    index = 1
+    for image_index, image in enumerate(matrix_images()):
+        for plan_index, plan in enumerate(PLANS):
+            for mode_index, mode in enumerate(ACCESS_MODES):
+                cases.append(
+                    {
+                        "index": index,
+                        "image": image,
+                        "plan": plan,
+                        "mode": mode,
+                        # Alterna el inicio explícito y automático sin
+                        # acoplarlo al modo de acceso.
+                        "start_on_create": (image_index + plan_index + mode_index) % 2 == 0,
+                        "label": f"{RUN_ID}-{index:02d}-{image}-{plan}-{mode}",
+                    }
+                )
+                index += 1
+    if len(cases) > MAX_CASES:
+        raise E2EError(f"la matriz excede {MAX_CASES} casos")
+    return cases
 _TEST_PASSWORDS: set[str] = set()
 _TEST_PASSWORDS_LOCK = Lock()
 _RUN_INSTANCE_IDS: set[str] = set()
@@ -450,6 +488,8 @@ def ssh_command(
     mode: str,
     password: str | None = None,
     private_key: Path | None = None,
+    command: str = "id -u",
+    expected: str | None = "0",
 ) -> str:
     private_key = private_key or PRIVATE_KEY
     if mode == "key" and (not private_key.exists() or private_key.stat().st_mode & 0o077):
@@ -473,7 +513,7 @@ def ssh_command(
         "-o",
         "LogLevel=ERROR",
         "root@" + ip,
-        "id -u",
+        command,
     ]
     environment = os.environ.copy()
     askpass_dir = None
@@ -517,7 +557,7 @@ def ssh_command(
     finally:
         if askpass_dir is not None:
             askpass_dir.cleanup()
-    if completed.returncode != 0 or completed.stdout.strip() != "0":
+    if completed.returncode != 0 or (expected is not None and completed.stdout.strip() != expected):
         raise E2EError(
             f"SSH {mode} {ip} falló rc={completed.returncode}: "
             f"{redact(completed.stderr.strip() or completed.stdout.strip())}"
@@ -766,7 +806,7 @@ def run_case(case: dict) -> dict:
         "network_profile": NETWORK_PROFILE,
         "tags": ["e2e", f"cl-e2e-{case['index']:02d}", f"kvm-{case['index']:03d}"],
         "access": {"root_password": password, "ssh_public_keys": [public_key] if mode == "key" else []},
-        "start_on_create": case["index"] % 2 == 0,
+        "start_on_create": bool(case.get("start_on_create", case["index"] % 2 == 0)),
     }
     create_key = f"{label}-create"
     instance_id = None
@@ -835,6 +875,22 @@ def run_case(case: dict) -> dict:
         claim_live_ip(instance_id, ip)
         current_ip = ip
         ping_statuses.append(ping_status)
+        if mode == "key":
+            # La llave entregada debe estar autorizada para root.
+            key_body = public_key.split()[1]
+            ssh_command(
+                ip, mode, password, private_key,
+                command=f"grep -qF '{key_body}' /root/.ssh/authorized_keys && echo llave-autorizada",
+                expected="llave-autorizada",
+            )
+        persistence_token = secrets.token_hex(16)
+        ssh_command(
+            ip, mode, password, private_key,
+            command=(
+                f"umask 077; printf %s {persistence_token} > {PERSISTENCE_FILE} && sync && cat {PERSISTENCE_FILE}"
+            ),
+            expected=persistence_token,
+        )
         stage_seconds["ssh_initial"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
         reboot = api(
@@ -852,6 +908,7 @@ def run_case(case: dict) -> dict:
         claim_live_ip(instance_id, ip)
         current_ip = ip
         ping_statuses.append(ping_status)
+        ssh_command(ip, mode, password, private_key, command=f"cat {PERSISTENCE_FILE}", expected=persistence_token)
         stage_seconds["ssh_reboot"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
         shutdown = api(
@@ -864,6 +921,33 @@ def run_case(case: dict) -> dict:
         wait_operation(shutdown_operation)
         wait_power(instance_id, "stopped")
         stage_seconds["shutdown"] = round(time.monotonic() - stage_started, 3)
+        stage_started = time.monotonic()
+        restart = api(
+            "POST",
+            f"/v1/instances/{quote(instance_id, safe='')}/power/start",
+            idempotency_key=f"{label}-restart",
+        )
+        restart_operation = operation_id(restart)
+        operation_ids.append(restart_operation)
+        wait_operation(restart_operation)
+        wait_power(instance_id, "running")
+        ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        claim_live_ip(instance_id, ip)
+        current_ip = ip
+        ping_statuses.append(ping_status)
+        ssh_command(ip, mode, password, private_key, command=f"cat {PERSISTENCE_FILE}", expected=persistence_token)
+        stage_seconds["restart"] = round(time.monotonic() - stage_started, 3)
+        stage_started = time.monotonic()
+        final_shutdown = api(
+            "POST",
+            f"/v1/instances/{quote(instance_id, safe='')}/power/shutdown",
+            idempotency_key=f"{label}-shutdown-final",
+        )
+        final_shutdown_operation = operation_id(final_shutdown)
+        operation_ids.append(final_shutdown_operation)
+        wait_operation(final_shutdown_operation)
+        wait_power(instance_id, "stopped")
+        stage_seconds["shutdown_final"] = round(time.monotonic() - stage_started, 3)
         instance(instance_id)
         api("GET", f"/v1/instances/{quote(instance_id, safe='')}/network")
         api("GET", f"/v1/instances/{quote(instance_id, safe='')}/power")
@@ -889,7 +973,7 @@ def run_case(case: dict) -> dict:
         stage_seconds["destroy"] = round(time.monotonic() - stage_started, 3)
         duration_seconds = round(time.monotonic() - case_started, 3)
         print(
-            f"PASS {label} vmid={vmid} ip={ip} ssh={mode} explicit_start={started_explicitly} duration={duration_seconds:.1f}s ping={','.join(ping_statuses)}",
+            f"PASS {label} vmid={vmid} ip={ip} ssh={mode} explicit_start={started_explicitly} persistence=ok duration={duration_seconds:.1f}s ping={','.join(ping_statuses)}",
             flush=True,
         )
         return {
@@ -1000,9 +1084,7 @@ def validate_catalog() -> None:
     images = api("GET", "/v1/images")
     actual_plans = [item.get("plan_id") for item in plans.get("plans", [])]
     actual_images = [item.get("image_id") for item in images.get("images", [])]
-    expected_catalog_images = list(IMAGES)
-    if selected_stage() == "develop":
-        expected_catalog_images.extend(("fedora-45", "debian-13"))
+    expected_catalog_images = list(matrix_images())
     if actual_plans != list(PLANS) or actual_images != expected_catalog_images:
         raise E2EError(f"catálogo inesperado planes={actual_plans} images={actual_images}")
     print(f"CATALOG PASS plans={','.join(actual_plans)} images={','.join(actual_images)}", flush=True)
@@ -1031,8 +1113,9 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
         "cluster": "MNG",
         "vmid_range": [VMID_MIN, VMID_MAX],
         "max_simultaneous_provisions": MAX_WORKERS,
-        "images": list(IMAGES),
+        "images": list(matrix_images()),
         "plans": list(PLANS),
+        "access_modes": list(ACCESS_MODES),
         "outcome": outcome,
         "metrics": metrics,
         "contention_details": list(_CONTENTION_DETAILS),
@@ -1062,21 +1145,12 @@ def main() -> int:
         f"uncertain={baseline['uncertain_operations']}",
         flush=True,
     )
-    cases = []
-    index = 1
-    for image_index, image in enumerate(IMAGES):
-        for plan_index, plan in enumerate(PLANS):
-            mode = "password" if (image_index + plan_index) % 2 == 0 else "key"
-            cases.append(
-                {
-                    "index": index,
-                    "image": image,
-                    "plan": plan,
-                    "mode": mode,
-                    "label": f"{RUN_ID}-{index:02d}-{image}-{plan}",
-                }
-            )
-            index += 1
+    cases = build_matrix_cases()
+    print(
+        f"MATRIX cases={len(cases)} images={len(matrix_images())} plans={len(PLANS)} "
+        f"modes={','.join(ACCESS_MODES)}",
+        flush=True,
+    )
     results = []
     matrix_started = time.monotonic()
     total_waves = (len(cases) + MAX_WORKERS - 1) // MAX_WORKERS
