@@ -98,8 +98,9 @@ def selected_stage_config() -> dict:
         raise E2EError("IACP_E2E_TARGET_STAGE debe ser production o develop")
     return stage
 
-IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10")
-DEVELOP_EXTRA_IMAGES = ("fedora-45", "debian-13")
+# Las seis Golden Images publicadas en el catálogo MNG de ambos stages
+# (terraform/environments/mng01/catalog.json desde 4339ffd).
+IMAGES = ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13")
 PLANS = ("kvm-1", "kvm-2", "kvm-3", "kvm-4")
 # Cada combinación imagen × plan se prueba con contraseña de root y con llave
 # SSH de root; antes se alternaba un solo modo por combinación.
@@ -108,10 +109,8 @@ PERSISTENCE_FILE = "/root/.iacp-e2e-persistencia"
 
 
 def matrix_images() -> tuple[str, ...]:
-    """Imágenes publicadas que la matriz debe cubrir en el stage seleccionado."""
+    """Imágenes publicadas que la matriz debe cubrir en cualquier stage."""
 
-    if selected_stage() == "develop":
-        return IMAGES + DEVELOP_EXTRA_IMAGES
     return IMAGES
 
 
