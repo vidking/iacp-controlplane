@@ -112,15 +112,28 @@ PERSISTENCE_FILE = "/root/.iacp-e2e-persistencia"
 
 
 def matrix_images() -> tuple[str, ...]:
-    """Imágenes publicadas que la matriz debe cubrir en cualquier stage."""
+    """Imágenes publicadas que cubre el catálogo en cualquier stage."""
 
     return IMAGES
+
+
+def selected_images() -> tuple[str, ...]:
+    """Imágenes a aprovisionar; IACP_E2E_IMAGES acota la corrida (p. ej. AlmaLinux)."""
+
+    raw = os.getenv("IACP_E2E_IMAGES", "").strip()
+    if not raw:
+        return matrix_images()
+    requested = tuple(dict.fromkeys(item.strip() for item in raw.split(",") if item.strip()))
+    unknown = set(requested) - set(matrix_images())
+    if not requested or unknown:
+        raise E2EError(f"IACP_E2E_IMAGES contiene imágenes no publicadas: {sorted(unknown)}")
+    return requested
 
 
 def build_matrix_cases() -> list[dict]:
     cases = []
     index = 1
-    for image_index, image in enumerate(matrix_images()):
+    for image_index, image in enumerate(selected_images()):
         for plan_index, plan in enumerate(PLANS):
             for mode_index, mode in enumerate(ACCESS_MODES):
                 cases.append(
@@ -1132,7 +1145,7 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
         "cluster": "MNG",
         "vmid_range": [VMID_MIN, VMID_MAX],
         "max_simultaneous_provisions": MAX_WORKERS,
-        "images": list(matrix_images()),
+        "images": list(selected_images()),
         "plans": list(PLANS),
         "access_modes": list(ACCESS_MODES),
         "network_profile": NETWORK_PROFILE,
@@ -1167,7 +1180,7 @@ def main() -> int:
     )
     cases = build_matrix_cases()
     print(
-        f"MATRIX cases={len(cases)} images={len(matrix_images())} plans={len(PLANS)} "
+        f"MATRIX cases={len(cases)} images={','.join(selected_images())} plans={len(PLANS)} "
         f"modes={','.join(ACCESS_MODES)} network_profile={NETWORK_PROFILE}",
         flush=True,
     )
