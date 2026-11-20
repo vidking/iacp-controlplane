@@ -72,3 +72,50 @@ def test_ssh_command_valida_la_salida_esperada(monkeypatch, tmp_path):
         e2e_matrix.ssh_command("192.0.2.10", "key", private_key=key, command="cat f", expected=None)
         == "otro-valor"
     )
+
+
+def _valid_config(monkeypatch, tmp_path, profile):
+    monkeypatch.setattr(e2e_matrix, "TARGET_STAGE", "production")
+    monkeypatch.setattr(e2e_matrix, "BASE_URL", "https://iac.cyberfuel.com")
+    monkeypatch.setattr(e2e_matrix, "API_TOKEN", "token-de-prueba")
+    monkeypatch.setattr(e2e_matrix, "PROXMOX_ENDPOINT", "https://mng01.example:8006")
+    monkeypatch.setattr(e2e_matrix, "PROXMOX_TOKEN", "proxmox-de-prueba")
+    monkeypatch.setattr(e2e_matrix, "RUN_ID", "20261120000000")
+    monkeypatch.setattr(e2e_matrix, "MAX_WORKERS", 6)
+    monkeypatch.setattr(e2e_matrix, "VMID_MIN", 30000)
+    monkeypatch.setattr(e2e_matrix, "VMID_MAX", 39999)
+    monkeypatch.setattr(e2e_matrix, "EVIDENCE_FILE", tmp_path / "report.json")
+    monkeypatch.setattr(e2e_matrix, "NETWORK_PROFILE", profile)
+
+
+@pytest.mark.parametrize("profile", ["lab_dhcp", "prod_static"])
+def test_perfiles_de_red_admitidos(monkeypatch, tmp_path, profile):
+    _valid_config(monkeypatch, tmp_path, profile)
+    e2e_matrix.validate_execution_config()
+
+
+def test_perfil_de_red_desconocido_se_rechaza(monkeypatch, tmp_path):
+    _valid_config(monkeypatch, tmp_path, "prod_dhcp")
+    with pytest.raises(e2e_matrix.E2EError, match="lab_dhcp o prod_static"):
+        e2e_matrix.validate_execution_config()
+
+
+def test_catalogo_exige_modo_estatico_para_prod_static(monkeypatch):
+    monkeypatch.setattr(e2e_matrix, "NETWORK_PROFILE", "prod_static")
+    monkeypatch.setattr(e2e_matrix, "TARGET_STAGE", "production")
+    responses = {
+        "/v1/environments": {"default_environment": "lab", "environments": [{"environment": "lab"}]},
+        "/v1/plans": {"plans": [{"plan_id": plan} for plan in e2e_matrix.PLANS]},
+        "/v1/images": {"images": [{"image_id": image} for image in e2e_matrix.IMAGES]},
+        "/v1/network-profiles": {"network_profiles": [
+            {"profile_id": "lab_dhcp", "enabled": False, "network_mode": "dhcp"},
+            {"profile_id": "prod_static", "enabled": True, "network_mode": "static"},
+        ]},
+        "/v1/observability": {"max_concurrent": 6},
+    }
+    monkeypatch.setattr(e2e_matrix, "api", lambda method, path, **kwargs: responses[path])
+    e2e_matrix.validate_catalog()
+
+    responses["/v1/network-profiles"]["network_profiles"][1]["network_mode"] = "dhcp"
+    with pytest.raises(e2e_matrix.E2EError, match="no disponible"):
+        e2e_matrix.validate_catalog()

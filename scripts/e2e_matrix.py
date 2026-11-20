@@ -49,6 +49,9 @@ SSH_ATTEMPT_TIMEOUT = int(os.getenv("IACP_E2E_SSH_ATTEMPT_TIMEOUT", "45"))
 PING_TIMEOUT = int(os.getenv("IACP_E2E_PING_TIMEOUT", "8"))
 RUN_ID = os.getenv("IACP_E2E_RUN_ID", time.strftime("%Y%m%d%H%M%S", time.gmtime()))
 NETWORK_PROFILE = os.getenv("IACP_E2E_NETWORK_PROFILE", "lab_dhcp")
+# lab_dhcp: red de laboratorio. prod_static: WAN con IP reservada en NetBox;
+# es el único perfil que producción publica.
+NETWORK_PROFILE_MODES = {"lab_dhcp": "dhcp", "prod_static": "static"}
 EVIDENCE_FILE = Path(os.environ["IACP_E2E_EVIDENCE_FILE"]) if os.getenv("IACP_E2E_EVIDENCE_FILE") else None
 STAGE_CONFIG = {
     "production": {
@@ -206,8 +209,8 @@ def validate_execution_config() -> None:
     if (VMID_MIN, VMID_MAX) != stage["vmid_range"]:
         lower, upper = stage["vmid_range"]
         raise E2EError(f"la matriz {stage_name} solo puede usar VMID {lower}–{upper}")
-    if NETWORK_PROFILE != "lab_dhcp":
-        raise E2EError("esta matriz debe ejecutarse con IACP_E2E_NETWORK_PROFILE=lab_dhcp")
+    if NETWORK_PROFILE not in NETWORK_PROFILE_MODES:
+        raise E2EError("IACP_E2E_NETWORK_PROFILE debe ser lab_dhcp o prod_static")
     if EVIDENCE_FILE is None:
         raise E2EError("IACP_E2E_EVIDENCE_FILE debe conservar el reporte fuera del volumen de workdata")
     evidence_path = EVIDENCE_FILE.expanduser().resolve(strict=False)
@@ -844,6 +847,12 @@ def run_case(case: dict) -> dict:
             raise E2EError(f"catálogo divergente: {redact(current)}")
         if (current.get("spec") or {}).get("network_profile") != NETWORK_PROFILE:
             raise E2EError(f"perfil de red divergente: {redact(current)}")
+        allocated_ip = None
+        if NETWORK_PROFILE == "prod_static":
+            allocation = current.get("network_allocation") or {}
+            if allocation.get("status") != "allocated" or not allocation.get("address"):
+                raise E2EError(f"IP WAN no asignada por IPAM: {redact(allocation)}")
+            allocated_ip = str(allocation["address"]).split("/", 1)[0]
         if (current.get("spec") or {}).get("tags") != body["tags"]:
             raise E2EError("los tags enviados no se conservaron en la instancia")
         if not vm_identity_matches(vmid, node, name):
@@ -871,6 +880,8 @@ def run_case(case: dict) -> dict:
         api("GET", "/v1/observability")
         stage_started = time.monotonic()
         ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        if allocated_ip and ip != allocated_ip:
+            raise E2EError(f"SSH respondió en {ip} y IPAM asignó {allocated_ip}")
         claim_live_ip(instance_id, ip)
         current_ip = ip
         ping_statuses.append(ping_status)
@@ -904,6 +915,8 @@ def run_case(case: dict) -> dict:
         stage_seconds["reboot"] = round(time.monotonic() - stage_started, 3)
         stage_started = time.monotonic()
         ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        if allocated_ip and ip != allocated_ip:
+            raise E2EError(f"SSH respondió en {ip} y IPAM asignó {allocated_ip}")
         claim_live_ip(instance_id, ip)
         current_ip = ip
         ping_statuses.append(ping_status)
@@ -931,6 +944,8 @@ def run_case(case: dict) -> dict:
         wait_operation(restart_operation)
         wait_power(instance_id, "running")
         ip, _, ping_status = wait_ssh(instance_id, mode, password, private_key)
+        if allocated_ip and ip != allocated_ip:
+            raise E2EError(f"SSH respondió en {ip} y IPAM asignó {allocated_ip}")
         claim_live_ip(instance_id, ip)
         current_ip = ip
         ping_statuses.append(ping_status)
@@ -1090,8 +1105,13 @@ def validate_catalog() -> None:
     profiles = api("GET", "/v1/network-profiles")
     available_profiles = {item.get("profile_id"): item for item in profiles.get("network_profiles", [])}
     selected_profile = available_profiles.get(NETWORK_PROFILE)
-    if not selected_profile or not selected_profile.get("enabled") or selected_profile.get("network_mode") != "dhcp":
-        raise E2EError(f"perfil DHCP no disponible: {NETWORK_PROFILE}")
+    expected_mode = NETWORK_PROFILE_MODES.get(NETWORK_PROFILE)
+    if (
+        not selected_profile
+        or not selected_profile.get("enabled")
+        or selected_profile.get("network_mode") != expected_mode
+    ):
+        raise E2EError(f"perfil de red no disponible: {NETWORK_PROFILE} ({expected_mode})")
     print(f"NETWORK PROFILE PASS profile={NETWORK_PROFILE}", flush=True)
     print("MNG PASS: identidad de cada VM se consultará por nodo y VMID asignados", flush=True)
     observability = api("GET", "/v1/observability")
@@ -1115,6 +1135,7 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
         "images": list(matrix_images()),
         "plans": list(PLANS),
         "access_modes": list(ACCESS_MODES),
+        "network_profile": NETWORK_PROFILE,
         "outcome": outcome,
         "metrics": metrics,
         "contention_details": list(_CONTENTION_DETAILS),
@@ -1147,7 +1168,7 @@ def main() -> int:
     cases = build_matrix_cases()
     print(
         f"MATRIX cases={len(cases)} images={len(matrix_images())} plans={len(PLANS)} "
-        f"modes={','.join(ACCESS_MODES)}",
+        f"modes={','.join(ACCESS_MODES)} network_profile={NETWORK_PROFILE}",
         flush=True,
     )
     results = []
