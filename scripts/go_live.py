@@ -780,6 +780,14 @@ def _verify(data: dict, compose: Path, env_file: Path) -> dict:
     api = next(item for item in statuses if item["service"] == "api")
     if postgres["health"] != "healthy" or api["health"] != "healthy":
         raise GateError("PostgreSQL o la API no está healthy")
+    # Los workers declaran healthcheck por heartbeat; «starting» se tolera
+    # durante su start_period, pero un worker unhealthy bloquea el gate.
+    unhealthy = sorted(
+        item["service"] for item in statuses
+        if str(item["service"]).startswith(("worker-", "service-worker-")) and item["health"] == "unhealthy"
+    )
+    if unhealthy:
+        raise GateError(f"Workers unhealthy: {', '.join(unhealthy)}")
     script = """
 import json, os, time, urllib.request
 from datetime import datetime, timezone
@@ -870,6 +878,175 @@ print(json.dumps(payload))
     if payload != expected_payload:
         raise GateError("API, PostgreSQL, migración y pools de workers no cumplen el contrato declarado")
     return {"services": statuses, "api": payload}
+
+
+BACKUP_FORMAT = 1
+BACKUP_FILES = ("postgres.dump", "workdata.tar.gz")
+WORKDATA_PATH = "/var/lib/iacp-controlplane"
+RESTORE_IMAGE = "postgres:17.6"
+_COUNT_SQL = (
+    "SELECT json_build_object("
+    "'schema_version', (SELECT MAX(version) FROM schema_migrations),"
+    "'instances', (SELECT COUNT(*) FROM instances),"
+    "'operations', (SELECT COUNT(*) FROM operations),"
+    "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
+    "('pending','running','planning','applying','destroying','powering')),"
+    "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
+)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stream_to_file(command: list[str], path: Path, *, label: str, timeout: int = 1800) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            result = subprocess.run(command, stdout=handle, stderr=subprocess.PIPE, timeout=timeout)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    if result.returncode or path.stat().st_size == 0:
+        path.unlink(missing_ok=True)
+        raise GateError(f"{label} terminó con código {result.returncode}")
+
+
+def _database_counts(prefix: list[str]) -> dict:
+    raw = _run(
+        prefix + [
+            "exec", "-T", "postgres", "sh", "-c",
+            'psql -X -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"', _COUNT_SQL,
+        ],
+        label="Conteo de PostgreSQL",
+    )
+    return json.loads(raw.strip().splitlines()[-1])
+
+
+def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dict:
+    """Respaldo para recuperación ante desastres de un stack V1.
+
+    El volcado de PostgreSQL es una instantánea consistente (pg_dump). El
+    archivo de workdata (workspaces y states de Terraform) es consistente
+    ante caídas; por eso se registran las operaciones activas al momento del
+    respaldo. Ambos contienen datos sensibles (los states incluyen la
+    contraseña root marcada como sensitive): permisos 600 y directorio 700.
+    """
+
+    resolved = destination.resolve()
+    if resolved == ROOT or ROOT in resolved.parents:
+        raise GateError("El respaldo debe guardarse fuera del checkout")
+    resolved.mkdir(mode=0o700, parents=True, exist_ok=False)
+    os.chmod(resolved, 0o700)
+    prefix = _compose_args(data, compose, env_file)
+    started = time.monotonic()
+    counts = _database_counts(prefix)
+    _stream_to_file(
+        prefix + [
+            "exec", "-T", "postgres", "sh", "-c",
+            'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges',
+        ],
+        resolved / "postgres.dump",
+        label="pg_dump",
+    )
+    _stream_to_file(
+        prefix + ["exec", "-T", "api", "tar", "-C", WORKDATA_PATH, "-czf", "-", "."],
+        resolved / "workdata.tar.gz",
+        label="Archivo de workdata",
+    )
+    manifest = {
+        "format": BACKUP_FORMAT,
+        "project": data["project"],
+        "stage": data.get("stage"),
+        "domain": data.get("domain"),
+        "image_tag": data.get("image_tag"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "database": counts,
+        "workdata_crash_consistent": True,
+        "files": {
+            name: {"sha256": _sha256_file(resolved / name), "bytes": (resolved / name).stat().st_size}
+            for name in BACKUP_FILES
+        },
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    manifest_path = resolved / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    os.chmod(manifest_path, 0o600)
+    return {"backup_dir": str(resolved), **manifest}
+
+
+def _backup_verify(backup_dir: Path) -> dict:
+    """Prueba de restauración: integridad, tar legible y pg_restore real.
+
+    Restaura en un PostgreSQL efímero sin red y en tmpfs; no toca los stacks.
+    """
+
+    resolved = backup_dir.resolve()
+    manifest = json.loads((resolved / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("format") != BACKUP_FORMAT:
+        raise GateError("Formato de respaldo no soportado")
+    for name in BACKUP_FILES:
+        expected = manifest["files"][name]["sha256"]
+        if not hmac.compare_digest(_sha256_file(resolved / name), expected):
+            raise GateError(f"El SHA-256 de {name} no coincide con el manifiesto")
+    listing = _run(["tar", "-tzf", str(resolved / "workdata.tar.gz")], label="Lectura de workdata", timeout=900)
+    entries = [line for line in listing.splitlines() if line.strip()]
+    tfstates = [line for line in entries if line.endswith("terraform.tfstate")]
+    container = f"iacp-restore-check-{os.getpid()}-{int(time.time())}"
+    password = hashlib.sha256(os.urandom(32)).hexdigest()
+    _run([
+        "docker", "run", "-d", "--rm", "--name", container, "--network", "none",
+        "--tmpfs", "/var/lib/postgresql/data", "-e", f"POSTGRES_PASSWORD={password}",
+        "-e", "POSTGRES_DB=restore_check", RESTORE_IMAGE,
+    ], label="PostgreSQL efímero de restauración")
+    try:
+        deadline = time.monotonic() + 90
+        while True:
+            ready = subprocess.run(
+                ["docker", "exec", container, "pg_isready", "-U", "postgres", "-d", "restore_check"],
+                capture_output=True, timeout=10,
+            )
+            if ready.returncode == 0:
+                break
+            if time.monotonic() > deadline:
+                raise GateError("El PostgreSQL efímero no quedó listo")
+            time.sleep(1)
+        with (resolved / "postgres.dump").open("rb") as dump:
+            restore = subprocess.run(
+                ["docker", "exec", "-i", container, "pg_restore", "-U", "postgres", "-d", "restore_check",
+                 "--no-owner", "--no-privileges", "--exit-on-error"],
+                stdin=dump, capture_output=True, timeout=1800,
+            )
+        if restore.returncode:
+            raise GateError(f"pg_restore terminó con código {restore.returncode}")
+        raw = _run(
+            ["docker", "exec", container, "psql", "-X", "-At", "-U", "postgres", "-d", "restore_check", "-c", _COUNT_SQL],
+            label="Conteo restaurado",
+        )
+        restored = json.loads(raw.strip().splitlines()[-1])
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60)
+    if restored.get("schema_version") != manifest["database"].get("schema_version"):
+        raise GateError("La versión de esquema restaurada no coincide con la respaldada")
+    for key in ("instances", "operations"):
+        if int(restored.get(key) or 0) < int(manifest["database"].get(key) or 0):
+            raise GateError(f"La restauración tiene menos filas de {key} que el respaldo")
+    return {
+        "backup_dir": str(resolved),
+        "project": manifest.get("project"),
+        "created_at": manifest.get("created_at"),
+        "checksums": "ok",
+        "workdata_entries": len(entries),
+        "terraform_states": len(tfstates),
+        "restored": restored,
+        "recorded": manifest["database"],
+    }
 
 
 def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
@@ -1052,6 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("action", choices=(
         "config-check", "preflight", "inventory", "deploy", "verify",
         "activate", "activate-develop", "disable-develop", "restore-legacy",
+        "backup", "backup-verify",
     ))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--evidence-dir", required=True, type=Path)
@@ -1060,7 +1238,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Verifica las imágenes locales fijadas en el manifiesto y despliega sin descargarlas",
     )
+    parser.add_argument(
+        "--backup-dir",
+        type=Path,
+        help="Directorio nuevo (backup) o existente (backup-verify) fuera del checkout",
+    )
     args = parser.parse_args(argv)
+    if args.action in {"backup", "backup-verify"} and args.backup_dir is None:
+        parser.error("--backup-dir es obligatorio para backup y backup-verify")
     if args.preloaded_images and args.action != "deploy":
         parser.error("--preloaded-images solo se permite con la acción deploy")
     evidence = None
@@ -1069,7 +1254,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence = _new_evidence_dir(args.evidence_dir)
         data, compose, env_file = _manifest(
             args.manifest,
-            require_runtime=args.action not in {"restore-legacy", "disable-develop"},
+            require_runtime=args.action not in {"restore-legacy", "disable-develop", "backup-verify"},
         )
         result["manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
         if args.action == "restore-legacy":
@@ -1081,6 +1266,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.action == "disable-develop":
             result["activation"] = _disable_develop(data, evidence)
             result["passed"] = True
+        elif args.action == "backup-verify":
+            result["restore_check"] = _backup_verify(args.backup_dir)
+            result["passed"] = True
         else:
             config = _compose_config(data, compose, env_file)
             if args.action == "config-check":
@@ -1091,6 +1279,9 @@ def main(argv: list[str] | None = None) -> int:
                 state_backend = _check_runtime_backend(data, config)
                 if state_backend is not None:
                     result["state_backend"] = state_backend
+                result["passed"] = True
+            elif args.action == "backup":
+                result["backup"] = _backup(data, compose, env_file, args.backup_dir)
                 result["passed"] = True
             elif args.action == "inventory":
                 result["inventory"] = _inventory(data, compose, env_file)
