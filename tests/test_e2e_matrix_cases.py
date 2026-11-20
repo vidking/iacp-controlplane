@@ -119,3 +119,19 @@ def test_catalogo_exige_modo_estatico_para_prod_static(monkeypatch):
     responses["/v1/network-profiles"]["network_profiles"][1]["network_mode"] = "dhcp"
     with pytest.raises(e2e_matrix.E2EError, match="no disponible"):
         e2e_matrix.validate_catalog()
+
+
+def test_filtro_almalinux_genera_16_casos(monkeypatch):
+    monkeypatch.setenv("IACP_E2E_IMAGES", "almalinux-9,almalinux-10")
+    cases = e2e_matrix.build_matrix_cases()
+    assert len(cases) == 16
+    assert Counter(case["image"] for case in cases) == {"almalinux-9": 8, "almalinux-10": 8}
+    assert Counter(case["mode"] for case in cases) == {"password": 8, "key": 8}
+    assert {case["plan"] for case in cases} == set(e2e_matrix.PLANS)
+    assert {case["start_on_create"] for case in cases} == {True, False}
+
+
+def test_filtro_rechaza_imagenes_no_publicadas(monkeypatch):
+    monkeypatch.setenv("IACP_E2E_IMAGES", "almalinux-9,centos-7")
+    with pytest.raises(e2e_matrix.E2EError, match="no publicadas"):
+        e2e_matrix.build_matrix_cases()
