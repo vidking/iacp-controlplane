@@ -82,7 +82,7 @@ resource "proxmox_virtual_environment_vm" "this" {
     user_account {
       username = var.cloudinit_username
       keys     = var.ssh_public_keys
-      password = var.root_password
+      password = var.password_configured_by_worker ? null : var.root_password
     }
   }
 

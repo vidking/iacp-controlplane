@@ -1,8 +1,14 @@
 import hashlib
+import hmac
 import json
 import os
+import re
+import secrets
+import stat
+import tempfile
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 from fastapi import HTTPException
@@ -19,7 +25,7 @@ from api.environments import EnvironmentConfigurationError, resolve_environment
 from api.models import Action, Command, CommercialContext, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, write_secret
-from api.network_policy import selected_profile
+from api.network_policy import apply_to_spec, selected_profile
 
 
 def now() -> str:
@@ -405,9 +411,80 @@ def _request_plain_payload(request: InstanceCreateRequest) -> dict:
     }
 
 
-def _fingerprint(payload: object) -> str:
+_IDEMPOTENCY_HASH_VERSION = "hmac-sha256-v1:"
+_LEGACY_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+
+
+def initialize_idempotency() -> bytes:
+    """Lee o crea la clave del stack, con publicación atómica en workdata."""
+
+    root = Path(os.getenv("IACP_WORKDATA_DIR", "/var/lib/iacp-controlplane"))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = root / ".idempotency-hmac-v1"
+    if not path.exists():
+        with tempfile.NamedTemporaryFile(dir=root, prefix=".idempotency-key-", delete=False) as file:
+            temporary = Path(file.name)
+            try:
+                file.write(secrets.token_bytes(32))
+                file.flush()
+                os.fsync(file.fileno())
+                try:
+                    os.link(temporary, path)
+                except FileExistsError:
+                    pass  # Otro proceso publicó la clave de este mismo volumen.
+                else:
+                    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+            finally:
+                temporary.unlink()
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as file:
+        mode = os.fstat(file.fileno()).st_mode
+        key = file.read(33) if stat.S_ISREG(mode) and not mode & 0o077 else b""
+    if len(key) != 32:
+        raise RuntimeError("clave de idempotencia inválida")
+    return key
+
+
+def _body_fingerprint(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _keyed_fingerprint(secret: bytes, scope: str, key: str, digest: str) -> str:
+    message = json.dumps([_IDEMPOTENCY_HASH_VERSION, scope, key, digest], separators=(",", ":")).encode()
+    return _IDEMPOTENCY_HASH_VERSION + hmac.new(secret, message, hashlib.sha256).hexdigest()
+
+
+def migrate_idempotency_fingerprints(*, limit: int = 250) -> int:
+    """Convierte un lote tras aprobar la transición sin reescribir al arrancar."""
+
+    if not 1 <= limit <= 1000:
+        raise ValueError("el tamaño del lote debe estar entre 1 y 1000")
+    secret = initialize_idempotency()
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        rows = db.execute(
+            """
+            SELECT scope, idempotency_key, request_hash FROM idempotency_keys
+            WHERE request_hash ~ '^[0-9a-f]{64}$'
+            ORDER BY created_at, scope, idempotency_key
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            scope = row["scope"]
+            key = row["idempotency_key"]
+            digest = _keyed_fingerprint(secret, scope, key, row["request_hash"])
+            db.execute(
+                "UPDATE idempotency_keys SET request_hash=? WHERE scope=? AND idempotency_key=?",
+                (digest, scope, key),
+            )
+        db.execute("COMMIT")
+    return len(rows)
 
 
 def _idempotency_key_or_error(value: str | None) -> str:
@@ -419,14 +496,16 @@ def _idempotency_key_or_error(value: str | None) -> str:
     return key
 
 
-def _existing_idempotency(db, scope: str, key: str, request_hash: str):
+def _existing_idempotency(db, scope: str, key: str, request_hash: str, legacy_hash: str):
     row = db.execute(
         "SELECT request_hash, response_json FROM idempotency_keys WHERE scope=? AND idempotency_key=?",
         (scope, key),
     ).fetchone()
     if row is None:
         return None
-    if row["request_hash"] != request_hash:
+    stored = row["request_hash"]
+    expected = legacy_hash if _LEGACY_FINGERPRINT.fullmatch(stored) else request_hash
+    if not hmac.compare_digest(stored.encode(), expected.encode()):
         raise HTTPException(status_code=409, detail="Idempotency-Key ya fue usada con otro cuerpo")
     return json.loads(row["response_json"])
 
@@ -439,10 +518,11 @@ def _idempotent_mutation(
     builder: Callable,
 ) -> dict:
     key = _idempotency_key_or_error(idempotency_key)
-    request_hash = _fingerprint(body)
+    legacy_hash = _body_fingerprint(body)
+    request_hash = _keyed_fingerprint(initialize_idempotency(), scope, key, legacy_hash)
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
-        existing = _existing_idempotency(db, scope, key, request_hash)
+        existing = _existing_idempotency(db, scope, key, request_hash, legacy_hash)
         if existing is not None:
             db.execute("COMMIT")
             return existing
@@ -473,6 +553,43 @@ def _idempotent_mutation(
             raise
 
 
+def _image_for_plan(image_id: str, plan: dict) -> dict:
+    image = image_by_id(image_id)
+    if image is None:
+        raise HTTPException(status_code=422, detail=f"image_id no disponible: {image_id}")
+    if plan["vcpus"] < image.get("minimum_vcpus", 1):
+        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de vCPU de la imagen")
+    if plan["memory_mb"] < image.get("minimum_memory_mb", 0):
+        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de memoria de la imagen")
+    if plan["disk_gb"] < image.get("minimum_disk_gb", 0):
+        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de disco de la imagen")
+    return image
+
+
+def _operator_spec(spec: InstanceSpec, plan_id: str | None) -> tuple[InstanceSpec, str]:
+    fields = ("vcpus", "memory_mb", "disk_gb")
+    if plan_id is None:
+        # El contrato anterior permite omitir plan_id para plan. Si indicó
+        # los recursos, deben corresponder a un plan del mismo catálogo.
+        specified = spec.model_fields_set.intersection(fields)
+        if not specified:
+            plan_id = "kvm-1"
+        else:
+            matching = [
+                plan["plan_id"] for plan in plan_catalog()
+                if all(plan[field] == getattr(spec, field) for field in specified)
+            ]
+            if len(matching) == 1:
+                plan_id = matching[0]
+    plan = plan_by_id(plan_id) if plan_id is not None else None
+    if plan is None:
+        raise HTTPException(422, "plan_id no disponible")
+    if any(field in spec.model_fields_set and getattr(spec, field) != plan[field] for field in fields):
+        raise HTTPException(422, "los recursos no coinciden con plan_id")
+    _image_for_plan(spec.image, plan)
+    return apply_to_spec(spec.model_copy(update={field: plan[field] for field in fields})), plan["plan_id"]
+
+
 def _resolve_public_request(
     request: InstanceCreateRequest,
 ) -> tuple[InstanceSpec, dict, dict, str | None, str]:
@@ -483,15 +600,7 @@ def _resolve_public_request(
     plan = plan_by_id(request.plan_id)
     if plan is None:
         raise HTTPException(status_code=422, detail=f"plan_id no disponible: {request.plan_id}")
-    image = image_by_id(request.image_id)
-    if image is None:
-        raise HTTPException(status_code=422, detail=f"image_id no disponible: {request.image_id}")
-    if plan["vcpus"] < image.get("minimum_vcpus", 1):
-        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de vCPU de la imagen")
-    if plan["memory_mb"] < image.get("minimum_memory_mb", 0):
-        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de memoria de la imagen")
-    if plan["disk_gb"] < image.get("minimum_disk_gb", 0):
-        raise HTTPException(status_code=422, detail="el plan no cumple el mínimo de disco de la imagen")
+    image = _image_for_plan(request.image_id, plan)
     resolved_profile = selected_profile(request.network_profile)
     profile = network_profile_by_id(resolved_profile)
     if profile is None:
@@ -521,6 +630,68 @@ def _resolve_public_request(
     return spec, plan, image, password, environment
 
 
+def _operation_target(db, instance_id: str):
+    row = db.execute(
+        "SELECT * FROM instances WHERE instance_id=? FOR UPDATE",
+        (instance_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "instance_id no existe")
+    _reject_protected_vmid(row["vmid"])
+    return row
+
+
+def _check_destroyable(instance) -> None:
+    if instance["status"] == "deleted":
+        raise HTTPException(409, "la instancia ya fue eliminada")
+    if instance["power_state"] == "running":
+        raise HTTPException(409, "apague la instancia antes de destruirla")
+
+
+def _plan_source(db, plan_operation_id: str):
+    source = db.execute(
+        "SELECT * FROM operations WHERE operation_id=?",
+        (plan_operation_id,),
+    ).fetchone()
+    if source is None:
+        raise HTTPException(404, "plan_operation_id no existe")
+    return source
+
+
+def _reconciliation_source(db, instance, source_id: str | None):
+    instance_id = instance["instance_id"]
+    if source_id:
+        source = db.execute(
+            "SELECT * FROM operations WHERE operation_id=? AND instance_id=?",
+            (source_id, instance_id),
+        ).fetchone()
+        if source is None:
+            raise HTTPException(404, "source_operation_id no pertenece a la instancia")
+        if source["status"] != "uncertain":
+            raise HTTPException(409, "source_operation_id no está en uncertain")
+        if source["command"] == "reconcile":
+            raise HTTPException(409, "seleccione la operación incierta de origen")
+    else:
+        source = db.execute(
+            """
+            SELECT * FROM operations
+            WHERE instance_id=? AND status='uncertain' AND command <> 'reconcile'
+            ORDER BY created_at DESC, operation_id DESC LIMIT 1
+            """,
+            (instance_id,),
+        ).fetchone()
+        if source is None:
+            raise HTTPException(409, "la instancia no tiene una operación uncertain para reconciliar")
+    if instance["status"] == "deleted" and not _deleted_reconcile_source_allowed(db, instance_id, source):
+        raise HTTPException(
+            409,
+            "una operación de energía solo puede cerrarse después de confirmar la eliminación física"
+            if source["command"] == "power"
+            else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
+        )
+    return source
+
+
 def _insert_operation(
     db,
     request: OperationRequest,
@@ -528,136 +699,85 @@ def _insert_operation(
     commercial_context: dict | None = None,
     secret_path: str | None = None,
     operation_id: str | None = None,
-    environment: str = "lab",
+    environment: str | None = None,
 ) -> tuple[dict, str]:
     operation_id = operation_id or str(uuid.uuid4())
-    instance_id = str(uuid.uuid4()) if request.command in {Command.plan, Command.provision} else request.instance_id
     try:
         environment = resolve_environment(environment or request.environment)
     except EnvironmentConfigurationError as error:
         raise HTTPException(status_code=error.status_code, detail=error.code) from error
+    command = request.command
     effective_stack = "mng01"
     created = now()
-    if request.command in {Command.plan, Command.provision} and request.spec is not None:
-        from api.network_policy import apply_to_spec
-        apply_to_spec(request.spec)
+    instance_id = request.instance_id
+    plan_operation_id = request.plan_operation_id
+    plan_id = request.plan_id
+    spec = request.spec
     payload = request.model_dump(mode="json")
 
-    if request.command in {Command.apply, Command.destroy, Command.power, Command.reconcile} and instance_id:
-        target = db.execute(
-            "SELECT vmid FROM instances WHERE instance_id=?",
-            (instance_id,),
-        ).fetchone()
-        if target is not None:
-            _reject_protected_vmid(target["vmid"])
-
-    if request.command in {Command.plan, Command.provision} and request.spec is not None:
+    if command in {Command.plan, Command.provision}:
+        instance_id = str(uuid.uuid4())
+        spec, plan_id = _operator_spec(spec, plan_id)
+        payload["spec"] = spec.model_dump(mode="json")
         duplicate = db.execute(
-            "SELECT instance_id FROM instances WHERE name = ? AND status != 'deleted' LIMIT 1",
-            (request.spec.name,),
+            "SELECT instance_id FROM instances WHERE name=? AND status <> 'deleted' LIMIT 1",
+            (spec.name,),
         ).fetchone()
         if duplicate is not None:
-            raise HTTPException(status_code=409, detail="ya existe una instancia con ese nombre")
-
-    if request.command == Command.power:
-        target = db.execute(
-            """
-            SELECT i.instance_id, i.status, o.stack
-            FROM instances i
-            LEFT JOIN operations o ON o.operation_id = i.operation_id
-            WHERE i.instance_id = ?
-            """,
-            (instance_id,),
-        ).fetchone()
-        if target is None:
-            raise HTTPException(status_code=404, detail="instance_id no existe")
-        if target["status"] == "deleted":
-            raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
-        if target["stack"] not in {"mng01", "local"}:
-            raise HTTPException(status_code=409, detail="cluster no soportado")
-        effective_stack = target["stack"]
-
-    if request.command == Command.reconcile:
-        target = db.execute(
-            "SELECT instance_id, status, operation_id FROM instances WHERE instance_id=?",
-            (instance_id,),
-        ).fetchone()
-        if target is None:
-            raise HTTPException(status_code=404, detail="instance_id no existe")
-        source_id = request.source_operation_id
-        source = None
-        if source_id:
-            source = db.execute(
-                "SELECT operation_id, instance_id, status, stack, command, created_at FROM operations WHERE operation_id=?",
-                (source_id,),
-            ).fetchone()
-            if source is None or source["instance_id"] != instance_id:
-                raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
-            if source["status"] != "uncertain":
-                raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
-        if target["status"] == "deleted" and (
-            source is None or not _deleted_reconcile_source_allowed(db, instance_id, source)
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "una operación de energía solo puede cerrarse después de confirmar la eliminación física"
-                    if source is not None and source["command"] == "power"
-                    else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas"
-                ),
-            )
-        if target["status"] == "deleted" and source["status"] != "uncertain":
-            raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
+            raise HTTPException(409, "ya existe una instancia con ese nombre")
+    else:
+        source = _plan_source(db, plan_operation_id) if plan_operation_id else None
         if source is not None:
+            if not source["instance_id"] or (instance_id and instance_id != source["instance_id"]):
+                raise HTTPException(409, "plan_operation_id no pertenece a la instancia")
+            instance_id = source["instance_id"]
+        target = _operation_target(db, instance_id)
+
+        if command in {Command.apply, Command.destroy}:
+            if source is None:
+                source = _plan_source(db, target["operation_id"])
+            if source["operation_id"] != target["operation_id"] or source["instance_id"] != instance_id:
+                raise HTTPException(409, "plan_operation_id no es el plan vigente de la instancia")
+            _reject_protected_vmid(source["vmid"])
+            if command == Command.apply:
+                if target["status"] != "planned" or source["command"] != "plan" or source["status"] != "succeeded":
+                    raise HTTPException(409, "el plan todavía no está listo o ya se aplicó")
+                source_spec = json.loads(source["payload_json"]).get("spec") or {}
+                profile = network_profile_by_id(selected_profile(source_spec.get("network_profile", "lab_dhcp")))
+                if profile is None or not profile["enabled"]:
+                    raise HTTPException(503, "NETWORK_PROFILE_NOT_CONFIGURED")
+            else:
+                _check_destroyable(target)
+                if source["command"] not in {"plan", "provision"} or source["status"] not in {"succeeded", "failed", "uncertain"}:
+                    raise HTTPException(409, "el plan todavía no está listo")
+            if plan_id is not None and plan_id != source["plan_id"]:
+                raise HTTPException(409, "plan_id no coincide con el plan de la instancia")
+            plan_operation_id = source["operation_id"]
+            plan_id = source["plan_id"]
             effective_stack = source["stack"] or effective_stack
-        payload["source_operation_id"] = source_id
-
-    if request.plan_operation_id:
-        source = db.execute(
-            "SELECT instance_id, stack, plan_id FROM operations WHERE operation_id = ?",
-            (request.plan_operation_id,),
-        ).fetchone()
-        if source is None:
-            raise HTTPException(status_code=404, detail="plan_operation_id no existe")
-        instance_id = instance_id or source["instance_id"]
-        if source["stack"]:
+        elif command == Command.power:
+            if target["status"] == "deleted":
+                raise HTTPException(409, "la instancia ya fue eliminada")
+            source = _plan_source(db, target["operation_id"])
+            if source["stack"] not in {"mng01", "local"}:
+                raise HTTPException(409, "cluster no soportado")
             effective_stack = source["stack"]
-            payload["stack"] = effective_stack
-        if source["plan_id"] and not request.plan_id:
-            payload["plan_id"] = source["plan_id"]
-        source_operation = db.execute(
-            "SELECT command, status FROM operations WHERE operation_id = ?",
-            (request.plan_operation_id,),
-        ).fetchone()
-        destroyable_plan_statuses = {"succeeded", "failed", "uncertain"}
-        valid_source = (
-            source_operation is not None
-            and source_operation["command"] in {"plan", "provision"}
-            and (
-                source_operation["status"] == "succeeded"
-                or (request.command == Command.destroy and source_operation["status"] in destroyable_plan_statuses)
-            )
-        )
-        if request.command in {Command.apply, Command.destroy} and not valid_source:
-            raise HTTPException(status_code=409, detail="el plan todavía no está listo")
+        else:
+            source = _reconciliation_source(db, target, request.source_operation_id)
+            effective_stack = source["stack"] or effective_stack
+            payload["source_operation_id"] = source["operation_id"]
 
-    if request.command in {Command.apply, Command.destroy} and not instance_id:
-        raise HTTPException(status_code=422, detail="la operacion no tiene instancia objetivo")
-
-    if request.command in {Command.apply, Command.destroy, Command.power, Command.reconcile} and instance_id:
         active = _active_instance_operation(
-            db, instance_id, allow_queued_service=request.command == Command.reconcile
+            db, instance_id, allow_queued_service=command == Command.reconcile
         )
         if active is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=f"la instancia ya tiene una operacion activa: {active['operation_id']}",
-            )
+            raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")
 
     payload["instance_id"] = instance_id
     payload["environment"] = environment
-    if request.command == Command.power:
-        payload["stack"] = effective_stack
+    payload["plan_operation_id"] = plan_operation_id
+    payload["plan_id"] = plan_id
+    payload["stack"] = effective_stack
     if secret_path:
         payload["secret_ref"] = "operation-secret"
 
@@ -674,7 +794,6 @@ def _insert_operation(
             )
 
     context_json = _commercial_json(commercial_context)
-    plan_id = request.plan_id or payload.get("plan_id")
     db.execute(
         """
         INSERT INTO operations(
@@ -691,13 +810,13 @@ def _insert_operation(
             context_json,
             secret_path,
             instance_id,
-            request.plan_operation_id,
+            plan_operation_id,
             effective_stack,
             environment,
             created,
         ),
     )
-    if request.command in {Command.plan, Command.provision} and request.action == Action.provision and request.spec is not None:
+    if command in {Command.plan, Command.provision}:
         db.execute(
             """
             INSERT INTO instances(
@@ -708,11 +827,11 @@ def _insert_operation(
             (
                 instance_id,
                 operation_id,
-                request.spec.name,
-                request.spec.image,
+                spec.name,
+                spec.image,
                 plan_id,
                 environment,
-                request.spec.model_dump_json(),
+                spec.model_dump_json(),
                 context_json,
                 created,
                 created,
@@ -734,7 +853,9 @@ def _insert_operation(
 
 def create_operation(request: OperationRequest) -> dict:
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
         response, _ = _insert_operation(db, request)
+        db.execute("COMMIT")
     return response
 
 
@@ -775,30 +896,24 @@ def create_instance(request: InstanceCreateRequest, idempotency_key: str | None)
 
 def create_provision(instance_id: str, plan_operation_id: str | None = None) -> dict:
     with database() as db:
-        plan = db.execute(
-            """
-            SELECT operation_id, plan_id FROM operations
-            WHERE instance_id = ? AND command IN ('plan', 'provision')
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (instance_id,),
-        ).fetchone()
-    plan_id = plan_operation_id or (plan["operation_id"] if plan else None)
-    if plan_id is None:
-        raise HTTPException(status_code=409, detail="la instancia no tiene un plan")
-    return create_operation(
-        OperationRequest(
-            command=Command.apply,
-            action=Action.provision,
-            instance_id=instance_id,
-            plan_operation_id=plan_id,
+        db.execute("BEGIN IMMEDIATE")
+        target = _operation_target(db, instance_id)
+        response, _ = _insert_operation(
+            db,
+            OperationRequest(
+                command=Command.apply,
+                action=Action.provision,
+                instance_id=instance_id,
+                plan_operation_id=plan_operation_id or target["operation_id"],
+            ),
         )
-    )
+        db.execute("COMMIT")
+    return response
 
 
 def _deleted_reconcile_source_allowed(db, instance_id: str, source) -> bool:
     command = source["command"]
-    if command in {"apply", "provision", "destroy"}:
+    if command in {"plan", "apply", "provision", "destroy"}:
         return True
     if command != "power":
         return False
@@ -820,24 +935,26 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
     body = {"instance_id": instance_id, "action": "destroy"}
 
     def builder(db):
-        from api.applications import guard_instance
-        guard_instance(db, instance_id)
-        instance = db.execute(
-            "SELECT status, power_state, vmid FROM instances WHERE instance_id=?",
-            (instance_id,),
-        ).fetchone()
-        if instance is None:
-            raise HTTPException(status_code=404, detail="instance not found")
-        _reject_protected_vmid(instance["vmid"])
-        if instance["status"] == "deleted":
-            raise HTTPException(status_code=409, detail="la instancia ya fue eliminada")
-        if instance["power_state"] == "running":
-            raise HTTPException(status_code=409, detail="apague la instancia antes de destruirla")
-        plan = _latest_provision(db, instance_id)
-        # A plan/provision that failed before a VMID was reserved leaves only a
-        # logical record. Mark it deleted immediately while preserving an
-        # auditable destroy operation; there is no physical VM to reconcile.
+        instance = _operation_target(db, instance_id)
+        _check_destroyable(instance)
+        active = _active_instance_operation(db, instance_id)
+        if active is not None:
+            raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")
+        plan = _plan_source(db, instance["operation_id"])
+        # El cierre lógico solo es seguro si nunca se reservó una identidad
+        # física y no queda intención de asignación pendiente de reconciliar.
         if instance["vmid"] is None and instance["status"] in {"failed", "uncertain"}:
+            held = db.execute(
+                """
+                SELECT 1 FROM vmid_leases WHERE operation_id=? AND status='held'
+                UNION ALL
+                SELECT 1 FROM ip_allocations WHERE instance_id=? AND status <> 'released'
+                LIMIT 1
+                """,
+                (instance["operation_id"], instance_id),
+            ).fetchone()
+            if held is not None or plan["vmid"] is not None:
+                raise HTTPException(409, "la instancia requiere reconciliación")
             operation_id = str(uuid.uuid4())
             created = now()
             payload = json.dumps(
@@ -882,8 +999,6 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
                 "command": "destroy",
                 "action": "destroy",
             }, operation_id
-        if plan is None:
-            raise HTTPException(status_code=409, detail="la instancia no tiene un plan")
         response, operation_id = _insert_operation(
             db,
             OperationRequest(
@@ -947,44 +1062,9 @@ def create_reconcile(
     }
 
     def builder(db):
-        from api.applications import guard_instance
-        guard_instance(db, instance_id, allow_queued=True)
-        instance = db.execute(
-            "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
-        ).fetchone()
-        if instance is None:
-            raise HTTPException(status_code=404, detail="instance not found")
-        _reject_protected_vmid(instance["vmid"])
-        selected = source_operation_id
-        if selected is None:
-            row = db.execute(
-                """
-                SELECT operation_id FROM operations
-                WHERE instance_id=? AND status='uncertain'
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (instance_id,),
-            ).fetchone()
-            selected = row["operation_id"] if row else None
-        if selected is None:
-            raise HTTPException(status_code=409, detail="la instancia no tiene una operación uncertain para reconciliar")
-        source = db.execute(
-            "SELECT * FROM operations WHERE operation_id=? AND instance_id=?",
-            (selected, instance_id),
-        ).fetchone()
-        if source is None:
-            raise HTTPException(status_code=404, detail="source_operation_id no pertenece a la instancia")
-        if source["status"] != "uncertain":
-            raise HTTPException(status_code=409, detail="source_operation_id no está en uncertain")
-        if instance["status"] == "deleted" and not _deleted_reconcile_source_allowed(db, instance_id, source):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "una operación de energía solo puede cerrarse después de confirmar la eliminación física"
-                    if source["command"] == "power"
-                    else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas"
-                ),
-            )
+        instance = _operation_target(db, instance_id)
+        source = _reconciliation_source(db, instance, source_operation_id)
+        selected = source["operation_id"]
         response, operation_id = _insert_operation(
             db,
             OperationRequest(

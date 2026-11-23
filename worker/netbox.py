@@ -14,9 +14,9 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
-from typing import TypeAlias, TypeGuard
+from typing import Callable, TypeAlias, TypeGuard
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler
 
 from api.catalog import (
@@ -26,6 +26,7 @@ from api.catalog import (
     PROD_STATIC_LEGACY_LAST_HOST,
     PROD_STATIC_PREFIX,
 )
+from worker.proxmox import RejectRedirects
 
 
 JsonObject: TypeAlias = dict[str, object]
@@ -158,14 +159,6 @@ def configured() -> bool:
     )
 
 
-def _context(config: NetBoxSettings) -> ssl.SSLContext:
-    if not config.verify_tls:
-        # Explicitly opt-in only for local diagnostics. Production examples
-        # keep verification enabled and should provide IACP_NETBOX_CA_FILE.
-        return ssl._create_unverified_context()
-    return ssl.create_default_context(cafile=config.ca_file)
-
-
 def _error_code(status: int | None) -> str:
     if status in {401, 403}:
         return "IPAM_PERMISSION_DENIED"
@@ -181,7 +174,26 @@ def _error_code(status: int | None) -> str:
 class NetBoxClient:
     def __init__(self, config: NetBoxSettings | None = None):
         self.config = config or settings()
-        self.opener = build_opener(HTTPSHandler(context=_context(self.config)))
+        parsed = urlsplit(self.config.base_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.query
+            or parsed.fragment
+            or not self.config.verify_tls
+        ):
+            raise NetBoxError("IPAM_VERIFIED_HTTPS_REQUIRED")
+        context = ssl.create_default_context(cafile=self.config.ca_file)
+        self.opener = build_opener(HTTPSHandler(context=context), RejectRedirects())
+        self._heartbeat_callback: Callable[[], None] | None = None
+
+    def set_heartbeat(self, callback: Callable[[], None]) -> None:
+        self._heartbeat_callback = callback
+
+    def _heartbeat(self) -> None:
+        if callback := getattr(self, "_heartbeat_callback", None):
+            callback()
 
     def _request(
         self,
@@ -206,6 +218,7 @@ class NetBoxClient:
             f"{self.config.base_url}{path}", data=body, headers=headers, method=method
         )
         for attempt in range(self.config.attempts):
+            self._heartbeat()
             try:
                 with self.opener.open(request, timeout=self.config.timeout) as response:
                     raw = response.read()
@@ -449,18 +462,25 @@ class NetBoxClient:
 
     def allocate(self, **kwargs) -> NetBoxAllocation:
         # Serializa los aprovisionadores IACP del mismo prefijo durante la llamada remota.
+        from psycopg.errors import LockNotAvailable
+
         from api.db import database
 
+        self._heartbeat()
         with database() as db:
             db.execute("BEGIN")
-            db.execute(
-                "SELECT pg_advisory_xact_lock(105, hashtext(?))",
-                (self.config.expected_prefix,),
-            )
+            db.execute("SET LOCAL lock_timeout = '12s'")
             try:
+                db.execute(
+                    "SELECT pg_advisory_xact_lock(105, hashtext(?))",
+                    (self.config.expected_prefix,),
+                )
                 result = self._allocate(**kwargs)
                 db.execute("COMMIT")
                 return result
+            except LockNotAvailable as error:
+                db.execute("ROLLBACK")
+                raise NetBoxError("IPAM_ALLOCATION_BUSY", uncertain=True) from error
             except Exception:
                 db.execute("ROLLBACK")
                 raise
@@ -589,6 +609,9 @@ class NetBoxClient:
             or not self._in_pool(value[0], prefix)
             or value[1] != prefix.prefixlen
             or record.get("vrf") is not None
+            or record.get("assigned_object") is not None
+            or record.get("assigned_object_id") is not None
+            or record.get("assigned_object_type") is not None
             or self._is_reserved(record)
             or not allocation.get("address")
             or record.get("address") != allocation["address"]

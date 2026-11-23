@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from api.catalog import cluster_nodes, load_catalog
@@ -17,7 +18,7 @@ from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
 from worker.golden import configured_pool_id, observe, validate_pool, variables as golden_variables
 from worker.guest_identity import GuestIdentityError, ensure as ensure_guest_identity, required as guest_identity_required
-from worker.heartbeat import heartbeat
+from worker.heartbeat import heartbeat as update_heartbeat
 from worker.netbox import NetBoxAllocation, NetBoxClient, NetBoxError, configured as netbox_configured
 from worker.preboot import (
     assert_stopped_plan,
@@ -26,7 +27,7 @@ from worker.preboot import (
     mismatches as preboot_mismatches,
     save_expectation as save_preboot_expectation,
 )
-from worker.proxmox import ProxmoxClient, ProxmoxError, load_environment
+from worker.proxmox import ProxmoxClient, ProxmoxError, credentials, validate_endpoint
 from worker.resilience import STOP, Backoff, identify_process, report, retry_until_ready
 
 
@@ -105,13 +106,20 @@ def recover_stale_operations() -> int:
             operation_id = operation["operation_id"]
             command = operation.get("command") or "unknown"
             timestamp = now()
-            terminal_status = "failed" if command == "plan" else "uncertain"
+            instance_id = operation.get("instance_id")
+            pending_ipam = command == "plan" and instance_id and db.execute(
+                """SELECT 1 FROM ip_allocations WHERE instance_id=?
+                AND status IN ('allocating','allocated','release_pending') LIMIT 1""",
+                (instance_id,),
+            ).fetchone()
+            terminal_status = "failed" if command == "plan" and not pending_ipam else "uncertain"
             detail = "El worker dejó de enviar heartbeat; se requiere reconciliación física."
-            db.execute(
+            result = db.execute(
                 """
                 UPDATE operations
                 SET status=?, phase=?, finished_at=?, last_heartbeat=?, exit_code=?, error=?
                 WHERE operation_id=? AND status IN ('running', 'planning', 'applying', 'destroying', 'powering')
+                  AND (last_heartbeat IS NULL OR last_heartbeat < ?)
                 """,
                 (
                     terminal_status,
@@ -121,9 +129,11 @@ def recover_stale_operations() -> int:
                     1,
                     "WORKER_HEARTBEAT_STALE",
                     operation_id,
+                    cutoff,
                 ),
             )
-            instance_id = operation.get("instance_id")
+            if result.rowcount != 1:
+                continue
             if instance_id:
                 db.execute(
                     """
@@ -141,7 +151,7 @@ def recover_stale_operations() -> int:
                 (operation_id, terminal_status, timestamp, detail),
             )
 
-            if command == "plan" and operation.get("vmid") is not None:
+            if terminal_status == "failed" and operation.get("vmid") is not None:
                 db.execute(
                     """
                     UPDATE vmid_leases
@@ -333,7 +343,15 @@ def claim(worker_id: str):
             db.execute("COMMIT")
             return None
         row = db.execute(
-            "SELECT * FROM operations WHERE status = 'pending' ORDER BY created_at LIMIT 1"
+            """
+            SELECT pending.* FROM operations AS pending
+            WHERE pending.status='pending' AND NOT EXISTS (
+                SELECT 1 FROM operations AS active
+                WHERE active.instance_id=pending.instance_id
+                  AND active.status IN ('running','planning','applying','destroying','powering')
+            )
+            ORDER BY pending.created_at LIMIT 1
+            """
         ).fetchone()
         if row is None:
             db.execute("COMMIT")
@@ -356,8 +374,8 @@ def claim(worker_id: str):
         return dict(row) | {"worker_id": worker_id}
 
 
-def emit(operation_id: str, kind: str, status: str, detail: str = "") -> None:
-    with database() as db:
+def emit(operation_id: str, kind: str, status: str, detail: str = "", *, connection=None) -> None:
+    with (database() if connection is None else nullcontext(connection)) as db:
         db.execute(
             "INSERT INTO events(operation_id, kind, status, occurred_at, detail) VALUES (?, ?, ?, ?, ?)",
             (operation_id, kind, status, now(), detail),
@@ -391,6 +409,23 @@ _FENCED_SQL = (
 )
 
 
+def heartbeat(
+    worker_id: str,
+    status: str,
+    operation_id: str | None = None,
+    *,
+    phase: str | None = None,
+) -> None:
+    if not update_heartbeat(
+        worker_id,
+        status,
+        operation_id,
+        phase=phase,
+        require_owned=_FENCE.get() is not None and operation_id is not None,
+    ):
+        raise OperationFencedError(f"la operación {operation_id} ya no pertenece al worker")
+
+
 def _fenced_operation_for(operation_id: str | None) -> str | None:
     fence = _FENCE.get()
     if fence is None or operation_id is None or fence[1] != operation_id:
@@ -413,23 +448,27 @@ def ensure_operation_owned(db, operation_id: str | None) -> None:
         _raise_fenced(db, fenced)
 
 
-def update_operation(operation_id: str, **values) -> None:
+def update_operation(operation_id: str, *, connection=None, **values) -> None:
     if not values:
         return
     unknown = set(values) - UPDATABLE_OPERATION_COLUMNS
     if unknown:
         raise ValueError(f"columnas de operations no permitidas: {sorted(unknown)}")
     assignments = ", ".join(f"{name}=?" for name in values)
-    with database() as db:
+    with (database() if connection is None else nullcontext(connection)) as db:
         if _fenced_operation_for(operation_id):
             # Compare-and-set: la escritura solo aplica si la recuperación
             # automática no tomó la operación; se evalúa en la misma sentencia.
+            worker_id, _ = _FENCE.get()
+            statuses = ",".join("?" for _ in ACTIVE_WORK_OPERATION_STATUSES)
             result = db.execute(
-                f"UPDATE operations SET {assignments} WHERE operation_id=? AND NOT {_FENCED_SQL}",
-                (*values.values(), operation_id, operation_id),
+                f"""UPDATE operations SET {assignments}
+                WHERE operation_id=? AND worker_id=? AND status IN ({statuses})
+                  AND NOT {_FENCED_SQL}""",
+                (*values.values(), operation_id, worker_id, *ACTIVE_WORK_OPERATION_STATUSES, operation_id),
             )
-            if result.rowcount == 0:
-                ensure_operation_owned(db, operation_id)
+            if result.rowcount != 1:
+                _raise_fenced(db, operation_id)
             return
         db.execute(
             f"UPDATE operations SET {assignments} WHERE operation_id=?",
@@ -444,13 +483,23 @@ def update_instance(
     vmid: int | None = None,
     power_state: str | None = None,
     node: str | None = None,
+    connection=None,
 ) -> None:
     if not instance_id:
         return
-    with database() as db:
+    with (database() if connection is None else nullcontext(connection)) as db:
         fence = _FENCE.get()
+        owns_transaction = fence is not None and connection is None
+        if owns_transaction:
+            db.execute("BEGIN IMMEDIATE")
         if fence is not None:
-            ensure_operation_owned(db, fence[1])
+            try:
+                ensure_operation_owned(db, fence[1])
+            except OperationFencedError:
+                if owns_transaction:
+                    # El evento de rechazo es la única escritura en esta transacción.
+                    db.execute("COMMIT")
+                raise
         if vmid is None and node is None:
             db.execute(
                 "UPDATE instances SET status=?, updated_at=? WHERE instance_id=?",
@@ -470,6 +519,8 @@ def update_instance(
                 "UPDATE instances SET power_state=?, updated_at=? WHERE instance_id=?",
                 (power_state, now(), instance_id),
             )
+        if owns_transaction:
+            db.execute("COMMIT")
 
 
 def _update_instance_spec(instance_id: str | None, spec: dict) -> None:
@@ -603,6 +654,9 @@ def _ensure_static_allocation(
     context = json.loads(source_operation.get("commercial_context_json") or "{}")
     marker = f"iacp-instance={instance_id}"
     client = NetBoxClient()
+    setter = getattr(client, "set_heartbeat", None)
+    if setter is not None:
+        setter(lambda: heartbeat(worker_id, "running", operation_id, phase="ipam_allocate"))
     allocation = _ip_allocation(instance_id)
     if allocation is None:
         allocation = _begin_ip_allocation(
@@ -663,6 +717,11 @@ def _release_static_allocation(instance_id: str | None, operation_id: str) -> bo
             if not physical_presence(ProxmoxClient(), int(instance["vmid"]), False):
                 raise NetBoxError("IPAM_VM_STILL_PRESENT", uncertain=True)
         client = NetBoxClient()
+        fence = _FENCE.get()
+        setter = getattr(client, "set_heartbeat", None)
+        if setter is not None and fence is not None:
+            worker_id, active_id = fence
+            setter(lambda: heartbeat(worker_id, "running", active_id, phase="ipam_release"))
         client.release(allocation, marker=allocation["marker"])
     except (NetBoxError, ProxmoxError) as error:
         _mark_ip_allocation(allocation["allocation_id"], "release_pending", error=getattr(error,"code","IPAM_ABSENCE_UNCONFIRMED"))
@@ -805,6 +864,17 @@ _TERRAFORM_ENV_DENY_PREFIXES = ("PG", "AWS_", "WASABI_", "NETBOX_", "IACP_NETBOX
 _TERRAFORM_ENV_DENY_MARKERS = ("TOKEN", "PASSWORD", "SECRET", "ACCESS_KEY", "DATABASE_URL")
 
 
+_PROXMOX_CREDENTIALS: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
+    "iacp_proxmox_credentials", default=None
+)
+
+
+def load_environment() -> None:
+    endpoint, token = credentials()
+    validate_endpoint(endpoint)
+    _PROXMOX_CREDENTIALS.set((endpoint, token))
+
+
 def terraform_environment() -> dict[str, str]:
     environment = {}
     for name, value in os.environ.items():
@@ -817,6 +887,9 @@ def terraform_environment() -> dict[str, str]:
         if any(marker in upper for marker in _TERRAFORM_ENV_DENY_MARKERS):
             continue
         environment[name] = value
+    if proxmox_credentials := _PROXMOX_CREDENTIALS.get():
+        endpoint, token = proxmox_credentials
+        environment.update(PROXMOX_VE_ENDPOINT=endpoint, PROXMOX_VE_API_TOKEN=token)
     return environment
 
 
@@ -840,6 +913,28 @@ def _terminate_process_group(process: subprocess.Popen) -> None:
     process.wait(timeout=10)
 
 
+def read_terraform_output(handle, secret: str | None = None) -> str:
+    size = os.fstat(handle.fileno()).st_size
+    limit = max(4096, int(os.getenv("IACP_OPERATION_OUTPUT_MAX_CHARS", "65536"))) * 4
+    secret_bytes = secret.encode() if secret else b""
+
+    def redact(data: bytes) -> bytes:
+        return data.replace(secret_bytes, b"<redacted>") if secret_bytes else data
+
+    handle.seek(0)
+    if size <= limit:
+        data = redact(handle.read(limit))
+    else:
+        head_limit = limit // 3
+        tail_limit = limit - head_limit
+        overlap = len(secret_bytes)
+        head = redact(handle.read(head_limit + overlap))[:head_limit]
+        handle.seek(max(0, size - tail_limit - overlap))
+        tail = redact(handle.read(tail_limit + overlap))[-tail_limit:]
+        data = head + b"\n...[output truncated]...\n" + tail
+    return data.decode("utf-8", errors="replace")
+
+
 def run_commands(
     worker_id: str,
     operation_id: str,
@@ -852,14 +947,19 @@ def run_commands(
     deadline = time.monotonic() + int(os.getenv("IACP_TERRAFORM_TIMEOUT", "1800"))
     output: list[str] = []
     errors: list[str] = []
+    max_log_bytes = max(1024 * 1024, int(os.getenv("IACP_TERRAFORM_OUTPUT_MAX_BYTES", str(16 * 1024 * 1024))))
     environment = terraform_environment()
+    environment.pop("TF_VAR_root_password", None)
+    external_password = workspace_password_by_worker(workspace)
     plugin_cache = os.getenv("IACP_TERRAFORM_PLUGIN_CACHE_DIR", "").strip()
     if plugin_cache:
         environment["TF_PLUGIN_CACHE_DIR"] = plugin_cache
-    password = read_secret(secret_path)
+    password = None if external_password else read_secret(secret_path)
     if password is not None:
         environment["TF_VAR_root_password"] = password
-    elif any(len(args) > 1 and args[0] == "terraform" and args[1] == "destroy" for args in commands):
+    elif not external_password and any(
+        len(args) > 1 and args[0] == "terraform" and args[1] == "destroy" for args in commands
+    ):
         # Terraform evaluates the module's access validation even during
         # destroy. The original bootstrap secret is intentionally deleted
         # after provisioning, so provide a destroy-only value that is never
@@ -874,8 +974,10 @@ def run_commands(
             # de supervisión no lee las tuberías mientras el proceso corre, y
             # una salida mayor que el búfer del pipe (~64 KiB) bloquearía a
             # Terraform hasta vencer el timeout, incluso durante un apply.
-            with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout_file, \
-                    tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_file:
+            owns_operation = _FENCE.get() is not None
+            if owns_operation:
+                heartbeat(worker_id, "running", operation_id, phase=phase)
+            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
                 process = subprocess.Popen(
                     args,
                     cwd=workspace,
@@ -888,8 +990,15 @@ def run_commands(
                     start_new_session=True,
                 )
                 heartbeat_every = max(1.0, float(os.getenv("IACP_COMMAND_HEARTBEAT_SECONDS", "5")))
-                last_heartbeat = 0.0
+                last_confirmed_heartbeat = time.monotonic()
+                last_heartbeat = last_confirmed_heartbeat if owns_operation else 0.0
+                heartbeat_grace = min(30.0, stale_operation_seconds() / 2)
+                if owns_operation:
+                    heartbeat_every = min(heartbeat_every, heartbeat_grace / 2)
                 while process.poll() is None:
+                    if any(os.fstat(log.fileno()).st_size > max_log_bytes for log in (stdout_file, stderr_file)):
+                        _terminate_process_group(process)
+                        raise RuntimeError("TERRAFORM_OUTPUT_LIMIT_EXCEEDED")
                     if time.monotonic() > deadline:
                         _terminate_process_group(process)
                         raise TimeoutError("Terraform excedió el tiempo configurado")
@@ -899,18 +1008,20 @@ def run_commands(
                     if time.monotonic() - last_heartbeat >= heartbeat_every:
                         try:
                             heartbeat(worker_id, "running", operation_id, phase=phase)
-                            last_heartbeat = time.monotonic()
+                            last_confirmed_heartbeat = time.monotonic()
+                            last_heartbeat = last_confirmed_heartbeat
+                        except OperationFencedError:
+                            _terminate_process_group(process)
+                            raise
                         except Exception as error:  # noqa: BLE001
-                            # Una caída breve de PostgreSQL no debe abandonar
-                            # un apply en curso; se reintenta en la siguiente
-                            # vuelta y la reconciliación cubre el resto.
-                            report(worker_id, "heartbeat", error, heartbeat_every)
                             last_heartbeat = time.monotonic()
+                            if last_heartbeat - last_confirmed_heartbeat >= heartbeat_grace:
+                                _terminate_process_group(process)
+                                raise RuntimeError("WORKER_HEARTBEAT_UNCONFIRMED") from error
+                            report(worker_id, "heartbeat", error, heartbeat_every)
                     time.sleep(1)
-                stdout_file.seek(0)
-                stderr_file.seek(0)
-                stdout = stdout_file.read()
-                stderr = stderr_file.read()
+                stdout = read_terraform_output(stdout_file, password)
+                stderr = read_terraform_output(stderr_file, password)
             output.append(operation_output(stdout, password))
             errors.append(operation_output(stderr, password))
             if process.returncode == 0:
@@ -999,6 +1110,33 @@ def physical_record(
     return None
 
 
+def assert_lease_owner(vmid: int, owner: str | None) -> None:
+    with database() as db:
+        lease = db.execute(
+            "SELECT operation_id, status FROM vmid_leases WHERE vmid=?",
+            (vmid,),
+        ).fetchone()
+    if not owner or lease is None or lease["operation_id"] != owner or lease["status"] != "held":
+        raise ProxmoxError("VMID_LEASE_OWNER_MISMATCH", uncertain=True)
+
+
+def assert_physical_identity(client: ProxmoxClient, vmid: int, node: str, name: str, owner: str) -> None:
+    assert_lease_owner(vmid, owner)
+    source = find_operation(owner)
+    marker = json.loads(source["payload_json"]).get("physical_identity_tag") if source else None
+    if marker:
+        config = client.vm_config(node, vmid)
+        tags = str(config.get("tags") or "").split(";")
+        if config.get("name") != name or config.get("template") or marker not in tags:
+            raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+
+def require_free_provision_target(client: ProxmoxClient, vmid: int, owner: str) -> None:
+    assert_lease_owner(vmid, owner)
+    if physical_record(client, vmid) is not None:
+        raise ProxmoxError("VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT", uncertain=True)
+
+
 def physical_presence(
     client: ProxmoxClient,
     vmid: int,
@@ -1020,11 +1158,11 @@ def physical_presence(
     # non-converged observation so reconcile_physical() can sample again;
     # declaring uncertainty on the first stale read creates a false positive
     # immediately after a successful destroy/create pair.
-    if name and observed_name and observed_name != name:
+    if name and observed_name != name:
         return False
-    if node and observed_node and observed_node != node:
+    if node and observed_node != node:
         return False
-    return True
+    return not bool(record.get("template"))
 
 
 def reconcile_physical(
@@ -1083,6 +1221,11 @@ def terraform_state_tracks_vmid(workspace: str | None, vmid: int) -> bool | None
     return False
 
 
+def require_reconciled_terraform_state(workspace: str, vmid: int) -> None:
+    if terraform_state_tracks_vmid(workspace, vmid) is not True:
+        raise ProxmoxError("TERRAFORM_STATE_OWNERSHIP_UNCONFIRMED", uncertain=True)
+
+
 def remove_orphan_vm(
     client: ProxmoxClient,
     operation_id: str,
@@ -1130,8 +1273,8 @@ def remove_orphan_vm(
     with database() as db:
         lease = db.execute(
             """
-            SELECT 1 FROM vmid_leases l JOIN operations o ON o.operation_id = l.operation_id
-            WHERE l.vmid = ? AND o.instance_id = ?
+            SELECT o.operation_id FROM vmid_leases l JOIN operations o ON o.operation_id = l.operation_id
+            WHERE l.vmid = ? AND o.instance_id = ? AND l.status='held'
             LIMIT 1
             """,
             (int(vmid), instance_id),
@@ -1141,6 +1284,7 @@ def remove_orphan_vm(
     if reasons:
         emit(operation_id, "destroy.orphan.retained", "uncertain", ",".join(reasons))
         return False
+    assert_physical_identity(client, int(vmid), node, identity["name"], lease["operation_id"])
     client.permissions(node, int(vmid), mutate=True)
     config = client.vm_config(node, int(vmid))
     if config.get("name") != identity.get("name") or config.get("template"):
@@ -1179,7 +1323,7 @@ def instance_identity(instance_id: str | None) -> dict:
         return {}
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, vmid, node, name, status, power_state FROM instances WHERE instance_id=?",
+            "SELECT instance_id, operation_id, vmid, node, name, status, power_state FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     return dict(row) if row else {}
@@ -1283,6 +1427,33 @@ def operation_preboot_expectation(
     ):
         raise ProxmoxError("PREBOOT_EXPECTATION_MISMATCH")
     return expected
+
+
+def workspace_password_by_worker(workspace: str) -> bool:
+    path = os.path.join(workspace, "preboot.expectation.json")
+    return os.path.isfile(path) and bool(load_preboot_expectation(workspace).get("password_configured_by_worker"))
+
+
+def configure_workspace_password(
+    client: ProxmoxClient,
+    workspace: str,
+    *,
+    proof_operation_id: str,
+    node: str,
+    vmid: int,
+    name: str,
+    expected: dict,
+    secret_path: str | None,
+) -> None:
+    if not workspace_password_by_worker(workspace) or preboot_previously_verified(proof_operation_id):
+        return
+    password = read_secret(secret_path)
+    if not password:
+        raise ProxmoxError("CLOUDINIT_PASSWORD_SECRET_REQUIRED", uncertain=True)
+    client.ensure_cloudinit_password(
+        node, vmid, name,
+        expected["instance"]["cloudinit_username"], password,
+    )
 
 
 def verify_preboot_configuration(
@@ -1526,6 +1697,12 @@ def preboot_previously_verified(operation_id: str | None) -> bool:
     return row is not None
 
 
+def release_operation_lease(vmid: int | None, source_operation: dict, *, connection=None) -> None:
+    owner = source_operation.get("plan_operation_id") or source_operation.get("operation_id")
+    if vmid is not None and owner:
+        release(int(vmid), owner, connection=connection)
+
+
 def settle_physical_operation(
     operation_id: str,
     command: str,
@@ -1538,56 +1715,46 @@ def settle_physical_operation(
     output: str = "",
     recovered: bool = False,
 ) -> bool:
-    if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
+    ipam_settled = command != "destroy" or _release_static_allocation(instance_id, operation_id)
+    status = "succeeded" if ipam_settled else "uncertain"
+    error = "" if ipam_settled else "IPAM_RELEASE_PENDING"
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        fence = _FENCE.get()
+        if fence is not None:
+            ensure_operation_owned(db, fence[1])
         update_operation(
             operation_id,
-            status="uncertain",
-            phase="recovery_required",
+            status=status,
+            phase="completed" if ipam_settled else "recovery_required",
             finished_at=now(),
             last_heartbeat=now(),
-            exit_code=1,
+            exit_code=0 if ipam_settled else 1,
             output=operation_output(output),
-            error="IPAM_RELEASE_PENDING",
+            error=error,
+            connection=db,
         )
-        update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=node)
-        if vmid is not None:
-            release(int(vmid))
+        if command == "destroy":
+            update_instance(
+                instance_id, "deleted" if ipam_settled else "uncertain",
+                vmid=vmid, power_state="unknown", node=node, connection=db,
+            )
+            if ipam_settled:
+                release_operation_lease(vmid, source_operation, connection=db)
+        elif command in {"apply", "provision"}:
+            started = bool(source_payload.get("spec", {}).get("started", True))
+            update_instance(
+                instance_id, "ready", vmid=vmid,
+                power_state="running" if started else "stopped", node=node,
+                connection=db,
+            )
+        detail = error or ("physical state reconciled" if recovered else "")
+        outcome = "completed" if ipam_settled else "failed"
+        emit(operation_id, f"terraform.{command}.{outcome}", status, detail, connection=db)
+        db.execute("COMMIT")
+    if command in {"destroy", "provision"}:
         delete_secret(source_operation.get("secret_path"))
-        emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
-        return False
-    update_operation(
-        operation_id,
-        status="succeeded",
-        phase="completed",
-        finished_at=now(),
-        last_heartbeat=now(),
-        exit_code=0,
-        output=operation_output(output),
-        error=operation_output(""),
-    )
-    if command == "destroy":
-        update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
-        if vmid is not None:
-            release(int(vmid))
-        delete_secret(source_operation.get("secret_path"))
-    elif command in {"apply", "provision"}:
-        started = bool(source_payload.get("spec", {}).get("started", True))
-        update_instance(
-            instance_id,
-            "ready",
-            vmid=vmid,
-            power_state="running" if started else "stopped",
-            node=node,
-        )
-        if command == "provision":
-            delete_secret(source_operation.get("secret_path"))
-    emit(
-        operation_id,
-        f"terraform.{command}.completed",
-        "succeeded",
-        "physical state reconciled" if recovered else "",
-    )
-    return True
+    return ipam_settled
 
 
 def close_source_after_reconciliation(
@@ -1599,10 +1766,10 @@ def close_source_after_reconciliation(
     *,
     succeeded: bool,
     detail: str,
-) -> None:
+) -> bool:
     source_id = source_operation["operation_id"]
     if succeeded:
-        settle_physical_operation(
+        return settle_physical_operation(
             source_id,
             source_operation["command"],
             instance_id,
@@ -1637,11 +1804,10 @@ def close_source_after_reconciliation(
                 AND (status!='deleted' OR ?='uncertain')""",
                 (terminal_status, vmid, node, now(), instance_id, terminal_status),
             )
-        if vmid is not None and source_operation["command"] in {"apply", "provision"}:
-            # Reconciliation proved that the physical VM is absent. Release
-            # the lease so a later request can reuse the lowest free VMID.
-            release(int(vmid))
+        if released and source_operation["command"] in {"apply", "provision", "plan"}:
+            release_operation_lease(vmid, source_operation)
         emit(source_id, "operation.reconciled", terminal_status, terminal_error)
+        return released
 
 
 def close_superseded_reconcile_attempts(
@@ -1766,9 +1932,13 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
     if source is None:
         raise RuntimeError("RECONCILIATION_SOURCE_NOT_FOUND")
 
-    identity = instance_identity(instance_id or source.get("instance_id"))
+    if source.get("instance_id") != instance_id:
+        raise RuntimeError("OPERATION_INSTANCE_MISMATCH")
+    identity = instance_identity(instance_id)
     instance_id = identity.get("instance_id") or source.get("instance_id")
     vmid = identity.get("vmid") or source.get("vmid")
+    if source.get("vmid") and identity.get("vmid") and source["vmid"] != identity["vmid"]:
+        raise RuntimeError("OPERATION_INSTANCE_MISMATCH")
     if is_protected_vmid(vmid):
         raise RuntimeError("PROTECTED_INSTANCE")
     node = identity.get("node") or source.get("target_node") or "mng01"
@@ -1782,12 +1952,15 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         setter(lambda: heartbeat(worker_id, "running", operation_id, phase="reconcile"))
     heartbeat(worker_id, "running", operation_id, phase="reconcile")
 
-    if vmid is None:
-        close_source_after_reconciliation(
-            source, instance_id, None, node, source_payload,
+    if vmid is None or source_command == "plan":
+        if vmid is not None and not physical_presence(client, int(vmid), False):
+            raise ProxmoxError("RECONCILIATION_PHYSICAL_RESOURCE_PRESENT", uncertain=True)
+        if not close_source_after_reconciliation(
+            source, instance_id, vmid, node, source_payload,
             succeeded=source_command == "destroy",
             detail="No había VM física para reconciliar.",
-        )
+        ):
+            raise ProxmoxError("IPAM_RELEASE_PENDING", uncertain=True)
         update_operation(
             operation_id,
             status="succeeded" if source_command == "destroy" else "failed",
@@ -1870,6 +2043,8 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         return
 
     if source_command == "power":
+        if _FENCE.get() is not None:
+            assert_physical_identity(client, int(vmid), node, name, identity.get("operation_id"))
         action = source_payload.get("power_action")
         if action not in {"start", "shutdown", "reboot"}:
             raise RuntimeError("POWER_ACTION_INVALID")
@@ -2076,6 +2251,9 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 source.get("workspace_path") or os.path.join(data_root(), "plans", source.get("plan_operation_id") or source.get("operation_id"), "terraform"),
                 source_stack_directory(source_stack),
             )
+            if _FENCE.get() is not None:
+                assert_physical_identity(client, int(vmid), node, name, identity.get("operation_id"))
+                require_reconciled_terraform_state(source_workspace, int(vmid))
             expected_preboot = operation_preboot_expectation(
                 source_workspace,
                 spec,
@@ -2084,6 +2262,15 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 client=client,
                 stack=source_stack,
                 password_present=bool(source.get("secret_path")),
+            )
+            password_source = source
+            if source.get("plan_operation_id"):
+                password_source = find_operation(source["plan_operation_id"]) or source
+            configure_workspace_password(
+                client, source_workspace,
+                proof_operation_id=source["operation_id"],
+                node=node, vmid=int(vmid), name=name, expected=expected_preboot,
+                secret_path=password_source.get("secret_path"),
             )
             observed = ensure_vm_running_if_requested(
                 worker_id,
@@ -2123,11 +2310,12 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                     error,
                 )
                 return
-        close_source_after_reconciliation(
+        if not close_source_after_reconciliation(
             source, instance_id, int(vmid), node, source_payload,
             succeeded=True,
             detail="La presencia física coincide con la operación solicitada.",
-        )
+        ):
+            raise ProxmoxError("IPAM_RELEASE_PENDING", uncertain=True)
         update_operation(
             operation_id,
             status="succeeded",
@@ -2156,11 +2344,12 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
             heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="reconcile"),
         ):
             detail = "VM huérfana fuera del state de Terraform eliminada con identidad verificada."
-            close_source_after_reconciliation(
+            if not close_source_after_reconciliation(
                 source, instance_id, int(vmid), node, source_payload,
                 succeeded=True,
                 detail=detail,
-            )
+            ):
+                raise ProxmoxError("IPAM_RELEASE_PENDING", uncertain=True)
             update_operation(
                 operation_id,
                 status="succeeded",
@@ -2174,11 +2363,12 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
             return
         raise ProxmoxError("RECONCILIATION_REQUIRED", uncertain=True)
 
-    close_source_after_reconciliation(
+    if not close_source_after_reconciliation(
         source, instance_id, int(vmid), node, source_payload,
         succeeded=False,
         detail="RECONCILIATION_PHYSICAL_RESOURCE_ABSENT",
-    )
+    ):
+        raise ProxmoxError("IPAM_RELEASE_PENDING", uncertain=True)
     update_operation(
         operation_id,
         status="failed",
@@ -2212,10 +2402,15 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     if is_protected_vmid(vmid):
         raise RuntimeError("PROTECTED_INSTANCE")
     node = row["node"] or "mng01"
+    setter = getattr(client, "set_heartbeat", None)
+    if setter is not None:
+        setter(lambda: heartbeat(worker_id, "running", operation_id, phase=f"power_{action}"))
     try:
         spec = json.loads(row["spec_json"] or "{}")
     except (TypeError, ValueError):
         spec = {}
+    if _FENCE.get() is not None:
+        assert_physical_identity(client, vmid, node, row["name"], row["operation_id"])
     if action in {"start", "reboot"}:
         expected = expected_preboot_for_spec(
             spec,
@@ -2240,9 +2435,6 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     update_operation(operation_id, vmid=vmid)
     update_instance(instance_id, "powering", vmid=vmid, power_state="unknown")
     emit(operation_id, f"power.{action}.started", "running")
-    setter = getattr(client, "set_heartbeat", None)
-    if setter is not None:
-        setter(lambda: heartbeat(worker_id, "running", operation_id, phase=f"power_{action}"))
     heartbeat(worker_id, "running", operation_id, phase=f"power_{action}")
     if action in {"start", "reboot"}:
         verify_power_preconditions(
@@ -2256,6 +2448,11 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
         )
     result = client.power(node, vmid, row["name"], action)
     power_state = result.get("power_state")
+    expected_power_state = "stopped" if action == "shutdown" else "running"
+    if power_state != expected_power_state:
+        raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
+    if _FENCE.get() is not None and client.power_state(node, vmid, row["name"])["power_state"] != expected_power_state:
+        raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
     if (
         action in {"start", "reboot"}
         and power_state == "running"
@@ -2272,17 +2469,21 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
             instance_id=instance_id,
             spec=spec if isinstance(spec, dict) else {},
         )
-    update_operation(
-        operation_id,
-        status="succeeded",
-        finished_at=now(),
-        last_heartbeat=now(),
-        exit_code=0,
-        output=json.dumps(result, sort_keys=True),
-        error="",
-    )
-    update_instance(instance_id, "ready", vmid=vmid, power_state=power_state)
-    emit(operation_id, f"power.{action}.completed", "succeeded")
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        update_operation(
+            operation_id,
+            status="succeeded",
+            finished_at=now(),
+            last_heartbeat=now(),
+            exit_code=0,
+            output=json.dumps(result, sort_keys=True),
+            error="",
+            connection=db,
+        )
+        update_instance(instance_id, "ready", vmid=vmid, power_state=power_state, connection=db)
+        emit(operation_id, f"power.{action}.completed", "succeeded", connection=db)
+        db.execute("COMMIT")
 
 
 def execute(worker_id: str, operation: dict) -> None:
@@ -2300,12 +2501,15 @@ def execute(worker_id: str, operation: dict) -> None:
     source_payload: dict = {}
     secret_path: str | None = operation.get("secret_path")
     requested_started: bool | None = None
+    credential_scope = _PROXMOX_CREDENTIALS.set(None)
     try:
         payload = json.loads(operation["payload_json"])
         command = payload["command"]
         source_payload = payload
         stack = payload.get("stack") or stack
-        instance_id = payload.get("instance_id") or instance_id
+        if instance_id and payload.get("instance_id") not in {None, instance_id}:
+            raise RuntimeError("OPERATION_INSTANCE_MISMATCH")
+        instance_id = instance_id or payload.get("instance_id")
 
         if command == "power":
             if stack != "mng01":
@@ -2338,7 +2542,8 @@ def execute(worker_id: str, operation: dict) -> None:
                 raise RuntimeError(f"no existe el plan {source_operation_id}")
             source_payload = json.loads(source_operation["payload_json"])
             stack = source_payload.get("stack") or source_operation.get("stack") or stack
-            instance_id = source_operation.get("instance_id") or instance_id
+            if not instance_id or source_operation.get("instance_id") != instance_id:
+                raise RuntimeError("OPERATION_INSTANCE_MISMATCH")
             target_node = source_operation.get("target_node") or target_node
             vmid = source_operation.get("vmid")
             if vmid is None and instance_id:
@@ -2349,12 +2554,20 @@ def execute(worker_id: str, operation: dict) -> None:
                 vmid = row["vmid"] if row else None
             if is_protected_vmid(vmid):
                 raise RuntimeError("PROTECTED_INSTANCE")
+            identity = instance_identity(instance_id)
+            if identity.get("operation_id") != source_operation_id or (
+                vmid is not None and identity.get("vmid") != vmid
+            ):
+                raise RuntimeError("OPERATION_INSTANCE_MISMATCH")
         requested_started = bool(source_payload.get("spec", {}).get("started", True))
 
         source_path = os.getenv("IACP_TERRAFORM_PATH", "/workspace/terraform")
         if stack == "mng01":
             load_environment()
             client = ProxmoxClient()
+            setter = getattr(client, "set_heartbeat", None)
+            if setter is not None:
+                setter(lambda: heartbeat(worker_id, "running", operation_id, phase=phase))
 
         secret_path = secret_path_for_command(command, source_operation, operation)
 
@@ -2392,6 +2605,13 @@ def execute(worker_id: str, operation: dict) -> None:
                     has_root_password=read_secret(secret_path) is not None,
                     pool_id=pool_id,
                 )
+                marker = f"iacp-owned-{operation_id}"
+                values["instance"]["tags"] = [
+                    tag for tag in values["instance"].get("tags", [])
+                    if not tag.startswith("iacp-owned-")
+                ] + [marker]
+                payload["physical_identity_tag"] = marker
+                _update_operation_payload(operation_id, payload)
                 update_instance(instance_id, "planning", vmid=vmid, node=target_node)
                 emit(operation_id, "vmid.reserved", "held", str(vmid))
                 expected = preboot_expectation(
@@ -2401,6 +2621,9 @@ def execute(worker_id: str, operation: dict) -> None:
                     node=target_node,
                     vmid=int(vmid),
                 )
+                if secret_path:
+                    values["password_configured_by_worker"] = True
+                    expected["password_configured_by_worker"] = True
             else:
                 values = local_variables(spec)
                 update_instance(instance_id, "planning")
@@ -2421,6 +2644,24 @@ def execute(worker_id: str, operation: dict) -> None:
                 data_root(), "plans", source_operation_id, "terraform"
             )
             workspace = os.path.join(workspace_root, source_stack_directory(stack))
+            if command == "destroy" and stack == "mng01" and client is not None:
+                identity = instance_identity(instance_id)
+                if identity.get("status") == "deleted":
+                    raise RuntimeError("OPERATION_INSTANCE_ALREADY_DELETED")
+                record = physical_record(client, int(vmid)) if vmid is not None else None
+                if record is None:
+                    settle_physical_operation(
+                        operation_id, command, instance_id, vmid, target_node,
+                        source_payload, source_operation,
+                    )
+                    return
+                name = identity.get("name")
+                node = target_node or identity.get("node")
+                if not name or not node or record.get("node") != node:
+                    raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+                assert_physical_identity(client, int(vmid), node, name, source_operation_id)
+                if client.power_state(node, int(vmid), name)["power_state"] != "stopped":
+                    raise RuntimeError("DESTROY_REQUIRES_STOPPED_INSTANCE")
             if not os.path.isdir(workspace):
                 raise RuntimeError(f"no existe el workspace del plan {source_operation_id}")
             plan_path = source_operation.get("plan_path") or os.path.join(
@@ -2467,6 +2708,8 @@ def execute(worker_id: str, operation: dict) -> None:
                 update_operation(operation_id, phase=phase)
                 if stack == "mng01":
                     assert_stopped_plan(workspace, plan_path)
+                    if _FENCE.get() is not None:
+                        require_free_provision_target(client, int(vmid), operation_id)
                 emit(operation_id, "terraform.apply.started", "running")
                 apply_code, apply_output, apply_error = run_commands(
                     worker_id,
@@ -2482,7 +2725,13 @@ def execute(worker_id: str, operation: dict) -> None:
         else:
             update_operation(operation_id, phase=phase)
             if command == "apply" and stack == "mng01":
+                from api.network_policy import selected_profile, wan_only
+
+                if wan_only() and source_payload.get("spec", {}).get("network_profile", "lab_dhcp") != selected_profile():
+                    raise RuntimeError("NETWORK_POLICY_MISMATCH")
                 assert_stopped_plan(workspace, plan_path)
+                if _FENCE.get() is not None:
+                    require_free_provision_target(client, int(vmid), source_operation_id)
             emit(operation_id, f"terraform.{command}.started", "running")
             heartbeat(worker_id, "running", operation_id, phase=phase)
             return_code, output, error = run_commands(
@@ -2500,60 +2749,25 @@ def execute(worker_id: str, operation: dict) -> None:
             if physical and client is not None and vmid is not None and not deterministic_error(failure_text):
                 emit(operation_id, "recovery.started", "running", "physical operation")
                 identity = instance_identity(instance_id)
-                expected = command in {"apply", "provision"}
-                # First observe the physical state. A lost Terraform response
-                # must never cause a second mutation when the requested state
-                # is already present.
-                for retry in range(2):
-                    if return_code == 0:
-                        break
-                    if not retryable_command_error(failure_text):
-                        break
-                    try:
-                        recovered = physical_presence(
-                            client,
-                            int(vmid),
-                            expected,
-                            name=identity.get("name"),
-                            node=target_node or identity.get("node"),
-                            heartbeat_callback=lambda: heartbeat(
-                                worker_id, "running", operation_id, phase="recovery"
-                            ),
-                        )
-                    except Exception:
-                        recovered = False
-                    if recovered:
-                        break
-                    time.sleep(min(15.0, 2 * (2**retry)))
-                    if stack == "mng01" and command in {"apply", "provision"}:
-                        assert_stopped_plan(workspace, plan_path)
-                    retry_code, retry_output, retry_error = run_commands(
-                        worker_id,
-                        operation_id,
-                        workspace,
-                        terraform_commands(command, plan_path)
-                        if command != "provision"
-                        else [["terraform", "apply", "-input=false", "-no-color", plan_path]],
-                        secret_path=secret_path,
-                    )
-                    output += retry_output
-                    error += retry_error
-                    return_code = retry_code
-                    failure_text = f"{output}\n{error}"
-                if return_code != 0 and not recovered:
-                    recovered = reconcile_physical(
-                        client,
-                        int(vmid),
-                        command in {"apply", "provision"},
-                        name=identity.get("name"),
-                        node=target_node or identity.get("node"),
-                        heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="recovery"),
-                    )
+                recovered = reconcile_physical(
+                    client,
+                    int(vmid),
+                    command in {"apply", "provision"},
+                    name=identity.get("name"),
+                    node=target_node or identity.get("node"),
+                    heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="recovery"),
+                )
                 if recovered:
                     if command in {"apply", "provision"}:
                         spec = operation_spec(source_operation, source_payload)
                         started = requested_started if requested_started is not None else bool(spec.get("started", True))
                         recovery_node = target_node or identity.get("node") or "mng01"
+                        if _FENCE.get() is not None:
+                            assert_physical_identity(
+                                client, int(vmid), recovery_node, identity.get("name"),
+                                source_operation.get("operation_id"),
+                            )
+                            require_reconciled_terraform_state(workspace, int(vmid))
                         expected_preboot = operation_preboot_expectation(
                             workspace,
                             spec,
@@ -2562,6 +2776,12 @@ def execute(worker_id: str, operation: dict) -> None:
                             client=client,
                             stack=stack,
                             password_present=bool(secret_path),
+                        )
+                        configure_workspace_password(
+                            client, workspace,
+                            proof_operation_id=operation_id,
+                            node=recovery_node, vmid=int(vmid), name=identity.get("name"),
+                            expected=expected_preboot, secret_path=secret_path,
                         )
                         ensure_vm_running_if_requested(
                             worker_id,
@@ -2618,9 +2838,9 @@ def execute(worker_id: str, operation: dict) -> None:
             update_instance(instance_id, status, node=target_node)
             emit(operation_id, f"terraform.{command}.completed", status, str(terminal_error)[-2000:])
             if command in {"plan", "provision", "apply"} and (phase == "plan" or status == "failed"):
-                if vmid is not None and allocated_here:
-                    release(int(vmid))
-            if command == "provision":
+                if allocated_here and ipam_release_ok:
+                    release_operation_lease(vmid, operation)
+            if command == "provision" and status != "uncertain":
                 delete_secret(secret_path)
             return
 
@@ -2653,6 +2873,11 @@ def execute(worker_id: str, operation: dict) -> None:
             spec = operation_spec(source_operation, source_payload)
             started = requested_started if requested_started is not None else bool(spec.get("started", True))
             instance = instance_identity(instance_id)
+            if _FENCE.get() is not None:
+                assert_physical_identity(
+                    client, int(vmid), target_node or instance.get("node") or "mng01",
+                    instance.get("name"), source_operation.get("operation_id"),
+                )
             expected_preboot = operation_preboot_expectation(
                 workspace,
                 spec,
@@ -2661,6 +2886,13 @@ def execute(worker_id: str, operation: dict) -> None:
                 client=client,
                 stack=stack,
                 password_present=bool(secret_path),
+            )
+            configure_workspace_password(
+                client, workspace,
+                proof_operation_id=operation_id,
+                node=target_node or instance.get("node") or "mng01",
+                vmid=int(vmid), name=instance.get("name"),
+                expected=expected_preboot, secret_path=secret_path,
             )
             ensure_vm_running_if_requested(
                 worker_id,
@@ -2685,53 +2917,25 @@ def execute(worker_id: str, operation: dict) -> None:
                 started=started,
             )
 
-        if command == "destroy" and not _release_static_allocation(instance_id, operation_id):
-            update_operation(
-                operation_id,
-                status="uncertain",
-                phase="recovery_required",
-                finished_at=now(),
-                last_heartbeat=now(),
-                exit_code=1,
-                output=operation_output(output),
-                error="IPAM_RELEASE_PENDING",
+        if command != "plan":
+            settle_physical_operation(
+                operation_id, command, instance_id, vmid, target_node,
+                source_payload, source_operation, output=output,
             )
-            update_instance(instance_id, "uncertain", vmid=vmid, power_state="unknown", node=target_node)
-            if vmid is not None:
-                release(int(vmid))
-            delete_secret(source_operation.get("secret_path"))
-            emit(operation_id, "terraform.destroy.failed", "uncertain", "IPAM_RELEASE_PENDING")
             return
 
-        update_operation(
-            operation_id,
-            status="succeeded",
-            phase="completed",
-            finished_at=now(),
-            last_heartbeat=now(),
-            exit_code=0,
-            output=operation_output(output),
-            error=operation_output(error),
-        )
-        if command == "plan":
-            update_instance(instance_id, "planned", vmid=vmid, node=target_node)
-        elif command in {"apply", "provision"}:
-            started = requested_started if requested_started is not None else bool(source_payload.get("spec", {}).get("started", True))
-            update_instance(
-                instance_id,
-                "ready",
-                vmid=vmid,
-                power_state="running" if started else "stopped",
-                node=target_node,
+        with database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            update_operation(
+                operation_id, status="succeeded", phase="completed",
+                finished_at=now(), last_heartbeat=now(), exit_code=0,
+                output=operation_output(output), error=operation_output(error), connection=db,
             )
-            if command == "provision":
-                delete_secret(secret_path)
-        else:
-            update_instance(instance_id, "deleted", vmid=vmid, power_state="unknown")
-            if vmid is not None:
-                release(int(vmid))
-            delete_secret(source_operation.get("secret_path"))
-        emit(operation_id, f"terraform.{command}.completed", "succeeded")
+            update_instance(instance_id, "planned", vmid=vmid, node=target_node, connection=db)
+            emit(operation_id, "terraform.plan.completed", "succeeded", connection=db)
+            db.execute("COMMIT")
+    except OperationFencedError:
+        raise
     except Exception as error:
         if isinstance(error, GuestIdentityError):
             current = instance_identity(instance_id)
@@ -2756,7 +2960,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 power_state="unknown",
                 node=target_node,
             )
-            if command == "provision":
+            if command == "provision" and status != "uncertain":
                 delete_secret(secret_path)
             emit(operation_id, "guest.identity.reconciliation_required", status, str(error))
             return
@@ -2766,7 +2970,7 @@ def execute(worker_id: str, operation: dict) -> None:
         recovered = False
         if (
             physical
-            and command != "reconcile"
+            and command == "destroy"
             and client is not None
             and vmid is not None
             and not deterministic_error(error)
@@ -2798,14 +3002,14 @@ def execute(worker_id: str, operation: dict) -> None:
             return
 
         status = "uncertain" if (physical or power_uncertain) and not deterministic_error(error) else "failed"
-        if command in {"plan", "provision"} and phase == "plan" and allocated_here and vmid is not None:
-            release(int(vmid))
         terminal_error = str(error)
         if command in {"plan", "provision"} and (phase == "plan" or status == "failed"):
             if not _release_static_allocation(instance_id, operation_id):
                 status = "uncertain"
                 terminal_error = "IPAM_RELEASE_PENDING"
-        if command == "provision":
+            elif phase == "plan" and allocated_here:
+                release_operation_lease(vmid, operation)
+        if command == "provision" and status != "uncertain":
             delete_secret(secret_path)
         update_operation(
             operation_id,
@@ -2815,7 +3019,14 @@ def execute(worker_id: str, operation: dict) -> None:
             last_heartbeat=now(),
             error=operation_output(terminal_error),
         )
-        if resource_protected:
+        if resource_protected or terminal_error in {
+            "OPERATION_INSTANCE_MISMATCH",
+            "OPERATION_INSTANCE_ALREADY_DELETED",
+            "DESTROY_REQUIRES_STOPPED_INSTANCE",
+            "NETWORK_POLICY_MISMATCH",
+            "VM_PHYSICAL_OWNER_MISMATCH",
+            "VMID_LEASE_OWNER_MISMATCH",
+        }:
             # Failing a rejected request must not rewrite protected instance state.
             pass
         elif command == "power" and not power_uncertain:
@@ -2830,6 +3041,7 @@ def execute(worker_id: str, operation: dict) -> None:
             )
         emit(operation_id, f"terraform.{command}.failed", status, terminal_error)
     finally:
+        _PROXMOX_CREDENTIALS.reset(credential_scope)
         heartbeat(worker_id, "idle")
 
 

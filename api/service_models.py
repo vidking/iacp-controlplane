@@ -1,6 +1,7 @@
 """Contrato aditivo para pedidos de aplicaciones."""
 
 from typing import Literal
+from pydantic_core import PydanticCustomError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -113,7 +114,8 @@ class ServiceCreateRequest(BaseModel):
             not self.instance.access.ssh_public_keys
             and not self.instance.access.root_password
         ):
-            raise ValueError(
+            raise PydanticCustomError(
+                "access_required",
                 "se requiere root_password o una clave SSH del cliente para conservar acceso al sistema"
             )
         if (

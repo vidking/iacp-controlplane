@@ -25,6 +25,13 @@ variable "allowed_nodes" {
   }
 }
 
+variable "password_configured_by_worker" {
+  description = "La cuenta cloud-init recibe su contraseña mediante el worker antes del primer arranque."
+  type        = bool
+  nullable    = false
+  default     = false
+}
+
 variable "root_password" {
   description = "Contraseña sensible de la cuenta cloud-init definida por la Golden Image."
   type        = string

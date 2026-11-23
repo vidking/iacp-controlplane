@@ -331,16 +331,20 @@ class OperationRequest(BaseModel):
             raise ValueError("source_operation_id solo aplica a reconcile")
         if self.power_action is not None:
             raise ValueError("power_action solo aplica a command=power")
-        if self.command == Command.provision:
-            if self.action != Action.provision:
-                raise ValueError("provision requiere action=provision")
+        if self.command == Command.destroy and "action" not in self.model_fields_set:
+            self.action = Action.destroy
+        expected_action = Action.destroy if self.command == Command.destroy else Action.provision
+        if self.action != expected_action:
+            raise ValueError(f"{self.command.value} requiere action={expected_action.value}")
+        if self.command in {Command.plan, Command.provision}:
             if self.spec is None:
-                raise ValueError("spec es obligatorio para provision")
-            if not self.plan_id:
+                raise ValueError(f"spec es obligatorio para {self.command.value}")
+            if self.command == Command.provision and not self.plan_id:
                 raise ValueError("plan_id es obligatorio para provision")
-            return self
-        if self.command == Command.plan and self.action == Action.provision and self.spec is None:
-            raise ValueError("spec es obligatorio para plan de provision")
+            if self.instance_id is not None or self.plan_operation_id is not None:
+                raise ValueError(f"{self.command.value} no acepta instance_id ni plan_operation_id")
+        elif self.spec is not None:
+            raise ValueError(f"{self.command.value} no acepta spec")
         if self.command == Command.apply and not self.plan_operation_id:
             raise ValueError("apply requiere plan_operation_id")
         if self.command == Command.destroy and not (self.plan_operation_id or self.instance_id):

@@ -54,7 +54,7 @@ def test_allocation_reuses_released_vmid(tmp_path, monkeypatch):
     initialize()
     client = FakeProxmox()
     first = allocate("operation-a", client)
-    release(first)
+    release(first, "operation-a")
     second = allocate("operation-b", client)
     assert first == second == 40000
 
@@ -67,9 +67,9 @@ def test_allocation_can_keep_unique_vmids_for_physical_matrix(tmp_path, monkeypa
     initialize()
     client = FakeProxmox()
     first = allocate("operation-unique-a", client)
-    release(first)
+    release(first, "operation-unique-a")
     second = allocate("operation-unique-b", client)
-    release(second)
+    release(second, "operation-unique-b")
     third = allocate("operation-unique-c", client)
     assert (first, second, third) == (40000, 40001, 40002)
 
@@ -92,8 +92,8 @@ def test_allocation_serializes_six_concurrent_requests_and_reuses_lowest_free_vm
 
     assert sorted(vmids) == list(range(40001, 40007))
     assert len(set(vmids)) == 6
-    for vmid in vmids:
-        release(vmid)
+    for index, vmid in enumerate(vmids):
+        release(vmid, f"operation-six-{index}")
     assert allocate("operation-reuse-after-six", client) == 40001
 
 
@@ -1850,7 +1850,7 @@ def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, ex
         db.execute("""INSERT INTO instances(instance_id,operation_id,name,image,vmid,node,status,power_state,spec_json,created_at,updated_at)
             VALUES ('deleted-instance','old-source','prueba-service-nextcloud','almalinux-9',40001,'mng01','deleted','unknown','{}','now','now')""")
     monkeypatch.setattr(main, '_release_static_allocation', lambda *_: released)
-    monkeypatch.setattr(main, 'release', lambda *_: None)
+    monkeypatch.setattr(main, 'release', lambda *_args, **_kwargs: None)
     main.close_source_after_reconciliation(
         {'operation_id': 'old-source', 'command': 'provision'},
         'deleted-instance', 40001, 'mng01', {}, succeeded=False, detail='VM_ABSENT',

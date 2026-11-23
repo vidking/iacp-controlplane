@@ -1,7 +1,7 @@
-FROM hashicorp/terraform:1.16.6 AS terraform
+FROM hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 AS terraform
 
-FROM python:3.12-slim
-COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+COPY --from=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,7 +14,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IACP_TERRAFORM_MNG_DIR=environments/mng01 \
     IACP_WORKDATA_DIR=/var/lib/iacp-controlplane
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+RUN sed -i \
+      -e 's|http://deb.debian.org/debian$|https://snapshot.debian.org/archive/debian/20261104T212339Z|' \
+      -e 's|http://deb.debian.org/debian-security$|https://snapshot.debian.org/archive/debian-security/20261104T212339Z|' \
+      /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Check-Valid-Until=false update && \
+    apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 999 iacp && useradd --system --uid 999 --gid iacp --home-dir /app iacp
 COPY --from=terraform /bin/terraform /usr/local/bin/terraform
 WORKDIR /app

@@ -1,14 +1,20 @@
 """Pedidos transaccionales y entrega explícita de aplicaciones."""
 
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from hmac import compare_digest
 import json
+from secrets import token_urlsafe
 import uuid
 from fastapi import HTTPException
 from api.db import database
 from api.models import Command, OperationRequest
 from api.service import (
     _idempotent_mutation,
+    _idempotency_key_or_error,
     _insert_operation,
     _resolve_public_request,
+    emit,
     now,
 )
 from api.service_catalog import enabled, supported_image_ids
@@ -18,6 +24,7 @@ from api.secrets import write_secret, delete_secret
 
 
 ACTIVE = "('queued','running','uncertain')"
+CREDENTIAL_RECOVERY_WINDOW = timedelta(minutes=15)
 
 
 def require_enabled():
@@ -60,10 +67,16 @@ def create(request: ServiceCreateRequest, key: str | None):
         credentials.update(
             {name: value for name, value in body["secrets"].items() if value is not None}
         )
+        configuration = request.configuration.model_dump()
         if request.application_id == "n8n":
-            # La receta crea el propietario nativo cuando el cliente lo envía.
-            # Los pedidos antiguos conservan el onboarding interactivo de n8n.
             credentials.pop("admin_password", None)
+            if not credentials.get("owner_password"):
+                configuration.update(
+                    owner_email=f"owner-{service_id}@example.invalid",
+                    owner_first_name="Cuenta",
+                    owner_last_name="Administradora",
+                )
+                credentials["owner_password"] = "Aa1-" + token_urlsafe(32)
         elif request.application_id == "nextcloud" and request.secrets.admin_password:
             credentials["admin_password"] = request.secrets.admin_password.get_secret_value()
         try:
@@ -95,12 +108,15 @@ def create(request: ServiceCreateRequest, key: str | None):
                 environment=environment,
             )
             db.execute(
-                """INSERT INTO service_instances VALUES (?, ?, ?, '1', ?, ?, 'waiting_vm', NULL, ?, ?)""",
+                """INSERT INTO service_instances(
+                    service_id, instance_id, application_id, recipe_version,
+                    configuration_json, secrets_encrypted, status, created_at, updated_at
+                ) VALUES (?, ?, ?, '1', ?, ?, 'waiting_vm', ?, ?)""",
                 (
                     service_id,
                     response["instance_id"],
                     request.application_id,
-                    request.configuration.model_dump_json(),
+                    json.dumps(configuration),
                     envelope,
                     now(),
                     now(),
@@ -154,14 +170,19 @@ def get_service(service_id):
             """SELECT s.service_id, s.instance_id, s.application_id, s.recipe_version,
             s.configuration_json, s.status, s.created_at, s.updated_at, s.credentials_retrieved_at,
             i.name, i.status AS infrastructure_status,
-            i.power_state, i.vmid FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
+                   i.power_state, i.vmid, r.request_hash IS NOT NULL AS credential_receipt_required
+            FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
+            LEFT JOIN service_credential_retrievals r ON r.service_id=s.service_id
             WHERE s.service_id=?""",
             (service_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         result = dict(row)
-        result["credentials_available"] = result.pop("credentials_retrieved_at") is None and result["status"] == "awaiting_customer"
+        retrieved_at = result.pop("credentials_retrieved_at")
+        awaiting_customer = result["status"] == "awaiting_customer"
+        result["credentials_available"] = retrieved_at is None and awaiting_customer
+        result["credentials_recovery_possible"] = retrieved_at is not None and awaiting_customer
         result["configuration"] = json.loads(result.pop("configuration_json"))
         result["jobs"] = [
             dict(job)
@@ -184,9 +205,17 @@ def get_service(service_id):
             # configurar la aplicación (incluidos trusted_domains en
             # Nextcloud). Evita que el consumidor abra una IP intermedia y vea
             # una pantalla de instalación o de dominio no confiable.
+            owner_review_required = (
+                result["application_id"] == "n8n"
+                and awaiting_customer
+                and not result["configuration"].get("owner_email")
+            )
+            if owner_review_required:
+                result["credentials_available"] = False
+                result["credentials_recovery_possible"] = False
             result["access_url"] = (
                 "https://" + host + "/"
-                if host and result["status"] in {"awaiting_customer", "delivered"}
+                if host and result["status"] in {"awaiting_customer", "delivered"} and not owner_review_required
                 else None
             )
         return result
@@ -210,6 +239,26 @@ def get_job(job_id):
         }
 
 
+def _current_job(db, job):
+    latest = db.execute(
+        f"""SELECT job_id FROM service_jobs WHERE service_id=?
+        ORDER BY (status IN {ACTIVE}) DESC, created_at DESC, job_id DESC LIMIT 1""",
+        (job["service_id"],),
+    ).fetchone()
+    if latest["job_id"] != job["job_id"]:
+        raise HTTPException(409, "SERVICE_JOB_SUPERSEDED")
+    service = db.execute(
+        """SELECT s.instance_id, s.application_id, s.status, i.status AS infrastructure_status,
+        i.image, i.power_state, i.operation_id, i.vmid
+        FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
+        WHERE s.service_id=?""",
+        (job["service_id"],),
+    ).fetchone()
+    if service["status"] in {"cancelled", "delivered", "deleted"}:
+        raise HTTPException(409, "SERVICE_JOB_SUPERSEDED")
+    return service
+
+
 def retry(job_id, key, stopped=False):
     require_enabled()
 
@@ -223,14 +272,8 @@ def retry(job_id, key, stopped=False):
             raise HTTPException(409, "SERVICE_NOT_RETRYABLE")
         if job["status"] == "uncertain" and not stopped:
             raise HTTPException(409, "PREVIOUS_EXECUTION_MUST_BE_STOPPED")
-        service = db.execute(
-            """SELECT s.instance_id, s.application_id, i.image
-            FROM service_instances s
-            JOIN instances i ON i.instance_id=s.instance_id
-            WHERE s.service_id=?""",
-            (job["service_id"],),
-        ).fetchone()
-        if service["image"] not in supported_image_ids(service["application_id"]):
+        service = _current_job(db, job)
+        if job["action"] == "install" and service["image"] not in supported_image_ids(service["application_id"]):
             raise HTTPException(409, "SERVICE_IMAGE_RETIRED")
         active = db.execute(
             "SELECT 1 FROM operations WHERE instance_id=? AND status IN ('pending','running','planning','applying','destroying','powering','uncertain')",
@@ -252,17 +295,28 @@ def retry(job_id, key, stopped=False):
     )
 
 
-def delivery(service_id, key):
+def delivery(service_id, key, receipt=None):
     require_enabled()
 
     def builder(db):
         row = db.execute(
-            "SELECT * FROM service_instances WHERE service_id=?", (service_id,)
+            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            WHERE s.service_id=?""",
+            (service_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         if row["status"] != "awaiting_customer" or not row["credentials_retrieved_at"]:
             raise HTTPException(409, "SERVICE_NOT_READY_FOR_DELIVERY")
+        if row["credentials_retrieval_key_hash"]:
+            from api.service_secrets import decrypt
+
+            expected = decrypt(row["secrets_encrypted"]).get("credential_receipt")
+            if not expected or not receipt or not compare_digest(
+                sha256(receipt.encode()).digest(), sha256(expected.encode()).digest()
+            ):
+                raise HTTPException(409, "SERVICE_CREDENTIAL_RECEIPT_REQUIRED")
         guard_instance(db, row["instance_id"])
         active = db.execute(
             "SELECT 1 FROM operations WHERE instance_id=? AND status IN ('pending','running','planning','applying','destroying','powering','uncertain')",
@@ -280,23 +334,43 @@ def delivery(service_id, key):
     return _idempotent_mutation(
         scope=f"POST:service-instances:{service_id}:deliver",
         idempotency_key=key,
-        body={},
+        body={"receipt_hash": sha256(receipt.encode()).hexdigest()} if receipt else {},
         builder=builder,
     )
 
 
-def credentials(service_id):
+def _credential_recovery_open(retrieved_at):
+    return datetime.now(timezone.utc) < (
+        datetime.fromisoformat(retrieved_at) + CREDENTIAL_RECOVERY_WINDOW
+    )
+
+
+def credentials(service_id, key=None):
     from api.service_secrets import decrypt
 
+    key_hash = sha256(_idempotency_key_or_error(key).encode()).hexdigest() if key else None
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            "SELECT * FROM service_instances WHERE service_id=?", (service_id,)
+            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            WHERE s.service_id=?""",
+            (service_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_NOT_FOUND")
-        if row["status"] != "awaiting_customer" or row["credentials_retrieved_at"]:
+        if row["status"] != "awaiting_customer":
             raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+        guard_instance(db, row["instance_id"])
+        previous_key_hash = row["credentials_retrieval_key_hash"]
+        recovered = False
+        if row["credentials_retrieved_at"]:
+            if not key_hash:
+                raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+            if _credential_recovery_open(row["credentials_retrieved_at"]):
+                if not previous_key_hash or not compare_digest(key_hash, previous_key_hash):
+                    raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+                recovered = True
         secrets = decrypt(row["secrets_encrypted"])
         if row["application_id"] == "nextcloud":
             result = {
@@ -305,23 +379,15 @@ def credentials(service_id):
             }
         elif row["application_id"] == "n8n":
             configuration = json.loads(row["configuration_json"])
-            if secrets.get("owner_password"):
-                result = {
-                    "owner_email": configuration["owner_email"],
-                    "owner_first_name": configuration["owner_first_name"],
-                    "owner_last_name": configuration["owner_last_name"],
-                    "owner_password": secrets["owner_password"],
-                    "owner_setup_required": False,
-                }
-            else:
-                result = {
-                    "owner_setup_required": True,
-                    "access_instructions": (
-                        "Abre la URL del servicio. En el primer acceso, n8n solicita "
-                        "crear la cuenta propietaria; después podrás iniciar sesión "
-                        "con las credenciales que definas allí."
-                    ),
-                }
+            if not secrets.get("owner_password") or not configuration.get("owner_email"):
+                raise HTTPException(409, "SERVICE_N8N_OWNER_REQUIRES_REVIEW")
+            result = {
+                "owner_email": configuration["owner_email"],
+                "owner_first_name": configuration["owner_first_name"],
+                "owner_last_name": configuration["owner_last_name"],
+                "owner_password": secrets["owner_password"],
+                "owner_setup_required": False,
+            }
         elif row["application_id"] == "openclaw":
             result = {"gateway_token": secrets["gateway_token"], "access": "ssh"}
         else:
@@ -329,10 +395,21 @@ def credentials(service_id):
                 "access": "ssh",
                 "telegram_configured": bool(secrets.get("telegram_bot_token")),
             }
-        db.execute(
-            "UPDATE service_instances SET credentials_retrieved_at=? WHERE service_id=?",
-            (now(), service_id),
-        )
+        if key_hash:
+            if not recovered:
+                secrets["credential_receipt"] = token_urlsafe(32)
+            result["credential_receipt"] = secrets["credential_receipt"]
+        if not recovered:
+            db.execute(
+                "UPDATE service_instances SET credentials_retrieved_at=?, secrets_encrypted=? WHERE service_id=?",
+                (now(), encrypt(secrets) if key_hash else row["secrets_encrypted"], service_id),
+            )
+            if key_hash:
+                db.execute(
+                    """INSERT INTO service_credential_retrievals(service_id, request_hash) VALUES (?, ?)
+                    ON CONFLICT(service_id) DO UPDATE SET request_hash=excluded.request_hash""",
+                    (service_id, key_hash),
+                )
         db.execute("COMMIT")
         return result
 
@@ -344,26 +421,100 @@ def cancel(job_id, key, stopped=False):
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
+        if row["status"] == "cancelled":
+            operation = db.execute(
+                """SELECT o.operation_id
+                FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
+                JOIN operations o ON o.operation_id=i.operation_id
+                WHERE s.service_id=? AND s.status='cancelled' AND o.phase='service_cancelled'""",
+                (row["service_id"],),
+            ).fetchone()
+            if operation:
+                operation_id = operation["operation_id"]
+                return {"job_id": job_id, "status": "cancelled", "operation_id": operation_id}, operation_id
         if row["status"] not in {"queued", "blocked"} and not (
             row["status"] == "uncertain" and stopped
         ):
             raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RUNNING_OR_UNCERTAIN")
+        service = _current_job(db, row)
+        if row["action"] == "handoff" and row["status"] == "queued" and row["generation"] == 0:
+            db.execute("UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?", (now(), job_id))
+            return {"job_id": job_id, "status": "cancelled"}, None
+        if row["action"] != "install":
+            raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RECOVERY")
+
+        cancelled_operation_id = None
+        if service["infrastructure_status"] == "pending" and service["vmid"] is None:
+            updated = db.execute(
+                """UPDATE operations SET status='failed', phase='service_cancelled',
+                error='SERVICE_CANCELLED', finished_at=?
+                WHERE operation_id=? AND instance_id=? AND command='provision'
+                AND status='pending' AND worker_id IS NULL AND vmid IS NULL AND started_at IS NULL
+                AND attempt_count=0 AND workspace_path IS NULL""",
+                (now(), service["operation_id"], service["instance_id"]),
+            )
+            if updated.rowcount:
+                cancelled_operation_id = service["operation_id"]
+                db.execute(
+                    "UPDATE instances SET status='deleted', updated_at=? WHERE instance_id=?",
+                    (now(), service["instance_id"]),
+                )
+                emit(db, cancelled_operation_id, "operation.cancelled", "failed", "SERVICE_CANCELLED")
+        clean_without_vm = cancelled_operation_id or service["infrastructure_status"] == "deleted"
+        if not clean_without_vm:
+            active = db.execute(
+                """SELECT 1 FROM operations WHERE instance_id=?
+                AND status IN ('pending','running','planning','applying','destroying','powering','uncertain') LIMIT 1""",
+                (service["instance_id"],),
+            ).fetchone()
+            if active:
+                raise HTTPException(409, "INFRASTRUCTURE_OPERATION_ACTIVE")
+            if service["infrastructure_status"] != "ready" or service["power_state"] != "running":
+                raise HTTPException(409, "SERVICE_CLEANUP_REQUIRES_RUNNING_VM")
         db.execute(
             "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
             (now(), job_id),
         )
+        if not clean_without_vm:
+            cleanup_job_id = str(uuid.uuid4())
+            db.execute(
+                """INSERT INTO service_jobs(job_id, service_id, action, status, created_at)
+                VALUES (?, ?, 'cleanup', 'queued', ?)""",
+                (cleanup_job_id, row["service_id"], now()),
+            )
+            db.execute(
+                "UPDATE service_instances SET status='cancelling', updated_at=? WHERE service_id=?",
+                (now(), row["service_id"]),
+            )
+            return {"job_id": cleanup_job_id, "cancelled_job_id": job_id, "status": "queued"}, None
         db.execute(
-            "UPDATE service_instances SET status='cancelled', updated_at=? WHERE service_id=?",
+            """UPDATE service_instances SET status='cancelled', secrets_encrypted=NULL, updated_at=?
+            WHERE service_id=?""",
             (now(), row["service_id"]),
         )
-        return {"job_id": job_id, "status": "cancelled"}, None
+        result = {"job_id": job_id, "status": "cancelled"}
+        if cancelled_operation_id:
+            result["operation_id"] = cancelled_operation_id
+        return result, cancelled_operation_id
 
-    return _idempotent_mutation(
+    response = _idempotent_mutation(
         scope=f"POST:service-jobs:{job_id}:cancel",
         idempotency_key=key,
         body={"stopped": True} if stopped else {},
         builder=builder,
     )
+    if operation_id := response.get("operation_id"):
+        # Se limpia tras confirmar la cancelación. Repetir la misma petición
+        # también completa la limpieza si la respuesta o el proceso se perdieron.
+        with database() as db:
+            operation = db.execute(
+                "SELECT secret_path FROM operations WHERE operation_id=? AND phase='service_cancelled'",
+                (operation_id,),
+            ).fetchone()
+            if operation and operation["secret_path"]:
+                delete_secret(operation["secret_path"])
+                db.execute("UPDATE operations SET secret_path=NULL WHERE operation_id=?", (operation_id,))
+    return response
 
 
 def connections(service_id, request, key):

@@ -6,8 +6,8 @@ import socket
 import ssl
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
-from urllib.request import Request, build_opener, HTTPSHandler
+from urllib.parse import quote, urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from typing import Callable
 
 
@@ -39,11 +39,23 @@ def credentials() -> tuple[str, str]:
     return str(endpoint).rstrip("/"), str(token)
 
 
-def load_environment() -> tuple[str, str]:
-    endpoint, token = credentials()
-    os.environ["PROXMOX_VE_ENDPOINT"] = endpoint
-    os.environ["PROXMOX_VE_API_TOKEN"] = token
-    return endpoint, token
+class RejectRedirects(HTTPRedirectHandler):
+    """Never forward authenticated requests to a redirected URL."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def validate_endpoint(endpoint: str) -> None:
+    parsed = urlsplit(endpoint)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ProxmoxError("PROXMOX_HTTPS_ENDPOINT_REQUIRED")
 
 
 class ProxmoxClient:
@@ -51,11 +63,12 @@ class ProxmoxClient:
         if endpoint is None or token is None:
             endpoint, token = credentials()
         endpoint = endpoint.rstrip("/")
+        validate_endpoint(endpoint)
         self.base = endpoint if endpoint.endswith("/api2/json") else f"{endpoint}/api2/json"
         self.token = token
         cafile = os.getenv("SSL_CERT_FILE") or None
         context = ssl.create_default_context(cafile=cafile)
-        self.opener = build_opener(HTTPSHandler(context=context))
+        self.opener = build_opener(HTTPSHandler(context=context), RejectRedirects())
         self._heartbeat_callback: Callable[[], None] | None = None
 
     def set_heartbeat(self, callback: Callable[[], None] | None) -> None:
@@ -76,6 +89,8 @@ class ProxmoxClient:
         timeout: float | None = None,
         attempts: int | None = None,
     ):
+        if method != "GET":
+            self._heartbeat()
         if parameters:
             # Proxmox declares ``sshkeys`` as a URL-encoded string inside the
             # form body. Encode the plain OpenSSH key here, at the HTTP
@@ -132,7 +147,9 @@ class ProxmoxClient:
             try:
                 with self.opener.open(request, timeout=request_timeout) as response:
                     body = json.loads(response.read())
-                return body.get("data")
+                if not isinstance(body, dict) or "data" not in body:
+                    raise ValueError("respuesta Proxmox sin data")
+                return body["data"]
             except HTTPError as error:
                 # A GET can be retried safely. A POST may already have
                 # reached Proxmox even when it returns 5xx; retrying it here
@@ -194,7 +211,15 @@ class ProxmoxClient:
         return self._request("PUT", path, parameters, uncertain=True)
 
     def inventory(self, *, uncertain: bool = False) -> list[dict]:
-        return self.get("/cluster/resources?type=vm", uncertain=uncertain) or []
+        data = self.get("/cluster/resources?type=vm", uncertain=uncertain)
+        if not isinstance(data, list) or any(
+            not isinstance(record, dict) or not str(record.get("vmid", "")).isdigit()
+            for record in data
+        ):
+            raise ProxmoxError("PROXMOX_INVENTORY_UNCONFIRMED", uncertain=uncertain)
+        if len({int(record["vmid"]) for record in data}) != len(data):
+            raise ProxmoxError("PROXMOX_INVENTORY_UNCONFIRMED", uncertain=uncertain)
+        return data
 
     def pools(self) -> list[dict]:
         return self.get("/pools") or []
@@ -268,6 +293,24 @@ class ProxmoxClient:
         ):
             raise ProxmoxError("CLOUDINIT_DNS_UNVERIFIED", uncertain=True)
         return {"nameserver": desired}
+
+    def ensure_cloudinit_password(
+        self, node: str, vmid: int, name: str, username: str, password: str
+    ) -> None:
+        """Write the initial credential only to an identified, stopped VM."""
+        if self.power_state(node, vmid, name)["power_state"] != "stopped":
+            raise ProxmoxError("CLOUDINIT_PASSWORD_VM_ALREADY_RUNNING", uncertain=True)
+        config = self.vm_config(node, vmid)
+        if config.get("name") != name or config.get("template") or config.get("ciuser") != username:
+            raise ProxmoxError("CLOUDINIT_PASSWORD_IDENTITY_MISMATCH", uncertain=True)
+        path = f"/nodes/{quote(node, safe='')}/qemu/{vmid}/config"
+        parameters = {"cipassword": password}
+        if config.get("digest"):
+            parameters["digest"] = config["digest"]
+        self.put(path, parameters)
+        observed = self.vm_config(node, vmid)
+        if observed.get("name") != name or observed.get("ciuser") != username or not observed.get("cipassword"):
+            raise ProxmoxError("CLOUDINIT_PASSWORD_UNCONFIRMED", uncertain=True)
 
     def storage_status(self, node: str, storage: str) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/storage/{quote(storage, safe='')}/status") or {}
@@ -396,7 +439,12 @@ class ProxmoxClient:
             parameters,
         )
         self._validate_task(node, vmid, action, task)
-        return {"action": action, "task": task, **self.wait_task(node, vmid, action, task)}
+        try:
+            result = self.wait_task(node, vmid, action, task)
+        except ProxmoxError as error:
+            error.task = task
+            raise
+        return {"action": action, "task": task, **result}
 
     def _reconcile_power_action(
         self,
@@ -433,42 +481,43 @@ class ProxmoxClient:
                     **observed,
                 }
 
-            try:
-                if action == "start" and current == "stopped":
-                    return {
-                        **self._submit_power_action(node, vmid, "start"),
-                        "recovered": True,
-                        "recovery_error": str(initial_error)[:256],
-                    }
-                if action in {"shutdown", "stop"} and current == "running":
-                    result = self._submit_power_action(node, vmid, "stop")
-                    return {
-                        "action": action,
-                        "fallback_action": "stop",
-                        "recovered": True,
-                        "recovery_error": str(initial_error)[:256],
-                        **result,
-                    }
-                if action == "reboot" and current in {"running", "stopped"}:
-                    stopped = (
-                        {"power_state": "stopped", "already": True}
-                        if current == "stopped"
-                        else self._submit_power_action(node, vmid, "stop")
-                    )
-                    started = self._submit_power_action(node, vmid, "start")
-                    return {
-                        "action": action,
-                        "fallback_action": "stop_start",
-                        "recovered": True,
-                        "recovery_error": str(initial_error)[:256],
-                        "stop": stopped,
-                        "start": started,
-                        "power_state": started.get("power_state", "running"),
-                    }
-            except ProxmoxError as error:
-                if not self._recoverable_power_error(error):
-                    raise
-                last_error = error
+            if attempt == 0 and str(initial_error).startswith("POWER_TASK_FAILED"):
+                try:
+                    if action == "shutdown" and current == "running":
+                        result = self._submit_power_action(node, vmid, "stop")
+                        return {
+                            **result,
+                            "action": action,
+                            "fallback_action": "stop",
+                            "recovered": True,
+                        }
+                    if action == "reboot" and current in {"running", "stopped"}:
+                        stopped = (
+                            {"power_state": "stopped", "already": True}
+                            if current == "stopped"
+                            else self._submit_power_action(node, vmid, "stop")
+                        )
+                        started = self._submit_power_action(node, vmid, "start")
+                        return {
+                            "action": action,
+                            "fallback_action": "stop_start",
+                            "recovered": True,
+                            "stop": stopped,
+                            "start": started,
+                            "power_state": started["power_state"],
+                        }
+                except ProxmoxError as error:
+                    raise ProxmoxError("POWER_FALLBACK_UNCONFIRMED", uncertain=True) from error
+
+            # Una respuesta perdida solo autoriza volver a observar o volver
+            # a consultar la misma tarea. Nunca autoriza otra mutación.
+            task = getattr(initial_error, "task", None)
+            if task and initial_error.uncertain:
+                try:
+                    result = self.wait_task(node, vmid, action, task)
+                except ProxmoxError as error:
+                    raise ProxmoxError("POWER_OPERATION_UNCERTAIN", uncertain=True) from error
+                return {"action": action, "task": task, "recovered": True, **result}
 
             time.sleep(self._power_recovery_delay(attempt))
             attempt += 1

@@ -439,46 +439,68 @@ def prune_history() -> dict[str, int]:
         return {"events": 0, "operations": 0, "idempotency_keys": 0}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with database() as db:
-        db.execute("BEGIN")
-        db.execute("SELECT pg_advisory_xact_lock(104, 10)")
-        event_result = db.execute(
+        # Serializa la selección con el encolado y la asignación de nuevas
+        # referencias. Los recursos vigentes conservan sus operaciones raíz.
+        db.execute("BEGIN IMMEDIATE")
+        result = db.execute(
             """
-            DELETE FROM events
-            WHERE occurred_at < ?
-              AND operation_id IN (
-                SELECT operation_id FROM operations
-                WHERE status IN ('succeeded', 'failed', 'uncertain')
-                  AND finished_at IS NOT NULL AND finished_at < ?
-              )
+            WITH source_references AS MATERIALIZED (
+                SELECT plan_operation_id AS operation_id FROM operations
+                WHERE plan_operation_id IS NOT NULL
+                UNION
+                SELECT payload_json::jsonb ->> 'source_operation_id'
+                FROM operations
+                WHERE command = 'reconcile' AND payload_json IS JSON OBJECT
+            ), eligible AS MATERIALIZED (
+                SELECT candidate.operation_id
+                FROM operations candidate
+                WHERE candidate.status IN ('succeeded', 'failed')
+                  AND candidate.finished_at IS NOT NULL AND candidate.finished_at < ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM instances i
+                      WHERE i.operation_id = candidate.operation_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM operations other
+                      WHERE other.instance_id = candidate.instance_id
+                        AND other.status NOT IN ('succeeded', 'failed')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM source_references ref
+                      WHERE ref.operation_id = candidate.operation_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM events event
+                      WHERE event.operation_id = candidate.operation_id AND event.occurred_at >= ?
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM idempotency_keys key
+                      WHERE key.operation_id = candidate.operation_id AND key.created_at >= ?
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM vmid_leases lease
+                      WHERE lease.operation_id = candidate.operation_id AND lease.status = 'held'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ip_allocations allocation
+                      WHERE allocation.operation_id = candidate.operation_id AND allocation.status <> 'released'
+                  )
+            ), removed_events AS (
+                DELETE FROM events WHERE operation_id IN (SELECT operation_id FROM eligible)
+                RETURNING event_id
+            ), removed_keys AS (
+                DELETE FROM idempotency_keys
+                WHERE operation_id IN (SELECT operation_id FROM eligible)
+                RETURNING 1
+            ), removed_operations AS (
+                DELETE FROM operations WHERE operation_id IN (SELECT operation_id FROM eligible)
+                RETURNING operation_id
+            )
+            SELECT (SELECT COUNT(*) FROM removed_events) AS events,
+                   (SELECT COUNT(*) FROM removed_operations) AS operations,
+                   (SELECT COUNT(*) FROM removed_keys) AS idempotency_keys
             """,
-            (cutoff, cutoff),
-        )
-        idempotency_result = db.execute(
-            """
-            DELETE FROM idempotency_keys
-            WHERE created_at < ?
-              AND (
-                operation_id IS NULL
-                OR operation_id IN (
-                  SELECT operation_id FROM operations
-                  WHERE status IN ('succeeded', 'failed', 'uncertain')
-                    AND finished_at IS NOT NULL AND finished_at < ?
-                )
-              )
-            """,
-            (cutoff, cutoff),
-        )
-        operation_result = db.execute(
-            """
-            DELETE FROM operations
-            WHERE status IN ('succeeded', 'failed', 'uncertain')
-              AND finished_at IS NOT NULL AND finished_at < ?
-            """,
-            (cutoff,),
-        )
+            (cutoff, cutoff, cutoff),
+        ).fetchone()
         db.execute("COMMIT")
-    return {
-        "events": event_result.rowcount,
-        "operations": operation_result.rowcount,
-        "idempotency_keys": idempotency_result.rowcount,
-    }
+    return dict(result)

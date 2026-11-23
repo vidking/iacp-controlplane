@@ -173,18 +173,15 @@ const setup = await post('/owner/setup', {
   lastName: account.lastName,
   password: account.password,
 });
-if (setup.status === 200 && setup.body.email === account.email) {
-  console.log('IACP_N8N_OWNER_CREATED');
-  process.exit(0);
-}
-// Si el worker reanuda después de que n8n creó la cuenta, verificar el login
-// convierte la repetición en idempotente sin revelar la causa ni la respuesta.
+const created = setup.status === 200 && setup.body.email === account.email;
+// Confirmar el acceso del propietario antes de publicar el proxy. En una
+// reanudación, el mismo login verifica el alta anterior.
 const login = await post('/login', {
   emailOrLdapLoginId: account.email,
   password: account.password,
 });
 if (login.status === 200 && login.body.email === account.email) {
-  console.log('IACP_N8N_OWNER_VERIFIED');
+  console.log(created ? 'IACP_N8N_OWNER_CREATED' : 'IACP_N8N_OWNER_VERIFIED');
   process.exit(0);
 }
 console.error('IACP_N8N_OWNER_SETUP_FAILED');
@@ -293,6 +290,9 @@ def pin_release(service_id, release):
 def execute(service, job, heartbeat):
     if os.getenv("IACP_SERVICE_EXECUTION_ENABLED", "0") != "1":
         raise ServiceBlocked("SERVICE_EXECUTION_DISABLED")
+    installing = job["action"] == "install"
+    if not installing and job["action"] not in {"handoff", "cleanup"}:
+        raise ServiceBlocked("SERVICE_ACTION_UNSUPPORTED")
     directory = Path(
         os.environ.get("IACP_SERVICE_BINDINGS_DIR", "/etc/iacp/service-bindings")
     )
@@ -309,14 +309,6 @@ def execute(service, job, heartbeat):
             if row
             else json.loads((directory / f"{service['instance_id']}.json").read_text())
         )
-        release = json.loads(
-            Path(
-                os.getenv(
-                    "IACP_SERVICE_RELEASES_FILE",
-                    str(Path(__file__).resolve().parents[1] / "services/releases.json"),
-                )
-            ).read_text()
-        )[service["application_id"]]
     except (OSError, ValueError, KeyError):
         raise ServiceBlocked("SERVICE_BINDING_OR_RELEASE_REQUIRED") from None
     if (
@@ -338,7 +330,7 @@ def execute(service, job, heartbeat):
     configuration = json.loads(service["configuration_json"])
     if binding.get("domain") != configuration.get("domain"):
         raise ServiceBlocked("SERVICE_DOMAIN_NOT_APPROVED")
-    if configuration.get("domain"):
+    if installing and configuration.get("domain"):
         import socket
 
         try:
@@ -355,36 +347,52 @@ def execute(service, job, heartbeat):
     spec = json.loads(service.get("spec_json") or "{}")
     if spec.get("ipv4_cidr") and str(ip_interface(spec["ipv4_cidr"]).ip) != address:
         raise ServiceBlocked("SERVICE_ADDRESS_IDENTITY_MISMATCH")
-    if (
-        not release.get("approved")
-        or release.get("recipe_version") != service["recipe_version"]
-    ):
-        raise ServiceBlocked("SERVICE_RELEASE_NOT_APPROVED")
-    verification = release.get("verification_argv")
-    if (
-        not isinstance(verification, list)
-        or not verification
-        or not all(isinstance(arg, str) and arg for arg in verification)
-    ):
-        raise ServiceBlocked("SERVICE_VERIFICATION_REQUIRED")
-    if configuration.get("access_mode") == "ip":
-        configuration["domain"] = address
-    if configuration.get("agent_mode") == "local":
-        configuration["model"] = configuration.get("model") or "openrouter/local-validation"
     secrets = decrypt(service["secrets_encrypted"])
-    try:
-        compose, files = render(
-            service["application_id"], configuration, secrets, release
-        )
-    except RecipeError as error:
-        raise ServiceBlocked(str(error)) from None
-    if configuration.get("access_mode") == "ip":
-        from worker.service_tls import issue
+    files = {}
+    if installing:
         try:
-            files.update(issue(address))
-        except (OSError, ValueError):
-            raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
-    pin_release(service["service_id"], release)
+            release = json.loads(
+                Path(
+                    os.getenv(
+                        "IACP_SERVICE_RELEASES_FILE",
+                        str(Path(__file__).resolve().parents[1] / "services/releases.json"),
+                    )
+                ).read_text()
+            )[service["application_id"]]
+        except (OSError, ValueError, KeyError):
+            raise ServiceBlocked("SERVICE_BINDING_OR_RELEASE_REQUIRED") from None
+        if not release.get("approved") or release.get("recipe_version") != service["recipe_version"]:
+            raise ServiceBlocked("SERVICE_RELEASE_NOT_APPROVED")
+        verification = release.get("verification_argv")
+        if (
+            not isinstance(verification, list)
+            or not verification
+            or not all(isinstance(arg, str) and arg for arg in verification)
+        ):
+            raise ServiceBlocked("SERVICE_VERIFICATION_REQUIRED")
+        if service["application_id"] == "n8n" and not all((
+            configuration.get("owner_email"),
+            configuration.get("owner_first_name"),
+            configuration.get("owner_last_name"),
+            secrets.get("owner_password"),
+        )):
+            raise ServiceBlocked("SERVICE_N8N_OWNER_REQUIRED")
+        if configuration.get("access_mode") == "ip":
+            configuration["domain"] = address
+        if configuration.get("agent_mode") == "local":
+            configuration["model"] = configuration.get("model") or "openrouter/local-validation"
+        try:
+            compose, files = render(service["application_id"], configuration, secrets, release)
+        except RecipeError as error:
+            raise ServiceBlocked(str(error)) from None
+        if configuration.get("access_mode") == "ip":
+            from worker.service_tls import issue
+
+            try:
+                files.update(issue(address))
+            except (OSError, ValueError):
+                raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
+        pin_release(service["service_id"], release)
     root = f"/opt/iacp-services/{service['service_id']}"
     command = lambda argv: {
         "ansible.builtin.command": {"argv": argv},
@@ -392,8 +400,36 @@ def execute(service, job, heartbeat):
     }
     tasks = [{"name": "Esperar cloud-init", **command(["cloud-init", "status", "--wait", "--long"]),
               "register": "cloud_init", "failed_when": "cloud_init.rc not in [0, 2] or 'status: done' not in cloud_init.stdout"}]
-    if job["action"] == "handoff":
-        tasks += [
+    base = ["docker", "compose", "--project-directory", root]
+    if not installing:
+        if job["action"] == "cleanup":
+            tasks.extend([
+                {
+                    "name": "Comprobar configuración de la aplicación",
+                    "ansible.builtin.stat": {"path": root + "/compose.yaml"},
+                    "register": "existing_compose",
+                    "no_log": True,
+                },
+                {
+                    "name": "Comprobar archivo Compose administrado",
+                    "ansible.builtin.assert": {
+                        "that": ["not existing_compose.stat.exists or existing_compose.stat.isreg | default(false)"],
+                        "fail_msg": "SERVICE_CLEANUP_UNTRUSTED_COMPOSE",
+                    },
+                },
+                {
+                    "name": "Retirar contenedores de la aplicación",
+                    **command(base + ["down"]),
+                    "when": "existing_compose.stat.exists",
+                },
+                {
+                    "name": "Retirar archivos de instalación",
+                    "ansible.builtin.file": {"path": root + "/{{ item }}", "state": "absent"},
+                    "loop": ["compose.yaml", "Caddyfile", "pilot.key", "pilot.crt", "pilot-ca.crt", "data/config.yaml"],
+                    "no_log": True,
+                },
+            ])
+        tasks.append(
             {
                 "name": "Retirar clave temporal",
                 "ansible.builtin.lineinfile": {
@@ -403,7 +439,7 @@ def execute(service, job, heartbeat):
                 },
                 "no_log": True,
             }
-        ]
+        )
     else:
         # El host lock evita dos Ansible simultáneos; las pérdidas de worker requieren revisión explícita.
         tasks += [
@@ -472,7 +508,6 @@ def execute(service, job, heartbeat):
                     "no_log": True,
                 }
             )
-        base = ["docker", "compose", "--project-directory", root]
         tasks.append(
             {
                 "name": "Descargar imágenes de aplicación",
@@ -528,13 +563,19 @@ def execute(service, job, heartbeat):
                     "no_log": True,
                 }
             )
+        up = base + ["up", "-d", "--wait", "--wait-timeout", "300"]
+        if service["application_id"] == "n8n":
+            tasks.append({
+                "name": "Cerrar proxy durante el alta de n8n",
+                **command(base + ["stop", "caddy"]),
+            })
         tasks += [
             {
                 "name": "Arrancar aplicación",
-                **command(base + ["up", "-d", "--wait", "--wait-timeout", "300"]),
+                **command(up + ["app", "postgres"] if service["application_id"] == "n8n" else up),
             }
         ]
-        if service["application_id"] == "n8n" and secrets.get("owner_password"):
+        if service["application_id"] == "n8n":
             tasks.append(n8n_owner_setup_task(base, configuration, secrets))
         if service["application_id"] == "nextcloud":
             tasks.append(
@@ -641,6 +682,11 @@ def execute(service, job, heartbeat):
                 "no_log": True,
             }
         )
+        if service["application_id"] == "n8n":
+            tasks.append({
+                "name": "Publicar proxy tras verificar propietario de n8n",
+                **command(up + ["caddy"]),
+            })
         if configuration.get("domain") and service["application_id"] in {
             "nextcloud",
             "n8n",

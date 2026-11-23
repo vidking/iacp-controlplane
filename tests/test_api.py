@@ -357,6 +357,10 @@ def test_network_observation_uses_guest_agent_and_does_not_guess_ip(tmp_path, mo
             def __init__(self):
                 self.calls = []
 
+            def power_state(self, node, vmid, name):
+                assert (node, vmid, name) == ("mng02", 40100, "network-observation")
+                return "running"
+
             def guest_agent_interfaces(self, node, vmid):
                 self.calls.append((node, vmid))
                 return [

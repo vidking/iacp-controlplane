@@ -246,10 +246,18 @@ variable "ssh_public_keys" {
     condition = (
       (length(var.ssh_public_keys) > 0 &&
       alltrue([for key in var.ssh_public_keys : trimspace(key) != ""])) ||
-      (var.root_password != null ? trimspace(var.root_password) != "" : false)
+      (var.root_password != null ? trimspace(var.root_password) != "" : false) ||
+      var.password_configured_by_worker
     )
     error_message = "Debe proporcionarse una clave SSH pública o una contraseña inicial."
   }
+}
+
+variable "password_configured_by_worker" {
+  description = "La cuenta cloud-init recibe su contraseña mediante el worker antes del primer arranque."
+  type        = bool
+  nullable    = false
+  default     = false
 }
 
 variable "root_password" {

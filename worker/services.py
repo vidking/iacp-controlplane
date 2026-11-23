@@ -57,6 +57,10 @@ def recover():
                 (now(), row["service_id"]),
             )
             db.execute(
+                "DELETE FROM service_credential_retrievals WHERE service_id=?",
+                (row["service_id"],),
+            )
+            db.execute(
                 "UPDATE service_jobs SET status='cancelled', error='VM_DELETED', finished_at=? WHERE service_id=? AND status IN ('queued','blocked')",
                 (now(), row["service_id"]),
             )
@@ -65,12 +69,15 @@ def recover():
             (cutoff,),
         ).fetchall()
         for job in rows:
-            db.execute(
-                "UPDATE service_jobs SET status='uncertain', error='WORKER_HEARTBEAT_STALE' WHERE job_id=?",
-                (job["job_id"],),
+            changed = db.execute(
+                """UPDATE service_jobs SET status='uncertain', error='WORKER_HEARTBEAT_STALE'
+                WHERE job_id=? AND generation=? AND status='running' AND last_heartbeat < ?""",
+                (job["job_id"], job["generation"], cutoff),
             )
+            if not changed.rowcount:
+                continue
             db.execute(
-                "UPDATE service_instances SET status='uncertain', updated_at=? WHERE service_id=?",
+                "UPDATE service_instances SET status='uncertain', updated_at=? WHERE service_id=? AND status!='deleted'",
                 (now(), job["service_id"]),
             )
             event(db, job["job_id"], "recovery_required", "uncertain")
@@ -110,7 +117,7 @@ def claim(worker_id):
         db.execute(
             "UPDATE service_instances SET status=?, updated_at=? WHERE service_id=?",
             (
-                "delivering" if row["action"] == "handoff" else "installing",
+                {"handoff": "delivering", "cleanup": "cancelling"}.get(row["action"], "installing"),
                 now(),
                 row["service_id"],
             ),
@@ -157,17 +164,21 @@ def process(worker_id, job):
         )
         if changed.rowcount:
             next_status = (
-                ("delivered" if job["action"] == "handoff" else "awaiting_customer")
+                {"handoff": "delivered", "cleanup": "cancelled"}.get(job["action"], "awaiting_customer")
                 if status == "succeeded"
                 else status
             )
             db.execute(
-                "UPDATE service_instances SET status=?, updated_at=? WHERE service_id=?",
+                "UPDATE service_instances SET status=?, updated_at=? WHERE service_id=? AND status!='deleted'",
                 (next_status, now(), job["service_id"]),
             )
-            if next_status == "delivered":
+            if next_status in {"delivered", "cancelled"}:
                 db.execute(
                     "UPDATE service_instances SET secrets_encrypted=NULL WHERE service_id=?",
+                    (job["service_id"],),
+                )
+                db.execute(
+                    "DELETE FROM service_credential_retrievals WHERE service_id=?",
                     (job["service_id"],),
                 )
             event(db, job["job_id"], next_status, status)

@@ -13,9 +13,23 @@ def heartbeat(
     operation_id: str | None = None,
     *,
     phase: str | None = None,
-) -> None:
+    require_owned: bool = False,
+) -> bool:
     timestamp = now()
     with database() as db:
+        if operation_id:
+            result = db.execute(
+                """
+                UPDATE operations
+                SET last_heartbeat=?, phase=COALESCE(?, phase)
+                WHERE operation_id=?
+                  AND status IN ('running', 'planning', 'applying', 'destroying', 'powering')
+                  AND (NOT ? OR worker_id=?)
+                """,
+                (timestamp, phase, operation_id, require_owned, worker_id),
+            )
+            if require_owned and result.rowcount != 1:
+                return False
         db.execute(
             """
             INSERT INTO workers(
@@ -34,25 +48,4 @@ def heartbeat(
             """,
             (worker_id, status, timestamp, operation_id, timestamp),
         )
-        if operation_id:
-            if phase:
-                db.execute(
-                    """
-                    UPDATE operations
-                    SET last_heartbeat=?, phase=?
-                    WHERE operation_id=?
-                      AND status IN ('running', 'planning', 'applying', 'destroying', 'powering')
-                    """,
-                    (timestamp, phase, operation_id),
-                )
-            else:
-                db.execute(
-                    """
-                    UPDATE operations
-                    SET last_heartbeat=?
-                    WHERE operation_id=?
-                      AND status IN ('running', 'planning', 'applying', 'destroying', 'powering')
-                    """,
-                    (timestamp, operation_id),
-                )
-
+        return True

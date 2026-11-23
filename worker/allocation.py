@@ -1,4 +1,5 @@
 import os
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
 from api.db import database
@@ -58,9 +59,13 @@ def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = Non
     return candidate
 
 
-def release(vmid: int) -> None:
-    with database() as db:
-        db.execute(
-            "UPDATE vmid_leases SET status='released', released_at=? WHERE vmid=?",
-            (now(), vmid),
+def release(vmid: int, operation_id: str, *, connection=None) -> bool:
+    with (database() if connection is None else nullcontext(connection)) as db:
+        result = db.execute(
+            """
+            UPDATE vmid_leases SET status='released', released_at=?
+            WHERE vmid=? AND operation_id=? AND status='held'
+            """,
+            (now(), vmid, operation_id),
         )
+        return result.rowcount == 1

@@ -1,8 +1,10 @@
 import hmac
-import os
 import json
+import os
+from base64 import b64encode
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from hashlib import sha384
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Literal
@@ -10,11 +12,13 @@ from typing import Annotated, Literal
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import PoolTimeout
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from api.db import database, initialize, prune_history, schema_ready
 from api import applications
@@ -33,6 +37,7 @@ from api.service import (
     create_reconcile,
     event_row,
     image_catalog,
+    initialize_idempotency,
     instance_row,
     latest_event,
     list_instances,
@@ -95,6 +100,23 @@ async def database_unavailable(_request: Request, _error: Exception):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(_request: Request, error: RequestValidationError):
+    # Los validadores de modelo pueden incluir el cuerpo completo en input.
+    safe_messages = {"access_required": "Se requiere root_password o una clave SSH"}
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [
+            {
+                "loc": entry["loc"][:-1] if entry["type"] == "extra_forbidden" else entry["loc"],
+                "type": entry["type"],
+                "msg": safe_messages.get(entry["type"], "Valor inválido"),
+            }
+            for entry in error.errors()
+        ]},
+    )
+
+
 def _listing_response(content: dict) -> JSONResponse:
     """Serializa listados grandes sin ``jsonable_encoder``.
 
@@ -117,32 +139,73 @@ def _max_body_bytes() -> int:
         return 256 * 1024
 
 
-@app.middleware("http")
-async def add_build_revision_header(request: Request, call_next):
-    # Los contratos /v1 son JSON pequeños; un cuerpo mayor se rechaza antes de
-    # leerlo para no consumir memoria del proceso compartido.
-    length = request.headers.get("content-length")
-    if length is not None:
-        try:
-            declared = int(length)
-        except ValueError:
-            return JSONResponse({"detail": "Content-Length inválido"}, status_code=400)
-        if declared > _max_body_bytes():
-            return JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, status_code=413)
-    response = await call_next(request)
-    revision = os.getenv("IACP_BUILD_REVISION", "").strip()
-    if revision:
-        response.headers["X-IACP-Build-Revision"] = revision
-    path = request.url.path
-    if path.startswith("/v1/") or path.startswith("/health/"):
-        # Respuestas operativas y de credenciales: ningún intermediario ni
-        # navegador debe almacenarlas. JSON no necesita cargar recursos.
-        response.headers["Cache-Control"] = "no-store"
-        response.headers.setdefault(
-            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
-        )
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    return response
+class HTTPGuards:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                revision = os.getenv("IACP_BUILD_REVISION", "").strip()
+                if revision:
+                    headers["X-IACP-Build-Revision"] = revision
+                if path.startswith(("/v1/", "/health/")) or path == "/openapi.json":
+                    headers["Cache-Control"] = "no-store"
+                    headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+            await send(message)
+
+        limit = _max_body_bytes()
+        length_headers = Headers(scope=scope).getlist("content-length")
+        if length_headers:
+            try:
+                declared = int(length_headers[0])
+                if declared < 0 or len(length_headers) != 1:
+                    raise ValueError
+            except ValueError:
+                await JSONResponse({"detail": "Content-Length inválido"}, 400)(scope, receive, send_with_headers)
+                return
+            if declared > limit:
+                await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
+                return
+
+        if path.startswith("/v1/") and scope["method"] in {"POST", "PUT", "PATCH", "DELETE"}:
+            body = bytearray()
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                chunk = message.get("body", b"")
+                if len(body) + len(chunk) > limit:
+                    await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
+                    return
+                body.extend(chunk)
+                if not message.get("more_body"):
+                    break
+
+            delivered = False
+
+            async def receive_bounded_body():
+                nonlocal delivered
+                if delivered:
+                    return await receive()
+                delivered = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+            await self.app(scope, receive_bounded_body, send_with_headers)
+            return
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(HTTPGuards)
 
 CONSOLE_DIR = Path(__file__).parent / "static" / "console"
 DOCS_DIR = Path(__file__).parent / "static" / "docs"
@@ -151,7 +214,7 @@ bearer = HTTPBearer(auto_error=False, scheme_name="Bearer")
 
 
 def _require_api_token() -> bool:
-    return os.getenv("IACP_REQUIRE_API_TOKEN", "0").strip().lower() not in {"0", "false", "no", "off"}
+    return os.getenv("IACP_REQUIRE_API_TOKEN", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _max_concurrent() -> int:
@@ -224,10 +287,11 @@ def authorize(
 
 
 def startup() -> None:
-    initialize()
-    prune_history()
     if _require_api_token() and not os.getenv("IACP_API_TOKEN", "").strip():
         raise RuntimeError("IACP_API_TOKEN es obligatorio cuando IACP_REQUIRE_API_TOKEN está activo")
+    initialize()
+    initialize_idempotency()
+    prune_history()
 
 
 @app.get("/", include_in_schema=False, tags=["health"])
@@ -244,24 +308,50 @@ def root():
 
 @app.get("/docs", include_in_schema=False)
 def docs_portal():
-    return FileResponse(DOCS_DIR / "index.html")
+    return FileResponse(DOCS_DIR / "index.html", headers={
+        "Content-Security-Policy": "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'",
+    })
+
+
+def _reference_page(title: str, body: str, initializer: str, script_url: str, script_hash: str, style: str = "", *, redoc: bool = False):
+    initializer_hash = b64encode(sha384(initializer.encode()).digest()).decode()
+    policy = (
+        f"default-src 'none'; script-src 'sha384-{script_hash}' 'sha384-{initializer_hash}'; "
+        "style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'; form-action 'none'; "
+        "img-src 'self' data:"
+    )
+    policy += " https://cdn.redoc.ly/redoc/logo-mini.svg; worker-src blob:" if redoc else "; worker-src 'none'"
+    return HTMLResponse(
+        f'<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>{title}</title><link rel="icon" href="/docs/assets/favicon.svg">{style}'
+        f'</head><body>{body}<script src="{script_url}" integrity="sha384-{script_hash}" '
+        f'crossorigin="anonymous"></script><script>{initializer}</script></body></html>',
+        headers={"Content-Security-Policy": policy, "Referrer-Policy": "no-referrer"},
+    )
 
 
 @app.get("/swagger", include_in_schema=False)
 def swagger():
-    return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
-        title="IACP Control Plane · Swagger",
-        swagger_favicon_url="/docs/assets/favicon.svg",
+    return _reference_page(
+        "IACP Control Plane · Swagger", '<div id="swagger-ui"></div>',
+        'SwaggerUIBundle({url:"/openapi.json",dom_id:"#swagger-ui",deepLinking:true,validatorUrl:null});',
+        "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.1/swagger-ui-bundle.js",
+        "XFYN47VzPiDY6qPtxYKg0nqUeW/upo20xf1j2SUE7gT/i35FJB4cuS/71Iegzk8Z",
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.1/swagger-ui.css" '
+        'integrity="sha384-4c3vsE5f+trhFyHrFrLM1fFGUn531NIaC7dcqEWIJdoRQJ5CkJbSuSCwXLpaS1KF" crossorigin="anonymous">',
     )
 
 
 @app.get("/redoc", include_in_schema=False)
 def redoc():
-    return get_redoc_html(
-        openapi_url=app.openapi_url,
-        title="IACP Control Plane · ReDoc",
-        redoc_favicon_url="/docs/assets/favicon.svg",
+    return _reference_page(
+        "IACP Control Plane · ReDoc", '<div id="redoc"></div>',
+        'Redoc.init("/openapi.json",{disableGoogleFont:true},document.getElementById("redoc"));',
+        "https://cdn.jsdelivr.net/npm/redoc@2.5.4/bundles/redoc.standalone.js",
+        "w447zOpYfw/1Tv/5AK9NfHTlQIqE3RVR6KY62jCyy9zNDgO64cMwGGP1Fj0zJVf5",
+        redoc=True,
     )
 
 
@@ -558,7 +648,7 @@ def _guest_ipv4(interfaces: list[dict]) -> list[str]:
 def get_network(instance_id: str):
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, vmid, node, status, spec_json FROM instances WHERE instance_id=?",
+            "SELECT instance_id, name, vmid, node, status, spec_json FROM instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
     if row is None:
@@ -600,9 +690,11 @@ def get_network(instance_id: str):
     if row["vmid"] is None or row["status"] == "deleted":
         return response
     try:
-        interfaces = ProxmoxClient().guest_agent_interfaces(row["node"], int(row["vmid"]))
-    except ProxmoxError as error:
-        response["reason"] = str(error)
+        client = ProxmoxClient()
+        client.power_state(row["node"], int(row["vmid"]), row["name"])
+        interfaces = client.guest_agent_interfaces(row["node"], int(row["vmid"]))
+    except ProxmoxError:
+        response["reason"] = "GUEST_AGENT_OR_IDENTITY_UNAVAILABLE"
         return response
     addresses = _guest_ipv4(interfaces)
     response["observed_ipv4"] = addresses
@@ -1013,14 +1105,17 @@ def retry_service_job(job_id: str, request: RecoveryRequest, idempotency_key: st
 
 
 @app.post("/v1/service-instances/{service_id}/deliver", status_code=202, dependencies=[Depends(authorize)], tags=["applications"])
-def deliver_service(service_id: str, idempotency_key: str | None = Header(default=None)):
-    return applications.delivery(service_id, idempotency_key)
+def deliver_service(
+    service_id: str,
+    idempotency_key: str | None = Header(default=None),
+    credential_receipt: str | None = Header(default=None, alias="X-IACP-Credential-Receipt", max_length=128),
+):
+    return applications.delivery(service_id, idempotency_key, credential_receipt)
 
 
 @app.post("/v1/service-instances/{service_id}/credentials", dependencies=[Depends(authorize)], tags=["applications"])
-def retrieve_service_credentials(service_id: str):
-    from fastapi.responses import JSONResponse
-    return JSONResponse(applications.credentials(service_id), headers={"Cache-Control": "no-store"})
+def retrieve_service_credentials(service_id: str, idempotency_key: str | None = Header(default=None)):
+    return JSONResponse(applications.credentials(service_id, idempotency_key), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/v1/service-workers", dependencies=[Depends(authorize)], tags=["applications"])

@@ -14,6 +14,10 @@ SCHEMA = (
         last_heartbeat TEXT, error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, finished_at TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS service_credential_retrievals (
+        service_id TEXT PRIMARY KEY REFERENCES service_instances(service_id) ON DELETE CASCADE,
+        request_hash TEXT NOT NULL
+    )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS idx_service_active ON service_jobs(service_id)
         WHERE status IN ('queued', 'running', 'uncertain')""",
     """CREATE TABLE IF NOT EXISTS service_events (

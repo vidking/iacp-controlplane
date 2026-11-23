@@ -602,6 +602,108 @@ def test_delivery_one_time_and_secret_removal(client, monkeypatch):
         )
 
 
+def test_credential_receipt_recovers_disclosure_until_delivery(client, monkeypatch):
+    order = create(client)
+    ready(order["instance_id"])
+    monkeypatch.setattr(services, "execute", lambda *_: None)
+    services.process("a", services.claim("a"))
+    path = f"/v1/service-instances/{order['service_id']}"
+    disclosure = {"Idempotency-Key": "credential-disclosure-1"}
+    received = client.post(path + "/credentials", headers=disclosure)
+    assert received.status_code == 200
+    assert client.post(path + "/credentials", headers=disclosure).json() == received.json()
+    assert client.post(path + "/credentials", headers={"Idempotency-Key": "another-attempt"}).status_code == 409
+    detail = client.get(path).json()
+    assert detail["credential_receipt_required"] is True
+    assert detail["credentials_recovery_possible"] is True
+    assert received.json()["credential_receipt"] not in json.dumps(detail)
+    assert client.post(path + "/deliver", headers={"Idempotency-Key": "handoff-1"}).status_code == 409
+    queued = client.post(
+        path + "/deliver",
+        headers={
+            "Idempotency-Key": "handoff-2",
+            "X-IACP-Credential-Receipt": received.json()["credential_receipt"],
+        },
+    )
+    assert queued.status_code == 202
+    services.process("b", services.claim("b"))
+    assert client.post(path + "/credentials", headers=disclosure).status_code == 409
+    with database() as db:
+        assert db.execute("SELECT count(*) AS n FROM service_credential_retrievals").fetchone()["n"] == 0
+
+
+def test_expired_disclosure_can_be_restarted_with_receipt(client, monkeypatch):
+    order = create(client)
+    ready(order["instance_id"])
+    monkeypatch.setattr(services, "execute", lambda *_: None)
+    services.process("a", services.claim("a"))
+    path = f"/v1/service-instances/{order['service_id']}"
+    assert client.post(path + "/credentials").status_code == 200
+    disclosure = {"Idempotency-Key": "credential-recovery"}
+    assert client.post(path + "/credentials", headers=disclosure).status_code == 409
+    with database() as db:
+        db.execute(
+            "UPDATE service_instances SET credentials_retrieved_at=? WHERE service_id=?",
+            ("2000-01-01T00:00:00+00:00", order["service_id"]),
+        )
+    recovered = client.post(path + "/credentials", headers=disclosure)
+    assert recovered.status_code == 200
+    assert recovered.json()["credential_receipt"]
+
+
+def test_cancel_queued_order_cancels_unused_provision_and_clears_credentials(client):
+    order = create(client)
+    from pathlib import Path
+
+    with database() as db:
+        row = db.execute("SELECT secret_path FROM operations WHERE operation_id=?", (order["operation_id"],)).fetchone()
+        operation_secret = Path(row["secret_path"])
+    assert operation_secret.is_file()
+    response = client.post(f"/v1/service-jobs/{order['job_id']}/cancel")
+    assert response.status_code == 202
+    assert response.json()["status"] == "cancelled"
+    assert not operation_secret.exists()
+    with database() as db:
+        row = db.execute("SELECT status, secret_path FROM operations WHERE operation_id=?", (order["operation_id"],)).fetchone()
+        service = db.execute("SELECT secrets_encrypted FROM service_instances WHERE service_id=?", (order["service_id"],)).fetchone()
+    assert dict(row) == {"status": "failed", "secret_path": None}
+    assert service["secrets_encrypted"] is None
+
+
+def test_cancellation_requires_verified_cleanup_after_provision(client, monkeypatch):
+    order = create(client)
+    ready(order["instance_id"])
+    cancelled = client.post(f"/v1/service-jobs/{order['job_id']}/cancel")
+    assert cancelled.status_code == 202
+    assert cancelled.json()["status"] == "queued"
+    path = f"/v1/service-instances/{order['service_id']}"
+    assert client.get(path).json()["status"] == "cancelling"
+    job = services.claim("cleanup")
+    assert job["action"] == "cleanup"
+    assert job["job_id"] == cancelled.json()["job_id"]
+    monkeypatch.setattr(services, "execute", lambda *_: None)
+    services.process("cleanup", job)
+    detail = client.get(path).json()
+    assert detail["status"] == "cancelled"
+    assert detail["infrastructure_status"] == "ready"
+
+
+def test_superseded_service_job_cannot_be_retried_or_cancelled(client):
+    order = create(client)
+    with database() as db:
+        db.execute("UPDATE service_jobs SET status='blocked' WHERE job_id=?", (order["job_id"],))
+        db.execute(
+            "INSERT INTO service_jobs(job_id, service_id, status, created_at) VALUES (?, ?, 'queued', ?)",
+            ("current-job", order["service_id"], "2099-01-01T00:00:00+00:00"),
+        )
+    path = f"/v1/service-jobs/{order['job_id']}"
+    for action in ("retry", "cancel"):
+        response = client.post(f"{path}/{action}", json={})
+        assert response.status_code == 409
+        assert response.json()["detail"] == "SERVICE_JOB_SUPERSEDED"
+    assert client.get("/v1/service-jobs/current-job").json()["status"] == "queued"
+
+
 def test_render_pins_no_agent_public_ports():
     with pytest.raises(RecipeError):
         render("hermes", {}, {}, {"images": {"app": "hermes:latest"}})
@@ -791,10 +893,16 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 assert "registry-1.docker.io" in egress_argv[6]
                 assert not any("AlmaLinux" in task.get("name", "") for task in service_tasks)
             else:
-                assert [task.get("name") for task in service_tasks] == [
-                    "Esperar cloud-init",
-                    "Retirar clave temporal",
-                ]
+                task_names = [task.get("name") for task in service_tasks]
+                assert task_names[0] == "Esperar cloud-init" and task_names[-1] == "Retirar clave temporal"
+                if expected_action == "cleanup":
+                    retirement = next(
+                        task for task in service_tasks if task.get("name") == "Retirar contenedores de la aplicación"
+                    )
+                    assert retirement["ansible.builtin.command"]["argv"][-1] == "down"
+                    assert retirement["when"] == "existing_compose.stat.exists"
+                else:
+                    assert len(task_names) == 2
             image_pull_tasks = [
                 task
                 for task in service_tasks
@@ -850,6 +958,15 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             ]
             if application == "n8n" and expected_action == "install":
                 assert len(owner_setup_tasks) == 1
+                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante el alta de n8n")
+                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar propietario de n8n")
+                start = application_start_tasks[0]
+                assert start["ansible.builtin.command"]["argv"][-2:] == ["app", "postgres"]
+                assert proxy_stop["ansible.builtin.command"]["argv"][-2:] == ["stop", "caddy"]
+                assert proxy_start["ansible.builtin.command"]["argv"][-1] == "caddy"
+                assert service_tasks.index(proxy_stop) < service_tasks.index(start)
+                assert service_tasks.index(start) < service_tasks.index(owner_setup_tasks[0])
+                assert service_tasks.index(owner_setup_tasks[0]) < service_tasks.index(proxy_start)
                 assert owner_setup_tasks[0]["no_log"] is True
                 owner_command = owner_setup_tasks[0]["ansible.builtin.command"]
                 assert "owner/setup" in owner_command["argv"][-1]
@@ -925,6 +1042,8 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
         service_executor.execute(service, {"action": "install"}, lambda: None)
         expected_action = "handoff"
         service_executor.execute(service, {"action": "handoff"}, lambda: None)
+        expected_action = "cleanup"
+        service_executor.execute(service, {"action": "cleanup"}, lambda: None)
 
 
 def test_six_infrastructure_slots_and_two_services_are_independent(client):
@@ -1082,7 +1201,7 @@ def test_n8n_recipe_leaves_authentication_to_n8n():
     assert compose['services']['app']['environment']['N8N_PROTOCOL'] == 'https'
 
 
-def test_n8n_access_instructions_do_not_return_proxy_credentials(client, monkeypatch):
+def test_n8n_generates_owner_when_order_omits_credentials(client, monkeypatch):
     request = body('prueba-service-n8n-instrucciones')
     request['application_id'] = 'n8n'
     request['configuration'] = {'access_mode': 'ip'}
@@ -1092,8 +1211,10 @@ def test_n8n_access_instructions_do_not_return_proxy_credentials(client, monkeyp
         headers={'Idempotency-Key': 'n8n-access-instructions'},
     ).json()
     with database() as db:
-        stored = db.execute('SELECT secrets_encrypted FROM service_instances').fetchone()
-        assert 'admin_password' not in decrypt(stored['secrets_encrypted'])
+        stored = db.execute('SELECT secrets_encrypted, configuration_json FROM service_instances').fetchone()
+        stored_secrets = decrypt(stored['secrets_encrypted'])
+        assert 'admin_password' not in stored_secrets
+        assert len(stored_secrets['owner_password']) >= 32
     ready(order['instance_id'])
     monkeypatch.setattr(services, 'execute', lambda *_: None)
     services.process('service-worker-test', services.claim('service-worker-test'))
@@ -1101,9 +1222,11 @@ def test_n8n_access_instructions_do_not_return_proxy_credentials(client, monkeyp
         f"/v1/service-instances/{order['service_id']}/credentials"
     )
     assert response.status_code == 200
-    assert response.json()['owner_setup_required'] is True
-    assert 'crear la cuenta propietaria' in response.json()['access_instructions']
-    assert 'onboarding_password' not in response.json()
+    access = response.json()
+    assert access['owner_setup_required'] is False
+    assert access['owner_email'] == json.loads(stored['configuration_json'])['owner_email']
+    assert access['owner_password'] == stored_secrets['owner_password']
+    assert 'onboarding_password' not in access
 
 
 def test_nextcloud_gui_credentials_are_applied_encrypted_and_delivered_once(client, monkeypatch):

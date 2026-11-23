@@ -8,10 +8,13 @@
     applications: [],
     selectedServiceId: null,
     credentialsBusy: false,
+    credentialAttempts: new Map(),
     networkProfiles: [],
     instances: [],
     operations: [],
     selectedInstanceId: null,
+    detailRequest: 0,
+    renderedInstanceId: null,
     selectedOperationId: null,
     lastJson: "",
     lastCurl: "",
@@ -199,7 +202,13 @@
       window.clearTimeout(state.liveTimer);
       state.liveTimer = null;
     }
-    if (!authorized) state.liveActive = false;
+    if (!authorized) {
+      state.liveActive = false;
+      state.detailRequest += 1;
+      state.renderedInstanceId = null;
+      state.credentialAttempts.clear();
+      clearServiceCredentials();
+    }
     const dot = document.querySelector(".access-status .status-dot");
     const card = $("auth-status-card");
     const summary = $("auth-summary");
@@ -684,7 +693,7 @@
     document.querySelectorAll(selector).forEach((button) => { button.disabled = !enabled; });
   }
 
-  async function refreshPower(instance) {
+  async function refreshPower(instance, isCurrent) {
     if (!instance?.vmid || ["pending", "provisioning", "deleting", "deleted"].includes(instance.status)) {
       setPowerButtons(false);
       setPowerButtons(false, ".lifecycle-action");
@@ -692,6 +701,7 @@
     }
     try {
       const power = await api(`/v1/instances/${instance.instance_id}/power`);
+      if (!isCurrent()) return;
       $("console-power-state").textContent = power.power_state || "unknown";
       $("console-power-note").textContent = power.blocked_reason || "Estado observado en Proxmox.";
       $("lifecycle-power").textContent = power.power_state || "unknown";
@@ -699,6 +709,7 @@
       setPowerButtons(power.mutations_available !== false);
       setPowerButtons(power.mutations_available !== false, ".lifecycle-action");
     } catch (error) {
+      if (!isCurrent()) return;
       $("console-power-note").textContent = error.message;
       $("lifecycle-note").textContent = error.message;
       setPowerButtons(false);
@@ -707,9 +718,14 @@
   }
 
   async function refreshDetail() {
-    if (!state.token || !state.selectedInstanceId) return;
-    const instance = await api(`/v1/instances/${state.selectedInstanceId}`);
-    const network = await loadNetwork(state.selectedInstanceId);
+    const identifier = state.selectedInstanceId;
+    if (!state.token || !identifier) return;
+    const request = ++state.detailRequest;
+    const isCurrent = () => request === state.detailRequest && identifier === state.selectedInstanceId;
+    const [instance, network] = await Promise.all([
+      api(`/v1/instances/${identifier}`), loadNetwork(identifier),
+    ]);
+    if (!isCurrent() || instance.instance_id !== identifier) return;
     $("console-detail-empty").classList.add("hidden");
     $("console-detail").classList.remove("hidden");
     $("console-detail-title").textContent = instance.name;
@@ -725,10 +741,16 @@
     $("lifecycle-operation").textContent = JSON.stringify(instance.latest_operation || { status: "sin operación" }, null, 2);
     $("delete-preview").textContent = `${instance.name} · ${instance.plan_id || "—"} · VMID ${instance.vmid ?? "pendiente"} · ${instance.status}`;
     $("delete-instance").value = instance.instance_id;
-    await refreshPower(instance);
+    state.renderedInstanceId = identifier;
+    await refreshPower(instance, isCurrent);
   }
 
   async function selectInstance(instanceId) {
+    if (state.selectedInstanceId !== instanceId) {
+      state.renderedInstanceId = null;
+      setPowerButtons(false);
+      setPowerButtons(false, ".lifecycle-action");
+    }
     state.selectedInstanceId = instanceId;
     navigate("console");
     await refreshDetail();
@@ -775,11 +797,15 @@
       url.textContent = `Abrir ${service.access_url} ↗`;
     } else url.removeAttribute("href");
     $("service-ca").disabled = !ready || service.configuration.access_mode !== "ip";
-    $("service-credentials").disabled = !service.credentials_available || state.credentialsBusy;
+    const attempt = state.credentialAttempts.get(identifier);
+    const canRecover = service.credentials_recovery_possible;
+    $("service-credentials").disabled = !(service.credentials_available || canRecover) || state.credentialsBusy;
     $("service-credentials").textContent = service.application_id === "n8n"
       ? "Ver instrucciones de acceso"
       : "Mostrar credenciales una vez";
-    $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
+    $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available
+      || (service.credential_receipt_required && !attempt?.receipt)
+      || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
     $("service-power-start").disabled = !kvmReady || service.power_state !== "stopped";
     $("service-power-shutdown").disabled = !kvmReady || service.power_state !== "running";
     $("service-reboot").disabled = !kvmReady || service.power_state !== "running";
@@ -856,11 +882,18 @@
   async function retrieveServiceCredentials() {
     const identifier = state.selectedServiceId;
     if (!identifier || state.credentialsBusy) return;
+    const attempt = state.credentialAttempts.get(identifier) || { key: newIdempotencyKey("portal-credentials") };
+    state.credentialAttempts.set(identifier, attempt);
     state.credentialsBusy = true;
     $("service-credentials").disabled = true;
     try {
-      const credentials = await api(`/v1/service-instances/${identifier}/credentials`, { method: "POST" });
-      if (state.selectedServiceId === identifier && state.route === "create") $("service-credentials-output").textContent = JSON.stringify(credentials, null, 2);
+      const { credential_receipt, ...credentials } = await api(`/v1/service-instances/${identifier}/credentials`, {
+        method: "POST", idempotencyKey: attempt.key,
+      });
+      if (state.selectedServiceId === identifier && state.route === "create") {
+        $("service-credentials-output").textContent = JSON.stringify(credentials, null, 2);
+        attempt.receipt = credential_receipt;
+      }
     } catch (error) { showError(error); }
     finally { state.credentialsBusy = false; await refreshService().catch(showError); }
   }
@@ -882,7 +915,12 @@
     if (!identifier) return;
     $("deliver-service").disabled = true;
     try {
-      await api(`/v1/service-instances/${identifier}/deliver`, { method: "POST", idempotencyKey: newIdempotencyKey("portal-delivery") });
+      const receipt = state.credentialAttempts.get(identifier)?.receipt;
+      await api(`/v1/service-instances/${identifier}/deliver`, {
+        method: "POST", idempotencyKey: newIdempotencyKey("portal-delivery"),
+        headers: receipt ? { "X-IACP-Credential-Receipt": receipt } : {},
+      });
+      state.credentialAttempts.delete(identifier);
       await pollService(identifier, true);
     } catch (error) { showError(error); }
   }
@@ -941,10 +979,14 @@
     $("json-preview").textContent = state.lastJson;
   }
 
+  function shellArgument(value) {
+    return "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  }
+
   function renderCurl(body, idempotencyKey) {
     const printable = redactCreateBody(body);
     renderJson(body);
-    state.lastCurl = `curl -X POST ${window.location.origin}${body.application_id ? "/v1/service-instances" : "/v1/instances"} \\\n  -H 'Authorization: Bearer <TOKEN>' \\\n  -H 'Idempotency-Key: ${idempotencyKey}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${JSON.stringify(printable)}'`;
+    state.lastCurl = `curl -X POST ${window.location.origin}${body.application_id ? "/v1/service-instances" : "/v1/instances"} \\\n  -H 'Authorization: Bearer <TOKEN>' \\\n  -H 'Idempotency-Key: ${idempotencyKey}' \\\n  -H 'Content-Type: application/json' \\\n  --data ${shellArgument(JSON.stringify(printable))}`;
     $("curl-preview").textContent = state.lastCurl;
     openStep("curl");
   }
@@ -1014,15 +1056,18 @@
   }
 
   async function powerAction(action) {
-    if (!state.selectedInstanceId) return showError(new Error("Selecciona una instancia primero."));
+    const identifier = state.renderedInstanceId;
+    if (!identifier || identifier !== state.selectedInstanceId) {
+      return showError(new Error("Espera a que se cargue la instancia seleccionada."));
+    }
     try {
-      const response = await api(`/v1/instances/${state.selectedInstanceId}/power/${action}`, { method: "POST", idempotencyKey: newIdempotencyKey(`portal-${action}`) });
+      const response = await api(`/v1/instances/${identifier}/power/${action}`, { method: "POST", idempotencyKey: newIdempotencyKey(`portal-${action}`) });
       showToast(`${action} encolado.`);
-      await pollOperation(response.operation_id, state.selectedInstanceId);
+      await pollOperation(response.operation_id, identifier);
     } catch (error) { showError(error); }
   }
 
-  async function destroyInstance(instanceId = state.selectedInstanceId) {
+  async function destroyInstance(instanceId) {
     if (!instanceId) return showError(new Error("Selecciona una instancia primero."));
     const instance = state.instances.find((item) => item.instance_id === instanceId);
     if (!window.confirm(`¿Confirmar destroy de ${instance?.name || instanceId}?`)) return;
@@ -1137,7 +1182,9 @@
   $("event-page-size").addEventListener("change", (event) => { state.pagination.events.limit = Number(event.target.value) || 20; state.pagination.events.offset = 0; refreshEvents().catch(showError); });
   $("delete-instance").addEventListener("change", renderDeletePreview);
   $("delete-submit").addEventListener("click", () => destroyInstance($("delete-instance").value));
-  $("console-delete").addEventListener("click", () => destroyInstance());
+  $("console-delete").addEventListener("click", () => {
+    if (state.renderedInstanceId === state.selectedInstanceId) destroyInstance(state.renderedInstanceId);
+  });
   document.querySelectorAll(".power-action, .lifecycle-action").forEach((button) => button.addEventListener("click", () => powerAction(button.dataset.action)));
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-page-kind][data-page-action]");
