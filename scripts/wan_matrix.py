@@ -305,6 +305,20 @@ def production_service_matrix(images, *, full_matrix):
     return planned
 
 
+def matrix_capacity_batch(category, images=None, cycle=1, *, exact_cases=False):
+    """Return the first six cases for capacity checks using the chosen catalog."""
+
+    planned = cases(
+        category,
+        images=images,
+        cycle=cycle,
+        include_controls=not exact_cases,
+    )
+    if not planned:
+        raise ValueError("MATRIX_CASES_EMPTY")
+    return planned[:6]
+
+
 def production_service_pilot_indexes(planned):
     """Select one first-pass case per application for the production pilot."""
 
@@ -802,13 +816,12 @@ class Matrix:
             (row for row in self.proxmox.nodes() if row.get("node") == "mng01"), None
         )
         storage = self.proxmox.storage_status("mng01", image["storage"])
-        requested_cases = cases(
-            "services",
+        batch = matrix_capacity_batch(
+            self.args.category,
             images=self.args.images,
             cycle=self.args.cycle,
-            include_controls=not self.args.exact_cases,
+            exact_cases=self.args.exact_cases,
         )
-        batch = requested_cases[:6]
         required_memory = sum(
             plan_by_id(case["plan"])["memory_mb"] for case in batch
         )

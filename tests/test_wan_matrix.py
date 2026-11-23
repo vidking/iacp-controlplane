@@ -6,6 +6,7 @@ from scripts.wan_matrix import (
     Matrix,
     allocate_matrix_names,
     cases,
+    matrix_capacity_batch,
     matrix_netbox_tags,
     matrix_runtime,
     nextcloud_request_token,
@@ -120,6 +121,27 @@ def test_production_kvm_scope_is_read_only_preflight_only():
     assert production_matrix_category_allowed("kvm", preflight_only=True)
     assert not production_matrix_category_allowed("kvm", preflight_only=False)
     assert not production_matrix_category_allowed("agents", preflight_only=True)
+
+
+def test_kvm_capacity_preflight_uses_the_selected_six_image_catalog():
+    images = [
+        "ubuntu-2404",
+        "ubuntu-2604",
+        "almalinux-9",
+        "almalinux-10",
+        "fedora-45",
+        "debian-13",
+    ]
+    batch = matrix_capacity_batch("kvm", images, cycle=1)
+    assert len(batch) == 6
+    assert {(case["image"], case["plan"]) for case in batch} == {
+        ("ubuntu-2404", "kvm-1"),
+        ("ubuntu-2404", "kvm-2"),
+        ("ubuntu-2404", "kvm-3"),
+        ("ubuntu-2404", "kvm-4"),
+        ("ubuntu-2604", "kvm-1"),
+        ("ubuntu-2604", "kvm-2"),
+    }
 
 
 def test_fedora_kvm_matrix_repeats_four_plans_across_six_worker_batches():
