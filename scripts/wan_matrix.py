@@ -47,7 +47,7 @@ from api.catalog import (
     plan_by_id,
 )
 from worker.netbox import NetBoxClient, NetBoxError
-from worker.proxmox import ProxmoxClient
+from worker.proxmox import ProxmoxClient, ProxmoxError
 
 WAN_BRIDGE = "vmbr3"
 REQUIRED_SERVICE_WORKERS = 4
@@ -694,7 +694,7 @@ class Matrix:
                 require_expected_golden_images(
                     catalog_images,
                     self.proxmox.inventory(),
-                    self.proxmox.vm_config,
+                    self.proxmox_vm_config,
                 )
                 if selected_alma
                 else []
@@ -747,7 +747,7 @@ class Matrix:
             )
             if not vm or vm.get("node") != "mng01" or vm.get("status") != "stopped":
                 raise RuntimeError("KVM_GOLDEN_INVENTORY_MISMATCH")
-            config = self.proxmox.vm_config("mng01", vmid)
+            config = self.proxmox_vm_config("mng01", vmid)
             root_disk = str(config.get("scsi0", ""))
             cloudinit_disk = str(config.get("scsi1", "")).lower()
             if (
@@ -789,7 +789,7 @@ class Matrix:
         )
         if not vm or vm.get("node") != "mng01" or vm.get("status") != "stopped":
             raise RuntimeError("UBUNTU_GOLDEN_INVENTORY_MISMATCH")
-        config = self.proxmox.vm_config("mng01", 29000)
+        config = self.proxmox_vm_config("mng01", 29000)
         root_disk = next(
             (
                 config.get(key, "")
@@ -959,6 +959,28 @@ class Matrix:
                     f"API_TRANSPORT_{method}_{path.split('/')[2]}"
                 ) from None
 
+    def proxmox_vm_config(self, node, vmid):
+        """Retry transient Proxmox rate limits on read-only VM configuration calls."""
+
+        for attempt in range(4):
+            try:
+                return self.proxmox.vm_config(node, vmid)
+            except ProxmoxError as error:
+                if error.status != 429 or attempt == 3:
+                    raise
+                delay = min(8.0, 2.0**attempt)
+                self.record(
+                    "proxmox_read_retry",
+                    resource="vm_config",
+                    node=node,
+                    vmid=vmid,
+                    status=429,
+                    attempt=attempt + 1,
+                    delay_seconds=delay,
+                )
+                time.sleep(delay)
+        raise RuntimeError("PROXMOX_READ_RETRY_EXHAUSTED")
+
     def parallel(self, function, items):
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             futures = {pool.submit(function, item): item for item in items}
@@ -969,13 +991,28 @@ class Matrix:
                 try:
                     results[item["name"]] = future.result()
                 except Exception as error:
-                    code = (
-                        str(error)
-                        if type(error) in {AssertionError, RuntimeError}
-                        and re.fullmatch(r"[A-Z0-9_.:-]{1,100}", str(error))
-                        else type(error).__name__
-                    )
-                    self.record("case_error", case=item["name"], error=code)
+                    if isinstance(error, ProxmoxError):
+                        status = error.status
+                        code = (
+                            f"PROXMOX_HTTP_{status}"
+                            if isinstance(status, int) and 100 <= status <= 599
+                            else "PROXMOX_TRANSPORT_ERROR"
+                        )
+                        self.record(
+                            "case_error",
+                            case=item["name"],
+                            error=code,
+                            http_status=status,
+                            uncertain=error.uncertain,
+                        )
+                    else:
+                        code = (
+                            str(error)
+                            if type(error) in {AssertionError, RuntimeError}
+                            and re.fullmatch(r"[A-Z0-9_.:-]{1,100}", str(error))
+                            else type(error).__name__
+                        )
+                        self.record("case_error", case=item["name"], error=code)
                     failures.append((item["name"], isinstance(error, AssertionError)))
         if failures:
             self.abort.set()
@@ -1088,7 +1125,7 @@ print(f"{jobs} {locks}")
 
     def binding(self, item):
         vmid = item["vmid"]
-        config = self.proxmox.vm_config("mng01", vmid)
+        config = self.proxmox_vm_config("mng01", vmid)
         nic = dict(
             field.split("=", 1)
             for field in config["net0"].split(",")
@@ -1159,8 +1196,8 @@ print(f"{jobs} {locks}")
         assert instance.get("plan_id") == item["plan"]
         assert instance.get("node") == "mng01"
         assert instance.get("status") == "ready"
-        config = self.proxmox.vm_config("mng01", item["vmid"])
-        template = self.proxmox.vm_config("mng01", image["template_vm_id"])
+        config = self.proxmox_vm_config("mng01", item["vmid"])
+        template = self.proxmox_vm_config("mng01", image["template_vm_id"])
         assert config.get("name") == item["name"] and not config.get("template")
         assert int(config.get("cores", 0)) == plan["vcpus"], "VM_CPU_MISMATCH"
         assert int(config.get("memory", 0)) == plan["memory_mb"], "VM_MEMORY_MISMATCH"
@@ -1770,7 +1807,7 @@ print(f"{jobs} {locks}")
             assert item["address"].startswith("190.0.231.")
         else:
             assert allocation is None
-            config = self.proxmox.vm_config("mng01", item["vmid"])
+            config = self.proxmox_vm_config("mng01", item["vmid"])
             mac = config["net0"].split(",")[0].split("=")[1].lower()
             addresses = [
                 entry["ip-address"]

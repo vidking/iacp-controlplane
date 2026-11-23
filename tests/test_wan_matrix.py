@@ -689,6 +689,64 @@ def test_parallel_failure_contains_future_mutations():
     assert sorted(completed)==[str(index) for index in range(6)]
 
 
+def test_proxmox_vm_config_retries_rate_limit_for_safe_gets(monkeypatch):
+    from types import SimpleNamespace
+
+    from worker.proxmox import ProxmoxError
+
+    matrix = object.__new__(Matrix)
+    calls = []
+    events = []
+
+    def vm_config(node, vmid):
+        calls.append((node, vmid))
+        if len(calls) < 3:
+            raise ProxmoxError("private response detail", 429)
+        return {"name": "kvm-service-n8n-040"}
+
+    matrix.proxmox = SimpleNamespace(vm_config=vm_config)
+    matrix.record = lambda event, **details: events.append((event, details))
+    monkeypatch.setattr("scripts.wan_matrix.time.sleep", lambda _delay: None)
+
+    result = matrix.proxmox_vm_config("mng01", 30005)
+
+    assert result == {"name": "kvm-service-n8n-040"}
+    assert calls == [("mng01", 30005)] * 3
+    assert [event for event, _ in events] == [
+        "proxmox_read_retry",
+        "proxmox_read_retry",
+    ]
+    assert all(details["status"] == 429 for _, details in events)
+
+
+def test_parallel_records_safe_proxmox_status_without_exception_message():
+    import threading
+
+    import pytest
+
+    from worker.proxmox import ProxmoxError
+
+    matrix = object.__new__(Matrix)
+    matrix.abort = threading.Event()
+    events = []
+    matrix.record = lambda event, **details: events.append((event, details))
+
+    def fail(_item):
+        raise ProxmoxError("sensitive response detail", 403)
+
+    with pytest.raises(RuntimeError, match="MATRIX_PARALLEL_CASE_FAILURE"):
+        matrix.parallel(fail, [{"name": "kvm-service-n8n-040"}])
+
+    error = next(details for event, details in events if event == "case_error")
+    assert error == {
+        "case": "kvm-service-n8n-040",
+        "error": "PROXMOX_HTTP_403",
+        "http_status": 403,
+        "uncertain": False,
+    }
+    assert "sensitive" not in repr(error)
+
+
 def test_record_keeps_matrix_running_when_ssh_output_closes(tmp_path, monkeypatch):
     import json
     import sys
