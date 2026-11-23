@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 from api.catalog import cluster_nodes, load_catalog
 from api.db import database, initialize
@@ -271,6 +272,7 @@ DETERMINISTIC_ERROR_MARKERS = (
     "ipam_prefix_pool_unsafe",
     "ipam_gateway_not_reserved",
     "ipam_pool_exhausted",
+    "ipam_allocation_busy",
     "ipam_tag_not_found",
     "ipam_permission_denied",
     "ipam_identity_mismatch",
@@ -279,6 +281,8 @@ DETERMINISTIC_ERROR_MARKERS = (
     "network_policy_mismatch",
     "terraform_start_before_validation_blocked",
     "terraform_plan_inspection_failed",
+    "terraform_unexpected_resource_change",
+    "terraform_plan_identity_mismatch",
     "terraform_vm_change_not_found",
     "preboot_expectation_required",
     "preboot_validation_failed",
@@ -446,6 +450,17 @@ def ensure_operation_owned(db, operation_id: str | None) -> None:
     fenced = _fenced_operation_for(operation_id)
     if fenced and db.execute(f"SELECT {_FENCED_SQL} AS fenced", (fenced,)).fetchone()["fenced"]:
         _raise_fenced(db, fenced)
+
+
+def assert_active_operation_owned(db, worker_id: str, operation_id: str) -> None:
+    statuses = ",".join("?" for _ in ACTIVE_WORK_OPERATION_STATUSES)
+    row = db.execute(
+        f"""SELECT 1 FROM operations WHERE operation_id=? AND worker_id=?
+        AND status IN ({statuses}) AND NOT {_FENCED_SQL}""",
+        (operation_id, worker_id, *ACTIVE_WORK_OPERATION_STATUSES, operation_id),
+    ).fetchone()
+    if row is None:
+        raise OperationFencedError(f"la operación {operation_id} ya no pertenece al worker")
 
 
 def update_operation(operation_id: str, *, connection=None, **values) -> None:
@@ -658,6 +673,7 @@ def _ensure_static_allocation(
     if setter is not None:
         setter(lambda: heartbeat(worker_id, "running", operation_id, phase="ipam_allocate"))
     allocation = _ip_allocation(instance_id)
+    new_intent = allocation is None
     if allocation is None:
         allocation = _begin_ip_allocation(
             instance_id=instance_id,
@@ -685,6 +701,8 @@ def _ensure_static_allocation(
             )
             emit(operation_id, "ipam.address.reserved", "succeeded", reserved.address)
         except NetBoxError as error:
+            if error.code == "IPAM_ALLOCATION_BUSY" and not new_intent:
+                raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True) from error
             _mark_ip_allocation(
                 allocation["allocation_id"],
                 "release_pending" if error.uncertain else "released",
@@ -899,17 +917,18 @@ def _terminate_process_group(process: subprocess.Popen) -> None:
     grace = max(1.0, float(os.getenv("IACP_TERRAFORM_KILL_GRACE_SECONDS", "20")))
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        process.terminate()
-    try:
-        process.wait(timeout=grace)
-        return
-    except subprocess.TimeoutExpired:
+    except ProcessLookupError:
         pass
     try:
+        process.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    # El líder puede salir antes que sus providers. El grupo sigue siendo
+    # alcanzable por su PGID aunque el proceso Terraform haya terminado.
+    try:
         os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        process.kill()
+    except ProcessLookupError:
+        pass
     process.wait(timeout=10)
 
 
@@ -1786,27 +1805,28 @@ def close_source_after_reconciliation(
             released = _release_static_allocation(instance_id, source_id)
         terminal_status = "failed" if released else "uncertain"
         terminal_error = detail if released else "IPAM_RELEASE_PENDING"
-        update_operation(
-            source_id,
-            status=terminal_status,
-            finished_at=now(),
-            last_heartbeat=now(),
-            exit_code=1,
-            output="",
-            error=terminal_error,
-        )
         # Cerrar una intención anterior no revierte una eliminación posterior.
         # Si queda IPAM pendiente, la incertidumbre sigue siendo visible.
         with database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            fence = _FENCE.get()
+            if fence is not None:
+                assert_active_operation_owned(db, *fence)
+            update_operation(
+                source_id, status=terminal_status,
+                finished_at=now(), last_heartbeat=now(), exit_code=1,
+                output="", error=terminal_error, connection=db,
+            )
             db.execute(
                 """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
                 node=COALESCE(?,node), updated_at=? WHERE instance_id=?
                 AND (status!='deleted' OR ?='uncertain')""",
                 (terminal_status, vmid, node, now(), instance_id, terminal_status),
             )
-        if released and source_operation["command"] in {"apply", "provision", "plan"}:
-            release_operation_lease(vmid, source_operation)
-        emit(source_id, "operation.reconciled", terminal_status, terminal_error)
+            if released and source_operation["command"] in {"apply", "provision", "plan"}:
+                release_operation_lease(vmid, source_operation, connection=db)
+            emit(source_id, "operation.reconciled", terminal_status, terminal_error, connection=db)
+            db.execute("COMMIT")
         return released
 
 
@@ -2585,7 +2605,11 @@ def execute(worker_id: str, operation: dict) -> None:
                 emit(operation_id, "golden.observed", "ok", spec["image"])
                 requested_started = bool(spec.get("started", True))
                 target_node = target_node or select_target_node(client)
-                vmid = allocate(operation_id, client, node=target_node)
+                check_owner = (
+                    partial(assert_active_operation_owned, worker_id=worker_id, operation_id=operation_id)
+                    if _FENCE.get() is not None else None
+                )
+                vmid = allocate(operation_id, client, node=target_node, check_owner=check_owner)
                 allocated_here = True
                 spec = _ensure_static_allocation(
                     worker_id=worker_id,
@@ -2707,7 +2731,7 @@ def execute(worker_id: str, operation: dict) -> None:
                 phase = "apply"
                 update_operation(operation_id, phase=phase)
                 if stack == "mng01":
-                    assert_stopped_plan(workspace, plan_path)
+                    assert_stopped_plan(workspace, plan_path, (int(vmid), spec["name"], target_node))
                     if _FENCE.get() is not None:
                         require_free_provision_target(client, int(vmid), operation_id)
                 emit(operation_id, "terraform.apply.started", "running")
@@ -2729,7 +2753,9 @@ def execute(worker_id: str, operation: dict) -> None:
 
                 if wan_only() and source_payload.get("spec", {}).get("network_profile", "lab_dhcp") != selected_profile():
                     raise RuntimeError("NETWORK_POLICY_MISMATCH")
-                assert_stopped_plan(workspace, plan_path)
+                assert_stopped_plan(
+                    workspace, plan_path, (int(vmid), identity["name"], target_node or identity.get("node")),
+                )
                 if _FENCE.get() is not None:
                     require_free_provision_target(client, int(vmid), source_operation_id)
             emit(operation_id, f"terraform.{command}.started", "running")

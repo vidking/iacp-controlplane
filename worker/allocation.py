@@ -1,8 +1,9 @@
 import os
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime, timezone
 
-from api.db import database
+from api.db import DatabaseConnection, database
 from api.protection import is_protected_vmid
 from worker.proxmox import ProxmoxClient
 
@@ -11,13 +12,21 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def allocate(operation_id: str, client: ProxmoxClient, *, node: str | None = None) -> int:
+def allocate(
+    operation_id: str,
+    client: ProxmoxClient,
+    *,
+    node: str | None = None,
+    check_owner: Callable[[DatabaseConnection], None] | None = None,
+) -> int:
     minimum = int(os.getenv("IACP_VMID_MIN", "40001"))
     maximum = int(os.getenv("IACP_VMID_MAX", "49999"))
     reuse = os.getenv("IACP_VMID_REUSE", "1").strip().lower() not in {"0", "false", "no"}
     inventory = {int(item["vmid"]) for item in client.inventory() if str(item.get("vmid", "")).isdigit()}
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
+        if check_owner is not None:
+            check_owner(db)
         reserved = {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases WHERE status = 'held'")}
         consumed = (
             {row["vmid"] for row in db.execute("SELECT vmid FROM vmid_leases")}

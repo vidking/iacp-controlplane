@@ -1,19 +1,146 @@
 """Preparación de servicios por canal Proxmox autenticado; no por TOFU SSH."""
 
+from dataclasses import dataclass, field
 import json
 import re
 import time
 from ipaddress import ip_address
+from cryptography.fernet import InvalidToken
 from api.db import database
 from api.protection import is_protected_vmid
 from api.service import now
+from api.service_secrets import decrypt
 from worker.guest_identity import (
     GuestIdentityError,
     _mac_from_config,
     _wait_for_pool_membership,
 )
 from worker.golden import configured_pool_id
-from worker.proxmox import ProxmoxError
+from worker.proxmox import ProxmoxClient, ProxmoxError
+
+
+def installer_key_pattern(public_key: str) -> str:
+    """Restringe la coincidencia al tipo y al cuerpo de la clave de instalación."""
+    match = re.fullmatch(r"ssh-ed25519 ([A-Za-z0-9+/=]+)(?:[ \t]+[^\r\n]*)?", public_key)
+    if not match:
+        raise ValueError("SERVICE_INSTALLER_KEY_INVALID")
+    return rf"(?:^|[ \t])ssh-ed25519[ \t]+{re.escape(match[1])}(?:[ \t]|$)"
+
+
+@dataclass(frozen=True)
+class HandoffEvidence:
+    key_absent: bool
+    snapshot: dict = field(repr=False)
+
+
+def _handoff_snapshot(db, job_id):
+    row = db.execute(
+        """SELECT j.generation, j.status AS job_status, s.service_id, s.secrets_encrypted,
+        i.instance_id, i.operation_id, i.name, i.vmid, i.node, i.spec_json, i.updated_at,
+        b.binding_json, b.observed_at
+        FROM service_jobs j JOIN service_instances s ON s.service_id=j.service_id
+        JOIN instances i ON i.instance_id=s.instance_id
+        JOIN service_bindings b ON b.service_id=s.service_id
+        JOIN vmid_leases l ON l.vmid=i.vmid AND l.operation_id=i.operation_id
+        WHERE j.job_id=? AND j.action='handoff' AND j.status IN ('failed','uncertain')
+        AND s.status=j.status AND s.secrets_encrypted IS NOT NULL
+        AND i.environment='lab' AND i.status='ready' AND i.power_state='running'
+        AND l.status='held'
+        AND NOT EXISTS (
+            SELECT 1 FROM operations o WHERE o.instance_id=i.instance_id
+            AND o.status IN ('pending','running','planning','applying','destroying','powering','uncertain')
+        )""",
+        (job_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _handoff_file(client, node, vmid, path):
+    result = client.guest_agent_file_read(node, vmid, path)
+    if not isinstance(result, dict) or result.get("truncated"):
+        raise ValueError("SERVICE_HANDOFF_FILE_UNVERIFIED")
+    content = result.get("content")
+    if not isinstance(content, str) or len(content.encode()) >= 8192 or "\x00" in content:
+        raise ValueError("SERVICE_HANDOFF_FILE_UNVERIFIED")
+    return content
+
+
+def observe_handoff(job_id: str, *, client=None) -> HandoffEvidence | None:
+    """Lee solo la identidad del invitado y el archivo de claves administrado."""
+    with database() as db:
+        snapshot = _handoff_snapshot(db, job_id)
+    if snapshot is None or is_protected_vmid(snapshot["vmid"]):
+        return None
+    try:
+        binding = json.loads(snapshot["binding_json"])
+        if not isinstance(binding, dict) or (
+            binding.get("source") != "qemu-guest-agent"
+            or binding.get("instance_id") != snapshot["instance_id"]
+            or binding.get("vmid") != snapshot["vmid"]
+            or binding.get("node") != snapshot["node"]
+        ):
+            return None
+        node, vmid = snapshot["node"], snapshot["vmid"]
+        if not isinstance(node, str) or not node:
+            return None
+        expected_host_key = binding.get("host_key", "")
+        if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+", expected_host_key):
+            return None
+
+        secrets = decrypt(snapshot["secrets_encrypted"])
+        key_pattern = installer_key_pattern(secrets["ssh_public_key"])
+        client = client or ProxmoxClient()
+        config = client.vm_config(node, vmid)
+        if config.get("template"):
+            return None
+        mac = _mac_from_config(config, snapshot["name"])
+        spec = json.loads(snapshot["spec_json"])
+        mode = "static" if spec.get("network_profile") == "prod_static" else "dhcp"
+        identity_path = f"/var/lib/iacp/{'static' if mode == 'static' else 'service-dhcp'}-identity.json"
+        marker = json.loads(_handoff_file(client, node, vmid, identity_path))
+        if not isinstance(marker, dict) or (
+            marker.get("instance_id") != snapshot["instance_id"]
+            or marker.get("mac_address") != mac
+            or marker.get("mode") != mode
+        ):
+            return None
+        host_key = _handoff_file(client, node, vmid, "/etc/ssh/ssh_host_ed25519_key.pub")
+        if " ".join(host_key.split()[:2]) != expected_host_key:
+            return None
+        authorized = _handoff_file(client, node, vmid, "/root/.ssh/authorized_keys")
+        key_absent = not any(re.search(key_pattern, line) for line in authorized.splitlines())
+        return HandoffEvidence(key_absent=key_absent, snapshot=snapshot)
+    except (InvalidToken, KeyError, OSError, ProxmoxError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def confirm_handoff_evidence(db, job_id: str, evidence: HandoffEvidence | None) -> bool:
+    """Revalida los datos de identidad dentro de la transacción del reintento."""
+    return evidence is not None and _handoff_snapshot(db, job_id) == evidence.snapshot
+
+
+def finish_handoff_from_observation(db, job_id: str, evidence: HandoffEvidence | None) -> bool:
+    if evidence is None or not evidence.key_absent or not confirm_handoff_evidence(db, job_id, evidence):
+        return False
+    service_id = evidence.snapshot["service_id"]
+    completed_at = now()
+    db.execute(
+        """UPDATE service_jobs SET status='succeeded', phase='completed', error='', finished_at=?
+        WHERE job_id=?""",
+        (completed_at, job_id),
+    )
+    db.execute(
+        """UPDATE service_instances SET status='delivered', secrets_encrypted=NULL, updated_at=?
+        WHERE service_id=?""",
+        (completed_at, service_id),
+    )
+    db.execute("DELETE FROM service_credential_retrievals WHERE service_id=?", (service_id,))
+    db.execute(
+        """INSERT INTO service_events(job_id, phase, status, occurred_at)
+        VALUES (?, 'recovered_handoff_qga', 'succeeded', ?)""",
+        (job_id, completed_at),
+    )
+    return True
 
 # Solo datos públicos salen del invitado. La identidad la acredita el paso previo.
 PROGRAM = r"""

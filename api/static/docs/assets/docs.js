@@ -9,6 +9,7 @@
     selectedServiceId: null,
     credentialsBusy: false,
     credentialAttempts: new Map(),
+    credentialVisibility: 0,
     networkProfiles: [],
     instances: [],
     operations: [],
@@ -757,6 +758,7 @@
   }
 
   function clearServiceCredentials() {
+    state.credentialVisibility += 1;
     $("service-credentials-output").textContent = "La información de acceso está oculta.";
   }
 
@@ -798,12 +800,12 @@
     } else url.removeAttribute("href");
     $("service-ca").disabled = !ready || service.configuration.access_mode !== "ip";
     const attempt = state.credentialAttempts.get(identifier);
-    const canRecover = service.credentials_recovery_possible;
+    const canRecover = service.credentials_recovery_possible && attempt;
     $("service-credentials").disabled = !(service.credentials_available || canRecover) || state.credentialsBusy;
     $("service-credentials").textContent = service.application_id === "n8n"
       ? "Ver instrucciones de acceso"
       : "Mostrar credenciales una vez";
-    $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available
+    $("deliver-service").disabled = service.status !== "awaiting_customer" || service.credentials_available || service.power_state !== "running"
       || (service.credential_receipt_required && !attempt?.receipt)
       || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
     $("service-power-start").disabled = !kvmReady || service.power_state !== "stopped";
@@ -882,6 +884,7 @@
   async function retrieveServiceCredentials() {
     const identifier = state.selectedServiceId;
     if (!identifier || state.credentialsBusy) return;
+    const visibility = state.credentialVisibility;
     const attempt = state.credentialAttempts.get(identifier) || { key: newIdempotencyKey("portal-credentials") };
     state.credentialAttempts.set(identifier, attempt);
     state.credentialsBusy = true;
@@ -890,7 +893,7 @@
       const { credential_receipt, ...credentials } = await api(`/v1/service-instances/${identifier}/credentials`, {
         method: "POST", idempotencyKey: attempt.key,
       });
-      if (state.selectedServiceId === identifier && state.route === "create") {
+      if (state.selectedServiceId === identifier && state.route === "create" && state.credentialVisibility === visibility) {
         $("service-credentials-output").textContent = JSON.stringify(credentials, null, 2);
         attempt.receipt = credential_receipt;
       }
@@ -921,6 +924,7 @@
         headers: receipt ? { "X-IACP-Credential-Receipt": receipt } : {},
       });
       state.credentialAttempts.delete(identifier);
+      if (state.selectedServiceId === identifier) clearServiceCredentials();
       await pollService(identifier, true);
     } catch (error) { showError(error); }
   }

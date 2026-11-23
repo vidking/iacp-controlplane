@@ -139,6 +139,7 @@ def validate(image, evidence):
         )
     services["test-runner"] = {
         "image": test_image,
+        "init": True,
         "profiles": ["checks"],
         "read_only": True,
         "tmpfs": ["/tmp:rw,nosuid,size=512m"],

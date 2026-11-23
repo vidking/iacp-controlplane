@@ -1,7 +1,8 @@
 """Catálogo de aplicaciones independiente de las Golden Images."""
 
-import os
+from hashlib import sha256
 import json
+import os
 from pathlib import Path
 
 APPLICATIONS = {
@@ -30,10 +31,21 @@ def enabled(name: str) -> bool:
     return os.getenv(name, "0").lower() in {"1", "true", "yes"}
 
 
+def _releases():
+    default_path = Path(__file__).resolve().parents[1] / "services/releases.json"
+    return json.loads(Path(os.getenv("IACP_SERVICE_RELEASES_FILE", default_path)).read_text())
+
+
+def load_service_release(application_id: str) -> dict:
+    return _releases()[application_id]
+
+
+def service_release_digest(release: dict) -> str:
+    return sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
+
+
 def catalog() -> list[dict]:
-    releases = json.loads(
-        (Path(__file__).resolve().parents[1] / "services/releases.json").read_text()
-    )
+    releases = _releases()
     return [
         dict(
             application_id=key,

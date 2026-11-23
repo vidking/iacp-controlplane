@@ -632,23 +632,34 @@ def test_credential_receipt_recovers_disclosure_until_delivery(client, monkeypat
         assert db.execute("SELECT count(*) AS n FROM service_credential_retrievals").fetchone()["n"] == 0
 
 
-def test_expired_disclosure_can_be_restarted_with_receipt(client, monkeypatch):
+def test_expired_disclosure_renews_only_for_original_key(client, monkeypatch):
     order = create(client)
     ready(order["instance_id"])
     monkeypatch.setattr(services, "execute", lambda *_: None)
     services.process("a", services.claim("a"))
     path = f"/v1/service-instances/{order['service_id']}"
-    assert client.post(path + "/credentials").status_code == 200
     disclosure = {"Idempotency-Key": "credential-recovery"}
-    assert client.post(path + "/credentials", headers=disclosure).status_code == 409
+    first = client.post(path + "/credentials", headers=disclosure)
+    assert first.status_code == 200
     with database() as db:
         db.execute(
             "UPDATE service_instances SET credentials_retrieved_at=? WHERE service_id=?",
             ("2000-01-01T00:00:00+00:00", order["service_id"]),
         )
+    assert client.post(path + "/credentials", headers={"Idempotency-Key": "new-attempt"}).status_code == 409
     recovered = client.post(path + "/credentials", headers=disclosure)
     assert recovered.status_code == 200
-    assert recovered.json()["credential_receipt"]
+    assert recovered.json()["credential_receipt"] != first.json()["credential_receipt"]
+
+
+def test_cancel_order_after_definitive_failure_without_resources(client):
+    order = create(client)
+    with database() as db:
+        db.execute("UPDATE operations SET status='failed' WHERE operation_id=?", (order["operation_id"],))
+        db.execute("UPDATE instances SET status='failed' WHERE instance_id=?", (order["instance_id"],))
+    response = client.post(f"/v1/service-jobs/{order['job_id']}/cancel")
+    assert response.status_code == 202
+    assert response.json()["status"] == "cancelled"
 
 
 def test_cancel_queued_order_cancels_unused_provision_and_clears_credentials(client):

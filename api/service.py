@@ -768,7 +768,9 @@ def _insert_operation(
             payload["source_operation_id"] = source["operation_id"]
 
         active = _active_instance_operation(
-            db, instance_id, allow_queued_service=command == Command.reconcile
+            db, instance_id,
+            allow_queued_service=command == Command.reconcile
+            or (command == Command.power and request.power_action == PowerAction.start),
         )
         if active is not None:
             raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")

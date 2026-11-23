@@ -475,12 +475,14 @@ class NetBoxClient:
                     "SELECT pg_advisory_xact_lock(105, hashtext(?))",
                     (self.config.expected_prefix,),
                 )
+            except LockNotAvailable as error:
+                db.execute("ROLLBACK")
+                # Todavía no se ha llamado a NetBox ni enviado una mutación.
+                raise NetBoxError("IPAM_ALLOCATION_BUSY") from error
+            try:
                 result = self._allocate(**kwargs)
                 db.execute("COMMIT")
                 return result
-            except LockNotAvailable as error:
-                db.execute("ROLLBACK")
-                raise NetBoxError("IPAM_ALLOCATION_BUSY", uncertain=True) from error
             except Exception:
                 db.execute("ROLLBACK")
                 raise

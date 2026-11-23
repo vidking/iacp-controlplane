@@ -199,27 +199,62 @@ def test_plan_gate_requires_stopped_tfvars_and_stopped_vm_change(tmp_path, monke
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "generated.auto.tfvars.json").write_text(
-        json.dumps({"instance": {"started": False, "vm_id": 40123, "vm_name": "preboot-nextcloud"}})
+        json.dumps({"instance": {
+            "started": False, "vm_id": 40123, "vm_name": "preboot-nextcloud", "node_name": "mng01",
+        }})
     )
     preboot.save_expectation(str(workspace), expected)
     plan = {
         "resource_changes": [
             {
+                "address": "module.kvm.proxmox_virtual_environment_vm.this",
+                "mode": "managed",
                 "type": "proxmox_virtual_environment_vm",
                 "name": "this",
-                "change": {"actions": ["create"], "after": {"started": False}},
+                "change": {"actions": ["create"], "after": {
+                    "started": False, "on_boot": False, "vm_id": 40123,
+                    "name": "preboot-nextcloud", "node_name": "mng01",
+                }},
             }
         ]
     }
-    monkeypatch.setattr(
-        preboot.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(plan)),
-    )
-    preboot.assert_stopped_plan(str(workspace), str(workspace / "plan.tfplan"))
-    plan["resource_changes"][0]["change"]["after"]["started"] = True
+    def inspect(*_args, **kwargs):
+        assert "PROXMOX_VE_API_TOKEN" not in kwargs["env"]
+        assert "TF_VAR_root_password" not in kwargs["env"]
+        assert "TF_CLI_ARGS_show" not in kwargs["env"]
+        return SimpleNamespace(returncode=0, stdout=json.dumps(plan))
+
+    monkeypatch.setenv("PROXMOX_VE_API_TOKEN", "valor-sintetico")
+    monkeypatch.setenv("TF_VAR_root_password", "valor-sintetico")
+    monkeypatch.setenv("TF_CLI_ARGS_show", "-no-color")
+    monkeypatch.setattr(preboot.subprocess, "run", inspect)
+    target = (40123, "preboot-nextcloud", "mng01")
+    plan_path = str(workspace / "plan.tfplan")
+    preboot.assert_stopped_plan(str(workspace), plan_path, target)
+
+    change = plan["resource_changes"][0]["change"]
+    for field, value in {
+        "vm_id": 40124, "name": "otra-instancia", "node_name": "mng02",
+    }.items():
+        with monkeypatch.context() as patch:
+            patch.setitem(change["after"], field, value)
+            with pytest.raises(RuntimeError, match="TERRAFORM_PLAN_IDENTITY_MISMATCH"):
+                preboot.assert_stopped_plan(str(workspace), plan_path, target)
+
+    for actions in (["delete", "create"], ["update"], ["delete"]):
+        with monkeypatch.context() as patch:
+            patch.setitem(change, "actions", actions)
+            with pytest.raises(RuntimeError, match="TERRAFORM_UNEXPECTED_RESOURCE_CHANGE"):
+                preboot.assert_stopped_plan(str(workspace), plan_path, target)
+
+    with monkeypatch.context() as patch:
+        patch.setitem(plan, "resource_changes", plan["resource_changes"] * 2)
+        with pytest.raises(RuntimeError, match="TERRAFORM_UNEXPECTED_RESOURCE_CHANGE"):
+            preboot.assert_stopped_plan(str(workspace), plan_path, target)
+
+    change["after"]["started"] = True
     with pytest.raises(RuntimeError, match="TERRAFORM_START_BEFORE_VALIDATION_BLOCKED"):
-        preboot.assert_stopped_plan(str(workspace), str(workspace / "plan.tfplan"))
+        preboot.assert_stopped_plan(str(workspace), plan_path, target)
 
 
 def test_plan_gate_rejects_old_plan_without_preboot_expectation(tmp_path):

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from api.service_catalog import load_service_release, service_release_digest
 from api.service_secrets import decrypt
 from worker.service_recipes import render, RecipeError
 from worker.service_diagnostics import (
@@ -269,10 +270,9 @@ def service_execution_timeout_seconds(value: str | None = None) -> int:
 
 
 def pin_release(service_id, release):
-    import hashlib
     from api.db import database
 
-    digest = hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
+    digest = service_release_digest(release)
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         db.execute(
@@ -351,14 +351,7 @@ def execute(service, job, heartbeat):
     files = {}
     if installing:
         try:
-            release = json.loads(
-                Path(
-                    os.getenv(
-                        "IACP_SERVICE_RELEASES_FILE",
-                        str(Path(__file__).resolve().parents[1] / "services/releases.json"),
-                    )
-                ).read_text()
-            )[service["application_id"]]
+            release = load_service_release(service["application_id"])
         except (OSError, ValueError, KeyError):
             raise ServiceBlocked("SERVICE_BINDING_OR_RELEASE_REQUIRED") from None
         if not release.get("approved") or release.get("recipe_version") != service["recipe_version"]:
@@ -402,6 +395,8 @@ def execute(service, job, heartbeat):
               "register": "cloud_init", "failed_when": "cloud_init.rc not in [0, 2] or 'status: done' not in cloud_init.stdout"}]
     base = ["docker", "compose", "--project-directory", root]
     if not installing:
+        from worker.service_bootstrap import installer_key_pattern
+
         if job["action"] == "cleanup":
             tasks.extend([
                 {
@@ -434,7 +429,7 @@ def execute(service, job, heartbeat):
                 "name": "Retirar clave temporal",
                 "ansible.builtin.lineinfile": {
                     "path": "/root/.ssh/authorized_keys",
-                    "line": secrets["ssh_public_key"],
+                    "regexp": installer_key_pattern(secrets["ssh_public_key"]),
                     "state": "absent",
                 },
                 "no_log": True,

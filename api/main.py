@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import json
 import os
@@ -15,6 +16,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security.utils import get_authorization_scheme_param
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import PoolTimeout
 from starlette.datastructures import Headers, MutableHeaders
@@ -55,12 +57,12 @@ from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
 tags_metadata = [
-    {"name": "instances", "description": "Perfiles, creación y consulta de instancias propias del tenant."},
+    {"name": "instances", "description": "Perfiles, creación y consulta de instancias del entorno administrado."},
     {"name": "environments", "description": "Entornos lógicos habilitados; la selección física permanece en el servidor."},
     {"name": "operations", "description": "Seguimiento de intenciones asíncronas, estados terminales y eventos."},
     {"name": "kvm-lifecycle", "description": "Estado de energía, inicio, reinicio y apagado ordenado de KVM autorizadas."},
     {"name": "disposable-deletion", "description": "Eliminación autorizada de instancias descartables; los recursos protegidos quedan excluidos."},
-    {"name": "observability", "description": "Diagnóstico, eventos, workers y estado del tenant; no sustituye la supervisión de infraestructura."},
+    {"name": "observability", "description": "Diagnóstico, eventos, workers y estado del entorno administrado."},
     {"name": "provisioning", "description": "Catálogo técnico, plan/apply explícito y compatibilidad operativa."},
     {"name": "health", "description": "Estado técnico del API."},
 ]
@@ -177,18 +179,30 @@ class HTTPGuards:
                 return
 
         if path.startswith("/v1/") and scope["method"] in {"POST", "PUT", "PATCH", "DELETE"}:
+            scheme, token = get_authorization_scheme_param(Headers(scope=scope).get("authorization"))
+            credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=token) if scheme.lower() == "bearer" else None
+            try:
+                authorize(credentials)
+            except HTTPException as error:
+                await JSONResponse({"detail": error.detail}, error.status_code)(scope, receive, send_with_headers)
+                return
             body = bytearray()
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    return
-                chunk = message.get("body", b"")
-                if len(body) + len(chunk) > limit:
-                    await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
-                    return
-                body.extend(chunk)
-                if not message.get("more_body"):
-                    break
+            try:
+                async with asyncio.timeout(20):
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.disconnect":
+                            return
+                        chunk = message.get("body", b"")
+                        if len(body) + len(chunk) > limit:
+                            await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
+                            return
+                        body.extend(chunk)
+                        if not message.get("more_body"):
+                            break
+            except TimeoutError:
+                await JSONResponse({"detail": "plazo de lectura de la solicitud agotado"}, 408)(scope, receive, send_with_headers)
+                return
 
             delivered = False
 
@@ -561,17 +575,27 @@ def list_instance_endpoint(
     ))
 
 
-def _power_target(instance_id: str) -> dict:
+def _observation_target(instance_id: str) -> dict:
     with database() as db:
         row = db.execute(
-            "SELECT instance_id, name, vmid, node, status, power_state FROM instances WHERE instance_id=?",
+            """SELECT i.*, o.payload_json AS provision_payload, l.operation_id AS current_lease_owner
+            FROM instances i LEFT JOIN operations o ON o.operation_id=i.operation_id
+            LEFT JOIN vmid_leases l ON l.vmid=i.vmid AND l.status='held' WHERE i.instance_id=?""",
             (instance_id,),
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="instance not found")
-    if row["vmid"] is None or row["status"] == "deleted":
-        raise HTTPException(status_code=409, detail="la instancia todavía no tiene una VM administrada")
     return dict(row)
+
+
+def _verify_marked_instance(client: ProxmoxClient, target: dict) -> None:
+    marker = json.loads(target["provision_payload"] or "{}").get("physical_identity_tag")
+    if marker:
+        if target["current_lease_owner"] != target["operation_id"]:
+            raise ProxmoxError("VMID_LEASE_OWNER_MISMATCH")
+        config = client.vm_config(target["node"], int(target["vmid"]))
+        if marker not in str(config.get("tags") or "").split(";"):
+            raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH")
 
 
 @app.get(
@@ -586,10 +610,13 @@ def _power_target(instance_id: str) -> dict:
     operation_id="getInstancePower",
 )
 def get_power(instance_id: str):
-    target = _power_target(instance_id)
+    target = _observation_target(instance_id)
+    if target["vmid"] is None or target["status"] == "deleted":
+        raise HTTPException(status_code=409, detail="la instancia todavía no tiene una VM administrada")
     try:
         client = ProxmoxClient()
         client.permissions(target["node"], int(target["vmid"]), mutate=False)
+        _verify_marked_instance(client, target)
         observed = client.power_state(target["node"], int(target["vmid"]), target["name"])
         mutations_available = True
         blocked_reason = None
@@ -601,11 +628,6 @@ def get_power(instance_id: str):
                 blocked_reason = str(error)
             else:
                 raise
-        with database() as db:
-            db.execute(
-                "UPDATE instances SET power_state=?, updated_at=? WHERE instance_id=?",
-                (observed["power_state"], now(), instance_id),
-            )
         return {
             "instance_id": instance_id,
             **observed,
@@ -646,13 +668,7 @@ def _guest_ipv4(interfaces: list[dict]) -> list[str]:
     operation_id="getInstanceNetwork",
 )
 def get_network(instance_id: str):
-    with database() as db:
-        row = db.execute(
-            "SELECT instance_id, name, vmid, node, status, spec_json FROM instances WHERE instance_id=?",
-            (instance_id,),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="instance not found")
+    row = _observation_target(instance_id)
     spec = json.loads(row["spec_json"] or "{}")
     response = {
         "instance_id": instance_id,
@@ -691,6 +707,7 @@ def get_network(instance_id: str):
         return response
     try:
         client = ProxmoxClient()
+        _verify_marked_instance(client, row)
         client.power_state(row["node"], int(row["vmid"]), row["name"])
         interfaces = client.guest_agent_interfaces(row["node"], int(row["vmid"]))
     except ProxmoxError:
@@ -1156,7 +1173,7 @@ def service_tls_ca(service_id: str):
     service = applications.get_service(service_id)
     if service["configuration"].get("access_mode") != "ip":
         raise HTTPException(409, "SERVICE_NOT_USING_PILOT_CA")
-    certificate = Path("/run/iacp-services/pilot-ca.crt")
+    certificate = Path(os.getenv("IACP_SERVICE_CA_DIR", "/run/iacp-services")) / "pilot-ca.crt"
     if not certificate.is_file():
         raise HTTPException(503, "SERVICE_CA_NOT_CONFIGURED")
     return FileResponse(certificate, media_type="application/x-pem-file", filename="iacp-pilot-ca.crt", headers={"Cache-Control": "no-store"})

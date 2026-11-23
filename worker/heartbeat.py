@@ -17,6 +17,8 @@ def heartbeat(
 ) -> bool:
     timestamp = now()
     with database() as db:
+        db.execute("BEGIN")
+        db.execute("SET LOCAL statement_timeout = '5s'")
         if operation_id:
             result = db.execute(
                 """
@@ -48,4 +50,5 @@ def heartbeat(
             """,
             (worker_id, status, timestamp, operation_id, timestamp),
         )
+        db.execute("COMMIT")
         return True

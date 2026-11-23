@@ -279,27 +279,39 @@ def mismatches(
     return failures
 
 
-def assert_stopped_plan(workspace: str, plan_path: str) -> None:
-    """No permitir aplicar ningún plan Terraform que pretenda encender la VM."""
-
+def assert_stopped_plan(
+    workspace: str,
+    plan_path: str,
+    target: tuple[int, str, str] | None = None,
+) -> None:
+    """Autoriza únicamente la creación detenida de la VM de este workspace."""
     variables_path = Path(workspace) / "generated.auto.tfvars.json"
     try:
         values = json.loads(variables_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise RuntimeError("TERRAFORM_START_BEFORE_VALIDATION_BLOCKED") from None
-    if not isinstance(values, dict) or values.get("instance", {}).get("started") is not False:
+    instance = values.get("instance") if isinstance(values, dict) else None
+    if not isinstance(instance, dict) or instance.get("started") is not False:
         raise RuntimeError("TERRAFORM_START_BEFORE_VALIDATION_BLOCKED")
     expected = load_expectation(workspace)
-    expected_instance = expected.get("instance") or {}
+    expected_instance = expected["instance"]
+    identity = (instance.get("vm_id"), instance.get("vm_name"), instance.get("node_name"))
     if (
-        expected_instance.get("started") is not False
-        or expected_instance.get("vm_id") != values.get("instance", {}).get("vm_id")
-        or expected_instance.get("vm_name") != values.get("instance", {}).get("vm_name")
+        type(identity[0]) is not int
+        or not isinstance(identity[1], str) or not identity[1]
+        or not isinstance(identity[2], str) or not identity[2]
+        or expected_instance.get("started") is not False
+        or identity != (expected_instance.get("vm_id"), expected_instance.get("vm_name"), expected_instance.get("node_name"))
+        or (identity[0], identity[2]) != (expected.get("vmid"), expected.get("node"))
+        or (target is not None and target != identity)
     ):
-        raise RuntimeError("TERRAFORM_START_BEFORE_VALIDATION_BLOCKED")
+        raise RuntimeError("TERRAFORM_PLAN_IDENTITY_MISMATCH")
 
+    # Solo se inspecciona un archivo local. No heredar credenciales, variables
+    # de entrada ni argumentos Terraform implícitos en este subprocess.
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("TF_VAR_")
+        key: value for key, value in os.environ.items()
+        if key in {"HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "TF_PLUGIN_CACHE_DIR"}
     }
     try:
         shown = subprocess.run(
@@ -319,20 +331,45 @@ def assert_stopped_plan(workspace: str, plan_path: str) -> None:
         plan = json.loads(shown.stdout)
     except (TypeError, ValueError):
         raise RuntimeError("TERRAFORM_PLAN_INSPECTION_FAILED") from None
+    if not isinstance(plan, dict):
+        raise RuntimeError("TERRAFORM_PLAN_INSPECTION_FAILED")
 
-    resources = [
-        resource
-        for resource in plan.get("resource_changes", [])
-        if isinstance(resource, dict)
-        and resource.get("type") == "proxmox_virtual_environment_vm"
-        and resource.get("name") == "this"
-        and set((resource.get("change") or {}).get("actions") or []) & {"create", "update"}
-    ]
+    resources = plan.get("resource_changes")
     if not resources:
         raise RuntimeError("TERRAFORM_VM_CHANGE_NOT_FOUND")
-    if any(
-        not isinstance((resource.get("change") or {}).get("after"), dict)
-        or (resource.get("change") or {}).get("after", {}).get("started") is not False
-        for resource in resources
+    if (
+        not isinstance(resources, list) or len(resources) != 1
+        or plan.get("errored") is True
+        or plan.get("applyable") is False
+        or plan.get("complete") is False
+        or any(plan.get(key) for key in ("resource_drift", "deferred_changes", "action_invocations"))
+    ):
+        raise RuntimeError("TERRAFORM_UNEXPECTED_RESOURCE_CHANGE")
+    resource = resources[0]
+    address = "module.kvm.proxmox_virtual_environment_vm.this"
+    if (
+        not isinstance(resource, dict)
+        or resource.get("address") != address
+        or resource.get("mode") != "managed"
+        or resource.get("type") != "proxmox_virtual_environment_vm"
+        or resource.get("name") != "this"
+        or resource.get("previous_address") is not None
+    ):
+        raise RuntimeError("TERRAFORM_UNEXPECTED_RESOURCE_CHANGE")
+    change = resource.get("change")
+    if (
+        not isinstance(change, dict)
+        or change.get("actions") != ["create"]
+        or change.get("before") is not None
+        or change.get("importing") is not None
+    ):
+        raise RuntimeError("TERRAFORM_UNEXPECTED_RESOURCE_CHANGE")
+    after = change.get("after")
+    if (
+        not isinstance(after, dict)
+        or after.get("started") is not False
+        or after.get("on_boot") is not False
     ):
         raise RuntimeError("TERRAFORM_START_BEFORE_VALIDATION_BLOCKED")
+    if (after.get("vm_id"), after.get("name"), after.get("node_name")) != identity:
+        raise RuntimeError("TERRAFORM_PLAN_IDENTITY_MISMATCH")

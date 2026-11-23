@@ -1,9 +1,11 @@
 """Controles de certificación: readiness, listados, PostgreSQL y Terraform."""
 
 import os
+import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -110,34 +112,52 @@ def test_terraform_no_hereda_credenciales_ajenas(monkeypatch):
     assert environment["PATH"] == os.environ["PATH"]
 
 
+@pytest.mark.no_database
 def test_timeout_detiene_el_grupo_de_procesos_completo(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_TERRAFORM_KILL_GRACE_SECONDS", "1")
     child_pid_file = tmp_path / "child.pid"
-    script = (
-        "import subprocess, sys, time;"
-        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']);"
-        f"open({str(child_pid_file)!r}, 'w').write(str(p.pid));"
+    child = (
+        "import os, signal, time; from pathlib import Path;"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+        f"Path({str(child_pid_file)!r}).write_text(str(os.getpid()));"
         "time.sleep(120)"
     )
-    process = subprocess.Popen([sys.executable, "-c", script], start_new_session=True)
-    deadline = time.monotonic() + 10
-    while not child_pid_file.exists() or not child_pid_file.read_text():
-        assert time.monotonic() < deadline
-        time.sleep(0.05)
-    child_pid = int(child_pid_file.read_text())
+    leader = (
+        "import subprocess, sys, time;"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]);"
+        "time.sleep(120)"
+    )
+    process = subprocess.Popen([sys.executable, "-c", leader], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not child_pid_file.exists() or not child_pid_file.read_text():
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        child_pid = int(child_pid_file.read_text())
 
-    worker_main._terminate_process_group(process)
+        worker_main._terminate_process_group(process)
 
-    assert process.poll() is not None
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
+        assert process.poll() is not None
+        stat_path = Path(f"/proc/{child_pid}/stat")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                state = stat_path.read_text().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                break
+            # Un contenedor sin init puede conservar un zombie en /proc,
+            # aunque el proceso ya no ejecute ni pueda mutar recursos.
+            if state in {"Z", "X"}:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("el proceso hijo de Terraform sigue ejecutándose")
+    finally:
         try:
-            os.kill(child_pid, 0)
+            os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
-            break
-        time.sleep(0.05)
-    else:
-        pytest.fail("el proceso hijo de Terraform quedó huérfano")
+            pass
+        process.wait(timeout=5)
 
 
 def test_heartbeat_de_comandos_acotado_y_tolerante(tmp_path, monkeypatch):
