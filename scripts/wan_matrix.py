@@ -33,7 +33,7 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1854,6 +1854,40 @@ print(f"{jobs} {locks}")
             time.sleep(2)
         raise RuntimeError("SERVICE_TIMEOUT")
 
+    def settle_service_cancellation(
+        self, response, item, original_job_id, *, previous_execution_stopped
+    ):
+        status = response.get("status")
+        if status == "cancelled":
+            self.record(
+                "service_recovery_cancelled",
+                case=item.get("name", "unknown"),
+                job_id=original_job_id,
+                previous_execution_stopped=previous_execution_stopped,
+            )
+            return
+        if status != "queued":
+            raise RuntimeError("SERVICE_RECOVERY_CANCEL_FAILED")
+
+        cleanup_job_id = response.get("job_id")
+        if not cleanup_job_id or cleanup_job_id == original_job_id:
+            raise RuntimeError("SERVICE_RECOVERY_CLEANUP_JOB_MISSING")
+        self.wait_service(cleanup_job_id)
+        service_id = item.get("service_id")
+        if service_id:
+            service = self.api(
+                "GET", "/v1/service-instances/" + quote(service_id, safe="")
+            )
+            if service.get("status") != "cancelled":
+                raise RuntimeError("SERVICE_RECOVERY_CLEANUP_NOT_CONFIRMED")
+        self.record(
+            "service_recovery_cleanup_completed",
+            case=item.get("name", "unknown"),
+            job_id=original_job_id,
+            cleanup_job_id=cleanup_job_id,
+            previous_execution_stopped=previous_execution_stopped,
+        )
+
     def settle_service_batch(self, items, timeout=900):
         """Wait for the whole service batch to stop before recovery or deletion."""
 
@@ -1886,12 +1920,10 @@ print(f"{jobs} {locks}")
                     {"previous_execution_stopped": True},
                     key="matrix-recovery-cancel-" + job_id,
                 )
-                if response.get("status") != "cancelled":
-                    raise RuntimeError("SERVICE_RECOVERY_CANCEL_FAILED")
-                self.record(
-                    "service_recovery_cancelled",
-                    case=items_by_job.get(job_id, {}).get("name", "unknown"),
-                    job_id=job_id,
+                self.settle_service_cancellation(
+                    response,
+                    items_by_job.get(job_id, {}),
+                    job_id,
                     previous_execution_stopped=True,
                 )
             elif job["status"] in {"queued", "blocked"}:
@@ -1901,8 +1933,12 @@ print(f"{jobs} {locks}")
                     {},
                     key="matrix-recovery-cancel-" + job_id,
                 )
-                if response.get("status") != "cancelled":
-                    raise RuntimeError("SERVICE_RECOVERY_CANCEL_FAILED")
+                self.settle_service_cancellation(
+                    response,
+                    items_by_job.get(job_id, {}),
+                    job_id,
+                    previous_execution_stopped=False,
+                )
 
     def process_service_batch(self, items):
         failures = []

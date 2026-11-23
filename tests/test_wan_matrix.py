@@ -921,6 +921,71 @@ def test_settle_service_batch_cancels_uncertain_only_after_worker_release():
     assert records[0][1]["case"] == item["name"]
 
 
+def test_settle_service_batch_waits_for_async_cleanup_after_cancel():
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    job_id = "uncertain-service-job"
+    cleanup_job_id = "service-cleanup-job"
+    service_id = "service-test"
+    item = {
+        "job_id": job_id,
+        "name": "kvm-service-nextcloud-001",
+        "service_id": service_id,
+    }
+    calls = []
+    records = []
+
+    def api(method, path, body=None, key=None):
+        calls.append((method, path, body, key))
+        if method == "GET" and path == f"/v1/service-jobs/{job_id}":
+            return {"job_id": job_id, "status": "uncertain", "worker_id": "service-worker-2"}
+        if method == "POST" and path == f"/v1/service-jobs/{job_id}/cancel":
+            return {
+                "job_id": cleanup_job_id,
+                "cancelled_job_id": job_id,
+                "status": "queued",
+            }
+        if method == "GET" and path == f"/v1/service-instances/{service_id}":
+            return {"service_id": service_id, "status": "cancelled"}
+        raise AssertionError(path)
+
+    matrix.api = api
+    matrix.wait_for_service_worker_release = lambda actual_job, worker: calls.append(
+        ("WORKER_RELEASED", actual_job, worker, None)
+    )
+    matrix.wait_service = lambda actual_job: calls.append(
+        ("CLEANUP_JOB_SUCCEEDED", actual_job, None, None)
+    )
+    matrix.record = lambda event, **values: records.append((event, values))
+
+    matrix.settle_service_batch([item])
+
+    assert calls[1] == ("WORKER_RELEASED", job_id, "service-worker-2", None)
+    assert calls[2] == (
+        "POST",
+        f"/v1/service-jobs/{job_id}/cancel",
+        {"previous_execution_stopped": True},
+        f"matrix-recovery-cancel-{job_id}",
+    )
+    assert calls[3] == ("CLEANUP_JOB_SUCCEEDED", cleanup_job_id, None, None)
+    assert calls[4][0:2] == (
+        "GET",
+        f"/v1/service-instances/{service_id}",
+    )
+    assert records == [
+        (
+            "service_recovery_cleanup_completed",
+            {
+                "case": item["name"],
+                "job_id": job_id,
+                "cleanup_job_id": cleanup_job_id,
+                "previous_execution_stopped": True,
+            },
+        )
+    ]
+
+
 def test_failed_service_batch_cleans_every_instance_before_reporting_failure():
     import pytest
 
