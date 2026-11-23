@@ -1188,6 +1188,42 @@ print(f"{jobs} {locks}")
             f"evento golden.observed de {item['image']}/{image['template_vm_id']}; CPU, RAM, disco, firmware, red, QGA y DS_CYBERFUEL verificados",
         )
 
+    def verify_cloud_init(self, item):
+        """Comprueba Cloud-Init por un canal permitido por la política de imagen."""
+
+        if item["image"] in EXPECTED_ALMALINUX_IMAGES:
+            # SELinux confina qemu-ga en AlmaLinux. Permite el helper fijo y
+            # validado que usa binding(), pero bloquea comandos arbitrarios.
+            # Consultar Cloud-Init después de fijar la clave del host por SSH y
+            # autenticar con la llave y la contraseña configuradas.
+            output = self.ssh(
+                item,
+                [
+                    "sh",
+                    "-c",
+                    "/usr/bin/cloud-init status --long --format json; "
+                    "result=$?; test \"$result\" -eq 0 || test \"$result\" -eq 2",
+                ],
+                timeout=60,
+            )
+            channel = "SSH autenticado; Guest Agent confinado por SELinux"
+        else:
+            output = self.qga(
+                item["vmid"],
+                ["/usr/bin/cloud-init", "status", "--long", "--format", "json"],
+                allowed_exitcodes=(0, 2),
+            )
+            channel = "Guest Agent"
+        cloud = json.loads(output)
+        assert cloud.get("status") == "done" and cloud.get("errors") == [], (
+            "CLOUD_INIT_NOT_COMPLETE"
+        )
+        self.check(
+            item,
+            "A04",
+            f"Cloud-Init informa done sin errores mediante {channel}",
+        )
+
     def reject_ssh_password(self, item, password):
         args = [
             "ssh",
@@ -1718,18 +1754,6 @@ print(f"{jobs} {locks}")
         assert self.vmid_range[0] <= item["vmid"] <= self.vmid_range[1]
         self.hardware(item, instance)
         self.check(item, "A06", "la API publica estado READY, nodo mng01 e instancia encendida")
-        if item["image"] == "fedora-45":
-            self.check(item, "A04", "la clave configurada por Cloud-Init autentica por SSH; SELinux restringe cloud-init status vía Guest Agent")
-        else:
-            cloud = json.loads(
-                self.qga(
-                    item["vmid"],
-                    ["/usr/bin/cloud-init", "status", "--long", "--format", "json"],
-                    allowed_exitcodes=(0, 2),
-                )
-            )
-            assert cloud.get("status") == "done" and cloud.get("errors") == [], "CLOUD_INIT_NOT_COMPLETE"
-            self.check(item, "A04", "Cloud-Init informa done sin errores mediante Guest Agent")
         allocation = instance["network_allocation"]
         if self.profile == "prod_static":
             assert (
@@ -1773,6 +1797,10 @@ print(f"{jobs} {locks}")
             == item["name"]
         )
         self.check(item, "B02", "autenticación SSH con la credencial de root configurada")
+        if item["image"] == "fedora-45":
+            self.check(item, "A04", "la clave configurada por Cloud-Init autentica por SSH; SELinux restringe cloud-init status vía Guest Agent")
+        else:
+            self.verify_cloud_init(item)
         assert self.reject_ssh_password(item, item["password"] + "X"), "SSH_INVALID_PASSWORD_ACCEPTED"
         self.check(item, "B03", "SSH rechaza una credencial incorrecta")
         self.ssh(

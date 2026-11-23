@@ -728,6 +728,80 @@ def test_almalinux_matrix_pins_key_through_validated_helper(tmp_path):
         matrix.binding(item)
 
 
+@pytest.mark.parametrize("image", ["almalinux-9", "almalinux-10"])
+def test_almalinux_cloud_init_status_uses_authenticated_ssh_not_qga(image):
+    import json
+
+    matrix = object.__new__(Matrix)
+    commands = []
+    checks = []
+
+    def ssh(_item, argv, **kwargs):
+        commands.append((argv, kwargs))
+        return json.dumps({"status": "done", "errors": []})
+
+    matrix.ssh = ssh
+    matrix.qga = lambda *_args, **_kwargs: pytest.fail(
+        "AlmaLinux cloud-init status must not execute through Guest Agent"
+    )
+    matrix.check = lambda item, check_id, evidence: checks.append(
+        (item["name"], check_id, evidence)
+    )
+
+    matrix.verify_cloud_init({"name": "kvm-prueba-013", "image": image})
+
+    assert len(commands) == 1
+    argv, kwargs = commands[0]
+    assert argv[:2] == ["sh", "-c"]
+    assert "/usr/bin/cloud-init status --long --format json" in argv[2]
+    assert kwargs == {"timeout": 60}
+    assert checks[0][1] == "A04"
+    assert "SSH autenticado" in checks[0][2]
+    assert "SELinux" in checks[0][2]
+
+
+def test_almalinux_cloud_init_still_rejects_errors_reported_over_ssh():
+    import json
+
+    matrix = object.__new__(Matrix)
+    matrix.ssh = lambda *_args, **_kwargs: json.dumps(
+        {"status": "error", "errors": ["cloud-init module failed"]}
+    )
+    matrix.qga = lambda *_args, **_kwargs: pytest.fail(
+        "AlmaLinux cloud-init status must not execute through Guest Agent"
+    )
+    matrix.check = lambda *_args, **_kwargs: pytest.fail(
+        "Failed cloud-init must not record a passing check"
+    )
+
+    with pytest.raises(AssertionError, match="CLOUD_INIT_NOT_COMPLETE"):
+        matrix.verify_cloud_init({"name": "kvm-prueba-013", "image": "almalinux-9"})
+
+
+def test_ubuntu_cloud_init_status_remains_on_guest_agent():
+    import json
+
+    matrix = object.__new__(Matrix)
+    calls = []
+    matrix.qga = lambda vmid, argv, **kwargs: calls.append(
+        (vmid, argv, kwargs)
+    ) or json.dumps({"status": "done", "errors": []})
+    matrix.ssh = lambda *_args, **_kwargs: pytest.fail(
+        "Ubuntu cloud-init status remains checked through Guest Agent"
+    )
+    matrix.check = lambda *_args, **_kwargs: None
+
+    matrix.verify_cloud_init({"name": "kvm-prueba-013", "image": "ubuntu-2404", "vmid": 40013})
+
+    assert calls == [
+        (
+            40013,
+            ["/usr/bin/cloud-init", "status", "--long", "--format", "json"],
+            {"allowed_exitcodes": (0, 2)},
+        )
+    ]
+
+
 def test_wait_service_retries_known_startup_failure_after_worker_release(monkeypatch):
     import scripts.wan_matrix as wan_matrix
 

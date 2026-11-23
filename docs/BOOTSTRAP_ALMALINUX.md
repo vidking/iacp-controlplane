@@ -57,6 +57,16 @@ La clave SSH se obtiene por el canal Proxmox autenticado y se contrasta con MAC,
 VMID, nombre, pool e IP observada. Las recetas Ansible posteriores mantienen
 SELinux y emplean etiquetas de bind mounts compatibles.
 
+## Validación de Cloud-Init en la matriz WAN
+
+La matriz comprueba identidad y clave pública del host mediante el helper fijo
+del Guest Agent. No debe invocar `cloud-init status` mediante QGA: SELinux
+confinó ese canal de forma intencional. Después de fijar la clave SSH del host y
+autenticar con la llave y la contraseña configuradas, el harness consulta
+`cloud-init status --long --format json` por SSH y exige estado `done` sin
+errores. Esta comprobación conserva la cobertura sin debilitar SELinux ni la
+validación del helper.
+
 ## Preparación verificada en MNG — 2026-11-17
 
 Con autorización explícita se prepararon copias completas en `mng01`:
