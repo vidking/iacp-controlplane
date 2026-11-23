@@ -9,6 +9,10 @@ from scripts.wan_matrix import (
     matrix_netbox_tags,
     matrix_runtime,
     nextcloud_request_token,
+    production_matrix_category_allowed,
+    production_service_batches,
+    production_service_matrix,
+    production_service_pilot_indexes,
     require_kvm_capacity,
     require_four_idle_service_workers,
     required_cycles,
@@ -77,6 +81,45 @@ def test_service_certification_exact_cases_are_eight_unique_ubuntu_services():
         for product in ("n8n", "nextcloud")
         for plan in range(1, 5)
     ]
+
+
+def test_production_full_service_matrix_keeps_all_16_cases_and_both_controls():
+    matrix = production_service_matrix(["ubuntu-2404"], full_matrix=True)
+    main = [case for case in matrix if not case["control"]]
+    controls = [case for case in matrix if case["control"]]
+    assert len(main) == 16 and len(controls) == 2
+    assert sum(case["product"] == "n8n" for case in main) == 8
+    assert sum(case["product"] == "nextcloud" for case in main) == 8
+    assert all(case["image"] == "ubuntu-2404" for case in matrix)
+    assert {case["product"] for case in controls} == {"n8n", "nextcloud"}
+    assert all(case["client_ssh_key"] is False for case in controls)
+    pilot_indexes = production_service_pilot_indexes(matrix)
+    assert len({matrix[index]["product"] for index in pilot_indexes}) == 2
+    batches = production_service_batches(matrix)
+    assert [len(batch) for batch in batches] == [1, 1, 6, 6, 4]
+    covered_indexes = sorted(index for batch in batches for index, _case in batch)
+    assert covered_indexes == list(range(18))
+    assert sum(bool(case.get("pilot")) for batch in batches for _, case in batch) == 2
+
+
+def test_production_scoped_service_matrix_remains_eight_cases_without_controls():
+    matrix = production_service_matrix(["ubuntu-2404"], full_matrix=False)
+    assert len(matrix) == 8
+    assert not any(case["control"] for case in matrix)
+    pilot_indexes = production_service_pilot_indexes(matrix)
+    assert len({matrix[index]["product"] for index in pilot_indexes}) == 2
+
+
+def test_production_service_matrix_rejects_other_images():
+    with pytest.raises(ValueError, match="PRODUCTION_MATRIX_REQUIRES_UBUNTU_2404"):
+        production_service_matrix(["almalinux-9"], full_matrix=True)
+
+
+def test_production_kvm_scope_is_read_only_preflight_only():
+    assert production_matrix_category_allowed("services", preflight_only=False)
+    assert production_matrix_category_allowed("kvm", preflight_only=True)
+    assert not production_matrix_category_allowed("kvm", preflight_only=False)
+    assert not production_matrix_category_allowed("agents", preflight_only=True)
 
 
 def test_fedora_kvm_matrix_repeats_four_plans_across_six_worker_batches():

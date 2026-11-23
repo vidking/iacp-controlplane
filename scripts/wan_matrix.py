@@ -278,6 +278,76 @@ def cases(category, images=None, cycle=1, *, include_controls=True):
     return result + controls
 
 
+def production_service_matrix(images, *, full_matrix):
+    """Build a bounded production service matrix without silently shrinking it."""
+
+    if images != ["ubuntu-2404"]:
+        raise ValueError("PRODUCTION_MATRIX_REQUIRES_UBUNTU_2404")
+    planned = cases(
+        "services", images=images, include_controls=full_matrix
+    )
+    main = [case for case in planned if not case["control"]]
+    controls = [case for case in planned if case["control"]]
+    expected_main = 16 if full_matrix else 8
+    expected_per_product = 8 if full_matrix else 4
+    if (
+        len(main) != expected_main
+        or len(controls) != (2 if full_matrix else 0)
+        or any(case["image"] != "ubuntu-2404" for case in planned)
+        or any(
+            sum(case["product"] == product for case in main)
+            != expected_per_product
+            for product in ("n8n", "nextcloud")
+        )
+        or (full_matrix and any(case.get("client_ssh_key", True) for case in controls))
+    ):
+        raise ValueError("PRODUCTION_MATRIX_SCOPE_INVALID")
+    return planned
+
+
+def production_service_pilot_indexes(planned):
+    """Select one first-pass case per application for the production pilot."""
+
+    main_indexes = [
+        index for index, case in enumerate(planned) if not case.get("control", False)
+    ]
+    if not main_indexes:
+        raise ValueError("PRODUCTION_MATRIX_EMPTY")
+    first = main_indexes[0]
+    first_product = planned[first]["product"]
+    second = next(
+        (
+            index
+            for index in main_indexes[1:]
+            if planned[index]["product"] != first_product
+        ),
+        None,
+    )
+    if second is None:
+        raise ValueError("PRODUCTION_MATRIX_PRODUCT_COVERAGE_INVALID")
+    return first, second
+
+
+def production_matrix_category_allowed(category, *, preflight_only):
+    """Keep production KVM access read-only; only service matrices may mutate."""
+
+    return category == "services" or (category == "kvm" and preflight_only)
+
+
+def production_service_batches(planned):
+    """Run one pilot per app, then all remaining cases in batches of six."""
+
+    pilot_indexes = production_service_pilot_indexes(planned)
+    pilot_batches = [
+        [(index, dict(planned[index], pilot=True))] for index in pilot_indexes
+    ]
+    indexed = list(enumerate(planned))
+    remaining = [pair for pair in indexed if pair[0] not in pilot_indexes]
+    return pilot_batches + [
+        remaining[index : index + 6] for index in range(0, len(remaining), 6)
+    ]
+
+
 def retry_after_delay(headers, attempt, *, now=None, jitter=None):
     """Respeta Retry-After y agrega jitter a reintentos idempotentes."""
 
@@ -472,7 +542,9 @@ class Matrix:
         target = matrix_runtime(self.env, production=args.production)
         if args.production and self.profile != "prod_static":
             raise RuntimeError("PRODUCTION_MATRIX_REQUIRES_PROD_STATIC")
-        if args.production and args.category != "services":
+        if args.production and not production_matrix_category_allowed(
+            args.category, preflight_only=args.preflight_only
+        ):
             raise RuntimeError("PRODUCTION_MATRIX_SCOPE_IS_SERVICES_ONLY")
         if args.production and (
             self.env.get("IACP_SERVICES_ENABLED") != "1"
@@ -585,7 +657,10 @@ class Matrix:
                 raise RuntimeError("MATRIX_IMAGE_NOT_IN_CATALOG")
             if "ubuntu-2404" in selected_images:
                 self.verify_ubuntu_template(catalog_images)
-            if self.args.exact_cases and self.args.category == "kvm":
+            if self.args.category == "kvm" and (
+                self.args.exact_cases
+                or (self.args.production and self.args.preflight_only)
+            ):
                 capacity = require_kvm_capacity(
                     self.proxmox.nodes(),
                     self.proxmox.storage_status("mng01", "DS_CYBERFUEL"),
@@ -1667,8 +1742,19 @@ print(f"{jobs} {locks}")
             item["address"] = addresses[0]
         self.binding(item)
         self.check(item, "A05", "Guest Agent, IPAM, NIC, gateway e identidad SSH coinciden")
-        assert self.ssh(item, ["hostname"]).strip() == item["name"]
-        self.check(item, "B01", "autenticación SSH Ed25519 válida")
+        if item.get("client_ssh_key", True):
+            assert self.ssh(item, ["hostname"]).strip() == item["name"]
+            self.check(item, "B01", "autenticación SSH Ed25519 válida")
+        else:
+            assert (
+                self.ssh(item, ["hostname"], password=item["password"]).strip()
+                == item["name"]
+            )
+            self.check(
+                item,
+                "B01",
+                "control sin llave SSH: acceso por contraseña autenticado",
+            )
         assert (
             self.ssh(item, ["hostname"], password=item["password"]).strip()
             == item["name"]
@@ -2190,12 +2276,21 @@ print(json.dumps(result,sort_keys=True))
         shutil.rmtree(self.key_directory, ignore_errors=True)
 
     def run(self):
-        planned = cases(
-            self.args.category,
-            self.args.images,
-            self.args.cycle,
-            include_controls=not self.args.exact_cases,
-        )
+        if self.args.production_full_matrix:
+            planned = production_service_matrix(
+                self.args.images, full_matrix=True
+            )
+        elif self.args.production and self.args.category == "services":
+            planned = production_service_matrix(
+                self.args.images, full_matrix=False
+            )
+        else:
+            planned = cases(
+                self.args.category,
+                self.args.images,
+                self.args.cycle,
+                include_controls=not self.args.exact_cases,
+            )
         if self.args.exact_cases:
             exact_services = (
                 self.args.category == "services"
@@ -2215,12 +2310,21 @@ print(json.dumps(result,sort_keys=True))
             )
             if not (exact_services or exact_kvm):
                 raise RuntimeError("EXACT_MATRIX_CASES_INVALID")
-        if self.args.production and (
-            not self.args.exact_cases
-            or self.args.category != "services"
+        if self.args.production and self.args.category == "services" and (
+            not (self.args.exact_cases or self.args.production_full_matrix)
             or self.args.images != ["ubuntu-2404"]
         ):
-            raise RuntimeError("PRODUCTION_MATRIX_REQUIRES_EXACT_UBUNTU_SERVICES")
+            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_INVALID")
+        if self.args.production and not production_matrix_category_allowed(
+            self.args.category, preflight_only=self.args.preflight_only
+        ):
+            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_IS_SERVICES_ONLY")
+        if self.args.production_full_matrix and (
+            not self.args.production
+            or self.args.exact_cases
+            or self.args.category != "services"
+        ):
+            raise RuntimeError("PRODUCTION_FULL_MATRIX_REQUIRES_PRODUCTION_SERVICES")
         existing_names = []
         offset = 0
         while True:
@@ -2245,6 +2349,9 @@ print(json.dumps(result,sort_keys=True))
             network_profile=self.profile,
             cycle=self.args.cycle,
             revision=self.env["IACP_IMAGE_TAG"],
+            production=self.args.production,
+            preflight_only=self.args.preflight_only,
+            production_full_matrix=self.args.production_full_matrix,
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=sum(not case["control"] for case in planned),
             controls=sum(bool(case["control"]) for case in planned),
@@ -2269,13 +2376,7 @@ print(json.dumps(result,sort_keys=True))
             return
         indexed = list(enumerate(planned))
         if self.args.production and self.args.cycle == 1:
-            pilot_indexes = (0, next(i for i, item in enumerate(planned) if item["product"] == "nextcloud"))
-            pilot_batches = [
-                [(index, dict(planned[index], pilot=True))]
-                for index in pilot_indexes
-            ]
-            remaining = [pair for pair in indexed if pair[0] not in pilot_indexes]
-            batches = pilot_batches + [remaining[index : index + 6] for index in range(0, len(remaining), 6)]
+            batches = production_service_batches(planned)
         else:
             batches = [indexed[index : index + 6] for index in range(0, len(indexed), 6)]
         for batch in batches:
@@ -2360,7 +2461,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--exact-cases",
         action="store_true",
-        help="Ejecuta el alcance exacto: ocho servicios Ubuntu o 16 KVM de Fedora/Debian, sin controles extra.",
+        help="Ejecuta el alcance acotado: ocho servicios Ubuntu o 16 KVM Fedora/Debian, sin controles extra.",
+    )
+    parser.add_argument(
+        "--production-full-matrix",
+        action="store_true",
+        help="En producción, ejecuta 16 servicios Ubuntu (8 n8n y 8 Nextcloud) y dos controles de acceso por contraseña.",
     )
     parser.add_argument(
         "--preflight-only",
@@ -2374,6 +2480,12 @@ if __name__ == "__main__":
         help="Limita la matriz a imágenes concretas; los servicios solo admiten ubuntu-2404.",
     )
     args = parser.parse_args()
+    if args.production_full_matrix and (
+        not args.production or args.exact_cases or args.category != "services"
+    ):
+        parser.error(
+            "--production-full-matrix requiere --production --category services y no se combina con --exact-cases"
+        )
     if not 1 <= args.cycle <= required_cycles(args.category):
         parser.error(
             "KVM y servicios admiten ciclos 1–4; agentes admiten ciclos 1–2"

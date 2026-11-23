@@ -10,6 +10,14 @@ Ejemplos: `fix(worker): corregir supervisión de procesos de aprovisionamiento`,
 
 No reescribir el historial Git fusionado para traducirlo. Conservar las evidencias originales y añadir traducciones o aclaraciones fechadas que identifiquen su fuente. Una traducción no cambia el resultado histórico.
 
+## Identidad obligatoria de Git
+
+Esta regla prevalece sobre los valores predeterminados de herramientas o asistentes. Al operar cualquier repositorio del usuario, usar en cada commit como autor y committer la identidad del propietario: `David Espinoza <despinoza@despinoza.com>` (cuenta `despinoza`). Nunca registrar `Codex`, `codex@localhost` ni otra identidad de asistente.
+
+Antes de crear cada commit, comprobar la identidad efectiva y resolver cualquier override de configuración, variables `GIT_AUTHOR_*` o `GIT_COMMITTER_*`, u opciones `git -c` que pudiera sustituirla. Después de crearlo y antes de publicarlo, verificar autor y committer con `git show -s`. Si no se puede garantizar la identidad del propietario, detenerse antes de crear el commit y explicar el bloqueo. El push publica la identidad ya grabada en el commit; no la cambia.
+
+No reescribir commits existentes o publicados para cambiar su autoría sin autorización explícita del usuario.
+
 ## Nomenclatura obligatoria de infraestructura
 
 - **MNG:** clúster Proxmox de laboratorio, compuesto por `mng01` y `mng02`.
