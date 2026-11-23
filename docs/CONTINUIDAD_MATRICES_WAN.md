@@ -470,3 +470,23 @@ La política `.10`–`.250` quedó implementada localmente. `tests/test_netbox.p
 `79e9d51431f9f6233cff529de2c94c95fe204d60`; preflight, inventory y verify de la
 revisión activa dieron PASS con evidencias privadas bajo
 `/opt/iacp/evidence/`. La política local aún no está desplegada.
+
+### Alcance autorizado para la API de producción — 2026-11-23
+
+El usuario autorizó ejecutar en `iac.cyberfuel.com` las matrices WAN completas
+después de verificar el candidato en Dev. Los recursos físicos de ensayo se
+crean en el clúster MNG, nodo `mng01`, con perfil `prod_static` e IPAM NetBox;
+Platinum/PRX no forma parte de estos ensayos. `scripts/wan_matrix.py` mantiene
+KVM productivo bloqueado por defecto y requiere `--production-full-kvm-matrix`
+para cada ciclo completo. Los ciclos 1 y 2 cubren las 48 combinaciones
+solicitadas (seis imágenes, cuatro planes, dos ciclos). La matriz de servicios
+usa `--production-full-matrix` para los 16 casos de Ubuntu 24.04 y dos controles
+de autenticación.
+
+Antes de cada inyección, los seis workers de infraestructura y los cuatro de
+servicios deben estar sanos, idle y con heartbeat reciente; no puede haber
+operaciones inciertas, trabajos activos ni locks. Los lotes KVM conservan seis
+aprovisionamientos simultáneos. La autorización amplía el alcance de ensayo de
+la API productiva y no autoriza cambios en Platinum/PRX. Los resultados se
+registran con el digest del runtime y el hash del harness; no declarar PASS
+antes de cerrar todos los casos y verificar limpieza/IPAM.

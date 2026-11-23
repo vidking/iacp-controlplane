@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Matriz física de red para servicios; producción requiere --production explícito.
+"""Matriz WAN KVM y servicios; producción requiere una autorización explícita.
 
 La evidencia no contiene credenciales ni salidas de aplicación sin filtrar.
 """
@@ -342,10 +342,14 @@ def production_service_pilot_indexes(planned):
     return first, second
 
 
-def production_matrix_category_allowed(category, *, preflight_only):
-    """Keep production KVM access read-only; only service matrices may mutate."""
+def production_matrix_category_allowed(
+    category, *, preflight_only, full_kvm_matrix=False
+):
+    """Autoriza KVM productivo solo con la opción explícita de matriz completa."""
 
-    return category == "services" or (category == "kvm" and preflight_only)
+    return category == "services" or (
+        category == "kvm" and (preflight_only or full_kvm_matrix)
+    )
 
 
 def production_service_batches(planned):
@@ -557,9 +561,11 @@ class Matrix:
         if args.production and self.profile != "prod_static":
             raise RuntimeError("PRODUCTION_MATRIX_REQUIRES_PROD_STATIC")
         if args.production and not production_matrix_category_allowed(
-            args.category, preflight_only=args.preflight_only
+            args.category,
+            preflight_only=args.preflight_only,
+            full_kvm_matrix=getattr(args, "production_full_kvm_matrix", False),
         ):
-            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_IS_SERVICES_ONLY")
+            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_NOT_AUTHORIZED")
         if args.production and (
             self.env.get("IACP_SERVICES_ENABLED") != "1"
             or self.env.get("IACP_SERVICE_EXECUTION_ENABLED") != "1"
@@ -2357,15 +2363,25 @@ print(json.dumps(result,sort_keys=True))
         ):
             raise RuntimeError("PRODUCTION_MATRIX_SCOPE_INVALID")
         if self.args.production and not production_matrix_category_allowed(
-            self.args.category, preflight_only=self.args.preflight_only
+            self.args.category,
+            preflight_only=self.args.preflight_only,
+            full_kvm_matrix=getattr(self.args, "production_full_kvm_matrix", False),
         ):
-            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_IS_SERVICES_ONLY")
+            raise RuntimeError("PRODUCTION_MATRIX_SCOPE_NOT_AUTHORIZED")
         if self.args.production_full_matrix and (
             not self.args.production
             or self.args.exact_cases
             or self.args.category != "services"
         ):
             raise RuntimeError("PRODUCTION_FULL_MATRIX_REQUIRES_PRODUCTION_SERVICES")
+        if getattr(self.args, "production_full_kvm_matrix", False) and (
+            not self.args.production
+            or self.args.exact_cases
+            or self.args.category != "kvm"
+            or self.args.images is not None
+            or self.args.cycle not in {1, 2}
+        ):
+            raise RuntimeError("PRODUCTION_FULL_KVM_MATRIX_REQUIRES_CYCLES_1_2_ALL_IMAGES")
         existing_names = []
         offset = 0
         while True:
@@ -2393,6 +2409,9 @@ print(json.dumps(result,sort_keys=True))
             production=self.args.production,
             preflight_only=self.args.preflight_only,
             production_full_matrix=self.args.production_full_matrix,
+            production_full_kvm_matrix=getattr(
+                self.args, "production_full_kvm_matrix", False
+            ),
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=sum(not case["control"] for case in planned),
             controls=sum(bool(case["control"]) for case in planned),
@@ -2416,7 +2435,11 @@ print(json.dumps(result,sort_keys=True))
             )
             return
         indexed = list(enumerate(planned))
-        if self.args.production and self.args.cycle == 1:
+        if (
+            self.args.production
+            and self.args.category == "services"
+            and self.args.cycle == 1
+        ):
             batches = production_service_batches(planned)
         else:
             batches = [indexed[index : index + 6] for index in range(0, len(indexed), 6)]
@@ -2510,6 +2533,14 @@ if __name__ == "__main__":
         help="En producción, ejecuta 16 servicios Ubuntu (8 n8n y 8 Nextcloud) y dos controles de acceso por contraseña.",
     )
     parser.add_argument(
+        "--production-full-kvm-matrix",
+        action="store_true",
+        help=(
+            "Autoriza un ciclo KVM productivo con las seis imágenes y cuatro planes "
+            "(24 casos); ejecutar ciclos 1 y 2 para completar los 48 casos."
+        ),
+    )
+    parser.add_argument(
         "--preflight-only",
         action="store_true",
         help="Comprueba stack, seis workers, servicios, catálogo, MNG, WAN e IPAM sin crear recursos.",
@@ -2526,6 +2557,16 @@ if __name__ == "__main__":
     ):
         parser.error(
             "--production-full-matrix requiere --production --category services y no se combina con --exact-cases"
+        )
+    if args.production_full_kvm_matrix and (
+        not args.production
+        or args.exact_cases
+        or args.category != "kvm"
+        or args.images is not None
+        or args.cycle not in {1, 2}
+    ):
+        parser.error(
+            "--production-full-kvm-matrix requiere --production --category kvm, todas las imágenes y ciclo 1 o 2"
         )
     if not 1 <= args.cycle <= required_cycles(args.category):
         parser.error(

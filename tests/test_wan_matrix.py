@@ -116,11 +116,17 @@ def test_production_service_matrix_rejects_other_images():
         production_service_matrix(["almalinux-9"], full_matrix=True)
 
 
-def test_production_kvm_scope_is_read_only_preflight_only():
+def test_production_kvm_scope_requires_explicit_full_matrix_authorization():
     assert production_matrix_category_allowed("services", preflight_only=False)
     assert production_matrix_category_allowed("kvm", preflight_only=True)
     assert not production_matrix_category_allowed("kvm", preflight_only=False)
+    assert production_matrix_category_allowed(
+        "kvm", preflight_only=False, full_kvm_matrix=True
+    )
     assert not production_matrix_category_allowed("agents", preflight_only=True)
+    assert not production_matrix_category_allowed(
+        "agents", preflight_only=False, full_kvm_matrix=True
+    )
 
 
 def test_kvm_capacity_preflight_uses_the_selected_six_image_catalog():
