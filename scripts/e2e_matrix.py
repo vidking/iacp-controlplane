@@ -12,12 +12,14 @@ import concurrent.futures
 import ipaddress
 import json
 import os
+import random
 import re
 import secrets
 import subprocess
 import sys
 import tempfile
 import time
+from email.utils import parsedate_to_datetime
 from threading import Event, Lock, Thread
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -158,6 +160,10 @@ _RUN_INSTANCE_IDS: set[str] = set()
 _RUN_INSTANCE_IDS_LOCK = Lock()
 _LIVE_IPS: dict[str, str] = {}
 _LIVE_IPS_LOCK = Lock()
+_API_REQUEST_LOCK = Lock()
+_API_LAST_REQUEST = 0.0
+_API_RETRIES: list[dict] = []
+_API_RETRIES_LOCK = Lock()
 _CONTENTION = Event()
 _CONTENTION_DETAILS: list[str] = []
 _CONTENTION_LOCK = Lock()
@@ -366,6 +372,39 @@ def _json_body(raw: bytes) -> object:
         return raw[:500].decode("utf-8", errors="replace")
 
 
+def _retry_after_delay(headers, attempt: int) -> float:
+    """Respeta Retry-After; si falta, aplica backoff exponencial con jitter."""
+
+    fallback = float(2**attempt)
+    raw = headers.get("Retry-After") if headers else None
+    delay = fallback
+    if raw:
+        try:
+            delay = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(str(raw))
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                delay = fallback
+    return delay + random.random() * min(0.5, max(0.05, delay * 0.1))
+
+
+def _record_api_retry(method: str, url: str, attempt: int, delay: float, retry_after: str | None) -> None:
+    entry = {
+        "method": method.upper(),
+        "endpoint": urlsplit(url).path,
+        "status": 429,
+        "attempt": attempt,
+        "delay_seconds": round(delay, 3),
+        "retry_after": retry_after,
+    }
+    with _API_RETRIES_LOCK:
+        _API_RETRIES.append(entry)
+
+
 def http_json(
     method: str,
     url: str,
@@ -379,20 +418,35 @@ def http_json(
     if body is not None:
         data = json.dumps(body, separators=(",", ":")).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
-    request = Request(url, data=data, headers=request_headers, method=method)
-    try:
-        with build_opener().open(request, timeout=timeout) as response:
-            return response.status, _json_body(response.read())
-    except HTTPError as error:
-        payload = _json_body(error.read())
-        detail = payload.get("detail") if isinstance(payload, dict) else payload
-        raise E2EError(
-            f"HTTP {error.code} {method} {url}: {redact(detail)}",
-            status=error.code,
-            body=payload,
-        ) from error
-    except (URLError, TimeoutError) as error:
-        raise E2EError(f"HTTP {method} {url}: {redact(error)}") from error
+    retryable = method.upper() == "GET" or bool(request_headers.get("Idempotency-Key"))
+    attempts = 4 if retryable else 1
+    global _API_LAST_REQUEST
+    for attempt in range(attempts):
+        with _API_REQUEST_LOCK:
+            time.sleep(max(0.0, 0.25 - (time.monotonic() - _API_LAST_REQUEST)))
+            _API_LAST_REQUEST = time.monotonic()
+        request = Request(url, data=data, headers=request_headers, method=method)
+        try:
+            with build_opener().open(request, timeout=timeout) as response:
+                return response.status, _json_body(response.read())
+        except HTTPError as error:
+            if error.code == 429 and retryable and attempt + 1 < attempts:
+                retry_after = error.headers.get("Retry-After") if error.headers else None
+                delay = _retry_after_delay(error.headers, attempt)
+                _record_api_retry(method, url, attempt + 1, delay, retry_after)
+                error.close()
+                time.sleep(delay)
+                continue
+            payload = _json_body(error.read())
+            detail = payload.get("detail") if isinstance(payload, dict) else payload
+            raise E2EError(
+                f"HTTP {error.code} {method} {url}: {redact(detail)}",
+                status=error.code,
+                body=payload,
+            ) from error
+        except (URLError, TimeoutError) as error:
+            raise E2EError(f"HTTP {method} {url}: {redact(error)}") from error
+    raise E2EError(f"HTTP 429 {method} {url}: se agotaron los reintentos idempotentes")
 
 
 def api(
@@ -743,6 +797,13 @@ def cleanup(instance_id: str | None, label: str) -> str:
         node = str(current.get("node") or "mng01")
         if current.get("status") == "deleted":
             vmid = current.get("vmid")
+            latest = current.get("latest_operation") or {}
+            if vmid is not None and latest.get("command") == "destroy" and latest.get("operation_id"):
+                verification = verify_destroy_result(
+                    instance_id, int(vmid), node, str(latest["operation_id"])
+                )
+                release_live_ip(instance_id)
+                return f"already-deleted:{verification}"
             if vmid is not None and vm_exists(int(vmid), node):
                 return "cleanup-failed: VM física presente tras estado deleted"
             release_live_ip(instance_id)
@@ -777,10 +838,13 @@ def cleanup(instance_id: str | None, label: str) -> str:
         if final.get("status") != "deleted":
             raise E2EError(f"cleanup no dejó la instancia eliminada: {redact(final)}")
         node = str(final.get("node") or node)
-        if vmid is not None and vm_exists(int(vmid), node):
-            raise E2EError(f"cleanup dejó VMID {vmid} presente en Proxmox")
+        verification = None
+        if vmid is not None:
+            verification = verify_destroy_result(
+                instance_id, int(vmid), node, operation_id(destroy)
+            )
         release_live_ip(instance_id)
-        return "destroyed"
+        return f"destroyed:{verification}" if verification else "destroyed"
     except Exception as error:
         print(f"CLEANUP {label}: {redact(error)}", flush=True)
         return "cleanup-failed"
@@ -1137,6 +1201,8 @@ def validate_catalog() -> None:
 def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
     if EVIDENCE_FILE is None:
         return
+    with _API_RETRIES_LOCK:
+        api_retries = list(_API_RETRIES)
     report = {
         "run_id": RUN_ID,
         "base_url": BASE_URL,
@@ -1151,6 +1217,7 @@ def write_evidence(results: list[dict], metrics: dict, outcome: str) -> None:
         "network_profile": NETWORK_PROFILE,
         "outcome": outcome,
         "metrics": metrics,
+        "api_retries": api_retries,
         "contention_details": list(_CONTENTION_DETAILS),
         "results": results,
     }
@@ -1214,6 +1281,7 @@ def main() -> int:
     failed = len(results) - passed
     print(f"SUMMARY total={len(results)} passed={passed} failed={failed}", flush=True)
     print_matrix_metrics(results, time.monotonic() - matrix_started)
+    print(f"HTTP429_RETRIES total={len(_API_RETRIES)}", flush=True)
     if passed == len(cases) and not _CONTENTION.is_set() and telemetry["peak_test_busy_workers"] >= 6:
         try:
             require_idle_runtime()

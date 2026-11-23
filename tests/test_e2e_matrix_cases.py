@@ -1,6 +1,10 @@
 """Cobertura de la matriz física KVM: imágenes × planes × modos de acceso."""
 
+import io
 from collections import Counter
+from email.message import Message
+from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
@@ -135,3 +139,141 @@ def test_filtro_rechaza_imagenes_no_publicadas(monkeypatch):
     monkeypatch.setenv("IACP_E2E_IMAGES", "almalinux-9,centos-7")
     with pytest.raises(e2e_matrix.E2EError, match="no publicadas"):
         e2e_matrix.build_matrix_cases()
+
+
+def test_http_json_reintenta_429_en_lecturas_idempotentes(monkeypatch):
+    attempts = []
+    headers = Message()
+    headers["Retry-After"] = "0"
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ready":true}'
+
+    def open_request(_request, timeout):
+        assert timeout == 30
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise HTTPError("https://dev.example/v1/workers", 429, "Too Many Requests", headers, io.BytesIO(b"{}"))
+        return Response()
+
+    monkeypatch.setattr(e2e_matrix, "build_opener", lambda: SimpleNamespace(open=open_request))
+    monkeypatch.setattr(e2e_matrix, "_API_LAST_REQUEST", 0.0)
+    monkeypatch.setattr(e2e_matrix.time, "sleep", lambda _delay: None)
+    retries = []
+    monkeypatch.setattr(e2e_matrix, "_API_RETRIES", retries)
+
+    status, payload = e2e_matrix.http_json("GET", "https://dev.example/v1/workers")
+
+    assert status == 200
+    assert payload == {"ready": True}
+    assert len(attempts) == 2
+    assert retries[-1]["endpoint"] == "/v1/workers"
+    assert retries[-1]["retry_after"] == "0"
+
+
+def test_http_json_no_reintenta_mutacion_sin_idempotency_key(monkeypatch):
+    attempts = []
+
+    def open_request(_request, timeout):
+        attempts.append(1)
+        raise HTTPError(
+            "https://dev.example/v1/instances",
+            429,
+            "Too Many Requests",
+            Message(),
+            io.BytesIO(b'{"detail":"busy"}'),
+        )
+
+    monkeypatch.setattr(e2e_matrix, "build_opener", lambda: SimpleNamespace(open=open_request))
+    monkeypatch.setattr(e2e_matrix, "_API_LAST_REQUEST", 0.0)
+    monkeypatch.setattr(e2e_matrix.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(e2e_matrix.E2EError) as error:
+        e2e_matrix.http_json("POST", "https://dev.example/v1/instances", body={"name": "vm"})
+
+    assert error.value.status == 429
+    assert len(attempts) == 1
+
+
+def test_http_json_reintenta_mutacion_con_idempotency_key(monkeypatch):
+    attempts = []
+    headers = Message()
+    headers["Retry-After"] = "0"
+
+    class Response:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"operation_id":"op-1"}'
+
+    def open_request(request, timeout):
+        assert request.get_header("Idempotency-key") == "create-key"
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise HTTPError("https://dev.example/v1/instances", 429, "Too Many Requests", headers, io.BytesIO(b"{}"))
+        return Response()
+
+    monkeypatch.setattr(e2e_matrix, "build_opener", lambda: SimpleNamespace(open=open_request))
+    monkeypatch.setattr(e2e_matrix, "_API_LAST_REQUEST", 0.0)
+    monkeypatch.setattr(e2e_matrix.time, "sleep", lambda _delay: None)
+
+    status, payload = e2e_matrix.http_json(
+        "POST",
+        "https://dev.example/v1/instances",
+        body={"name": "vm"},
+        headers={"Idempotency-Key": "create-key"},
+    )
+
+    assert status == 202
+    assert payload == {"operation_id": "op-1"}
+    assert len(attempts) == 2
+
+
+def test_cleanup_confirma_destroy_por_api_si_proxmox_bloquea_lectura(monkeypatch):
+    initial = {
+        "status": "ready",
+        "vmid": 40042,
+        "node": "mng01",
+        "latest_operation": {"operation_id": "provision-op", "status": "completed", "command": "provision"},
+    }
+    deleted = {"status": "deleted", "vmid": 40042, "node": "mng01"}
+    instances = iter([initial, deleted, deleted])
+    calls = []
+
+    monkeypatch.setattr(e2e_matrix, "instance", lambda _instance_id: next(instances))
+    monkeypatch.setattr(e2e_matrix, "power", lambda _instance_id: {"power_state": "stopped"})
+    monkeypatch.setattr(e2e_matrix, "wait_operation", lambda _operation: {"status": "completed"})
+    def forbidden_vmid_read(*_args):
+        raise e2e_matrix.E2EError("forbidden", status=403)
+
+    monkeypatch.setattr(e2e_matrix, "vm_exists", forbidden_vmid_read)
+    monkeypatch.setattr(e2e_matrix, "release_live_ip", lambda _instance_id: None)
+
+    def api(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "DELETE":
+            return {"operation_id": "destroy-op"}
+        return {"status": "completed", "command": "destroy", "exit_code": 0}
+
+    monkeypatch.setattr(e2e_matrix, "api", api)
+
+    result = e2e_matrix.cleanup("instance-id", "case-1")
+
+    assert result == "destroyed:terraform_destroy_completed_proxmox_read_forbidden"
+    assert calls[0][0] == "DELETE"
+    assert calls[0][2]["idempotency_key"] == "case-1-cleanup-destroy"
