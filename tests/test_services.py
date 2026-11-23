@@ -1117,8 +1117,10 @@ def test_release_manifest_cannot_change_on_retry(client):
     from worker.service_executor import pin_release, ServiceBlocked
 
     order = create(client)
-    pin_release(order["service_id"], {"images": {"app": "first"}})
-    pin_release(order["service_id"], {"images": {"app": "first"}})
+    from api.service_catalog import load_service_release
+    pinned = load_service_release("nextcloud")
+    pin_release(order["service_id"], pinned)
+    pin_release(order["service_id"], pinned)
     with pytest.raises(ServiceBlocked, match="SERVICE_RELEASE_CHANGED"):
         pin_release(order["service_id"], {"images": {"app": "second"}})
 
