@@ -109,8 +109,14 @@ def test_operation_exposes_netbox_missing_object(code, message):
         assert operation["error"] == f"{message} Código: {code}."
 
 
+@pytest.mark.no_database
 def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
+    import api.main
+
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "0")
+    monkeypatch.setenv("IACP_API_TOKEN", "")
+    monkeypatch.setattr(api.main, "startup", lambda: None)
     with TestClient(app) as client:
         plans = client.get("/v1/plans")
         assert plans.status_code == 200
@@ -129,6 +135,16 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
             ("fedora-45", 29005),
             ("debian-13", 29006),
         ]
+        assert {
+            image["image_id"]: image["display_name"] for image in images
+        } == {
+            "ubuntu-2404": "Ubuntu 24.04 LTS Noble Numbat",
+            "ubuntu-2604": "Ubuntu 26.04 LTS Resolute Raccoon",
+            "almalinux-9": "AlmaLinux OS 9",
+            "almalinux-10": "AlmaLinux OS 10",
+            "fedora-45": "Fedora Linux 45",
+            "debian-13": "Debian 13 Trixie",
+        }
 
 
 def test_dev_catalog_exposes_fedora_and_debian_with_all_compatible_plans(tmp_path, monkeypatch):

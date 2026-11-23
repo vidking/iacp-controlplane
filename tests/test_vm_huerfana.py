@@ -32,6 +32,25 @@ class FakeClient:
         return {"status": "stopped", "exitstatus": "OK"}
 
 
+class PartialCloneClient(FakeClient):
+    def __init__(self, record, *, tags="almalinux-9;golden-image;iacp", clone_proof=True):
+        super().__init__(record)
+        self.tags = tags
+        self.clone_proof = clone_proof
+
+    def vm_config(self, node, vmid):
+        return {
+            "name": self.record.get("name"),
+            "template": self.record.get("template", 0),
+            "tags": self.tags,
+        }
+
+    def completed_clone_task_during(self, node, target_vmid, source_vmid, started_at, finished_at):
+        assert (node, target_vmid, source_vmid) == ("mng01", 40510, 29010)
+        assert started_at and finished_at
+        return self.clone_proof
+
+
 def _state(tmp_path, vm_ids):
     resources = [
         {"type": "proxmox_virtual_environment_vm", "instances": [{"attributes": {"vm_id": vm_id}} for vm_id in vm_ids]}
@@ -126,6 +145,136 @@ def test_conserva_vm_con_lease_de_otra_instancia(tmp_path, entorno):
     _seed(lease_instance="inst-ajena")
     client = FakeClient(RECORD)
     assert worker_main.remove_orphan_vm(client, "op-prov", "inst-1", 40510, _state(tmp_path, None)) is False
+    assert client.deleted == []
+
+
+def _preparar_prueba_clon_parcial(tmp_path, monkeypatch, *, state_tag=True):
+    name = "qa-clon-parcial"
+    owner = "op-parcial"
+    marker = f"iacp-owned-{owner}"
+    state_root = tmp_path / "plans" / owner
+    workspace = state_root / "environments" / "mng01"
+    workspace.mkdir(parents=True)
+    tags = ["almalinux-9", "iacp-lab", "mng01"]
+    if state_tag:
+        tags.append(marker)
+    state = {
+        "resources": [{
+            "mode": "managed",
+            "type": "proxmox_virtual_environment_vm",
+            "name": "this",
+            "instances": [{"attributes": {
+                "vm_id": 40510,
+                "name": name,
+                "node_name": "mng01",
+                "pool_id": "iacp-lab",
+                "template": False,
+                "tags": tags,
+            }}],
+        }]
+    }
+    (workspace / "terraform.tfstate").write_text(json.dumps(state))
+    payload = {
+        "physical_identity_tag": marker,
+        "spec": {"name": name, "image": "almalinux-9"},
+    }
+    source = {
+        "operation_id": owner,
+        "command": "provision",
+        "status": "uncertain",
+        "stack": "mng01",
+        "started_at": "2026-03-01T00:00:01+00:00",
+        "finished_at": "2026-03-01T00:00:10+00:00",
+        "instance_id": "inst-parcial",
+        "vmid": 40510,
+        "target_node": "mng01",
+        "workspace_path": str(state_root),
+        "payload_json": json.dumps(payload),
+    }
+    identity = {
+        "instance_id": "inst-parcial",
+        "operation_id": owner,
+        "name": name,
+        "vmid": 40510,
+        "node": "mng01",
+        "status": "uncertain",
+    }
+    persisted_spec = {"name": name, "image": "almalinux-9"}
+    events = []
+
+    def check_lease(vmid, lease_owner):
+        assert (vmid, lease_owner) == (40510, owner)
+
+    monkeypatch.setattr(worker_main, "find_operation", lambda operation_id: source if operation_id == owner else None)
+    monkeypatch.setattr(worker_main, "instance_identity", lambda instance_id: identity if instance_id == "inst-parcial" else {})
+    monkeypatch.setattr(worker_main, "instance_spec", lambda instance_id: persisted_spec if instance_id == "inst-parcial" else {})
+    monkeypatch.setattr(worker_main, "assert_lease_owner", check_lease)
+    monkeypatch.setattr(worker_main, "emit", lambda *args, **kwargs: events.append(args))
+    return name, owner, str(workspace), events
+
+
+@pytest.mark.no_database
+def test_destroy_acepta_clon_parcial_probado_por_state_y_tarea_qmclone(
+    tmp_path, monkeypatch, entorno
+):
+    name, owner, workspace, _events = _preparar_prueba_clon_parcial(
+        tmp_path, monkeypatch
+    )
+    client = PartialCloneClient(dict(RECORD, vmid=40510, name=name))
+    assert worker_main.assert_destroy_physical_identity(
+        client, 40510, "mng01", name, owner, workspace
+    ) is None
+    assert client.deleted == []
+
+
+@pytest.mark.no_database
+def test_destroy_rechaza_clon_si_la_imagen_persistida_no_coincide(
+    tmp_path, monkeypatch, entorno
+):
+    from worker.proxmox import ProxmoxError
+
+    name, owner, workspace, _events = _preparar_prueba_clon_parcial(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "instance_spec",
+        lambda _instance_id: {"name": name, "image": "debian-13"},
+    )
+    client = PartialCloneClient(dict(RECORD, vmid=40510, name=name))
+    with pytest.raises(ProxmoxError, match="VM_PHYSICAL_OWNER_MISMATCH"):
+        worker_main.assert_destroy_physical_identity(
+            client, 40510, "mng01", name, owner, workspace
+        )
+    assert client.deleted == []
+
+
+@pytest.mark.no_database
+@pytest.mark.parametrize(
+    ("state_tag", "clone_proof", "tags"),
+    [
+        (False, True, "almalinux-9;golden-image;iacp"),
+        (True, False, "almalinux-9;golden-image;iacp"),
+        (True, True, "almalinux-9;iacp-owned-otra-operacion"),
+    ],
+)
+def test_destroy_conserva_clon_si_falla_prueba_de_titularidad(
+    tmp_path, monkeypatch, entorno, state_tag, clone_proof, tags
+):
+    from worker.proxmox import ProxmoxError
+
+    name, owner, workspace, _events = _preparar_prueba_clon_parcial(
+        tmp_path, monkeypatch, state_tag=state_tag
+    )
+    client = PartialCloneClient(
+        dict(RECORD, vmid=40510, name=name),
+        tags=tags,
+        clone_proof=clone_proof,
+    )
+    with pytest.raises(ProxmoxError, match="VM_PHYSICAL_OWNER_MISMATCH"):
+        worker_main.assert_destroy_physical_identity(
+            client, 40510, "mng01", name, owner, workspace
+        )
     assert client.deleted == []
 
 

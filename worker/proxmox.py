@@ -639,6 +639,85 @@ class ProxmoxClient:
         self.wait_task(node, vmid, action, matches[0])
         return matches[0]
 
+    def completed_clone_task_during(
+        self, node, target_vmid, source_vmid, started_at, finished_at
+    ) -> bool:
+        """Prueba que este token clonó la Golden Image al VMID esperado.
+
+        Proxmox identifica `qmclone` por la VM fuente en el UPID. El VMID de
+        destino se prueba con la línea de log generada por la propia tarea.
+        Una coincidencia ambigua, incompleta o ajena al intervalo de la
+        operación se rechaza.
+        """
+        from datetime import datetime
+
+        try:
+            begin = datetime.fromisoformat(started_at).timestamp()
+            end = datetime.fromisoformat(finished_at).timestamp()
+            if end < begin:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        owner = self.token.split("=", 1)[0]
+        records = self.get(
+            f"/nodes/{quote(node, safe='')}/tasks?"
+            + urlencode(
+                {
+                    "since": max(0, int(begin - 1)),
+                    "limit": 500,
+                    "typefilter": "qmclone",
+                }
+            )
+        )
+        expected_line = f"creating a clone of VM {int(source_vmid)} with ID {int(target_vmid)}"
+        pattern = (
+            rf"UPID:{re.escape(node)}:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:"
+            rf"qmclone:{int(source_vmid)}:[^:\r\n]+:"
+        )
+        matches = []
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            identity = record.get("user", "") + (
+                "!" + record["tokenid"] if record.get("tokenid") else ""
+            )
+            try:
+                valid = (
+                    record.get("node") == node
+                    and str(record.get("id")) == str(source_vmid)
+                    and record.get("type") == "qmclone"
+                    and identity == owner
+                    and record.get("status") == "OK"
+                    and begin - 1
+                    <= float(record["starttime"])
+                    <= float(record["endtime"])
+                    <= end + 1
+                )
+            except (KeyError, TypeError, ValueError):
+                valid = False
+            task = record.get("upid")
+            if not valid or not isinstance(task, str) or not re.fullmatch(pattern, task):
+                continue
+
+            log = self.get(
+                f"/nodes/{quote(node, safe='')}/tasks/{quote(task, safe='')}/log?limit=100"
+            )
+            log_lines = log if isinstance(log, list) else []
+            if not any(
+                isinstance(line, dict) and line.get("t") == expected_line
+                for line in log_lines
+            ):
+                continue
+            status = self.get(
+                f"/nodes/{quote(node, safe='')}/tasks/{quote(task, safe='')}/status",
+                uncertain=True,
+            ) or {}
+            if status.get("status") == "stopped" and status.get("exitstatus") == "OK":
+                matches.append(task)
+
+        return len(matches) == 1
+
     def wait_task(self, node: str, vmid: int, action: str, task: str) -> dict:
         timeout = int(os.getenv("IACP_POWER_TIMEOUT", "180"))
         deadline = time.monotonic() + timeout

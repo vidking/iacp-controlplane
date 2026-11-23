@@ -230,6 +230,10 @@
     return state.images.find((image) => image.image_id === id);
   }
 
+  function imageDisplayName(id) {
+    return imageById(id)?.display_name || id;
+  }
+
   function networkProfileById(id) {
     return state.networkProfiles.find((profile) => profile.profile_id === id);
   }
@@ -278,7 +282,7 @@
     state.images.forEach((image) => {
       const option = document.createElement("option");
       option.value = image.image_id;
-      option.textContent = `${image.image_id} · Golden ${image.template_vm_id}`;
+      option.textContent = `${image.display_name || image.image_id} · Golden ${image.template_vm_id}`;
       imageSelect.append(option);
     });
     const profileSelect = $("network-profile");
@@ -314,7 +318,7 @@
     const application = state.applications.find((item) => item.application_id === product);
     const currentImage = $("image").value;
     const images = state.images.filter((image) => !service || application?.supported_image_ids.includes(image.image_id));
-    $("image").innerHTML = images.map((image) => `<option value="${escapeHtml(image.image_id)}">${escapeHtml(image.image_id)} · Golden ${image.template_vm_id}</option>`).join("");
+    $("image").innerHTML = images.map((image) => `<option value="${escapeHtml(image.image_id)}">${escapeHtml(image.display_name || image.image_id)} · Golden ${image.template_vm_id}</option>`).join("");
     $("image").value = images.some((image) => image.image_id === currentImage) ? currentImage : images[0]?.image_id || "";
     $("service-configuration").classList.toggle("hidden", !service);
     const nextcloud = product === "nextcloud";
@@ -419,7 +423,7 @@
       return;
     }
     container.innerHTML = `<table><thead><tr><th>Nombre</th><th>Plan</th><th>Imagen</th><th>VMID</th><th>Nodo</th><th>Estado</th><th>Energía</th></tr></thead><tbody>${filtered.map((instance) => `
-      <tr data-instance-id="${escapeHtml(instance.instance_id)}"><td><strong>${escapeHtml(instance.name)}</strong><br><small>${escapeHtml(instance.instance_id)}</small></td><td>${escapeHtml(instance.plan_id || "—")}</td><td>${escapeHtml(instance.image_id || instance.image)}</td><td>${escapeHtml(instance.vmid ?? "pendiente")}</td><td>${escapeHtml(instance.node || "—")}</td><td>${statusBadge(instance.status)}</td><td>${escapeHtml(instance.power_state || "unknown")}</td></tr>`).join("")}</tbody></table>${containerId === "instances-table" ? renderPager("instances") : ""}`;
+      <tr data-instance-id="${escapeHtml(instance.instance_id)}"><td><strong>${escapeHtml(instance.name)}</strong><br><small>${escapeHtml(instance.instance_id)}</small></td><td>${escapeHtml(instance.plan_id || "—")}</td><td>${escapeHtml(imageDisplayName(instance.image_id || instance.image))}</td><td>${escapeHtml(instance.vmid ?? "pendiente")}</td><td>${escapeHtml(instance.node || "—")}</td><td>${statusBadge(instance.status)}</td><td>${escapeHtml(instance.power_state || "unknown")}</td></tr>`).join("")}</tbody></table>${containerId === "instances-table" ? renderPager("instances") : ""}`;
     container.querySelectorAll("[data-instance-id]").forEach((row) => row.addEventListener("click", () => selectInstance(row.dataset.instanceId)));
   }
 
@@ -687,7 +691,7 @@
   }
 
   function renderFacts(instance) {
-    return [["Instance ID", instance.instance_id], ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image], ["Perfil de red", instance.spec?.network_profile || "lab_dhcp"], ["VMID", instance.vmid ?? "pendiente"], ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"], ["vCPU", instance.spec?.vcpus], ["Memoria", `${instance.spec?.memory_mb ?? "—"} MB`], ["Disco", `${instance.spec?.disk_gb ?? "—"} GB`], ["IP asignada", instance.network_allocation?.address || "pendiente"], ["Tag", instance.spec?.tags?.join(", ") || "—"]].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+    return [["Instance ID", instance.instance_id], ["Plan", instance.plan_id], ["Imagen", imageDisplayName(instance.image_id || instance.image)], ["Perfil de red", instance.spec?.network_profile || "lab_dhcp"], ["VMID", instance.vmid ?? "pendiente"], ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"], ["vCPU", instance.spec?.vcpus], ["Memoria", `${instance.spec?.memory_mb ?? "—"} MB`], ["Disco", `${instance.spec?.disk_gb ?? "—"} GB`], ["IP asignada", instance.network_allocation?.address || "pendiente"], ["Tag", instance.spec?.tags?.join(", ") || "—"]].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
   }
 
   function setPowerButtons(enabled, selector = ".power-action") {

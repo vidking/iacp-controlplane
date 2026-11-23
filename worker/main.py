@@ -1245,6 +1245,194 @@ def require_reconciled_terraform_state(workspace: str, vmid: int) -> None:
         raise ProxmoxError("TERRAFORM_STATE_OWNERSHIP_UNCONFIRMED", uncertain=True)
 
 
+def terraform_state_owns_vm(
+    workspace: str,
+    vmid: int,
+    *,
+    name: str,
+    node: str,
+    pool: str,
+    owner_tag: str,
+) -> bool:
+    """Valida que el state de esta operación atribuya la VM a su titular."""
+
+    try:
+        with open(os.path.join(workspace, "terraform.tfstate"), encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    resources = state.get("resources")
+    if not isinstance(resources, list):
+        return False
+
+    matches = []
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("type") != "proxmox_virtual_environment_vm"
+            or resource.get("mode", "managed") != "managed"
+        ):
+            continue
+        instances = resource.get("instances")
+        if not isinstance(instances, list):
+            return False
+        for instance in instances:
+            attributes = (instance or {}).get("attributes") or {}
+            observed_vmid = attributes.get("vm_id")
+            if observed_vmid is None:
+                return False
+            try:
+                is_target = int(observed_vmid) == int(vmid)
+            except (TypeError, ValueError):
+                return False
+            if not is_target:
+                continue
+            tags = attributes.get("tags") or []
+            if isinstance(tags, str):
+                tags = tags.split(";")
+            if not isinstance(tags, list):
+                return False
+            if (
+                attributes.get("name") != name
+                or attributes.get("node_name") != node
+                or attributes.get("pool_id") != pool
+                or attributes.get("template") is not False
+                or owner_tag not in tags
+            ):
+                return False
+            matches.append(attributes)
+    return len(matches) == 1
+
+
+def assert_destroy_physical_identity(
+    client: ProxmoxClient,
+    vmid: int,
+    node: str,
+    name: str,
+    owner: str,
+    workspace: str,
+) -> None:
+    """Permite destruir por Terraform un clon parcial con titularidad probada.
+
+    La etiqueta física se aplica después de clonar. Si el worker se interrumpe
+    antes de esa escritura, la combinación de state, lease, identidad y tarea
+    `qmclone` atribuible permite únicamente la limpieza normal por Terraform.
+    """
+
+    try:
+        assert_physical_identity(client, vmid, node, name, owner)
+        return
+    except ProxmoxError as error:
+        if str(error) != "VM_PHYSICAL_OWNER_MISMATCH":
+            raise
+
+    source = find_operation(owner)
+    identity = instance_identity(source.get("instance_id") if source else None)
+    persisted_spec = instance_spec(source.get("instance_id") if source else None)
+    if (
+        source is None
+        or source.get("command") != "provision"
+        or source.get("status") != "uncertain"
+        or source.get("stack") != "mng01"
+        or not source.get("started_at")
+        or not source.get("finished_at")
+        or source.get("instance_id") != identity.get("instance_id")
+        or identity.get("operation_id") != owner
+        or identity.get("name") != name
+        or int(identity.get("vmid") or -1) != int(vmid)
+        or identity.get("node") != node
+        or persisted_spec.get("name") != name
+        or int(source.get("vmid") or -1) != int(vmid)
+        or source.get("target_node") != node
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+    if not int(os.getenv("IACP_VMID_MIN", "40000")) <= int(vmid) <= int(
+        os.getenv("IACP_VMID_MAX", "49999")
+    ) or is_protected_vmid(vmid):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    try:
+        payload = json.loads(source.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+    spec = payload.get("spec") or {}
+    marker = payload.get("physical_identity_tag")
+    if (
+        not isinstance(spec, dict)
+        or spec.get("name") != name
+        or not spec.get("image")
+        or persisted_spec.get("image") != spec.get("image")
+        or marker != f"iacp-owned-{owner}"
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    state_root = source.get("workspace_path")
+    expected_workspace = (
+        os.path.join(state_root, source_stack_directory("mng01"))
+        if state_root
+        else None
+    )
+    if (
+        not expected_workspace
+        or os.path.realpath(workspace) != os.path.realpath(expected_workspace)
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    pool = configured_pool_id()
+    if not terraform_state_owns_vm(
+        workspace,
+        int(vmid),
+        name=name,
+        node=node,
+        pool=pool,
+        owner_tag=marker,
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    record = physical_record(client, int(vmid))
+    if (
+        record is None
+        or record.get("name") != name
+        or record.get("node") != node
+        or record.get("pool") != pool
+        or record.get("status") != "stopped"
+        or bool(record.get("template"))
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+    config = client.vm_config(node, int(vmid))
+    tags = str(config.get("tags") or "").split(";")
+    if (
+        config.get("name") != name
+        or bool(config.get("template"))
+        or marker in tags
+        or any(tag.startswith("iacp-owned-") for tag in tags)
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    from worker.golden import catalog as golden_catalog
+
+    template = (golden_catalog().get(spec["image"]) or {}).get("template_vm_id")
+    clone_proof = getattr(client, "completed_clone_task_during", None)
+    if (
+        not template
+        or not callable(clone_proof)
+        or not clone_proof(
+            node,
+            int(vmid),
+            int(template),
+            source["started_at"],
+            source["finished_at"],
+        )
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+    emit(
+        owner,
+        "destroy.partial_clone_owner_verified",
+        "ok",
+        f"VMID {vmid}; titularidad probada por state y tarea qmclone.",
+    )
+
+
 def remove_orphan_vm(
     client: ProxmoxClient,
     operation_id: str,
@@ -2688,7 +2876,14 @@ def execute(worker_id: str, operation: dict) -> None:
                 node = target_node or identity.get("node")
                 if not name or not node or record.get("node") != node:
                     raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
-                assert_physical_identity(client, int(vmid), node, name, source_operation_id)
+                assert_destroy_physical_identity(
+                    client,
+                    int(vmid),
+                    node,
+                    name,
+                    source_operation_id,
+                    workspace,
+                )
                 if client.power_state(node, int(vmid), name)["power_state"] != "stopped":
                     raise RuntimeError("DESTROY_REQUIRES_STOPPED_INSTANCE")
             if not os.path.isdir(workspace):

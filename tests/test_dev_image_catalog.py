@@ -11,6 +11,52 @@ ROOT = Path(__file__).parents[1]
 
 
 @pytest.mark.no_database
+def test_dev_y_produccion_publican_metadatos_humanos_para_las_seis_imagenes():
+    expected = {
+        "ubuntu-2404": (
+            "Ubuntu", "24.04", "Ubuntu 24.04 LTS Noble Numbat",
+            "Noble Numbat", "LTS", "debian",
+        ),
+        "ubuntu-2604": (
+            "Ubuntu", "26.04", "Ubuntu 26.04 LTS Resolute Raccoon",
+            "Resolute Raccoon", "LTS", "debian",
+        ),
+        "almalinux-9": (
+            "AlmaLinux OS", "9", "AlmaLinux OS 9", None,
+            "enterprise-linux", "rhel",
+        ),
+        "almalinux-10": (
+            "AlmaLinux OS", "10", "AlmaLinux OS 10", None,
+            "enterprise-linux", "rhel",
+        ),
+        "fedora-45": (
+            "Fedora", "45", "Fedora Linux 45", None,
+            "standard-release", "fedora",
+        ),
+        "debian-13": (
+            "Debian", "13", "Debian 13 Trixie", "Trixie",
+            "stable", "debian",
+        ),
+    }
+    for filename in ("catalog-dev.json", "catalog.json"):
+        catalog = json.loads(
+            (ROOT / "terraform/environments/mng01" / filename).read_text()
+        )
+        images = {item["image_id"]: item for item in catalog["images"]}
+        assert set(images) == set(expected)
+        for image_id, metadata in expected.items():
+            image = images[image_id]
+            assert (
+                image["distribution"],
+                image["version"],
+                image["display_name"],
+                image["release_name"],
+                image["release_track"],
+                image["platform_family"],
+            ) == metadata
+
+
+@pytest.mark.no_database
 def test_dev_and_production_catalogs_publish_the_same_fedora_and_debian_templates():
     dev = json.loads(
         (ROOT / "terraform/environments/mng01/catalog-dev.json").read_text()

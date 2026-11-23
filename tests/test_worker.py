@@ -1841,6 +1841,55 @@ def test_reboot_recovery_requires_unique_matching_task_and_time(monkeypatch):
     assert client.completed_power_task_during('mng01',40018,'reboot','1970-01-01T00:02:00+00:00','1970-01-01T00:02:05+00:00') is None
 
 
+@pytest.mark.no_database
+def test_tarea_qmclone_exige_token_destino_y_ventana_exactos(monkeypatch):
+    client = object.__new__(ProxmoxClient)
+    client.token = "test@pve!runtime=ficticio"
+    task = "UPID:mng01:000001:000002:000003:qmclone:29010:test@pve!runtime:"
+    record = {
+        "node": "mng01",
+        "id": "29010",
+        "type": "qmclone",
+        "user": "test@pve",
+        "tokenid": "runtime",
+        "status": "OK",
+        "starttime": 102,
+        "endtime": 103,
+        "upid": task,
+    }
+    calls = []
+
+    def fake_get(path, **kwargs):
+        calls.append(path)
+        if "/tasks?" in path:
+            return [record]
+        if "/log?" in path:
+            return [{"t": "creating a clone of VM 29010 with ID 40018"}]
+        return {"status": "stopped", "exitstatus": "OK"}
+
+    monkeypatch.setattr(client, "get", fake_get)
+    args = (
+        "mng01", 40018, 29010,
+        "1970-01-01T00:01:40+00:00",
+        "1970-01-01T00:01:45+00:00",
+    )
+    assert client.completed_clone_task_during(*args) is True
+    assert len(calls) == 3
+
+    monkeypatch.setattr(client, "get", lambda *_args, **_kwargs: [dict(record, user="otro@pve")])
+    assert client.completed_clone_task_during(*args) is False
+
+    def duplicate_get(path, **kwargs):
+        if "/tasks?" in path:
+            return [record, dict(record, upid=task.replace("000001", "000004"))]
+        if "/log?" in path:
+            return [{"t": "creating a clone of VM 29010 with ID 40018"}]
+        return {"status": "stopped", "exitstatus": "OK"}
+
+    monkeypatch.setattr(client, "get", duplicate_get)
+    assert client.completed_clone_task_during(*args) is False
+
+
 @pytest.mark.parametrize('released,expected', [(True, 'deleted'), (False, 'uncertain')])
 def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, expected):
     from worker import main

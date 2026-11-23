@@ -1,5 +1,5 @@
 (() => {
-  const state = { token: "", selectedId: null };
+  const state = { token: "", selectedId: null, images: [] };
   const $ = (id) => document.getElementById(id);
 
   function showToast(message, error = false) {
@@ -62,6 +62,10 @@
     return JSON.stringify(operation, null, 2);
   }
 
+  function imageDisplayName(imageId) {
+    return state.images.find((image) => image.image_id === imageId)?.display_name || imageId;
+  }
+
   async function loadCatalog() {
     const [imagesBody, plansBody, profilesBody] = await Promise.all([
       api("/v1/images"),
@@ -70,10 +74,11 @@
     ]);
     const imageSelect = $("image");
     imageSelect.innerHTML = "";
-    (imagesBody.images || []).forEach((image) => {
+    state.images = imagesBody.images || [];
+    state.images.forEach((image) => {
       const option = document.createElement("option");
       option.value = image.image_id;
-      option.textContent = `${image.image_id} · Golden ${image.template_vm_id}`;
+      option.textContent = `${image.display_name || image.image_id} · Golden ${image.template_vm_id}`;
       imageSelect.append(option);
     });
     const planSelect = $("plan");
@@ -135,7 +140,7 @@
     }
     node.innerHTML = body.instances.map((instance) => `
       <div class="instance-row ${instance.instance_id === state.selectedId ? "selected" : ""}" data-instance-id="${escapeHtml(instance.instance_id)}">
-        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(instance.image_id || instance.image)} · ${escapeHtml(instance.stack)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
+        <div><strong>${escapeHtml(instance.name)}</strong><small>${escapeHtml(imageDisplayName(instance.image_id || instance.image))} · ${escapeHtml(instance.stack)} · VMID ${escapeHtml(instance.vmid ?? "pendiente")}</small></div>
         <div class="instance-meta"><span class="badge ${statusClass(instance.status)}">${escapeHtml(instance.status)}</span><span class="pill">${escapeHtml(instance.power_state || "unknown")}</span></div>
       </div>`).join("");
     node.querySelectorAll("[data-instance-id]").forEach((item) => item.addEventListener("click", () => selectInstance(item.dataset.instanceId)));
@@ -166,7 +171,7 @@
       $("detail-facts").innerHTML = [
         ["Instance ID", instance.instance_id], ["VMID", instance.vmid ?? "pendiente"],
         ["Nodo", instance.node || "pendiente"], ["Cluster", instance.cluster || "mng"],
-        ["Plan", instance.plan_id], ["Imagen", instance.image_id || instance.image],
+        ["Plan", instance.plan_id], ["Imagen", imageDisplayName(instance.image_id || instance.image)],
         ["vCPU", instance.spec.vcpus], ["Memoria", `${instance.spec.memory_mb} MB`],
         ["Disco", `${instance.spec.disk_gb} GB`],
       ].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");

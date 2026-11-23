@@ -32,7 +32,7 @@ const server = http.createServer((request, response) => {
       const request = route.request(), pathname = new URL(request.url()).pathname;
       let body = {};
       if (pathname === '/v1/plans') body = {plans:[{plan_id:'kvm-2',vcpus:2,memory_mb:4096,disk_gb:100}]};
-      else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000],['ubuntu-2604',29001],['almalinux-9',29010],['almalinux-10',29011],['fedora-45',29005],['debian-13',29006]].map(([image_id,template_vm_id]) => ({image_id,template_vm_id}))};
+      else if (pathname === '/v1/images') body = {images:[['ubuntu-2404',29000,'Ubuntu 24.04 LTS Noble Numbat'],['ubuntu-2604',29001,'Ubuntu 26.04 LTS Resolute Raccoon'],['almalinux-9',29010,'AlmaLinux OS 9'],['almalinux-10',29011,'AlmaLinux OS 10'],['fedora-45',29005,'Fedora Linux 45'],['debian-13',29006,'Debian 13 Trixie']].map(([image_id,template_vm_id,display_name]) => ({image_id,template_vm_id,display_name}))};
       else if (pathname === '/v1/network-profiles') body = {network_profiles:[{profile_id:'lab_dhcp',enabled:true}],active_profile:'lab_dhcp'};
       else if (pathname === '/v1/applications') body = ['nextcloud','n8n'].map(application_id => ({application_id,label:application_id,enabled:true,version:'test',supported_image_ids:['ubuntu-2404']}));
       else if (pathname === '/v1/service-instances' && request.method() === 'POST') { created = true; deleted = false; delivered = false; retrieved = false; powerState = 'running'; payload = request.postDataJSON(); payloads.push(payload); body = {operation_id:'operation-test',instance_id:'instance-test',service_id:'service-test',job_id:'job-test',status:'waiting_vm'}; }
@@ -57,6 +57,14 @@ const server = http.createServer((request, response) => {
     await page.locator('#services-panel > summary').click();
     assert.equal(await page.locator('#services-panel').evaluate(element => element.open),true);
     assert.equal(await page.locator('#image option').count(),6);
+    assert.deepEqual(await page.locator('#image option').evaluateAll(options => options.map(option => option.textContent)),[
+      'Ubuntu 24.04 LTS Noble Numbat · Golden 29000',
+      'Ubuntu 26.04 LTS Resolute Raccoon · Golden 29001',
+      'AlmaLinux OS 9 · Golden 29010',
+      'AlmaLinux OS 10 · Golden 29011',
+      'Fedora Linux 45 · Golden 29005',
+      'Debian 13 Trixie · Golden 29006',
+    ]);
     assert.equal(await page.locator('[data-application-id="nextcloud"]').isEnabled(),true);
     assert.equal(await page.locator('[data-application-id="n8n"]').isEnabled(),true);
     await page.locator('[data-application-id="nextcloud"]').click();
