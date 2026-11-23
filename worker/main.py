@@ -2471,8 +2471,13 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     expected_power_state = "stopped" if action == "shutdown" else "running"
     if power_state != expected_power_state:
         raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
-    if _FENCE.get() is not None and client.power_state(node, vmid, row["name"])["power_state"] != expected_power_state:
-        raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
+    if _FENCE.get() is not None:
+        observation_deadline = time.monotonic() + 30
+        while client.power_state(node, vmid, row["name"])["power_state"] != expected_power_state:
+            if time.monotonic() >= observation_deadline:
+                raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
+            heartbeat(worker_id, "running", operation_id, phase=f"power_{action}_observing")
+            time.sleep(1)
     if (
         action in {"start", "reboot"}
         and power_state == "running"
