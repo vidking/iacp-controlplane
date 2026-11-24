@@ -1113,7 +1113,7 @@ def test_reconcile_can_recheck_proven_partial_clone_cleanup(tmp_path, monkeypatc
             )
             db.execute(
                 """INSERT INTO events(operation_id, kind, status, occurred_at, detail)
-                VALUES (?, 'instance.recovery.completed', 'succeeded', '2026-11-24T00:00:03Z',
+                VALUES (?, 'recovery.completed', 'succeeded', '2026-11-24T00:00:03Z',
                 'Clon parcial eliminado tras validar lease, state vacío, identidad y tarea qmclone.')""",
                 (recovery_id,),
             )

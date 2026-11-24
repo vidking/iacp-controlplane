@@ -794,7 +794,7 @@ def _partial_clone_cleanup_retry_is_safe(db, instance, source) -> bool:
           AND EXISTS (
             SELECT 1 FROM events AS completed
             WHERE completed.operation_id=recovery.operation_id
-              AND completed.kind='instance.recovery.completed'
+              AND completed.kind='recovery.completed'
               AND completed.status='succeeded'
               AND completed.detail=?
           )
