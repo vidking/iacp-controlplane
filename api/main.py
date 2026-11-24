@@ -3,6 +3,9 @@ import hmac
 import json
 import os
 import re
+import threading
+import time
+from collections import deque
 from base64 import b64encode
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -145,6 +148,83 @@ def _max_body_bytes() -> int:
         return 256 * 1024
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+class AuthFailureThrottle:
+    """Ventana deslizante de fallos de autenticación por origen.
+
+    Solo frena a quien presenta un token inválido: una solicitud con el token
+    correcto nunca se bloquea, de modo que un atacante tras el proxy no puede
+    dejar fuera a los operadores. El estado es por proceso (la API corre con
+    varios workers de uvicorn), así que el límite efectivo es
+    ``IACP_AUTH_MAX_FAILURES`` por proceso.
+    """
+
+    MAX_SOURCES = 4096
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failures: dict[str, deque[float]] = {}
+
+    @staticmethod
+    def _limits() -> tuple[int, int]:
+        return (
+            _env_int("IACP_AUTH_MAX_FAILURES", 10),
+            _env_int("IACP_AUTH_FAILURE_WINDOW_SECONDS", 60),
+        )
+
+    def retry_after(self, source: str) -> int:
+        """Segundos de espera si el origen superó el límite; 0 si no."""
+
+        maximum, window = self._limits()
+        now = time.monotonic()
+        with self._lock:
+            events = self._failures.get(source)
+            if not events:
+                return 0
+            while events and now - events[0] >= window:
+                events.popleft()
+            if not events:
+                del self._failures[source]
+                return 0
+            if len(events) < maximum:
+                return 0
+            return max(1, int(window - (now - events[0])) + 1)
+
+    def record(self, source: str) -> None:
+        maximum, window = self._limits()
+        now = time.monotonic()
+        with self._lock:
+            if source not in self._failures and len(self._failures) >= self.MAX_SOURCES:
+                # Memoria acotada: descarta el origen con el fallo más antiguo.
+                oldest = min(self._failures, key=lambda key: self._failures[key][-1])
+                del self._failures[oldest]
+            events = self._failures.setdefault(source, deque(maxlen=maximum + 1))
+            while events and now - events[0] >= window:
+                events.popleft()
+            events.append(now)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._failures.clear()
+
+
+AUTH_THROTTLE = AuthFailureThrottle()
+
+
+def _presented_token_is_valid(headers: Headers) -> bool:
+    configured = os.getenv("IACP_API_TOKEN", "").strip()
+    scheme, token = get_authorization_scheme_param(headers.get("authorization"))
+    if not configured or scheme.lower() != "bearer" or not token:
+        return False
+    return hmac.compare_digest(token.encode("utf-8"), configured.encode("utf-8"))
+
+
 class HTTPGuards:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -155,9 +235,13 @@ class HTTPGuards:
             return
 
         path = scope["path"]
+        client = scope.get("client")
+        source = client[0] if client else "desconocido"
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
+                if message["status"] == 401 and path.startswith("/v1/"):
+                    AUTH_THROTTLE.record(source)
                 headers = MutableHeaders(scope=message)
                 revision = os.getenv("IACP_BUILD_REVISION", "").strip()
                 if revision:
@@ -182,6 +266,21 @@ class HTTPGuards:
                 return
             if declared > limit:
                 await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
+                return
+
+        if (
+            path.startswith("/v1/")
+            and os.getenv("IACP_API_TOKEN", "").strip()
+            and not _presented_token_is_valid(Headers(scope=scope))
+        ):
+            wait = AUTH_THROTTLE.retry_after(source)
+            if wait:
+                response = JSONResponse(
+                    {"detail": "demasiados intentos de autenticación fallidos"},
+                    429,
+                    headers={"Retry-After": str(wait)},
+                )
+                await response(scope, receive, send_with_headers)
                 return
 
         if path.startswith("/v1/") and scope["method"] in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -324,8 +423,16 @@ def authorize(
 
 
 def startup() -> None:
-    if not os.getenv("IACP_API_TOKEN", "").strip() and not _insecure_development_mode_enabled():
+    token = os.getenv("IACP_API_TOKEN", "").strip()
+    if not token and not _insecure_development_mode_enabled():
         raise RuntimeError("IACP_API_TOKEN es obligatorio")
+    minimum = _env_int("IACP_API_TOKEN_MIN_LENGTH", 32)
+    if token and len(token) < minimum:
+        # Un token corto es vulnerable a fuerza bruta aunque haya limitador.
+        raise RuntimeError(
+            f"IACP_API_TOKEN debe tener al menos {minimum} caracteres "
+            "(p. ej. python -c 'import secrets;print(secrets.token_urlsafe(48))')"
+        )
     initialize()
     initialize_idempotency()
     prune_history()

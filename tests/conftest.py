@@ -14,6 +14,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
+def reset_auth_throttle(monkeypatch):
+    from api.main import AUTH_THROTTLE
+
+    # Los tests comparten proceso y origen ("testclient"): sin reinicio, los 401
+    # intencionales de unos tests acabarían bloqueando a otros.
+    monkeypatch.setenv("IACP_API_TOKEN_MIN_LENGTH", "8")
+    AUTH_THROTTLE.reset()
+    yield
+    AUTH_THROTTLE.reset()
+
+
+@pytest.fixture(autouse=True)
 def isolated_postgres_schema(monkeypatch, tmp_path, request):
     if request.node.get_closest_marker("no_database"):
         yield

@@ -75,3 +75,114 @@ def test_clave_maestra_se_cachea_y_se_recarga_al_rotar(tmp_path, monkeypatch):
     os.utime(ruta, ns=(1, 2_000_000_000_000_000_000))
     with pytest.raises(Exception):
         service_secrets.decrypt(cifrado)
+
+
+TOKEN = "t" * 40
+
+
+def _con_token(monkeypatch, maximo="3"):
+    monkeypatch.setenv("IACP_API_TOKEN", TOKEN)
+    monkeypatch.setenv("IACP_ALLOW_INSECURE_LOCAL_DEV", "0")
+    monkeypatch.setenv("IACP_AUTH_MAX_FAILURES", maximo)
+    monkeypatch.setenv("IACP_AUTH_FAILURE_WINDOW_SECONDS", "60")
+
+
+def test_limitador_bloquea_tokens_invalidos_pero_nunca_al_valido(monkeypatch):
+    _con_token(monkeypatch)
+    invalido = {"Authorization": "Bearer " + "x" * 40}
+    valido = {"Authorization": f"Bearer {TOKEN}"}
+    with TestClient(app) as client:
+        for _ in range(3):
+            assert client.get("/v1/operations", headers=invalido).status_code == 401
+        bloqueado = client.get("/v1/operations", headers=invalido)
+        assert bloqueado.status_code == 429
+        assert int(bloqueado.headers["retry-after"]) >= 1
+        # También se frena sin credenciales y en métodos con cuerpo.
+        assert client.post("/v1/operations", json={}).status_code == 429
+        # El operador legítimo no se ve afectado por el bloqueo del origen.
+        assert client.get("/v1/operations", headers=valido).status_code == 200
+
+
+def test_limitador_expira_con_la_ventana(monkeypatch):
+    from api.main import AUTH_THROTTLE
+
+    _con_token(monkeypatch, maximo="2")
+    monkeypatch.setenv("IACP_AUTH_FAILURE_WINDOW_SECONDS", "1")
+    AUTH_THROTTLE.record("origen")
+    AUTH_THROTTLE.record("origen")
+    assert AUTH_THROTTLE.retry_after("origen") >= 1
+    import time
+
+    time.sleep(1.1)
+    assert AUTH_THROTTLE.retry_after("origen") == 0
+
+
+@pytest.mark.no_database
+def test_limitador_acota_la_memoria_por_origen():
+    from api.main import AuthFailureThrottle
+
+    limitador = AuthFailureThrottle()
+    for indice in range(AuthFailureThrottle.MAX_SOURCES + 50):
+        limitador.record(f"10.0.{indice // 256}.{indice % 256}")
+    assert len(limitador._failures) <= AuthFailureThrottle.MAX_SOURCES
+
+
+def test_token_corto_impide_el_arranque(monkeypatch):
+    monkeypatch.setenv("IACP_API_TOKEN", "corto-pero-no-vacio")
+    monkeypatch.setenv("IACP_API_TOKEN_MIN_LENGTH", "32")
+    monkeypatch.setenv("IACP_ALLOW_INSECURE_LOCAL_DEV", "0")
+    with pytest.raises(RuntimeError, match="al menos 32 caracteres"):
+        with TestClient(app):
+            pass
+
+
+def test_token_largo_arranca(monkeypatch):
+    _con_token(monkeypatch)
+    monkeypatch.setenv("IACP_API_TOKEN_MIN_LENGTH", "32")
+    with TestClient(app) as client:
+        assert client.get("/health/live").status_code == 200
+
+
+PORTAINER = COMPOSE.parent / "deploy" / "portainer" / "docker-compose.yml"
+DOCKERFILE = COMPOSE.parent / "Dockerfile"
+
+
+def _stack(ruta: Path) -> dict:
+    return yaml.safe_load(ruta.read_text(encoding="utf-8"))["services"]
+
+
+@pytest.mark.no_database
+@pytest.mark.parametrize("ruta", [COMPOSE, PORTAINER], ids=["compose", "portainer"])
+def test_contenedores_tienen_techos_de_memoria_y_procesos(ruta):
+    servicios = _stack(ruta)
+    assert {"api", "postgres", "worker-1", "service-worker-1"} <= set(servicios)
+    for nombre, servicio in servicios.items():
+        assert servicio.get("mem_limit"), f"{nombre} sin mem_limit"
+        assert servicio.get("pids_limit"), f"{nombre} sin pids_limit"
+
+
+@pytest.mark.no_database
+@pytest.mark.parametrize("ruta", [COMPOSE, PORTAINER], ids=["compose", "portainer"])
+def test_postgres_endurecido_con_capacidades_minimas(ruta):
+    postgres = _stack(ruta)["postgres"]
+    assert postgres["read_only"] is True
+    assert "no-new-privileges:true" in postgres["security_opt"]
+    assert postgres["cap_drop"] == ["ALL"]
+    assert set(postgres["cap_add"]) == {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
+    assert not postgres.get("ports"), "PostgreSQL nunca se publica en el host"
+
+
+@pytest.mark.no_database
+def test_portainer_conserva_aislamiento_de_red_de_postgres():
+    contenido = yaml.safe_load(PORTAINER.read_text(encoding="utf-8"))
+    assert contenido["networks"]["internal"]["internal"] is True
+    assert contenido["services"]["postgres"]["networks"] == ["internal"]
+
+
+@pytest.mark.no_database
+def test_dockerfile_deja_el_codigo_de_solo_lectura_para_el_usuario_de_runtime():
+    texto = DOCKERFILE.read_text(encoding="utf-8")
+    assert "chown -R iacp:iacp /app" not in texto
+    assert "chown -R iacp:iacp /var/lib/iacp-controlplane" in texto
+    assert "chmod -R go-w,a+rX /app" in texto
+    assert "\nUSER iacp\n" in texto

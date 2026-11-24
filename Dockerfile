@@ -36,9 +36,13 @@ RUN mkdir -p /opt/terraform-plugin-cache /var/lib/iacp-controlplane && \
     cd /app/terraform/environments/prx && \
     TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache \
       terraform init -input=false -no-color -backend=false -lockfile=readonly && \
-    chown -R iacp:iacp /app /var/lib/iacp-controlplane
+    chown -R iacp:iacp /var/lib/iacp-controlplane && \
+    chown -R root:root /app /opt/terraform-plugin-cache && \
+    chmod -R go-w,a+rX /app /opt/terraform-plugin-cache
 USER iacp
 
 EXPOSE 8080
+# El código y los proveedores de Terraform son de solo lectura para el usuario
+# de runtime; únicamente el volumen de trabajo es escribible.
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
 

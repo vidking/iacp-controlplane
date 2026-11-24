@@ -68,6 +68,24 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 60s
+    # PostgreSQL solo conserva las capacidades que exige su entrypoint para
+    # cambiar de usuario y asumir la propiedad del volumen.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /run/postgresql:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: ${IACP_POSTGRES_MEM_LIMIT:-2g}
+    pids_limit: ${IACP_POSTGRES_PIDS_LIMIT:-512}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iacp_controlplane}
       POSTGRES_USER: ${POSTGRES_USER:-iacp}
@@ -86,6 +104,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 30s
+    mem_limit: ${IACP_API_MEM_LIMIT:-1g}
+    pids_limit: ${IACP_API_PIDS_LIMIT:-256}
     init: true
     read_only: true
     tmpfs:
@@ -150,6 +170,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -181,6 +203,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -212,6 +236,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -243,6 +269,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -274,6 +302,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -305,6 +335,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -336,6 +368,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -376,6 +410,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -416,6 +452,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -455,6 +493,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -494,6 +534,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
@@ -534,6 +576,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 120s
+    mem_limit: ${IACP_WORKER_MEM_LIMIT:-1536m}
+    pids_limit: ${IACP_WORKER_PIDS_LIMIT:-512}
     healthcheck: *worker-healthcheck
     init: true
     read_only: true
