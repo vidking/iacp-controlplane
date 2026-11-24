@@ -18,8 +18,8 @@ def test_backup_counts_use_the_current_worker_ownership_columns():
     assert "current_operation_id IS NOT NULL" in go_live._COUNT_SQL
     assert "FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL" not in go_live._COUNT_SQL
     assert "FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL" in go_live._COUNT_SQL
-    assert "instance.operation_id=o.operation_id AND instance.vmid=o.vmid" in go_live._COUNT_SQL
-    assert "instance.status='uncertain'" in go_live._COUNT_SQL
+    assert "queued_operations" in go_live._COUNT_SQL
+    assert "queued_service_jobs" in go_live._COUNT_SQL
 
 
 def test_local_compose_declares_six_workers_with_shared_capacity():
@@ -1083,119 +1083,6 @@ def test_replace_active_solo_se_acepta_con_deploy(capsys):
     assert "--replace-active solo se permite con la acción deploy" in capsys.readouterr().err
 
 
-def test_recover_uncertain_solo_se_acepta_con_deploy(capsys):
-    with pytest.raises(SystemExit):
-        go_live.main(["verify", "--manifest", "m.json", "--evidence-dir", "e", "--recover-uncertain"])
-    assert "--recover-uncertain solo se permite con la acción deploy" in capsys.readouterr().err
-
-
-def test_recover_uncertain_rechaza_produccion_antes_de_tocar_runtime(tmp_path, monkeypatch, capsys):
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text("{}", encoding="utf-8")
-    compose = tmp_path / "compose.yaml"
-    env_file = tmp_path / "runtime.env"
-    evidence = tmp_path / "evidence"
-    evidence.mkdir(mode=0o700)
-    monkeypatch.setattr(
-        go_live,
-        "_manifest",
-        lambda *_args, **_kwargs: ({"stage": "production"}, compose, env_file),
-    )
-    monkeypatch.setattr(go_live, "_new_evidence_dir", lambda _path: evidence)
-
-    result = go_live.main([
-        "deploy", "--manifest", str(manifest_path), "--evidence-dir", str(tmp_path / "evidence-root"),
-        "--recover-uncertain",
-    ])
-
-    assert result == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["passed"] is False
-    assert payload["reason"] == "--recover-uncertain solo se permite en el stack develop"
-
-
-def test_quiescence_allows_only_classified_uncertain_operations(monkeypatch):
-    counts = {
-        "active_operations": 6,
-        "uncertain_operations": 6,
-        "active_service_jobs": 0,
-        "queued_operations": 0,
-        "queued_service_jobs": 0,
-        "busy_infrastructure_workers": 0,
-        "busy_service_workers": 0,
-    }
-    monkeypatch.setattr(go_live, "_database_counts", lambda _prefix: counts)
-
-    assert go_live._wait_for_stack_quiescence([], timeout=0, allow_uncertain=True) == counts
-    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
-        go_live._wait_for_stack_quiescence([], timeout=0)
-
-
-def test_recuperacion_dev_verifica_workers_y_ausencia_fisica(monkeypatch):
-    candidates = [
-        {"operation_id": f"operation-{vmid}", "instance_id": f"instance-{vmid}", "vmid": vmid}
-        for vmid in range(40855, 40861)
-    ]
-    monkeypatch.setattr(
-        go_live,
-        "_database_counts",
-        lambda _prefix: {
-            "uncertain_operations": len(candidates),
-            "uncertain_recovery_candidates": candidates,
-        },
-    )
-    calls = []
-
-    def fake_run(command, *, label, timeout=120):
-        calls.append((command, label))
-        if label.startswith("Procesos físicos"):
-            return "[]"
-        if label.startswith("Confirmación de ausencia"):
-            return json.dumps({str(vmid): "absent" for vmid in range(40855, 40861)})
-        raise AssertionError(label)
-
-    monkeypatch.setattr(go_live, "_run", fake_run)
-    result = go_live._verify_dev_uncertain_recovery(
-        {
-            "stage": "develop",
-            "vmid_min": 40000,
-            "vmid_max": 49999,
-            "services_enabled": True,
-            "service_worker_count": 6,
-        },
-        ["docker", "compose"],
-    )
-
-    assert result["operation_count"] == 6
-    assert result["vmids"] == list(range(40855, 40861))
-    assert result["physical_absence_confirmed"] is True
-    assert len(calls) == 13  # doce workers y una consulta física de Proxmox
-
-
-def test_recuperacion_dev_falla_cerrada_si_no_hay_ausencia_confirmada(monkeypatch):
-    candidate = {"operation_id": "operation-1", "instance_id": "instance-1", "vmid": 40855}
-    monkeypatch.setattr(
-        go_live,
-        "_database_counts",
-        lambda _prefix: {
-            "uncertain_operations": 1,
-            "uncertain_recovery_candidates": [candidate],
-        },
-    )
-
-    def fake_run(_command, *, label, timeout=120):
-        if label.startswith("Procesos físicos"):
-            return "[]"
-        return json.dumps({"40855": "unknown"})
-
-    monkeypatch.setattr(go_live, "_run", fake_run)
-    with pytest.raises(go_live.GateError, match="no tiene ausencia física confirmada"):
-        go_live._verify_dev_uncertain_recovery(
-            {"stage": "develop", "vmid_min": 40000, "vmid_max": 49999},
-            ["docker", "compose"],
-        )
-
-
 def test_la_proteccion_del_candidato_activo_sigue_vigente_por_defecto(tmp_path):
     ruta = tmp_path / "traefik.yml"
     ruta.write_text(
@@ -1208,28 +1095,6 @@ def test_la_proteccion_del_candidato_activo_sigue_vigente_por_defecto(tmp_path):
     }
     with pytest.raises(go_live.GateError, match="alias candidato está activo"):
         go_live._assert_production_candidate_inactive(manifiesto)
-
-
-def test_certificacion_productiva_ata_commit_y_digest(tmp_path, monkeypatch):
-    ruta = tmp_path / "controlplane-v1.json"
-    ruta.write_text(json.dumps({
-        "result": "PASS",
-        "image_tag": IMAGE_TAG,
-        "image_digest": IMAGE_DIGEST,
-        "checks": {key: "PASS" for key in go_live.PRODUCTION_CERTIFICATION_CHECKS},
-    }))
-    ruta.chmod(0o600)
-    monkeypatch.setattr(go_live, "PRODUCTION_CERTIFICATION_PATH", ruta)
-    manifiesto = _manifest(certification_file=str(ruta))
-
-    assert go_live._load_production_certificate(manifiesto)["image_digest"] == IMAGE_DIGEST
-
-    manifiesto["image_digest"] = "sha256:" + "d" * 64
-    with pytest.raises(go_live.GateError, match="no corresponde al commit y digest"):
-        go_live._load_production_certificate(manifiesto)
-
-    manifiesto["image_digest"] = ""
-    assert go_live._load_production_certificate(manifiesto)["image_tag"] == IMAGE_TAG
 
 
 @pytest.mark.parametrize("cantidad", [0, 2, 4, 5, 7, "6", None])
@@ -1248,3 +1113,46 @@ def test_los_manifiestos_de_ejemplo_declaran_seis_y_seis(ejemplo):
     datos = json.loads((go_live.ROOT / "deploy" / "portainer" / ejemplo).read_text())
     assert datos["service_worker_count"] == 6
     assert datos["max_concurrent"] == 6
+
+
+def _conteos(**extra):
+    base = {
+        "active_operations": 0, "active_service_jobs": 0,
+        "running_operations": 0, "running_service_jobs": 0,
+        "uncertain_operations": 0, "uncertain_service_jobs": 0,
+        "queued_operations": 0, "queued_service_jobs": 0,
+        "busy_infrastructure_workers": 0, "busy_service_workers": 0,
+    }
+    base.update(extra)
+    return base
+
+
+def test_el_drenaje_por_defecto_sigue_esperando_las_operaciones_inciertas(monkeypatch):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(active_operations=6, uncertain_operations=6))
+    monkeypatch.setattr(go_live.time, "sleep", lambda _s: None)
+    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
+        go_live._wait_for_stack_quiescence(["docker"], timeout=0)
+
+
+def test_allow_uncertain_no_espera_intenciones_sin_worker_y_las_registra(monkeypatch):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(active_operations=6, uncertain_operations=6))
+    resultado = go_live._wait_for_stack_quiescence(["docker"], timeout=0, allow_uncertain=True)
+    assert resultado["uncertain_operations"] == 6 and resultado["uncertain_deferred"] is True
+
+
+@pytest.mark.parametrize("ocupado", [
+    {"running_operations": 1}, {"running_service_jobs": 1},
+    {"queued_operations": 1}, {"queued_service_jobs": 1},
+    {"busy_infrastructure_workers": 1}, {"busy_service_workers": 1},
+])
+def test_allow_uncertain_sigue_esperando_el_trabajo_en_ejecucion(monkeypatch, ocupado):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(uncertain_operations=6, **ocupado))
+    monkeypatch.setattr(go_live.time, "sleep", lambda _s: None)
+    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
+        go_live._wait_for_stack_quiescence(["docker"], timeout=0, allow_uncertain=True)
+
+
+def test_allow_uncertain_solo_se_acepta_con_backup_o_deploy(capsys):
+    with pytest.raises(SystemExit):
+        go_live.main(["verify", "--manifest", "m.json", "--evidence-dir", "e", "--allow-uncertain"])
+    assert "--allow-uncertain solo se permite con backup o deploy" in capsys.readouterr().err

@@ -840,6 +840,71 @@ def test_power_permission_zero_is_denied():
         client.permissions("mng01", 40000, mutate=True)
 
 
+def _cliente_con_permisos(respuestas):
+    from worker.proxmox import ProxmoxClient
+
+    cliente = object.__new__(ProxmoxClient)
+    consultas = []
+
+    def get(ruta, **_kwargs):
+        consultas.append(ruta)
+        for prefijo, valor in respuestas.items():
+            if ruta.startswith(prefijo):
+                return valor
+        return {}
+
+    cliente.get = get
+    cliente.consultas = consultas
+    return cliente
+
+
+def test_power_permission_is_inherited_from_the_pool_for_member_vms(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
+    # Caso real de MNG: 0 sobre /vms/<id>, 1 en el pool y la VM es miembro.
+    cliente = _cliente_con_permisos({
+        "/access/permissions?path=%2Fvms%2F30000": {"/vms/30000": {"VM.Audit": 0, "VM.PowerMgmt": 0}},
+        "/pools/iacp-lab": {"members": [{"vmid": 29010}, {"vmid": 30000}]},
+        "/access/permissions?path=%2Fpool%2Fiacp-lab": {"/pool/iacp-lab": {"VM.Audit": 1, "VM.PowerMgmt": 1}},
+    })
+    cliente.permissions("mng01", 30000, mutate=True)
+
+
+def test_power_permission_denies_vms_outside_the_pool(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
+    cliente = _cliente_con_permisos({
+        "/access/permissions?path=%2Fvms%2F29000": {"/vms/29000": {"VM.Audit": 0, "VM.PowerMgmt": 0}},
+        "/pools/iacp-lab": {"members": [{"vmid": 30000}]},
+        "/access/permissions?path=%2Fpool%2Fiacp-lab": {"/pool/iacp-lab": {"VM.Audit": 1, "VM.PowerMgmt": 1}},
+    })
+    with pytest.raises(ProxmoxError, match="POWER_PERMISSION_DENIED"):
+        cliente.permissions("mng01", 29000, mutate=True)
+    # Ni siquiera se consulta el privilegio del pool para una VM que no pertenece a él.
+    assert not any("pool%2Fiacp-lab" in ruta for ruta in cliente.consultas)
+
+
+def test_power_permission_denies_when_the_pool_privilege_is_zero(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "iacp-lab")
+    cliente = _cliente_con_permisos({
+        "/access/permissions?path=%2Fvms%2F30000": {"/vms/30000": {"VM.Audit": 0, "VM.PowerMgmt": 0}},
+        "/pools/iacp-lab": {"members": [{"vmid": 30000}]},
+        "/access/permissions?path=%2Fpool%2Fiacp-lab": {"/pool/iacp-lab": {"VM.Audit": 1, "VM.PowerMgmt": 0}},
+    })
+    with pytest.raises(ProxmoxError, match="POWER_PERMISSION_DENIED"):
+        cliente.permissions("mng01", 30000, mutate=True)
+    # Lectura: basta VM.Audit.
+    cliente.permissions("mng01", 30000, mutate=False)
+
+
+def test_power_permission_rejects_an_invalid_pool_name(monkeypatch):
+    monkeypatch.setenv("IACP_PROXMOX_POOL_ID", "../etc")
+    cliente = _cliente_con_permisos({
+        "/access/permissions?path=%2Fvms%2F30000": {"/vms/30000": {"VM.Audit": 0, "VM.PowerMgmt": 0}},
+    })
+    with pytest.raises(ProxmoxError, match="POWER_PERMISSION_DENIED"):
+        cliente.permissions("mng01", 30000, mutate=True)
+    assert cliente.consultas == ["/access/permissions?path=%2Fvms%2F30000"]
+
+
 @pytest.mark.no_database
 def test_lifecycle_uses_saved_provision_time_image_expectation(tmp_path, monkeypatch):
     import worker.main as worker_main

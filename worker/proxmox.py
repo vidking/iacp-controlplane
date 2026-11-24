@@ -327,13 +327,45 @@ class ProxmoxClient:
     def storage_status(self, node: str, storage: str) -> dict:
         return self.get(f"/nodes/{quote(node, safe='')}/storage/{quote(storage, safe='')}/status") or {}
 
-    def permissions(self, node: str, vmid: int, *, mutate: bool = False) -> None:
-        path = f"/vms/{vmid}"
+    def _privileges_granted(self, path: str, required: list[str]) -> bool:
         data = self.get("/access/permissions?" + urlencode({"path": path}))
         privileges = data.get(path) if isinstance(data, dict) else None
+        return isinstance(privileges, dict) and all(
+            privileges.get(name) in {True, 1} for name in required
+        )
+
+    def _pool_has_vm(self, pool_id: str, vmid: int) -> bool:
+        data = self.get(f"/pools/{quote(pool_id, safe='')}")
+        members = data.get("members") if isinstance(data, dict) else None
+        if not isinstance(members, list):
+            return False
+        return any(
+            isinstance(member, dict) and str(member.get("vmid", "")) == str(vmid)
+            for member in members
+        )
+
+    def permissions(self, node: str, vmid: int, *, mutate: bool = False) -> None:
+        """Exige los privilegios efectivos del token sobre la VM.
+
+        En este Proxmox la ACL del orquestador se concede sobre el pool
+        (``/pool/<id>``, propagate=1) y la consulta ``/access/permissions`` de
+        ``/vms/<id>`` devuelve 0 para esos privilegios aunque Proxmox sí permita
+        operar la VM por pertenecer al pool. Se acepta, por tanto, el privilegio
+        en ``/vms/<id>`` o el heredado del pool configurado, pero solo si la VM
+        es miembro de ese pool: una VM ajena sigue denegada.
+        """
+
         required = ["VM.Audit", "VM.PowerMgmt"] if mutate else ["VM.Audit"]
-        if not isinstance(privileges, dict) or any(privileges.get(name) not in {True, 1} for name in required):
-            raise ProxmoxError("POWER_PERMISSION_DENIED", 403)
+        if self._privileges_granted(f"/vms/{vmid}", required):
+            return
+        pool_id = os.getenv("IACP_PROXMOX_POOL_ID", "iacp-lab").strip()
+        if (
+            re.fullmatch(r"[A-Za-z0-9_-]+", pool_id)
+            and self._pool_has_vm(pool_id, vmid)
+            and self._privileges_granted(f"/pool/{pool_id}", required)
+        ):
+            return
+        raise ProxmoxError("POWER_PERMISSION_DENIED", 403)
 
     def power_state(self, node: str, vmid: int, name: str) -> dict:
         config = self.vm_config(node, vmid)

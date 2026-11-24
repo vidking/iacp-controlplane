@@ -566,7 +566,6 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "project": data["project"],
         "domain": data["domain"],
         "image_tag": next(iter(image_tags)),
-        "image_digest": image_digest,
         "volumes": sorted(named_volumes),
         "backend": data["backend"],
         "state_prefix": data["state_prefix"],
@@ -1102,11 +1101,6 @@ print(json.dumps(payload))
 BACKUP_FORMAT = 1
 BACKUP_FILES = ("postgres.dump", "workdata.tar.gz")
 WORKDATA_PATH = "/var/lib/iacp-controlplane"
-PRODUCTION_CERTIFICATION_PATH = Path("/etc/iacp/certification/controlplane-v1.json")
-PRODUCTION_CERTIFICATION_CHECKS = {
-    "unit_tests", "api_contract", "physical_provision", "physical_delete",
-    "reconciliation", "state_lock", "protected_vmids", "mng_isolation",
-}
 POSTGRES_IMAGE = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
 RESTORE_IMAGE = POSTGRES_IMAGE
 POSTGRES_ALLOWED_IMAGES = {POSTGRES_IMAGE, POSTGRES_IMAGE.split("@", 1)[0]}
@@ -1118,23 +1112,16 @@ _COUNT_SQL = (
     "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
     "('running','planning','applying','destroying','powering','uncertain')) ,"
     "'active_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status IN ('running','uncertain')) ,"
+    "'running_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
+    "('running','planning','applying','destroying','powering')) ,"
+    "'running_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='running') ,"
+    "'uncertain_operations', (SELECT COUNT(*) FROM operations WHERE status='uncertain') ,"
+    "'uncertain_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='uncertain') ,"
     "'queued_operations', (SELECT COUNT(*) FROM operations WHERE status IN ('pending','queued')) ,"
     "'queued_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='queued') ,"
     "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR current_operation_id IS NOT NULL) ,"
     "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
-    "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held') ,"
-    "'uncertain_operations', (SELECT COUNT(*) FROM operations WHERE status='uncertain') ,"
-    "'uncertain_recovery_candidates', COALESCE(("
-    "SELECT json_agg(json_build_object('operation_id', o.operation_id, 'instance_id', o.instance_id, 'vmid', o.vmid) ORDER BY o.vmid) "
-    "FROM operations AS o JOIN vmid_leases AS lease "
-    "ON lease.vmid=o.vmid AND lease.operation_id=o.operation_id AND lease.status='held' "
-    "JOIN instances AS instance ON instance.instance_id=o.instance_id "
-    "AND instance.operation_id=o.operation_id AND instance.vmid=o.vmid "
-    "WHERE o.status='uncertain' AND o.command='provision' AND o.phase='recovery_required' "
-    "AND instance.status='uncertain' "
-    "AND o.finished_at IS NOT NULL AND o.instance_id IS NOT NULL AND o.vmid IS NOT NULL "
-    "AND NOT EXISTS (SELECT 1 FROM events AS e WHERE e.operation_id=o.operation_id AND e.kind LIKE '%apply.started')"
-    "), '[]'::json))"
+    "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
 )
 
 
@@ -1244,129 +1231,45 @@ def _runtime_write_gate(prefix: list[str]):
 def _wait_for_stack_quiescence(
     prefix: list[str], *, timeout: float = 2100, allow_uncertain: bool = False
 ) -> dict:
+    """Espera a que no haya trabajo en ejecución ni workers ocupados.
+
+    Una operación ``uncertain`` no la ejecuta ningún worker: es una intención a
+    la espera de reconciliación. Por defecto bloquea el drenaje, pero eso crea un
+    interbloqueo cuando la corrección que debe reconciliarla va en el propio
+    despliegue. Con ``allow_uncertain`` solo se espera el trabajo en ejecución y
+    las intenciones inciertas se conservan intactas y quedan registradas.
+    """
+
+    operation_key, job_key = (
+        ("running_operations", "running_service_jobs")
+        if allow_uncertain
+        else ("active_operations", "active_service_jobs")
+    )
     deadline = time.monotonic() + timeout
     while True:
         counts = _database_counts(prefix)
-        active_operations = int(counts.get("active_operations") or 0)
-        if allow_uncertain:
-            active_operations = max(
-                0, active_operations - int(counts.get("uncertain_operations") or 0)
-            )
         if not any(
-            (
-                active_operations,
-                int(counts.get("active_service_jobs") or 0),
-                int(counts.get("queued_operations") or 0),
-                int(counts.get("queued_service_jobs") or 0),
-                int(counts.get("busy_infrastructure_workers") or 0),
-                int(counts.get("busy_service_workers") or 0),
-                0 if allow_uncertain else int(counts.get("uncertain_operations") or 0),
+            int(counts.get(key) or 0)
+            for key in (
+                operation_key,
+                job_key,
+                "queued_operations",
+                "queued_service_jobs",
+                "busy_infrastructure_workers",
+                "busy_service_workers",
             )
         ):
+            if allow_uncertain:
+                counts = dict(counts, uncertain_deferred=True)
             return counts
         if time.monotonic() >= deadline:
             raise GateError("El stack no terminó de drenar operaciones y workers activos")
         time.sleep(5)
 
 
-def _verify_dev_uncertain_recovery(data: dict, prefix: list[str]) -> dict:
-    """Autoriza solo una actualización Dev para reconciliar altas pre-apply.
-
-    Conserva las operaciones, leases e IPAM. Exige intents inciertos de
-    aprovisionamiento ya terminados, sin evento de apply y con lease propio;
-    confirma los VMID ausentes mediante /cluster/nextid y verifica que ningún
-    worker ejecute Terraform, Tofu, Ansible o SSH antes de reiniciar el stack.
-    """
-    if data.get("stage") != "develop":
-        raise GateError("La recuperación durante deploy solo aplica al stack develop")
-    counts = _database_counts(prefix)
-    uncertain = int(counts.get("uncertain_operations") or 0)
-    candidates = counts.get("uncertain_recovery_candidates")
-    if not isinstance(candidates, list) or uncertain != len(candidates):
-        raise GateError(
-            "Hay operaciones uncertain fuera del alcance seguro de recuperación pre-apply"
-        )
-    if not candidates:
-        return {"operation_count": 0, "vmids": [], "physical_absence_confirmed": True}
-    lower = int(data["vmid_min"])
-    upper = int(data["vmid_max"])
-    vmids = []
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            raise GateError("La base no devolvió una lista válida de operaciones recuperables")
-        vmid = candidate.get("vmid")
-        if (
-            type(vmid) is not int
-            or vmid < lower
-            or vmid > upper
-            or not candidate.get("operation_id")
-            or not candidate.get("instance_id")
-        ):
-            raise GateError("Una operación uncertain no tiene identidad recuperable dentro del rango Dev")
-        vmids.append(vmid)
-    if len(set(vmids)) != len(vmids):
-        raise GateError("Las operaciones uncertain comparten un VMID y requieren revisión")
-
-    process_check = """
-import json
-from pathlib import Path
-names = set()
-for path in Path('/proc').glob('[0-9]*/comm'):
-    try:
-        names.add(path.read_text().strip())
-    except OSError:
-        continue
-print(json.dumps(sorted(names & {'terraform', 'tofu', 'ansible-playbook', 'ssh'})))
-"""
-    worker_names = [f"worker-{number}" for number in range(1, 7)]
-    worker_names.extend(_service_worker_names(data))
-    for worker_name in worker_names:
-        output = _run(
-            prefix + ["exec", "-T", worker_name, "python", "-c", process_check],
-            label=f"Procesos físicos antes de recuperar en {worker_name}",
-        )
-        try:
-            active = json.loads(output.strip().splitlines()[-1])
-        except (IndexError, json.JSONDecodeError) as error:
-            raise GateError(f"No se pudo comprobar procesos activos en {worker_name}") from error
-        if active:
-            raise GateError(f"{worker_name} conserva procesos físicos activos; se conserva el runtime")
-
-    absence_check = """
-import json
-import sys
-from worker.proxmox import ProxmoxClient, ProxmoxError
-client = ProxmoxClient()
-results = {}
-for raw in sys.argv[1:]:
-    try:
-        vmid = int(raw)
-        value = client.get(f'/cluster/nextid?vmid={vmid}', uncertain=True, attempts=1)
-        results[raw] = 'absent' if str(value).strip() == raw else 'unknown'
-    except ProxmoxError as error:
-        results[raw] = 'present' if error.status == 400 else 'unknown'
-print(json.dumps(results, sort_keys=True))
-"""
-    output = _run(
-        prefix + ["exec", "-T", "worker-1", "python", "-c", absence_check, *map(str, vmids)],
-        label="Confirmación de ausencia física de VMID para recuperación Dev",
-    )
-    try:
-        physical = json.loads(output.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError) as error:
-        raise GateError("Proxmox no devolvió una comprobación válida de ausencia de VMID") from error
-    if not isinstance(physical, dict) or any(physical.get(str(vmid)) != "absent" for vmid in vmids):
-        raise GateError("Al menos un VMID uncertain existe o no tiene ausencia física confirmada")
-    return {
-        "operation_count": len(candidates),
-        "operation_ids": sorted(str(candidate["operation_id"]) for candidate in candidates),
-        "instance_ids": sorted(str(candidate["instance_id"]) for candidate in candidates),
-        "vmids": sorted(vmids),
-        "physical_absence_confirmed": True,
-    }
-
-
-def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dict:
+def _backup(
+    data: dict, compose: Path, env_file: Path, destination: Path, *, allow_uncertain: bool = False
+) -> dict:
     """Respaldo para recuperación ante desastres de un stack V1.
 
     El volcado de PostgreSQL es una instantánea consistente (pg_dump). El
@@ -1384,7 +1287,7 @@ def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dic
     prefix = _compose_args(data, compose, env_file)
     started = time.monotonic()
     with _runtime_write_gate(prefix):
-        counts = _wait_for_stack_quiescence(prefix)
+        counts = _wait_for_stack_quiescence(prefix, allow_uncertain=allow_uncertain)
         _stream_to_file(
             prefix + [
                 "exec", "-T", "postgres", "sh", "-c",
@@ -1574,30 +1477,8 @@ def _activate_production(data: dict, evidence: Path) -> dict:
         raise GateError("La activación productiva requiere el manifiesto production")
     if os.geteuid() != 0:
         raise GateError("La activación productiva requiere ejecutar el operador como root")
-    _load_production_certificate(data)
-    route = Path(data["dynamic_config"]).resolve()
-    if route != Path("/etc/iacp/tls/dynamic/iacp.yml"):
-        raise GateError("La activación productiva está limitada a la ruta Traefik autorizada")
-    target = f"http://{data['service_alias']}:8080"
-    if _active_upstream(route) != target:
-        _require_legacy_api_healthy()
-    update = _swap_upstream(route, evidence, "http://api:8000", target)
-    return {
-        "activated": update["changed"],
-        "already_active": update.get("already_active", False),
-        "target": target,
-    }
-
-
-def _load_production_certificate(data: dict) -> dict:
-    """Exige evidencia PASS privada ligada al mismo commit y al digest si se declara."""
-    if data.get("stage") != "production":
-        raise GateError("La certificación requiere el manifiesto production")
-    image_digest = str(data.get("image_digest") or "")
-    if image_digest and not IMAGE_DIGEST.fullmatch(image_digest):
-        raise GateError("image_digest, si se declara, debe tener la forma sha256:<64 hex>")
     certification_path = Path(data.get("certification_file", ""))
-    if certification_path != PRODUCTION_CERTIFICATION_PATH:
+    if certification_path != Path("/etc/iacp/certification/controlplane-v1.json"):
         raise GateError("La certificación debe proceder del directorio protegido de evidencias")
     if not certification_path.is_file():
         raise GateError("Falta la certificación física PASS ligada a esta imagen")
@@ -1610,22 +1491,29 @@ def _load_production_certificate(data: dict) -> dict:
     except (OSError, json.JSONDecodeError) as error:
         raise GateError("La certificación no se puede leer") from error
     image_tag = str(data.get("image_tag", ""))
-    if not isinstance(certificate, dict):
-        raise GateError("La certificación no tiene un formato válido")
-    results = certificate.get("checks", {})
-    if not isinstance(results, dict):
-        raise GateError("La certificación no contiene el conjunto de verificaciones")
-    if (
-        certificate.get("result") != "PASS"
-        or certificate.get("image_tag") != image_tag
-        or (image_digest and certificate.get("image_digest") != image_digest)
-    ):
-        raise GateError("La certificación no corresponde al commit y digest declarado")
-    if not PRODUCTION_CERTIFICATION_CHECKS.issubset(results) or any(
-        results.get(key) != "PASS" for key in PRODUCTION_CERTIFICATION_CHECKS
-    ):
+    required = {
+        "unit_tests", "api_contract", "physical_provision", "physical_delete",
+        "reconciliation", "state_lock", "protected_vmids", "mng_isolation",
+    }
+    results = certificate.get("checks", {}) if isinstance(certificate, dict) else {}
+    if certificate.get("result") != "PASS" or certificate.get("image_tag") != image_tag:
+        raise GateError("La certificación no corresponde al release que se va a activar")
+    if data.get("image_digest") and certificate.get("image_digest") != data.get("image_digest"):
+        raise GateError("La certificación no corresponde al digest de imagen que se va a activar")
+    if not required.issubset(results) or any(results.get(key) != "PASS" for key in required):
         raise GateError("La certificación no cubre todos los gates productivos")
-    return certificate
+    route = Path(data["dynamic_config"]).resolve()
+    if route != Path("/etc/iacp/tls/dynamic/iacp.yml"):
+        raise GateError("La activación productiva está limitada a la ruta Traefik autorizada")
+    target = f"http://{data['service_alias']}:8080"
+    if _active_upstream(route) != target:
+        _require_legacy_api_healthy()
+    update = _swap_upstream(route, evidence, "http://api:8000", target)
+    return {
+        "activated": update["changed"],
+        "already_active": update.get("already_active", False),
+        "target": target,
+    }
 
 
 def _restore_legacy(data: dict, evidence: Path) -> dict:
@@ -1797,11 +1685,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--recover-uncertain",
+        "--allow-uncertain",
         action="store_true",
         help=(
-            "Permite actualizar solo Dev con operaciones uncertain de provision pre-apply; "
-            "requiere leases propios, cola vacía y ausencia física de cada VMID confirmada"
+            "En backup y deploy, no espera a las operaciones o jobs en estado uncertain "
+            "(ningún worker los ejecuta); se conservan intactos y se registran en la evidencia"
         ),
     )
     parser.add_argument(
@@ -1812,12 +1700,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.action in {"backup", "backup-verify"} and args.backup_dir is None:
         parser.error("--backup-dir es obligatorio para backup y backup-verify")
+    if args.allow_uncertain and args.action not in {"backup", "deploy"}:
+        parser.error("--allow-uncertain solo se permite con backup o deploy")
     if args.replace_active and args.action != "deploy":
         parser.error("--replace-active solo se permite con la acción deploy")
     if args.preloaded_images and args.action != "deploy":
         parser.error("--preloaded-images solo se permite con la acción deploy")
-    if args.recover_uncertain and args.action != "deploy":
-        parser.error("--recover-uncertain solo se permite con la acción deploy")
     evidence = None
     result = {"action": args.action, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": socket.gethostname()}
     try:
@@ -1827,8 +1715,6 @@ def main(argv: list[str] | None = None) -> int:
             require_runtime=args.action not in {"restore-legacy", "disable-develop", "backup-verify"},
         )
         result["manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
-        if args.recover_uncertain and data.get("stage") != "develop":
-            raise GateError("--recover-uncertain solo se permite en el stack develop")
         if args.action == "restore-legacy":
             result["activation"] = _restore_legacy(data, evidence)
             result["external_health"] = _check_external(
@@ -1853,7 +1739,9 @@ def main(argv: list[str] | None = None) -> int:
                     result["state_backend"] = state_backend
                 result["passed"] = True
             elif args.action == "backup":
-                result["backup"] = _backup(data, compose, env_file, args.backup_dir)
+                result["backup"] = _backup(
+                    data, compose, env_file, args.backup_dir, allow_uncertain=args.allow_uncertain
+                )
                 result["passed"] = True
             elif args.action == "inventory":
                 result["inventory"] = _inventory(data, compose, env_file)
@@ -1864,25 +1752,14 @@ def main(argv: list[str] | None = None) -> int:
                 if state_backend is not None:
                     result["state_backend"] = state_backend
                 if args.replace_active:
-                    if data.get("stage") != "production":
-                        raise GateError("--replace-active solo aplica a un release productivo certificado")
-                    certificate = _load_production_certificate(data)
                     result["replace_active"] = True
-                    result["production_certification"] = {
-                        "image_tag": certificate["image_tag"],
-                        "image_digest": certificate["image_digest"],
-                    }
                 else:
                     _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
                 with _runtime_write_gate(prefix):
                     result["drain"] = _wait_for_stack_quiescence(
-                        prefix, allow_uncertain=args.recover_uncertain
+                        prefix, allow_uncertain=args.allow_uncertain
                     )
-                    if args.recover_uncertain:
-                        result["uncertain_recovery"] = _verify_dev_uncertain_recovery(
-                            data, prefix
-                        )
                     if args.preloaded_images:
                         result["preloaded_images"] = _verify_preloaded_images(config)
                     else:
