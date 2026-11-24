@@ -14,6 +14,12 @@ IMAGE_REPOSITORY = "scm.cyberfuel.com/cyberfuel/iacp-controlplane"
 IMAGE_DIGEST = "sha256:" + "c" * 64
 
 
+def test_backup_counts_use_the_current_worker_ownership_columns():
+    assert "current_operation_id IS NOT NULL" in go_live._COUNT_SQL
+    assert "FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL" not in go_live._COUNT_SQL
+    assert "FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL" in go_live._COUNT_SQL
+
+
 def test_local_compose_declares_six_workers_with_shared_capacity():
     compose = (Path(__file__).resolve().parents[1] / "compose.yaml").read_text(encoding="utf-8")
     workers = re.findall(r"(?m)^  (worker-\d+):$", compose)

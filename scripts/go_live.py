@@ -1106,7 +1106,7 @@ _COUNT_SQL = (
     "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
     "('running','planning','applying','destroying','powering','uncertain')) ,"
     "'active_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status IN ('running','uncertain')) ,"
-    "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
+    "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR current_operation_id IS NOT NULL) ,"
     "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
     "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
 )
