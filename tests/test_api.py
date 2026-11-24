@@ -1176,7 +1176,7 @@ def test_reconcile_allows_exact_failed_provision_with_owned_vmid_lease(
         with database() as db:
             db.execute(
                 """UPDATE operations SET status='failed', vmid=40000,
-                target_node='mng01', stack='mng01' WHERE operation_id=?""",
+                target_node=NULL, stack='mng01' WHERE operation_id=?""",
                 (source_id,),
             )
             db.execute(

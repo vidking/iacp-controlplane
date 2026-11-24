@@ -864,8 +864,11 @@ def _failed_provision_reconciliation_is_safe(db, instance, source) -> bool:
         or instance["status"] != "failed"
         or instance["operation_id"] != source["operation_id"]
         or instance["vmid"] != vmid
-        or not source["target_node"]
-        or instance["node"] != source["target_node"]
+        or not instance["node"]
+        or (
+            source["target_node"] is not None
+            and instance["node"] != source["target_node"]
+        )
         or is_protected_vmid(vmid)
     ):
         return False

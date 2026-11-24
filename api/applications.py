@@ -400,8 +400,11 @@ def _failed_provision_waiting_job_is_safe_to_cancel(db, service, job) -> bool:
         or source["operation_id"] != service["operation_id"]
         or source["vmid"] != vmid
         or source["instance_vmid"] != vmid
-        or not source["target_node"]
-        or source["instance_node"] != source["target_node"]
+        or not source["instance_node"]
+        or (
+            source["target_node"] is not None
+            and source["instance_node"] != source["target_node"]
+        )
     ):
         return False
     lease = db.execute(

@@ -1024,7 +1024,7 @@ def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lea
     with database() as db:
         db.execute(
             """UPDATE operations SET status='failed', vmid=40990,
-            target_node='mng01', stack='mng01' WHERE operation_id=?""",
+            target_node=NULL, stack='mng01' WHERE operation_id=?""",
             (order["operation_id"],),
         )
         db.execute(
