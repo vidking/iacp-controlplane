@@ -155,6 +155,207 @@ def test_conserva_vm_con_lease_de_otra_instancia(tmp_path, entorno):
     assert client.deleted == []
 
 
+def _seed_clon_parcial_sin_state(tmp_path, state_resources=None):
+    _seed(instance_name="qa-clon-parcial")
+    root = tmp_path / "plans" / "op-prov"
+    workspace = root / worker_main.source_stack_directory("mng01")
+    workspace.mkdir(parents=True)
+    (workspace / "terraform.tfstate").write_text(
+        json.dumps({"resources": state_resources or []})
+    )
+    payload = {
+        "physical_identity_tag": "iacp-owned-op-prov",
+        "spec": {"name": "qa-clon-parcial", "image": "almalinux-9"},
+    }
+    with database() as db:
+        db.execute(
+            """UPDATE operations SET status='uncertain', error='VM_PHYSICAL_OWNER_MISMATCH',
+            stack='mng01', target_node='mng01', started_at='2026-03-01T00:00:01+00:00',
+            finished_at='2026-03-01T00:00:10+00:00', workspace_path=?, payload_json=?
+            WHERE operation_id='op-prov'""",
+            (str(root), json.dumps(payload)),
+        )
+        db.execute(
+            """UPDATE instances SET status='planning', node='mng01', power_state='unknown',
+            spec_json=? WHERE instance_id='inst-1'""",
+            (json.dumps(payload["spec"]),),
+        )
+    return str(workspace)
+
+
+def test_elimina_clon_parcial_sin_state_con_lease_y_qmclone_probados(
+    tmp_path, monkeypatch, entorno
+):
+    import worker.golden as golden
+
+    workspace = _seed_clon_parcial_sin_state(tmp_path)
+    monkeypatch.setattr(
+        golden,
+        "catalog",
+        lambda: {"almalinux-9": {"template_vm_id": 29010}},
+    )
+    client = PartialCloneClient(
+        dict(RECORD, name="qa-clon-parcial"),
+        tags="golden-image;iacp;almalinux-9;v20261017",
+        clone_proof=True,
+    )
+    assert worker_main.remove_orphan_vm(
+        client,
+        "op-prov",
+        "inst-1",
+        40510,
+        workspace,
+        allow_partial_provision_clone=True,
+    ) is True
+    assert len(client.deleted) == 1
+
+
+@pytest.mark.parametrize(
+    ("tags", "clone_proof"),
+    [
+        ("golden-image;iacp;almalinux-9", False),
+        ("golden-image;iacp;iacp-owned-otra-operacion", True),
+    ],
+)
+def test_conserva_clon_parcial_sin_state_si_no_se_prueba_titularidad(
+    tmp_path, monkeypatch, entorno, tags, clone_proof
+):
+    import worker.golden as golden
+
+    workspace = _seed_clon_parcial_sin_state(tmp_path)
+    monkeypatch.setattr(
+        golden,
+        "catalog",
+        lambda: {"almalinux-9": {"template_vm_id": 29010}},
+    )
+    client = PartialCloneClient(
+        dict(RECORD, name="qa-clon-parcial"),
+        tags=tags,
+        clone_proof=clone_proof,
+    )
+    with pytest.raises(ProxmoxError, match="VM_PHYSICAL_OWNER_MISMATCH"):
+        worker_main.remove_orphan_vm(
+            client,
+            "op-prov",
+            "inst-1",
+            40510,
+            workspace,
+            allow_partial_provision_clone=True,
+        )
+    assert client.deleted == []
+
+
+def test_conserva_clon_parcial_si_state_contiene_otro_recurso_gestionado(
+    tmp_path, monkeypatch, entorno
+):
+    import worker.golden as golden
+
+    workspace = _seed_clon_parcial_sin_state(
+        tmp_path,
+        state_resources=[
+            {
+                "mode": "managed",
+                "type": "proxmox_virtual_environment_vm",
+                "instances": [{"attributes": {"vm_id": 40511}}],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        golden,
+        "catalog",
+        lambda: {"almalinux-9": {"template_vm_id": 29010}},
+    )
+    client = PartialCloneClient(
+        dict(RECORD, name="qa-clon-parcial"),
+        tags="golden-image;iacp;almalinux-9",
+        clone_proof=True,
+    )
+    with pytest.raises(ProxmoxError, match="VM_PHYSICAL_OWNER_MISMATCH"):
+        worker_main.remove_orphan_vm(
+            client,
+            "op-prov",
+            "inst-1",
+            40510,
+            workspace,
+            allow_partial_provision_clone=True,
+        )
+    assert client.deleted == []
+
+
+def test_reconcile_limpia_clon_parcial_y_cierra_el_provision(monkeypatch):
+    from worker.proxmox import ProxmoxError
+
+    source = {
+        "operation_id": "op-prov",
+        "command": "provision",
+        "status": "uncertain",
+        "error": "VM_PHYSICAL_OWNER_MISMATCH",
+        "instance_id": "inst-1",
+        "vmid": 40510,
+        "target_node": "mng01",
+        "stack": "mng01",
+        "workspace_path": "/tmp/plans/op-prov/terraform",
+        "payload_json": json.dumps({
+            "spec": {"name": "qa-clon-parcial", "image": "almalinux-9"}
+        }),
+    }
+    operation = {
+        "operation_id": "op-reconcile",
+        "payload_json": json.dumps({
+            "instance_id": "inst-1",
+            "source_operation_id": "op-prov",
+        }),
+    }
+    identity = {
+        "instance_id": "inst-1",
+        "operation_id": "op-prov",
+        "name": "qa-clon-parcial",
+        "vmid": 40510,
+        "node": "mng01",
+        "status": "planning",
+    }
+    removals = []
+    closures = []
+    updates = []
+    events = []
+    monkeypatch.setattr(worker_main, "find_operation", lambda _operation_id: source)
+    monkeypatch.setattr(worker_main, "instance_identity", lambda _instance_id: identity)
+    monkeypatch.setattr(worker_main, "operation_spec", lambda *_args: {"name": "qa-clon-parcial", "image": "almalinux-9"})
+    monkeypatch.setattr(worker_main, "reconcile_physical", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        worker_main,
+        "assert_physical_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+        ),
+    )
+
+    def remove(*_args, **kwargs):
+        removals.append(kwargs)
+        return True
+
+    monkeypatch.setattr(worker_main, "remove_orphan_vm", remove)
+    monkeypatch.setattr(
+        worker_main,
+        "close_source_after_reconciliation",
+        lambda *args, **kwargs: closures.append((args, kwargs)) or True,
+    )
+    monkeypatch.setattr(worker_main, "update_operation", lambda *_args, **kwargs: updates.append(kwargs))
+    monkeypatch.setattr(worker_main, "emit", lambda *args, **kwargs: events.append(args))
+    monkeypatch.setattr(worker_main, "heartbeat", lambda *_args, **_kwargs: True)
+    client = type("Client", (), {"set_heartbeat": lambda self, _callback: None})()
+    fence = worker_main._FENCE.set(("worker-1", "op-reconcile"))
+    try:
+        worker_main.execute_reconcile("worker-1", operation, client)
+    finally:
+        worker_main._FENCE.reset(fence)
+
+    assert removals[0]["allow_partial_provision_clone"] is True
+    assert closures[0][1]["succeeded"] is False
+    assert updates[-1]["status"] == "succeeded"
+    assert any(event[1:3] == ("recovery.completed", "succeeded") for event in events)
+
+
 def _preparar_prueba_clon_parcial(tmp_path, monkeypatch, *, state_tag=True):
     name = "qa-clon-parcial"
     owner = "op-parcial"
