@@ -39,6 +39,7 @@ x-app-environment: &app-environment
   IACP_WORKER_IDLE_HEARTBEAT_SECONDS: ${IACP_WORKER_IDLE_HEARTBEAT_SECONDS:-15}
   IACP_OPERATION_OUTPUT_MAX_CHARS: ${IACP_OPERATION_OUTPUT_MAX_CHARS:-65536}
   IACP_DEFAULT_SSH_PUBLIC_KEY: ${IACP_DEFAULT_SSH_PUBLIC_KEY:-}
+  IACP_SERVICE_KEY_FILE: /run/iacp-services/key
 
   IACP_PROD_STATIC_ENABLED: ${IACP_PROD_STATIC_ENABLED:-0}
   IACP_PROD_STATIC_BRIDGE: ${IACP_PROD_STATIC_BRIDGE:-vmbr0}
@@ -124,6 +125,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy
@@ -148,6 +153,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy
@@ -172,6 +181,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy
@@ -196,6 +209,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy
@@ -220,6 +237,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy
@@ -244,6 +265,10 @@ services:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     volumes:
       - workdata:/var/lib/iacp-controlplane
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
     depends_on:
       api:
         condition: service_healthy

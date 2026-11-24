@@ -89,6 +89,7 @@ x-worker-health: &worker-health
 
 x-worker-environment: &worker-environment
   <<: *runtime-environment
+  IACP_SERVICE_KEY_FILE: /run/iacp-services/key
   IACP_WASABI_ACCESS_KEY_ID: ${IACP_WASABI_ACCESS_KEY_ID:-}
   IACP_WASABI_SECRET_ACCESS_KEY: ${IACP_WASABI_SECRET_ACCESS_KEY:-}
 
@@ -109,6 +110,12 @@ x-worker-common: &worker-common
     - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
   volumes:
     - workdata:/var/lib/iacp-controlplane
+    - type: bind
+      source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+      target: /run/iacp-services/key
+      read_only: true
+      bind:
+        create_host_path: false
   networks:
     - internal
     - egress

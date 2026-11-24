@@ -118,6 +118,7 @@ def validate(image, evidence):
     for i in range(1, 7):
         services[f"worker-{i}"] = dict(
             common,
+            volumes=common["volumes"] + ["config:/run/iacp-services:ro"],
             command=["python", "-m", "worker.main", "--worker-id", f"worker-{i}"],
             depends_on={"api": {"condition": "service_healthy"}},
         )

@@ -638,6 +638,20 @@ def _service_configuration(tmp_path, worker_count=2):
     config = _configuration(stage="develop", include_aws=False)
     config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
     config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
+    service_config = tmp_path / "services"
+    service_config.mkdir(mode=0o700)
+    key_file = service_config / "key"
+    key_file.write_text("test-only-key-material", encoding="utf-8")
+    key_file.chmod(0o600)
+    for number in range(1, 7):
+        worker = config["services"][f"worker-{number}"]
+        worker["environment"]["IACP_SERVICE_KEY_FILE"] = "/run/iacp-services/key"
+        worker["volumes"] = [{
+            "type": "bind",
+            "source": str(key_file),
+            "target": "/run/iacp-services/key",
+            "read_only": True,
+        }]
     for number in range(1, worker_count + 1):
         config['services'][f'service-worker-{number}']={
             'image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}',
@@ -650,6 +664,7 @@ def _service_configuration(tmp_path, worker_count=2):
         'POSTGRES_PASSWORD':config['services']['postgres']['environment']['POSTGRES_PASSWORD'],
         'IACP_API_TOKEN':config['services']['api']['environment']['IACP_API_TOKEN'],
         'IACP_PROXMOX_MNG_API_TOKEN':config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']}.items()))
+    dev.write_text(dev.read_text() + f'IACP_SERVICE_CONFIG_DIR={service_config}\n')
     reference=tmp_path/'prod.env'
     reference.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=prod-api-token\nIACP_PROXMOX_MNG_API_TOKEN=prod-proxmox-token\n')
     reference.chmod(0o600)
@@ -670,6 +685,7 @@ def test_service_development_policy_and_profile(tmp_path):
 def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
     config,env,manifest=_service_configuration(tmp_path)
     env.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=dev-api-token\nIACP_PROXMOX_MNG_API_TOKEN=dev-proxmox-token\n')
+    env.write_text(env.read_text() + f'IACP_SERVICE_CONFIG_DIR={env.parent / "services"}\n')
     config['services']['postgres']['environment']['POSTGRES_PASSWORD']='prod-password'
     config['services']['api']['environment']['IACP_API_TOKEN']='dev-api-token'
     config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']='dev-proxmox-token'
@@ -692,6 +708,8 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
              'service_max_concurrent':2,'service_key_ready':True,'service_api':True,
              'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
+        if "exec" in command and any(name in command for name in (f"worker-{i}" for i in range(1, 7))):
+            return "IACP_SERVICE_KEY_READY"
         ast.parse(command[-1])
         assert "EXPECTED_SERVICE_WORKERS" not in command[-1]
         assert repr(['service-worker-1','service-worker-2']) in command[-1]
@@ -728,3 +746,18 @@ def test_service_policy_supports_six_workers_without_changing_infra_pool(tmp_pat
         "--profile", "service-workers-5-6"
     ]
     assert len([name for name in config["services"] if name.startswith("worker-")]) == 6
+
+
+@pytest.mark.parametrize("defect", ["missing_env", "missing_mount", "writable_mount"])
+def test_services_enabled_policy_requires_private_key_on_each_infra_worker(tmp_path, defect):
+    config, env, manifest = _service_configuration(tmp_path)
+    worker = config["services"]["worker-4"]
+    if defect == "missing_env":
+        worker["environment"].pop("IACP_SERVICE_KEY_FILE")
+    elif defect == "missing_mount":
+        worker["volumes"] = []
+    else:
+        worker["volumes"][0]["read_only"] = False
+
+    with pytest.raises(go_live.GateError, match="clave de servicios|IACP_SERVICE_KEY_FILE"):
+        go_live._check_policy(manifest, config, env)

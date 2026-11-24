@@ -124,6 +124,23 @@ def _extra_host_map(service: dict) -> dict[str, str]:
     return result
 
 
+def _has_readonly_bind_mount(service: dict, *, source: str, target: str) -> bool:
+    for mount in service.get("volumes", []):
+        if isinstance(mount, dict):
+            if (
+                mount.get("type") == "bind"
+                and str(mount.get("source", "")) == source
+                and mount.get("target") == target
+                and mount.get("read_only") is True
+            ):
+                return True
+            continue
+        parts = str(mount).split(":")
+        if len(parts) >= 3 and parts[-2] == target and parts[0] == source and parts[-1] == "ro":
+            return True
+    return False
+
+
 def _private_environment(path: Path) -> dict:
     try:
         from scripts.envfile import read_env_file
@@ -214,6 +231,24 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         execution = data.get("service_execution_enabled", False)
         if not isinstance(execution, bool):
             raise GateError("service_execution_enabled debe ser booleano")
+        runtime_environment = _private_environment(env_file)
+        service_config_dir = runtime_environment.get("IACP_SERVICE_CONFIG_DIR", "")
+        if not service_config_dir or not Path(service_config_dir).is_absolute():
+            raise GateError("IACP_SERVICE_CONFIG_DIR debe apuntar a un directorio absoluto")
+        service_key = Path(service_config_dir) / "key"
+        if not service_key.is_file() or (service_key.stat().st_mode & 0o077):
+            raise GateError("La clave de servicios debe existir como archivo privado")
+        for name in worker_names:
+            env = _service_env(config, name)
+            service = config["services"][name]
+            if env.get("IACP_SERVICE_KEY_FILE") != "/run/iacp-services/key":
+                raise GateError(f"Falta IACP_SERVICE_KEY_FILE en {name}")
+            if not _has_readonly_bind_mount(
+                service,
+                source=str(service_key),
+                target="/run/iacp-services/key",
+            ):
+                raise GateError(f"La clave de servicios debe montarse en solo lectura en {name}")
         for name in service_worker_names:
             env = _service_env(config, name)
             if str(env.get("IACP_SERVICES_ENABLED", "0")) != "1":
@@ -882,6 +917,18 @@ print(json.dumps(payload))
         expected_payload.update(service_worker_ids=expected_service_workers, service_max_concurrent=len(expected_service_workers), service_tables=True, service_key_ready=True, service_api=True, infrastructure_workers_fresh=True)
     if payload != expected_payload:
         raise GateError("API, PostgreSQL, migración y pools de workers no cumplen el contrato declarado")
+    if data.get("services_enabled", False):
+        key_check = (
+            "from api.service_secrets import cipher; cipher(); "
+            "print('IACP_SERVICE_KEY_READY')"
+        )
+        for worker_name in (f"worker-{number}" for number in range(1, 7)):
+            output = _run(
+                prefix + ["exec", "-T", worker_name, "python", "-c", key_check],
+                label=f"Verificación de clave de servicios en {worker_name}",
+            )
+            if output.strip().splitlines()[-1:] != ["IACP_SERVICE_KEY_READY"]:
+                raise GateError(f"{worker_name} no puede leer la clave de servicios")
     return {"services": statuses, "api": payload}
 
 

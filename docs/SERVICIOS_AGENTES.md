@@ -68,8 +68,10 @@ Las instalaciones están deshabilitadas por defecto:
 - `IACP_SERVICE_EXECUTION_ENABLED=0`: bloquear ejecución Ansible incluso si hay pedidos.
 - Perfil Compose `services`: los dos primeros workers se incluyen al activarlo.
 - Perfil Compose `service-workers-3-6`: agrega los workers 3 a 6 cuando el manifiesto declara cuatro o seis.
-- `IACP_SERVICE_CONFIG_DIR`: directorio del operador, preferiblemente absoluto,
-  montado en API y workers como `/run/iacp-services`, solo lectura. No montar el socket Docker.
+- `IACP_SERVICE_CONFIG_DIR`: directorio absoluto del operador. La API y los
+  workers de servicios lo montan en `/run/iacp-services`, solo lectura; cada
+  worker de infraestructura recibe únicamente `key` en
+  `/run/iacp-services/key`, también solo lectura. No montar el socket Docker.
 
 Contenido requerido del directorio (no incorporar secretos a Git):
 
