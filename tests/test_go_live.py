@@ -1111,3 +1111,44 @@ def test_los_manifiestos_de_ejemplo_declaran_seis_y_seis(ejemplo):
     datos = json.loads((go_live.ROOT / "deploy" / "portainer" / ejemplo).read_text())
     assert datos["service_worker_count"] == 6
     assert datos["max_concurrent"] == 6
+
+
+def _conteos(**extra):
+    base = {
+        "active_operations": 0, "active_service_jobs": 0,
+        "running_operations": 0, "running_service_jobs": 0,
+        "uncertain_operations": 0, "uncertain_service_jobs": 0,
+        "busy_infrastructure_workers": 0, "busy_service_workers": 0,
+    }
+    base.update(extra)
+    return base
+
+
+def test_el_drenaje_por_defecto_sigue_esperando_las_operaciones_inciertas(monkeypatch):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(active_operations=6, uncertain_operations=6))
+    monkeypatch.setattr(go_live.time, "sleep", lambda _s: None)
+    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
+        go_live._wait_for_stack_quiescence(["docker"], timeout=0)
+
+
+def test_allow_uncertain_no_espera_intenciones_sin_worker_y_las_registra(monkeypatch):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(active_operations=6, uncertain_operations=6))
+    resultado = go_live._wait_for_stack_quiescence(["docker"], timeout=0, allow_uncertain=True)
+    assert resultado["uncertain_operations"] == 6 and resultado["uncertain_deferred"] is True
+
+
+@pytest.mark.parametrize("ocupado", [
+    {"running_operations": 1}, {"running_service_jobs": 1},
+    {"busy_infrastructure_workers": 1}, {"busy_service_workers": 1},
+])
+def test_allow_uncertain_sigue_esperando_el_trabajo_en_ejecucion(monkeypatch, ocupado):
+    monkeypatch.setattr(go_live, "_database_counts", lambda _p: _conteos(uncertain_operations=6, **ocupado))
+    monkeypatch.setattr(go_live.time, "sleep", lambda _s: None)
+    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
+        go_live._wait_for_stack_quiescence(["docker"], timeout=0, allow_uncertain=True)
+
+
+def test_allow_uncertain_solo_se_acepta_con_backup_o_deploy(capsys):
+    with pytest.raises(SystemExit):
+        go_live.main(["verify", "--manifest", "m.json", "--evidence-dir", "e", "--allow-uncertain"])
+    assert "--allow-uncertain solo se permite con backup o deploy" in capsys.readouterr().err

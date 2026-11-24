@@ -1112,6 +1112,11 @@ _COUNT_SQL = (
     "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
     "('running','planning','applying','destroying','powering','uncertain')) ,"
     "'active_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status IN ('running','uncertain')) ,"
+    "'running_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
+    "('running','planning','applying','destroying','powering')) ,"
+    "'running_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='running') ,"
+    "'uncertain_operations', (SELECT COUNT(*) FROM operations WHERE status='uncertain') ,"
+    "'uncertain_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='uncertain') ,"
     "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR current_operation_id IS NOT NULL) ,"
     "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
     "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
@@ -1221,26 +1226,46 @@ def _runtime_write_gate(prefix: list[str]):
             process.stdout.close()
 
 
-def _wait_for_stack_quiescence(prefix: list[str], *, timeout: float = 2100) -> dict:
+def _wait_for_stack_quiescence(
+    prefix: list[str], *, timeout: float = 2100, allow_uncertain: bool = False
+) -> dict:
+    """Espera a que no haya trabajo en ejecución ni workers ocupados.
+
+    Una operación ``uncertain`` no la ejecuta ningún worker: es una intención a
+    la espera de reconciliación. Por defecto bloquea el drenaje, pero eso crea un
+    interbloqueo cuando la corrección que debe reconciliarla va en el propio
+    despliegue. Con ``allow_uncertain`` solo se espera el trabajo en ejecución y
+    las intenciones inciertas se conservan intactas y quedan registradas.
+    """
+
+    operation_key, job_key = (
+        ("running_operations", "running_service_jobs")
+        if allow_uncertain
+        else ("active_operations", "active_service_jobs")
+    )
     deadline = time.monotonic() + timeout
     while True:
         counts = _database_counts(prefix)
         if not any(
             int(counts.get(key) or 0)
             for key in (
-                "active_operations",
-                "active_service_jobs",
+                operation_key,
+                job_key,
                 "busy_infrastructure_workers",
                 "busy_service_workers",
             )
         ):
+            if allow_uncertain:
+                counts = dict(counts, uncertain_deferred=True)
             return counts
         if time.monotonic() >= deadline:
             raise GateError("El stack no terminó de drenar operaciones y workers activos")
         time.sleep(5)
 
 
-def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dict:
+def _backup(
+    data: dict, compose: Path, env_file: Path, destination: Path, *, allow_uncertain: bool = False
+) -> dict:
     """Respaldo para recuperación ante desastres de un stack V1.
 
     El volcado de PostgreSQL es una instantánea consistente (pg_dump). El
@@ -1258,7 +1283,7 @@ def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dic
     prefix = _compose_args(data, compose, env_file)
     started = time.monotonic()
     with _runtime_write_gate(prefix):
-        counts = _wait_for_stack_quiescence(prefix)
+        counts = _wait_for_stack_quiescence(prefix, allow_uncertain=allow_uncertain)
         _stream_to_file(
             prefix + [
                 "exec", "-T", "postgres", "sh", "-c",
@@ -1656,6 +1681,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--allow-uncertain",
+        action="store_true",
+        help=(
+            "En backup y deploy, no espera a las operaciones o jobs en estado uncertain "
+            "(ningún worker los ejecuta); se conservan intactos y se registran en la evidencia"
+        ),
+    )
+    parser.add_argument(
         "--backup-dir",
         type=Path,
         help="Directorio nuevo (backup) o existente (backup-verify) fuera del checkout",
@@ -1663,6 +1696,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.action in {"backup", "backup-verify"} and args.backup_dir is None:
         parser.error("--backup-dir es obligatorio para backup y backup-verify")
+    if args.allow_uncertain and args.action not in {"backup", "deploy"}:
+        parser.error("--allow-uncertain solo se permite con backup o deploy")
     if args.replace_active and args.action != "deploy":
         parser.error("--replace-active solo se permite con la acción deploy")
     if args.preloaded_images and args.action != "deploy":
@@ -1700,7 +1735,9 @@ def main(argv: list[str] | None = None) -> int:
                     result["state_backend"] = state_backend
                 result["passed"] = True
             elif args.action == "backup":
-                result["backup"] = _backup(data, compose, env_file, args.backup_dir)
+                result["backup"] = _backup(
+                    data, compose, env_file, args.backup_dir, allow_uncertain=args.allow_uncertain
+                )
                 result["passed"] = True
             elif args.action == "inventory":
                 result["inventory"] = _inventory(data, compose, env_file)
@@ -1716,7 +1753,9 @@ def main(argv: list[str] | None = None) -> int:
                     _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
                 with _runtime_write_gate(prefix):
-                    result["drain"] = _wait_for_stack_quiescence(prefix)
+                    result["drain"] = _wait_for_stack_quiescence(
+                        prefix, allow_uncertain=args.allow_uncertain
+                    )
                     if args.preloaded_images:
                         result["preloaded_images"] = _verify_preloaded_images(config)
                     else:
