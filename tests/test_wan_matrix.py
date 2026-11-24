@@ -785,6 +785,112 @@ def test_parallel_failure_contains_future_mutations():
     assert sorted(completed)==[str(index) for index in range(6)]
 
 
+def test_failed_verification_cleans_only_succeeded_ready_owned_batch():
+    import threading
+
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    matrix.abort = threading.Event()
+    matrix.abort.set()
+    matrix.vmid_range = (40000, 49999)
+    matrix.profile = "prod_static"
+    instance_id = "matrix-instance"
+    operation_id = "matrix-provision"
+    item = {
+        "name": "kvm-prueba-991",
+        "instance_id": instance_id,
+        "operation_id": operation_id,
+        "image": "ubuntu-2604",
+        "plan": "kvm-2",
+        "product": "kvm",
+    }
+    calls = []
+
+    def api(method, path):
+        if method == "GET" and path == f"/v1/operations/{operation_id}":
+            return {"status": "succeeded"}
+        if method == "GET" and path == f"/v1/instances/{instance_id}":
+            return {
+                "instance_id": instance_id,
+                "operation_id": operation_id,
+                "name": item["name"],
+                "image_id": item["image"],
+                "plan_id": item["plan"],
+                "status": "ready",
+                "vmid": 40882,
+                "network_allocation": {
+                    "profile": "prod_static",
+                    "status": "allocated",
+                    "gateway": "190.0.231.1",
+                    "address": "190.0.231.20/24",
+                },
+            }
+        raise AssertionError((method, path))
+
+    matrix.api = api
+    matrix.idle = lambda: calls.append(("idle", None))
+    matrix.cleanup = lambda target: calls.append(("cleanup", target["name"]))
+    matrix.post_cleanup = lambda targets: calls.append(("post_cleanup", len(targets)))
+    matrix.record = lambda event, **values: calls.append((event, values))
+
+    matrix.cleanup_failed_verification_batch(
+        [item], RuntimeError("SSH_CONNECTION_REFUSED_HOSTNAME_255")
+    )
+
+    assert item["vmid"] == 40882
+    assert item["address"] == "190.0.231.20"
+    assert ("cleanup", item["name"]) in calls
+    assert ("post_cleanup", 1) in calls
+    assert any(
+        event == "failed_batch_cleanup" and values["result"] == "PASS"
+        for event, values in calls
+    )
+    assert matrix.abort.is_set()
+
+
+def test_failed_verification_keeps_uncertain_batch_fail_closed():
+    import threading
+
+    import pytest
+
+    from scripts.wan_matrix import Matrix
+
+    matrix = object.__new__(Matrix)
+    matrix.abort = threading.Event()
+    matrix.abort.set()
+    matrix.vmid_range = (40000, 49999)
+    matrix.profile = "prod_static"
+    item = {
+        "name": "kvm-prueba-992",
+        "instance_id": "matrix-instance",
+        "operation_id": "matrix-provision",
+        "image": "ubuntu-2604",
+        "plan": "kvm-2",
+        "product": "kvm",
+    }
+    cleaned = []
+    events = []
+    matrix.api = lambda *_args: {"status": "uncertain"}
+    matrix.idle = lambda: None
+    matrix.cleanup = lambda target: cleaned.append(target)
+    matrix.record = lambda event, **values: events.append((event, values))
+
+    with pytest.raises(RuntimeError, match="MATRIX_FAILURE_CLEANUP_BLOCKED"):
+        matrix.cleanup_failed_verification_batch(
+            [item], RuntimeError("SSH_CONNECTION_REFUSED_HOSTNAME_255")
+        )
+
+    assert cleaned == []
+    assert matrix.abort.is_set()
+    assert any(
+        event == "failed_batch_cleanup"
+        and values["result"] == "BLOCKED"
+        and values["cleanup_error"] == "FAILED_BATCH_OPERATION_NOT_SUCCEEDED"
+        for event, values in events
+    )
+
+
 def test_proxmox_vm_config_retries_rate_limit_for_safe_gets(monkeypatch):
     from types import SimpleNamespace
 

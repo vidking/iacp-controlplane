@@ -1112,6 +1112,117 @@ class Matrix:
             raise RuntimeError("MATRIX_PARALLEL_CASE_FAILURE")
         return [results[item["name"]] for item in items]
 
+    def cleanup_failed_verification_batch(self, items, failure):
+        """Clean only a fully completed, identity-verified batch after a check fails.
+
+        Provisioning failures or uncertain operations stay fail-closed for
+        explicit reconciliation. A transient guest check must not leave an
+        otherwise healthy test batch running in MNG.
+        """
+
+        reason = (
+            str(failure)
+            if type(failure) in {AssertionError, RuntimeError}
+            and re.fullmatch(r"[A-Z0-9_.:-]{1,120}", str(failure))
+            else type(failure).__name__
+        )
+        try:
+            self.idle()
+            for item in items:
+                operation = self.api("GET", "/v1/operations/" + item["operation_id"])
+                instance = self.api("GET", "/v1/instances/" + item["instance_id"])
+                if operation.get("status") not in {"completed", "succeeded"}:
+                    raise RuntimeError("FAILED_BATCH_OPERATION_NOT_SUCCEEDED")
+                vmid = instance.get("vmid")
+                if (
+                    instance.get("instance_id") != item["instance_id"]
+                    or instance.get("operation_id") != item["operation_id"]
+                    or instance.get("name") != item["name"]
+                    or instance.get("image_id") != item["image"]
+                    or instance.get("plan_id") != item["plan"]
+                    or instance.get("status") != "ready"
+                    or type(vmid) is not int
+                    or not self.vmid_range[0] <= vmid <= self.vmid_range[1]
+                ):
+                    raise RuntimeError("FAILED_BATCH_INSTANCE_IDENTITY_OR_STATE_MISMATCH")
+                item["vmid"] = vmid
+                allocation = instance.get("network_allocation")
+                if self.profile == "prod_static":
+                    if (
+                        not isinstance(allocation, dict)
+                        or allocation.get("profile") != "prod_static"
+                        or allocation.get("status") != "allocated"
+                        or allocation.get("gateway") != "190.0.231.1"
+                        or not isinstance(allocation.get("address"), str)
+                        or not allocation["address"].startswith("190.0.231.")
+                    ):
+                        raise RuntimeError("FAILED_BATCH_IP_ALLOCATION_MISMATCH")
+                    item["address"] = allocation["address"].split("/")[0]
+                elif allocation is not None:
+                    raise RuntimeError("FAILED_BATCH_UNEXPECTED_IP_ALLOCATION")
+                if item["product"] != "kvm":
+                    service = self.api(
+                        "GET", "/v1/service-instances/" + item["service_id"]
+                    )
+                    if (
+                        service.get("service_id") != item["service_id"]
+                        or service.get("instance_id") != item["instance_id"]
+                        or service.get("application_id") != item["product"]
+                    ):
+                        raise RuntimeError("FAILED_BATCH_SERVICE_IDENTITY_MISMATCH")
+
+            # ``parallel`` sets abort after a verification exception. Clear it
+            # only after proving that every provision succeeded and is ready;
+            # this enables the exact API cleanup calls, then abort is restored.
+            self.abort.clear()
+            failures = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+                futures = {pool.submit(self.cleanup, item): item for item in items}
+                for future in concurrent.futures.as_completed(futures):
+                    item = futures[future]
+                    try:
+                        future.result()
+                    except Exception as cleanup_error:
+                        code = (
+                            str(cleanup_error)
+                            if type(cleanup_error) in {AssertionError, RuntimeError}
+                            and re.fullmatch(r"[A-Z0-9_.:-]{1,120}", str(cleanup_error))
+                            else type(cleanup_error).__name__
+                        )
+                        failures.append((item["name"], code))
+                        self.record(
+                            "failed_batch_cleanup_error",
+                            case=item["name"],
+                            error=code,
+                        )
+            if failures:
+                raise RuntimeError("FAILED_BATCH_CLEANUP_INCOMPLETE")
+            self.post_cleanup(items)
+            self.idle()
+            self.record(
+                "failed_batch_cleanup",
+                result="PASS",
+                reason=reason,
+                cases=len(items),
+            )
+        except Exception as cleanup_error:
+            code = (
+                str(cleanup_error)
+                if type(cleanup_error) in {AssertionError, RuntimeError}
+                and re.fullmatch(r"[A-Z0-9_.:-]{1,120}", str(cleanup_error))
+                else type(cleanup_error).__name__
+            )
+            self.record(
+                "failed_batch_cleanup",
+                result="BLOCKED",
+                reason=reason,
+                cleanup_error=code,
+                cases=len(items),
+            )
+            raise RuntimeError("MATRIX_FAILURE_CLEANUP_BLOCKED") from None
+        finally:
+            self.abort.set()
+
     def idle(self):
         """Exige un runtime quieto, tolerando estados transitorios.
 
@@ -1932,6 +2043,10 @@ print(f"{jobs} {locks}")
             item["address"] = addresses[0]
         self.binding(item)
         self.check(item, "A05", "Guest Agent, IPAM, NIC, gateway e identidad SSH coinciden")
+        # API/Guest Agent readiness can precede sshd readiness by a short
+        # interval, especially after a clone. Verify both configured access
+        # methods with bounded transport retries before the strict checks below.
+        self.wait_for_ssh_after_power_on(item)
         if item.get("client_ssh_key", True):
             assert self.ssh(item, ["hostname"]).strip() == item["name"]
             self.check(item, "B01", "autenticación SSH Ed25519 válida")
@@ -2674,7 +2789,11 @@ print(json.dumps(result,sort_keys=True))
                 assert peak == 6, "SIX_SIMULTANEOUS_NOT_OBSERVED"
             self.record("concurrency", simultaneous_peak=peak, batch_size=len(items))
             self.process_service_batch(items)
-            self.parallel(self.verify, items)
+            try:
+                self.parallel(self.verify, items)
+            except Exception as verification_error:
+                self.cleanup_failed_verification_batch(items, verification_error)
+                raise
             self.parallel(self.cleanup, items)
             self.post_cleanup(items)
             self.idle()
