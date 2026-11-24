@@ -1404,3 +1404,42 @@ def test_cleanup_hydrates_vmid_and_static_ip_from_exact_instance(monkeypatch):
     assert item["address"] == "190.0.231.25"
     assert ("DELETE", f"/v1/service-instances/{service_id}", None, f"delete-{item['name']}") in calls
     assert {code for _name, code, _detail in checks} == {"E01", "E02", "E03", "E04", "E06"}
+
+
+def _matriz_sin_inicializar():
+    from scripts.wan_matrix import Matrix
+
+    return object.__new__(Matrix)
+
+
+def test_idle_tolera_un_estado_transitorio_y_se_recupera(monkeypatch):
+    import scripts.wan_matrix as wan_matrix
+
+    matriz = _matriz_sin_inicializar()
+    intentos = {"n": 0}
+
+    def una_vez():
+        intentos["n"] += 1
+        if intentos["n"] < 3:
+            raise RuntimeError("SERVICE_QUEUE_NOT_IDLE")  # lock advisory de NetBox en curso
+
+    matriz._idle_once = una_vez
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _s: None)
+    monkeypatch.setenv("IACP_MATRIX_IDLE_WAIT_SECONDS", "90")
+    matriz.idle()
+    assert intentos["n"] == 3
+
+
+def test_idle_sigue_fallando_si_el_estado_persiste(monkeypatch):
+    import pytest
+
+    import scripts.wan_matrix as wan_matrix
+
+    matriz = _matriz_sin_inicializar()
+    matriz._idle_once = lambda: (_ for _ in ()).throw(AssertionError("RUNTIME_NOT_IDLE"))
+    reloj = iter(range(0, 1000, 40))
+    monkeypatch.setattr(wan_matrix.time, "monotonic", lambda: next(reloj))
+    monkeypatch.setattr(wan_matrix.time, "sleep", lambda _s: None)
+    monkeypatch.setenv("IACP_MATRIX_IDLE_WAIT_SECONDS", "90")
+    with pytest.raises(AssertionError, match="RUNTIME_NOT_IDLE"):
+        matriz.idle()

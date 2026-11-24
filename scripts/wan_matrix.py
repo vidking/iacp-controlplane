@@ -1113,6 +1113,25 @@ class Matrix:
         return [results[item["name"]] for item in items]
 
     def idle(self):
+        """Exige un runtime quieto, tolerando estados transitorios.
+
+        Tras limpiar un lote, la liberación de IPs en NetBox toma por un
+        instante un advisory lock y los workers actualizan su heartbeat: leer
+        justo entonces no es una cola ocupada. Se reintenta durante una
+        ventana acotada y solo se falla si el estado persiste (una operación
+        ``uncertain`` o un job atascado nunca se quita solo y sigue fallando).
+        """
+
+        deadline = time.monotonic() + float(os.getenv("IACP_MATRIX_IDLE_WAIT_SECONDS", "90"))
+        while True:
+            try:
+                return self._idle_once()
+            except (AssertionError, RuntimeError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(3)
+
+    def _idle_once(self):
         state = self.api("GET", "/v1/observability")
         assert (
             state["max_concurrent"] == 6
