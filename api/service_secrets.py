@@ -3,17 +3,25 @@
 import json
 import os
 import secrets
+from functools import lru_cache
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
+@lru_cache(maxsize=4)
+def _cipher_for(path: str, mtime_ns: int, size: int) -> Fernet:
+    return Fernet(Path(path).read_bytes().strip())
+
+
 def cipher() -> Fernet:
     path = os.getenv("IACP_SERVICE_KEY_FILE", "")
     if not path:
         raise RuntimeError("SERVICE_KEY_NOT_CONFIGURED")
-    return Fernet(Path(path).read_bytes().strip())
+    # La caché se invalida si la clave se rota (cambia mtime o tamaño).
+    stat = os.stat(path)
+    return _cipher_for(path, stat.st_mtime_ns, stat.st_size)
 
 
 def encrypt(value: dict) -> str:

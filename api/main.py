@@ -162,6 +162,8 @@ class HTTPGuards:
                     headers["Cache-Control"] = "no-store"
                     headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
                 headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("Referrer-Policy", "no-referrer")
             await send(message)
 
         limit = _max_body_bytes()
@@ -277,7 +279,10 @@ def _elapsed_seconds(start: str | None, end: str | None = None) -> float | None:
 
 
 def _worker_stale_seconds() -> float:
-    return max(30.0, float(os.getenv("IACP_WORKER_STALE_SECONDS", "900")))
+    try:
+        return max(30.0, float(os.getenv("IACP_WORKER_STALE_SECONDS", "900")))
+    except ValueError:
+        return 900.0
 
 
 def _worker_liveness(worker: dict) -> str:

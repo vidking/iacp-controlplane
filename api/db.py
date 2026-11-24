@@ -434,7 +434,11 @@ def initialize() -> None:
 def prune_history() -> dict[str, int]:
     """Compacta historial terminal solo si la retención se habilita explícitamente."""
 
-    days = int(os.getenv("IACP_RETENTION_DAYS", "0"))
+    try:
+        days = int(os.getenv("IACP_RETENTION_DAYS", "0"))
+    except ValueError:
+        # Una retención mal escrita no debe borrar historial ni impedir el arranque.
+        days = 0
     if days <= 0:
         return {"events": 0, "operations": 0, "idempotency_keys": 0}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
