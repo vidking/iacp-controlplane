@@ -142,7 +142,6 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
 
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
-    monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "0")
     monkeypatch.delenv("IACP_ALLOW_INSECURE_LOCAL_DEV", raising=False)
     monkeypatch.setenv("IACP_API_TOKEN", "")
     monkeypatch.setattr(api.main, "startup", lambda: None)

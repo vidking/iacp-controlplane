@@ -57,7 +57,6 @@ def validate(image, evidence):
         "IACP_BUILD_REVISION": "local-uncommitted-validation",
         "IACP_RUNTIME_STAGE": "develop",
         "IACP_API_TOKEN": "local-test-only-api-token-not-a-secret",
-        "IACP_REQUIRE_API_TOKEN": "1",
         "IACP_DEFAULT_ENVIRONMENT": "lab",
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_WASABI_ENABLED": "false",

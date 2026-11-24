@@ -9,7 +9,8 @@ Control Plane y publica el contrato HTTP `/v1`.
 
 ## Autenticación y catálogos
 
-Cuando `IACP_REQUIRE_API_TOKEN` está habilitado, envía el token en:
+Cada ruta `/v1` requiere el Bearer de servicio que el backend del portal añade
+a sus solicitudes:
 
 ```http
 Authorization: Bearer <token>
@@ -23,6 +24,9 @@ GET /v1/plans
 GET /v1/images
 GET /v1/network-profiles
 ```
+
+Los clientes finales acceden mediante el portal y no reciben el Bearer ni
+llaman directamente a esta API.
 
 `GET /v1/environments` publica únicamente `lab` en este runtime. El servidor
 resuelve ese entorno al clúster MNG y selecciona internamente un nodo. El cuerpo

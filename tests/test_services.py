@@ -1698,6 +1698,5 @@ def test_service_inventory_paginates_without_exposing_secrets(client, monkeypatc
     detail = client.get('/v1/service-instances/'+first['service_id']).json()
     assert detail['name'] == 'prueba-service-nextcloud-uno'
     assert detail['credentials_available'] is False
-    monkeypatch.setenv('IACP_REQUIRE_API_TOKEN', '1')
     monkeypatch.setenv('IACP_API_TOKEN', 'token-ficticio-inventario')
     assert client.get('/v1/service-instances').status_code == 401

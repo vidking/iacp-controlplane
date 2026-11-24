@@ -41,7 +41,6 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_SERVICE_MAX_CONCURRENT": "2",
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
-        "IACP_REQUIRE_API_TOKEN": "1",
         "PGHOST": "postgres",
         "PGPORT": "5432",
         "PGDATABASE": database_name,
@@ -194,6 +193,14 @@ def test_development_configuration_passes_without_wasabi(tmp_path):
     assert summary["state_prefix"] == ""
     assert summary["prx_enabled"] is False
     assert summary["vmid_range"] == {"min": 40000, "max": 49999}
+
+
+def test_stack_rejects_explicit_local_auth_bypass(tmp_path):
+    config = _configuration()
+    config["services"]["api"]["environment"]["IACP_ALLOW_INSECURE_LOCAL_DEV"] = "1"
+
+    with pytest.raises(go_live.GateError, match="modo local sin autenticación"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
 
 
 def test_production_domain_can_run_lab_with_local_state_and_wasabi_disabled(tmp_path, monkeypatch):

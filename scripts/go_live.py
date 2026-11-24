@@ -288,8 +288,10 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
                 f"El rango VMID de API y workers debe ser "
                 f"{expected_range[0]}–{expected_range[1]} en {stage}"
             )
-    if api_env.get("IACP_REQUIRE_API_TOKEN") not in {"1", 1, True}:
-        raise GateError("La API debe exigir Bearer token")
+    if str(api_env.get("IACP_ALLOW_INSECURE_LOCAL_DEV", "")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        raise GateError("El stack no debe habilitar el modo local sin autenticación")
     for key in ("IACP_API_TOKEN", "IACP_PROXMOX_MNG_API_TOKEN"):
         value = api_env.get(key)
         if not isinstance(value, str) or len(value.strip()) < 16 or "REEMPLAZAR" in value.upper():
