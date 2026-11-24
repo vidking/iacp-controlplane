@@ -20,9 +20,8 @@ Seis aprovisionamientos simultáneos con los seis workers sanos e idle antes de
 cada inyección. Estado posterior: 0 instancias, 0 operaciones, 0 leases VMID,
 6 + 6 workers idle.
 
-**Qué no certifica este dictamen.** Solo se ejecutó el ciclo 1 de cada matriz
-(el alcance pedido fue una matriz de 48 y una de 24); los ciclos 2 (96 y 48 en
-total) siguen **PENDIENTES**. No se generó el archivo
+**Qué no certifica este dictamen.** Los ciclos 1 y 2 de ambas matrices están
+en PASS (96 KVM y 48 aplicaciones; ver «Ciclo 2» más abajo). No se generó el archivo
 `/etc/iacp/certification/controlplane-v1.json` que exige `iacpctl activate`.
 Es un dictamen de integración en producción, no una certificación integral.
 
@@ -52,3 +51,34 @@ plataforma la declara fallida, pero no se reintenta automáticamente.
   tag previo (`5cd54b1b9310523edcc1cfa6fa73f940120d192c`); respaldos en
   `/etc/iacp/backups/prod-*`. Los volúmenes no se tocaron.
 - `devops/features` (rama de Codex) **no** contiene estas correcciones; `main` sí.
+
+## Ciclo 2 (2026-11-24, revisión `c6b1a9c`)
+
+Tras integrar `origin/devops/features` en `main` (`1c6cb4a`, 673 pruebas) y
+promover al IACP Control Plane (VM 104), se ejecutó el ciclo 2 sobre el clúster
+MNG (nodo `mng01`), con seis workers sanos e idle antes de cada lote.
+
+| Matriz | Casos | Resultado | Checks | Evidencia |
+| --- | --- | --- | --- | --- |
+| KVM, ciclo 2 | 48 | **PASS** | 1152 PASS, 0 FAIL | `/opt/iacp/evidence-prod-kvm-c2-20261124160430.log` |
+| Aplicaciones, ciclo 2 | 24 | **PASS** | 924 PASS, 0 FAIL | `/opt/iacp/evidence-prod-apps-c2-20261124163440.log` |
+
+Acumulado: **96 aprovisionamientos KVM y 48 de aplicaciones en PASS**. Estado
+posterior: 0 instancias de prueba, 0 operaciones activas, 0 leases VMID.
+
+### Incidentes del ciclo 2
+
+Cada intento previo quedó BLOCKED; se corrigió o limpió y se repitió la matriz
+completa.
+
+| # | Síntoma | Causa | Resolución |
+| --- | --- | --- | --- |
+| 6 | `kvm-prueba-179` (AlmaLinux 10, `kvm-1`, VMID 30003): `SERVICE_BOOTSTRAP_GUEST_FAILED`; sin IP y «NetworkManager is not running», también tras reiniciar | **Sin determinar** (el guest no permite leer logs: SELinux y Guest Agent restringido). Mismo síntoma que el incidente 5; ambos fallos son AlmaLinux 10 con plan `kvm-1` (correlación, no causa demostrada) | Reconcile → `failed`, eliminación por API y repetición de la matriz. Sigue **abierto** |
+| 7 | `kvm-prueba-192` (Ubuntu 24.04, `kvm-4`): `STATIC_GUEST_VALIDATION_UNCERTAIN` con la VM sana y la IP correcta | Un error transitorio de Proxmox en `agent/exec` o `exec-status` se convertía en incertidumbre | `worker/service_bootstrap.py`: reenvío acotado (4) del exec solo para comandos idempotentes (sondeo y modo estático) y lectura de estado tolerante hasta 180 s; DHCP no se reenvía. Commit `c6b1a9c` |
+
+Riesgo abierto: dos fallos en 16+ aprovisionamientos AlmaLinux 10 `kvm-1`
+exigen un reintento automático con VM nueva o reforzar el helper de la Golden
+Image; ambos cambios tocan runtime y requieren pruebas y promoción controlada.
+
+Nota de aislamiento: durante el ciclo 2 Codex ejecutó en el stack dev una
+matriz de servicios sobre la misma red `190.0.231.0/24`; no se tocó el stack dev.
