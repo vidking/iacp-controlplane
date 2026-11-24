@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from cryptography.fernet import Fernet
 from dotenv import dotenv_values
+from scripts.prepare_pilot_ca import prepare as prepare_service_ca
 
 
 def prepare(
@@ -21,6 +22,7 @@ def prepare(
     endpoint: str,
     host_ip: str,
     pool_id: str,
+    image_digest: str | None = None,
     runtime_uid: int = 999,
     runtime_gid: int = 999,
     shared_mng: bool = False,
@@ -30,6 +32,8 @@ def prepare(
 
     if not re.fullmatch(r"[a-f0-9]{40}", image_tag):
         raise ValueError("image_tag requiere una revisión inmutable de 40 caracteres")
+    if image_digest is not None and not re.fullmatch(r"sha256:[a-f0-9]{64}", image_digest):
+        raise ValueError("image_digest requiere el digest sha256 del artefacto publicado")
     if (
         urlsplit(endpoint).scheme != "https"
         or urlsplit(endpoint).hostname != "mng01.cyberfuel.com"
@@ -75,6 +79,7 @@ def prepare(
     (private / "key").chmod(0o600)
     os.chown(private, runtime_uid, runtime_gid)
     os.chown(private / "key", runtime_uid, runtime_gid)
+    prepare_service_ca(private, uid=runtime_uid, gid=runtime_gid)
     env = {
         "POSTGRES_DB": "iacp_controlplane_dev",
         "POSTGRES_USER": "iacp_dev",
@@ -87,7 +92,7 @@ def prepare(
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_WASABI_ENABLED": "false",
         "IACP_MAX_CONCURRENT": "6",
-        "IACP_SERVICE_MAX_CONCURRENT": "4",
+        "IACP_SERVICE_MAX_CONCURRENT": "6",
         "IACP_ENFORCE_WAN_ONLY": "0",
         "IACP_VMID_MIN": "40000",
         "IACP_VMID_MAX": "49999",
@@ -119,6 +124,8 @@ def prepare(
     ]:
         if ipam.get(key) is not None:
             env[key] = ipam[key]
+    if image_digest:
+        env["IACP_IMAGE_DIGEST"] = image_digest
     # IPAM solo se habilita después de revisar red y permisos en el preflight.
     # Comillas simples evitan interpolación Compose de $, # y espacios en credenciales.
     if any("\n" in value or "\r" in value or "'" in value for value in env.values()):
@@ -137,6 +144,7 @@ def prepare(
         mng_credentials_shared=shared_mng,
         environment_file=str(path),
         image_tag=image_tag,
+        image_digest=image_digest or "",
         isolation_reference_environment_file=str(reference.resolve()),
     )
     path = output / "manifest-dev.json"
@@ -151,6 +159,7 @@ def main():
     parser.add_argument("--proxmox-token-file", type=Path, required=True)
     parser.add_argument("--reference-env", type=Path, required=True)
     parser.add_argument("--image-tag", required=True)
+    parser.add_argument("--image-digest", required=True)
     parser.add_argument("--proxmox-endpoint", required=True)
     parser.add_argument("--proxmox-host-ip", required=True)
     parser.add_argument("--pool-id", required=True)
@@ -169,6 +178,7 @@ def main():
             token_file=args.proxmox_token_file,
             reference=args.reference_env,
             image_tag=args.image_tag,
+            image_digest=args.image_digest,
             endpoint=args.proxmox_endpoint,
             host_ip=args.proxmox_host_ip,
             pool_id=args.pool_id,

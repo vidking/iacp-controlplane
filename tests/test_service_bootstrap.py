@@ -85,7 +85,15 @@ def test_binding_is_observed_on_correct_mac_and_persisted(monkeypatch, tmp_path)
         spec = json.loads(
             db.execute("SELECT spec_json FROM instances").fetchone()["spec_json"]
         )
-    assert json.loads(persisted["binding_json"]) == binding
+    stored_binding = json.loads(persisted["binding_json"])
+    assert {key: value for key, value in stored_binding.items() if key != "maintenance_access_encrypted"} == binding
+    from api.service_secrets import decrypt
+
+    maintenance = decrypt(stored_binding["maintenance_access_encrypted"])
+    assert maintenance["private_key"]
+    assert maintenance["public_key"].endswith(" iacp-maintenance")
+    assert maintenance["installer_public_key"].endswith(" iacp-installer")
+    assert "maintenance_access_encrypted" not in json.dumps(binding)
     assert spec["dns_servers"] == ["1.1.1.1", "8.8.8.8"]
     response["instance_id"] = "different-instance"
     with pytest.raises(GuestIdentityError, match="IDENTITY_MISMATCH"):
@@ -150,6 +158,9 @@ def test_prepare_develop_is_private_and_non_destructive(tmp_path):
     assert env["IACP_MNG_CATALOG"] == "/app/terraform/environments/mng01/catalog-dev.json"
     assert env["IACP_NETBOX_EXCLUDED_ADDRESSES"] == "190.0.231.2,190.0.231.11"
     assert env["POSTGRES_PASSWORD"] != "old-database"
+    services_dir = path.parent / "services"
+    assert (services_dir / "pilot-ca.crt").is_file()
+    assert (services_dir / "pilot-ca.key").stat().st_mode & 0o777 == 0o600
     assert reference.read_text().startswith("POSTGRES_PASSWORD=old-database")
     with pytest.raises(FileExistsError):
         prepare(**args)

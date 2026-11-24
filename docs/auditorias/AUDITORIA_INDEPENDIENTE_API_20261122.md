@@ -85,3 +85,43 @@ iniciales y lotes posteriores de seis; no convierte un preflight en un PASS de
 matriz. El resultado de certificación integral continúa **BLOCKED** hasta que
 el mismo candidato supere las matrices físicas solicitadas y se cierren los
 hallazgos de seguridad pendientes.
+
+## Reauditoría independiente del candidato — 2026-11-23
+
+Seis revisiones independientes recibieron únicamente copias del código fuente:
+sin pruebas, matrices, documentación, auditorías anteriores, historial Git ni
+conversación. Sus observaciones se consolidaron después de que terminaron las
+revisiones.
+
+| Área | Hallazgo | Estado en el candidato local |
+| --- | --- | --- |
+| API y cola | `POST /v1/operations` aceptaba reintentos sin clave idempotente; la cola podía quedar sin límite y el inventario de trabajos de servicio crecía sin límite. | Corregido: `Idempotency-Key` obligatorio en la ruta genérica, cola con máximo 100 y detalle de servicio limitado a los 100 trabajos más recientes con conteo de truncamiento. |
+| NetBox/IPAM | Un resultado ambiguo al crear tags podía dejar una intención local pendiente antes de solicitar una IP. La liberación no resolvía con seguridad el reemplazo de un ID antiguo. | Corregido: distingue el resultado del tag de una reserva IP, vuelve a buscar por marcador y verifica propiedad, dirección, estado activo y ausencia de asignación antes de liberar. Reserva y liberación se serializan por prefijo. |
+| Worker KVM | Compose inyectaba nombres de variables Proxmox que el cliente no leía; la reconciliación podía exceder su deadline por los reintentos internos del cliente. | Corregido: alias de entorno compatibles y consultas de inventario acotadas al tiempo restante, con un intento por consulta. |
+| Servicios | La clave SSH de mantenimiento podía sobrevivir a la eliminación; un lock remoto huérfano impedía reintentar; la CA emitida por 90 días podía expirar antes de servicios de larga duración. | Corregido parcialmente: se elimina el binding al borrar, los locks remoto/local llevan dueño y generación y la CA nueva dura hasta 10 años. Sigue pendiente diseñar y ensayar rotación coordinada de CA antes de ese vencimiento. |
+| Escalado | Los perfiles de 4 workers podían activar 6; el manifiesto de producción declaraba 6 workers sin habilitar el procesamiento de aplicaciones. | Corregido en manifiestos/Compose: perfiles separados para workers 3–4 y 5–6; Dev y Prod declaran 6 y habilitan explícitamente el procesamiento de servicios. |
+| Consola | Un fallo al cargar una selección podía dejar visible una VM mientras una acción apuntaba a otra; no había reconciliación desde la consola. | Corregido: se limpia la ficha antes de cambiar, las mutaciones se atan al ID mostrado y `uncertain` ofrece `Reconciliar`; la confirmación de destrucción muestra nombre e ID. |
+| Autorización | El Bearer de servicio tiene privilegio global. El propietario confirmó que lo consume únicamente el backend del portal; los clientes finales no reciben el token ni acceden directamente a la API. | Alcance de confianza backend a backend aceptado para este despliegue. Mantener el token en el backend del portal y no exponerlo en navegador, respuestas, URLs o logs. Si el modelo cambia a acceso directo de clientes, añadir autorización por rol y recurso antes de habilitarlo. |
+
+La API falla cerrada sin `IACP_API_TOKEN`; la única excepción local requiere
+`IACP_RUNTIME_STAGE=develop` y el opt-in explícito
+`IACP_ALLOW_INSECURE_LOCAL_DEV=1`. Los stacks Portainer no lo habilitan.
+
+### Evidencia local y gate de desarrollo
+
+| Control | Resultado | Evidencia |
+| --- | --- | --- |
+| Suite en PostgreSQL 17.6 aislado | **PASS 548/548** | `scripts/test_local_docker.py --image iacp-controlplane:dev-local-6x6-validation-4`; `/tmp/iacp-dev-validation-405af946/pytest.log`. |
+| Runtime local del mismo build | **PASS** | Readiness lista, esquema 3, seis workers KVM y seis workers de servicios sanos; `IACP_SERVICE_MAX_CONCURRENT=6`. Imagen local `sha256:10bbe22e2f75ff3ffef84faddbf43945ff0aa22626ca3593112b77b257079461`. No es imagen publicada ni digest de promoción. |
+| Generadores de matriz | **PASS estático** | 48 combinaciones KVM (seis imágenes × cuatro planes × dos métodos SSH) y 24 servicios Ubuntu 24.04 (12 accesos SSH y 12 recorridos GUI/persistencia) definidos por el runner. |
+| API Dev desplegada | **PASS de lectura** | `GET https://dev-iac.cyberfuel.com/health/live` respondió `alive`; la cabecera `X-IACP-Build-Revision` anuncia `5cd54b1b9310523edcc1cfa6fa73f940120d192c`. El candidato local aún no está desplegado. |
+| Preflight oficial de Dev | **BLOCKED** | `scripts/iacpctl --manifest deploy/portainer/manifest-dev.example.json --evidence-dir /tmp/iacp-dev-preflight-codex-7d0342 preflight` informó que falta el archivo privado de configuración. No existe `/etc/iacp/stacks/dev.env` en este entorno. |
+| Matrices físicas en MNG | **BLOCKED / no ejecutadas** | Aún no hay prueba de acceso al API de Dev, seis workers reales idle, asignaciones NetBox, aprovisionamiento, SSH/GUI, persistencia, limpieza ni liberación de IPs. |
+| Producción | **Sin cambios** | No se promovió ni modificó `iac.cyberfuel.com`. |
+
+El dictamen integral permanece **BLOCKED**. Para continuar el despliegue de Dev,
+el siguiente requisito operativo es que la configuración privada aprobada del
+stack esté disponible en `/etc/iacp/stacks/dev.env`; luego se repiten el
+preflight y las matrices físicas completas. El riesgo del Bearer global debe
+resolverse o mantenerse explícitamente fuera del acceso de clientes antes de
+certificar ese modelo de exposición.

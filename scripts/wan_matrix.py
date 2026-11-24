@@ -50,7 +50,7 @@ from worker.netbox import NetBoxClient, NetBoxError
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 WAN_BRIDGE = "vmbr3"
-REQUIRED_SERVICE_WORKERS = 4
+REQUIRED_SERVICE_WORKERS = 6
 EXPECTED_ALMALINUX_IMAGES = {"almalinux-9": 29010, "almalinux-10": 29011}
 EXCLUDED_WAN_ADDRESSES = {"190.0.231.2"}
 
@@ -75,13 +75,10 @@ def wan_nic_config(env):
     return WAN_BRIDGE
 
 
-def require_four_idle_service_workers(service_state):
+def require_six_idle_service_workers(service_state):
     workers = service_state.get("workers") or []
-    if (
-        service_state.get("max_concurrent") != REQUIRED_SERVICE_WORKERS
-        or len(workers) != REQUIRED_SERVICE_WORKERS
-    ):
-        raise RuntimeError("FOUR_SERVICE_WORKERS_REQUIRED")
+    if service_state.get("max_concurrent") != REQUIRED_SERVICE_WORKERS or len(workers) != REQUIRED_SERVICE_WORKERS:
+        raise RuntimeError("SIX_SERVICE_WORKERS_REQUIRED")
     now = datetime.now(UTC)
     for worker in workers:
         try:
@@ -302,6 +299,87 @@ def production_service_matrix(images, *, full_matrix):
         or (full_matrix and any(case.get("client_ssh_key", True) for case in controls))
     ):
         raise ValueError("PRODUCTION_MATRIX_SCOPE_INVALID")
+    return planned
+
+
+def application_certification_matrix(images=None):
+    """24 instancias Ubuntu 24.04: acceso SSH y GUI/persistencia de servicios."""
+    if images not in (None, ["ubuntu-2404"]):
+        raise ValueError("APPLICATION_MATRIX_REQUIRES_UBUNTU_2404")
+    combinations = [
+        {"product": product, "image": "ubuntu-2404", "plan": f"kvm-{plan}"}
+        for product in ("n8n", "nextcloud")
+        for plan in range(1, 5)
+    ]
+    duplicate_indexes = (0, 1, 4, 5)
+    infrastructure = []
+    for index, combination in enumerate(combinations):
+        infrastructure.append({
+            **combination,
+            "client_ssh_key": index % 2 == 0,
+            "access_mode": "ssh_key" if index % 2 == 0 else "ssh_password",
+            "certification_track": "infrastructure_access",
+            "control": False,
+        })
+    for index in duplicate_indexes:
+        combination = combinations[index]
+        client_ssh_key = index % 2 != 0
+        infrastructure.append({
+            **combination,
+            "client_ssh_key": client_ssh_key,
+            "access_mode": "ssh_key" if client_ssh_key else "ssh_password",
+            "certification_track": "infrastructure_access",
+            "control": False,
+        })
+    gui = [
+        {
+            **combination,
+            "client_ssh_key": True,
+            "access_mode": "gui_credentials_persistence",
+            "certification_track": "gui_persistence",
+            "control": False,
+        }
+        for combination in combinations
+    ]
+    gui.extend(
+        {
+            **combinations[index],
+            "client_ssh_key": True,
+            "access_mode": "gui_credentials_persistence",
+            "certification_track": "gui_persistence",
+            "control": False,
+        }
+        for index in duplicate_indexes
+    )
+    planned = infrastructure + gui
+    if (
+        len(planned) != 24
+        or sum(case["certification_track"] == "infrastructure_access" for case in planned) != 12
+        or sum(case["access_mode"] == "ssh_key" for case in infrastructure) != 6
+        or sum(case["access_mode"] == "ssh_password" for case in infrastructure) != 6
+        or sum(case["product"] == "n8n" for case in gui) != 6
+        or sum(case["product"] == "nextcloud" for case in gui) != 6
+    ):
+        raise ValueError("APPLICATION_MATRIX_SCOPE_INVALID")
+    return planned
+
+
+def kvm_certification_matrix():
+    """48 aprovisionamientos: seis imágenes, cuatro planes, dos accesos."""
+    planned = []
+    for image in ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13"):
+        for plan in range(1, 5):
+            for client_ssh_key, access_mode in ((True, "ssh_key"), (False, "ssh_password")):
+                planned.append({
+                    "product": "kvm",
+                    "image": image,
+                    "plan": f"kvm-{plan}",
+                    "client_ssh_key": client_ssh_key,
+                    "access_mode": access_mode,
+                    "control": False,
+                })
+    if len(planned) != 48:
+        raise ValueError("KVM_MATRIX_SCOPE_INVALID")
     return planned
 
 
@@ -563,7 +641,10 @@ class Matrix:
         if args.production and not production_matrix_category_allowed(
             args.category,
             preflight_only=args.preflight_only,
-            full_kvm_matrix=getattr(args, "production_full_kvm_matrix", False),
+            full_kvm_matrix=(
+                getattr(args, "production_full_kvm_matrix", False)
+                or getattr(args, "full_kvm_certification_matrix", False)
+            ),
         ):
             raise RuntimeError("PRODUCTION_MATRIX_SCOPE_NOT_AUTHORIZED")
         if args.production and (
@@ -1036,7 +1117,7 @@ class Matrix:
             for w in state["workers"]
         ), "SIX_WORKERS_REQUIRED"
         service_state = self.api("GET", "/v1/service-workers")
-        require_four_idle_service_workers(service_state)
+        require_six_idle_service_workers(service_state)
         query = """
 from api.db import database
 with database() as db:
@@ -1864,7 +1945,9 @@ print(f"{jobs} {locks}")
         self.check(item, "D01", "marcador sintético de persistencia escrito en el sistema")
         if item["product"] != "kvm":
             item["credentials"] = self.api(
-                "POST", "/v1/service-instances/" + item["service_id"] + "/credentials"
+                "POST",
+                "/v1/service-instances/" + item["service_id"] + "/credentials",
+                key="credentials-" + item["name"],
             )
             if item["credentials"].get("admin_password"):
                 self.secrets.append(item["credentials"]["admin_password"])
@@ -2360,7 +2443,11 @@ print(json.dumps(result,sort_keys=True))
         shutil.rmtree(self.key_directory, ignore_errors=True)
 
     def run(self):
-        if self.args.production_full_matrix:
+        if getattr(self.args, "application_certification_matrix", False):
+            planned = application_certification_matrix(self.args.images)
+        elif getattr(self.args, "full_kvm_certification_matrix", False):
+            planned = kvm_certification_matrix()
+        elif self.args.production_full_matrix:
             planned = production_service_matrix(
                 self.args.images, full_matrix=True
             )
@@ -2395,14 +2482,27 @@ print(json.dumps(result,sort_keys=True))
             if not (exact_services or exact_kvm):
                 raise RuntimeError("EXACT_MATRIX_CASES_INVALID")
         if self.args.production and self.args.category == "services" and (
-            not (self.args.exact_cases or self.args.production_full_matrix)
-            or self.args.images != ["ubuntu-2404"]
+            not (
+                self.args.exact_cases
+                or self.args.production_full_matrix
+                or getattr(self.args, "application_certification_matrix", False)
+            )
+            or (
+                self.args.images != ["ubuntu-2404"]
+                and not (
+                    getattr(self.args, "application_certification_matrix", False)
+                    and self.args.images is None
+                )
+            )
         ):
             raise RuntimeError("PRODUCTION_MATRIX_SCOPE_INVALID")
         if self.args.production and not production_matrix_category_allowed(
             self.args.category,
             preflight_only=self.args.preflight_only,
-            full_kvm_matrix=getattr(self.args, "production_full_kvm_matrix", False),
+            full_kvm_matrix=(
+                getattr(self.args, "production_full_kvm_matrix", False)
+                or getattr(self.args, "full_kvm_certification_matrix", False)
+            ),
         ):
             raise RuntimeError("PRODUCTION_MATRIX_SCOPE_NOT_AUTHORIZED")
         if self.args.production_full_matrix and (
@@ -2419,6 +2519,18 @@ print(json.dumps(result,sort_keys=True))
             or self.args.cycle not in {1, 2}
         ):
             raise RuntimeError("PRODUCTION_FULL_KVM_MATRIX_REQUIRES_CYCLES_1_2_ALL_IMAGES")
+        if getattr(self.args, "application_certification_matrix", False) and (
+            self.args.exact_cases
+            or self.args.category != "services"
+            or self.args.images not in (None, ["ubuntu-2404"])
+        ):
+            raise RuntimeError("APPLICATION_CERTIFICATION_MATRIX_SCOPE_INVALID")
+        if getattr(self.args, "full_kvm_certification_matrix", False) and (
+            self.args.exact_cases
+            or self.args.category != "kvm"
+            or self.args.images is not None
+        ):
+            raise RuntimeError("KVM_CERTIFICATION_MATRIX_SCOPE_INVALID")
         existing_names = []
         offset = 0
         while True:
@@ -2448,6 +2560,12 @@ print(json.dumps(result,sort_keys=True))
             production_full_matrix=self.args.production_full_matrix,
             production_full_kvm_matrix=getattr(
                 self.args, "production_full_kvm_matrix", False
+            ),
+            application_certification_matrix=getattr(
+                self.args, "application_certification_matrix", False
+            ),
+            full_kvm_certification_matrix=getattr(
+                self.args, "full_kvm_certification_matrix", False
             ),
             harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             cases=sum(not case["control"] for case in planned),
@@ -2578,6 +2696,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--full-kvm-certification-matrix",
+        action="store_true",
+        help="Ejecuta 48 aprovisionamientos KVM: seis imágenes × cuatro planes × acceso SSH con llave o contraseña.",
+    )
+    parser.add_argument(
+        "--application-certification-matrix",
+        action="store_true",
+        help="Ejecuta 24 aprovisionamientos de servicios Ubuntu 24.04: 12 accesos SSH y 12 validaciones GUI/persistencia.",
+    )
+    parser.add_argument(
         "--preflight-only",
         action="store_true",
         help="Comprueba stack, seis workers, servicios, catálogo, MNG, WAN e IPAM sin crear recursos.",
@@ -2604,6 +2732,20 @@ if __name__ == "__main__":
     ):
         parser.error(
             "--production-full-kvm-matrix requiere --production --category kvm, todas las imágenes y ciclo 1 o 2"
+        )
+    if args.full_kvm_certification_matrix and (
+        args.exact_cases or args.category != "kvm" or args.images is not None
+    ):
+        parser.error(
+            "--full-kvm-certification-matrix requiere --category kvm y todas las imágenes"
+        )
+    if args.application_certification_matrix and (
+        args.exact_cases
+        or args.category != "services"
+        or args.images not in (None, ["ubuntu-2404"])
+    ):
+        parser.error(
+            "--application-certification-matrix requiere --category services y Ubuntu 24.04"
         )
     if not 1 <= args.cycle <= required_cycles(args.category):
         parser.error(

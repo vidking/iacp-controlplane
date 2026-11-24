@@ -13,7 +13,7 @@ class FakeClient:
         self.record = dict(record)
         self.deleted = []
 
-    def inventory(self, uncertain=False):
+    def inventory(self, uncertain=False, timeout=None, attempts=None):
         return [self.record] if self.record else []
 
     def permissions(self, node, vmid, mutate=False):
@@ -224,6 +224,32 @@ def test_destroy_acepta_clon_parcial_probado_por_state_y_tarea_qmclone(
     assert worker_main.assert_destroy_physical_identity(
         client, 40510, "mng01", name, owner, workspace
     ) is None
+    assert client.deleted == []
+
+
+@pytest.mark.no_database
+def test_destroy_rechaza_state_con_recursos_managed_adicionales(tmp_path, monkeypatch, entorno):
+    from worker.proxmox import ProxmoxError
+
+    name, owner, workspace, _events = _preparar_prueba_clon_parcial(
+        tmp_path, monkeypatch
+    )
+    state_path = tmp_path / "plans" / owner / "environments" / "mng01" / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"].append(
+        {
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": "unexpected",
+            "instances": [{"attributes": {"id": "unrelated"}}],
+        }
+    )
+    state_path.write_text(json.dumps(state))
+    client = PartialCloneClient(dict(RECORD, vmid=40510, name=name))
+    with pytest.raises(ProxmoxError, match="VM_PHYSICAL_OWNER_MISMATCH"):
+        worker_main.assert_destroy_physical_identity(
+            client, 40510, "mng01", name, owner, workspace
+        )
     assert client.deleted == []
 
 

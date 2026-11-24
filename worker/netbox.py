@@ -238,7 +238,10 @@ class NetBoxClient:
                 raise NetBoxError(
                     _error_code(status),
                     status,
-                    uncertain=method != "GET" and status >= 500,
+                    # HTTP 408 no garantiza que el servidor no haya aplicado
+                    # una mutación antes de cerrar la respuesta. Mantener la
+                    # intención local para reconciliarla en el siguiente intento.
+                    uncertain=method != "GET" and (status == 408 or status >= 500),
                 ) from None
             except (URLError, TimeoutError, socket.timeout, ValueError):
                 if retry_get and attempt + 1 < self.config.attempts:
@@ -374,6 +377,12 @@ class NetBoxClient:
         status_value = status.get("value") if _is_json_object(status) else status
         return self.config.gateway_tag in tag_slugs or status_value == "reserved"
 
+    @staticmethod
+    def _is_active_allocation(record: JsonObject) -> bool:
+        status = record.get("status")
+        value = status.get("value") if _is_json_object(status) else status
+        return value == "active"
+
     def validate_gateway(self, prefix: IPv4Network) -> str:
         gateway = prefix.network_address + self.config.gateway_host
         address = f"{gateway}/{self.config.prefix_length}"
@@ -403,9 +412,17 @@ class NetBoxClient:
                 raise NetBoxError("IPAM_RESPONSE_INVALID")
             return _response_int(result["id"])
         except NetBoxError as error:
-            if error.code not in {"IPAM_ADDRESS_CONFLICT", "IPAM_REQUEST_UNCERTAIN"}:
+            if error.code != "IPAM_ADDRESS_CONFLICT" and not error.uncertain:
                 raise
-            return self._tag_id(slug)
+            try:
+                return self._tag_id(slug)
+            except NetBoxError as lookup_error:
+                if error.uncertain:
+                    # En este punto aún no se ha enviado ninguna reserva IP.
+                    # El tag se reconcilia en el siguiente intento por su slug;
+                    # no hay un recurso de red que deba quedar en uncertain.
+                    raise NetBoxError("IPAM_TAG_OPERATION_UNCONFIRMED") from error
+                raise lookup_error
 
     def owned_allocation(self, prefix: IPv4Network, marker: str) -> JsonObject | None:
         # Recuperar una reserva cuyo POST terminó antes de persistirla localmente.
@@ -439,6 +456,10 @@ class NetBoxClient:
             or not self._in_pool(value[0], prefix)
             or (expected_address is not None and address != expected_address)
             or record.get("vrf") is not None
+            or record.get("assigned_object") is not None
+            or record.get("assigned_object_id") is not None
+            or record.get("assigned_object_type") is not None
+            or not self._is_active_allocation(record)
             or self._is_reserved(record)
             or not self._marker_matches(record, marker)
         ):
@@ -454,11 +475,64 @@ class NetBoxClient:
             len(existing) != 1
             or existing[0].get("id") != ip_id
             or existing[0].get("address") != address
+            or existing[0].get("assigned_object") is not None
+            or existing[0].get("assigned_object_id") is not None
+            or existing[0].get("assigned_object_type") is not None
+            or not self._is_active_allocation(existing[0])
             or self._is_reserved(existing[0])
             or not self._marker_matches(existing[0], marker)
         ):
             raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
         return NetBoxAllocation(ip_id, address, str(prefix), gateway, marker)
+
+    def verify_allocation(self, allocation: JsonObject, *, marker: str) -> NetBoxAllocation:
+        """Confirma que NetBox aún reserva exactamente la IP asignada a IACP."""
+
+        parsed_prefix = ip_network(self.config.expected_prefix)
+        if not isinstance(parsed_prefix, IPv4Network):
+            raise NetBoxError("IPAM_PREFIX_INVALID")
+        try:
+            ip_id = _response_int(
+                allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0
+            )
+        except (TypeError, ValueError):
+            ip_id = 0
+        address = allocation.get("address")
+        if (
+            ip_id <= 0
+            or not isinstance(address, str)
+            or allocation.get("marker") != marker
+            or allocation.get("status") not in {None, "allocated"}
+        ):
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+
+        try:
+            record = self._request(
+                "GET", f"/ipam/ip-addresses/{ip_id}/", retry_get=True
+            )
+        except NetBoxError as error:
+            if error.status == 404:
+                raise NetBoxError(
+                    "IPAM_ALLOCATION_CONFLICT", 404, uncertain=True
+                ) from error
+            raise NetBoxError(
+                "IPAM_REQUEST_UNCERTAIN", error.status, uncertain=True
+            ) from error
+
+        try:
+            gateway = self.validate_gateway(parsed_prefix)
+            verified = self._confirm_allocation(
+                record,
+                parsed_prefix,
+                gateway,
+                marker,
+                expected_address=address,
+            )
+        except NetBoxError as error:
+            raise NetBoxError(error.code, error.status, uncertain=True) from error
+        if allocation.get("gateway") != verified.gateway:
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+        return verified
 
     def allocate(self, **kwargs) -> NetBoxAllocation:
         # Serializa los aprovisionadores IACP del mismo prefijo durante la llamada remota.
@@ -576,6 +650,31 @@ class NetBoxClient:
         raise NetBoxError("IPAM_POOL_EXHAUSTED", 409)
 
     def release(self, allocation: JsonObject, *, marker: str) -> None:
+        """Serializa lookup/delete con las reservas del mismo prefijo."""
+        from psycopg.errors import LockNotAvailable
+
+        from api.db import database
+
+        self._heartbeat()
+        with database() as db:
+            db.execute("BEGIN")
+            db.execute("SET LOCAL lock_timeout = '12s'")
+            try:
+                db.execute(
+                    "SELECT pg_advisory_xact_lock(105, hashtext(?))",
+                    (self.config.expected_prefix,),
+                )
+            except LockNotAvailable as error:
+                db.execute("ROLLBACK")
+                raise NetBoxError("IPAM_ALLOCATION_BUSY") from error
+            try:
+                self._release_locked(allocation, marker=marker)
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def _release_locked(self, allocation: JsonObject, *, marker: str) -> None:
         ip_id = _response_int(
             allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0
         )
@@ -586,7 +685,7 @@ class NetBoxClient:
         if ip_id <= 0:
             record = self.owned_allocation(prefix, marker)
             if record is None:
-                if allocation.get("status") == "release_pending":
+                if allocation.get("status") in {"allocating", "release_pending"}:
                     raise NetBoxError("IPAM_REQUEST_UNCERTAIN", uncertain=True)
                 return
             ip_id = _response_int(record["id"])
@@ -596,8 +695,27 @@ class NetBoxClient:
             record = self._request("GET", path, retry_get=True)
         except NetBoxError as error:
             if error.status == 404:
-                return
-            raise
+                replacement = self.owned_allocation(prefix, marker)
+                if replacement is None:
+                    return
+                replacement_id = _response_int(replacement.get("id") or 0)
+                if (
+                    replacement_id <= 0
+                    or replacement_id == ip_id
+                    or not allocation.get("address")
+                    or replacement.get("address") != allocation["address"]
+                ):
+                    raise NetBoxError("IPAM_IDENTITY_MISMATCH", uncertain=True) from error
+                ip_id = replacement_id
+                path = f"/ipam/ip-addresses/{ip_id}/"
+                try:
+                    record = self._request("GET", path, retry_get=True)
+                except NetBoxError as replacement_error:
+                    if replacement_error.status == 404 and self.owned_allocation(prefix, marker) is None:
+                        return
+                    raise NetBoxError("IPAM_RELEASE_UNCONFIRMED", uncertain=True) from replacement_error
+            else:
+                raise
         value = (
             self._address_value(record.get("address"))
             if _is_json_object(record)
@@ -614,6 +732,7 @@ class NetBoxClient:
             or record.get("assigned_object") is not None
             or record.get("assigned_object_id") is not None
             or record.get("assigned_object_type") is not None
+            or not self._is_active_allocation(record)
             or self._is_reserved(record)
             or not allocation.get("address")
             or record.get("address") != allocation["address"]
@@ -623,5 +742,7 @@ class NetBoxClient:
             self._request("DELETE", path)
         except NetBoxError as error:
             if error.status == 404:
-                return
+                if self.owned_allocation(prefix, marker) is None:
+                    return
+                raise NetBoxError("IPAM_RELEASE_UNCONFIRMED", uncertain=True) from error
             raise

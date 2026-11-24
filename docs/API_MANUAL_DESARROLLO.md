@@ -18,14 +18,17 @@ resuelven dentro del servidor. El consumidor no envía clúster, nodo ni
 parámetros de infraestructura. En esta configuración, la API publica el perfil
 de laboratorio MNG; el servidor decide el destino físico.
 
-Si `IACP_REQUIRE_API_TOKEN` está habilitado, cada ruta `/v1` requiere:
+Cada ruta `/v1` requiere el Bearer de servicio configurado en el backend del
+portal:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-Guarda el token y las contraseñas en el backend de tu integración. No los
-incluyas en JavaScript público, URLs, logs ni repositorios.
+El portal inyecta este Bearer desde su backend. Los clientes finales usan el
+portal y no reciben el token ni llaman directamente a esta API. Conserva el
+token y las contraseñas en el backend; no los incluyas en JavaScript público,
+URLs, logs ni repositorios.
 
 ## 2. Consultar catálogos
 

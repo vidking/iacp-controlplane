@@ -1,6 +1,7 @@
 """Pedidos transaccionales y entrega explícita de aplicaciones."""
 
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 from hashlib import sha256
 from hmac import compare_digest
 import json
@@ -10,12 +11,14 @@ from fastapi import HTTPException
 from api.db import database
 from api.models import Command, OperationRequest
 from api.service import (
+    ACTIVE_OPERATION_STATUSES,
     _idempotent_mutation,
     _idempotency_key_or_error,
     _insert_operation,
     _resolve_public_request,
     emit,
     now,
+    register_idempotent_rollback_cleanup,
 )
 from api.service_catalog import enabled, supported_image_ids, load_service_release, service_release_digest
 from api.service_models import ServiceCreateRequest
@@ -46,6 +49,34 @@ def guard_instance(db, instance_id: str, *, allow_queued: bool = False):
     ).fetchone()
     if row:
         raise HTTPException(409, "SERVICE_OPERATION_ACTIVE")
+
+
+@contextmanager
+def _stopped_execution_lock(job_id: str, required: bool):
+    if not required:
+        yield
+        return
+    with database() as db:
+        row = db.execute(
+            "SELECT status FROM service_jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+    if row is None or row["status"] != "uncertain":
+        # Replays of an already accepted request remain idempotent even while
+        # its replacement generation is running.
+        yield
+        return
+    from worker.service_locks import (
+        release_service_job_lock,
+        try_acquire_service_job_lock,
+    )
+
+    descriptor = try_acquire_service_job_lock(job_id)
+    if descriptor is None:
+        raise HTTPException(409, "PREVIOUS_EXECUTION_MUST_BE_STOPPED")
+    try:
+        yield
+    finally:
+        release_service_job_lock(descriptor)
 
 
 def create(request: ServiceCreateRequest, key: str | None):
@@ -85,13 +116,16 @@ def create(request: ServiceCreateRequest, key: str | None):
         except (OSError, ValueError, RuntimeError):
             raise HTTPException(503, "SERVICE_KEY_NOT_CONFIGURED") from None
         instance = request.instance.model_copy(deep=True)
-        instance.access.ssh_public_keys.append(credentials["ssh_public_key"])
+        instance.access.ssh_public_keys.extend(
+            [credentials["ssh_public_key"], credentials["management_ssh_public_key"]]
+        )
         instance.tags = list(
             dict.fromkeys(instance.tags + [f"app-{request.application_id}"])
         )
         spec, plan, _image, password, environment = _resolve_public_request(instance)
         spec.dns_servers = ["1.1.1.1", "8.8.8.8"]
         secret_path = str(write_secret(operation_id, password)) if password else None
+        register_idempotent_rollback_cleanup(lambda: delete_secret(secret_path))
         try:
             response, _ = _insert_operation(
                 db,
@@ -183,17 +217,47 @@ def get_service(service_id):
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         result = dict(row)
         retrieved_at = result.pop("credentials_retrieved_at")
-        awaiting_customer = result["status"] == "awaiting_customer"
+        active_operation_statuses = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
+        active_operation = db.execute(
+            f"""SELECT 1 FROM operations WHERE instance_id=?
+            AND status IN ({active_operation_statuses}) LIMIT 1""",
+            (result["instance_id"], *sorted(ACTIVE_OPERATION_STATUSES)),
+        ).fetchone()
+        active_service_job = db.execute(
+            """SELECT 1 FROM service_jobs WHERE service_id=?
+            AND status IN ('queued','running','uncertain') LIMIT 1""",
+            (service_id,),
+        ).fetchone()
+        infrastructure_ready = (
+            result["infrastructure_status"] == "ready"
+            and result["power_state"] == "running"
+            and active_operation is None
+            and active_service_job is None
+        )
+        awaiting_customer = (
+            result["status"] == "awaiting_customer" and infrastructure_ready
+        )
         result["credentials_available"] = retrieved_at is None and awaiting_customer
-        result["credentials_recovery_possible"] = result["credential_receipt_required"] and awaiting_customer
+        result["credentials_recovery_possible"] = bool(
+            result["credential_receipt_required"]
+            and awaiting_customer
+            and retrieved_at
+            and _credential_recovery_open(retrieved_at)
+        )
         result["configuration"] = json.loads(result.pop("configuration_json"))
-        result["jobs"] = [
-            dict(job)
-            for job in db.execute(
-                "SELECT * FROM service_jobs WHERE service_id=? ORDER BY created_at",
-                (service_id,),
-            ).fetchall()
-        ]
+        result["jobs_total"] = db.execute(
+            "SELECT COUNT(*) AS total FROM service_jobs WHERE service_id=?",
+            (service_id,),
+        ).fetchone()["total"]
+        recent_jobs = db.execute(
+            "SELECT * FROM service_jobs WHERE service_id=? "
+            "ORDER BY created_at DESC, job_id DESC LIMIT 100",
+            (service_id,),
+        ).fetchall()
+        # El portal conserva el contrato cronológico y toma el último job con
+        # jobs.at(-1); la respuesta solo incluye los cien más recientes.
+        result["jobs"] = [dict(job) for job in reversed(recent_jobs)]
+        result["jobs_truncated"] = result["jobs_total"] > len(recent_jobs)
         spec = db.execute("SELECT spec_json FROM instances WHERE instance_id=?", (result["instance_id"],)).fetchone()
         if result["application_id"] in {"nextcloud", "n8n"}:
             from ipaddress import ip_interface
@@ -218,7 +282,10 @@ def get_service(service_id):
                 result["credentials_recovery_possible"] = False
             result["access_url"] = (
                 "https://" + host + "/"
-                if host and result["status"] in {"awaiting_customer", "delivered"} and not owner_review_required
+                if host
+                and result["status"] in {"awaiting_customer", "delivered"}
+                and infrastructure_ready
+                and not owner_review_required
                 else None
             )
         return result
@@ -279,39 +346,40 @@ def _require_running_instance(db, instance_id):
 def retry(job_id, key, stopped=False):
     require_enabled()
     from worker.service_bootstrap import observe_handoff, confirm_handoff_evidence, finish_handoff_from_observation
-    evidence = observe_handoff(job_id) if stopped else None
+    with _stopped_execution_lock(job_id, stopped):
+        evidence = observe_handoff(job_id) if stopped else None
 
-    def builder(db):
-        job = db.execute(
-            "SELECT * FROM service_jobs WHERE job_id=?", (job_id,)
-        ).fetchone()
-        if not job:
-            raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
-        if job["status"] not in {"failed", "blocked", "uncertain"}:
-            raise HTTPException(409, "SERVICE_NOT_RETRYABLE")
-        if job["status"] == "uncertain" and not stopped:
-            raise HTTPException(409, "PREVIOUS_EXECUTION_MUST_BE_STOPPED")
-        service = _current_job(db, job)
-        if job["action"] == "handoff" and stopped:
-            if finish_handoff_from_observation(db, job_id, evidence):
-                return {"job_id": job_id, "status": "succeeded"}, None
-            if not confirm_handoff_evidence(db, job_id, evidence):
-                raise HTTPException(409, "SERVICE_HANDOFF_OBSERVATION_REQUIRED")
-        if job["action"] == "install" and service["image"] not in supported_image_ids(service["application_id"]):
-            raise HTTPException(409, "SERVICE_IMAGE_RETIRED")
-        _require_running_instance(db, service["instance_id"])
-        db.execute(
-            "UPDATE service_jobs SET status='queued', error='', worker_id=NULL, finished_at=NULL WHERE job_id=?",
-            (job_id,),
+        def builder(db):
+            job = db.execute(
+                "SELECT * FROM service_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if not job:
+                raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
+            if job["status"] not in {"failed", "blocked", "uncertain"}:
+                raise HTTPException(409, "SERVICE_NOT_RETRYABLE")
+            if job["status"] == "uncertain" and not stopped:
+                raise HTTPException(409, "PREVIOUS_EXECUTION_MUST_BE_STOPPED")
+            service = _current_job(db, job)
+            if job["action"] == "handoff" and stopped:
+                if finish_handoff_from_observation(db, job_id, evidence):
+                    return {"job_id": job_id, "status": "succeeded"}, None
+                if not confirm_handoff_evidence(db, job_id, evidence):
+                    raise HTTPException(409, "SERVICE_HANDOFF_OBSERVATION_REQUIRED")
+            if job["action"] == "install" and service["image"] not in supported_image_ids(service["application_id"]):
+                raise HTTPException(409, "SERVICE_IMAGE_RETIRED")
+            _require_running_instance(db, service["instance_id"])
+            db.execute(
+                "UPDATE service_jobs SET status='queued', error='', worker_id=NULL, finished_at=NULL WHERE job_id=?",
+                (job_id,),
+            )
+            return {"job_id": job_id, "status": "queued"}, None
+
+        return _idempotent_mutation(
+            scope=f"POST:service-jobs:{job_id}:retry",
+            idempotency_key=key,
+            body={"stopped": stopped},
+            builder=builder,
         )
-        return {"job_id": job_id, "status": "queued"}, None
-
-    return _idempotent_mutation(
-        scope=f"POST:service-jobs:{job_id}:retry",
-        idempotency_key=key,
-        body={"stopped": stopped},
-        builder=builder,
-    )
 
 
 def delivery(service_id, key, receipt=None):
@@ -319,8 +387,11 @@ def delivery(service_id, key, receipt=None):
 
     def builder(db):
         row = db.execute(
-            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
-            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            """SELECT s.*, i.status AS infrastructure_status,
+            r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            LEFT JOIN service_credential_retrievals r USING(service_id)
             WHERE s.service_id=?""",
             (service_id,),
         ).fetchone()
@@ -362,12 +433,18 @@ def _credential_recovery_open(retrieved_at):
 def credentials(service_id, key=None):
     from api.service_secrets import decrypt
 
-    key_hash = sha256(_idempotency_key_or_error(key).encode()).hexdigest() if key else None
+    if not isinstance(key, str) or not key.strip():
+        raise HTTPException(422, "Idempotency-Key es obligatorio para recuperar credenciales")
+    normalized_key = _idempotency_key_or_error(key)
+    key_hash = sha256(normalized_key.encode()).hexdigest()
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
-            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            """SELECT s.*, i.status AS infrastructure_status,
+            r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            LEFT JOIN service_credential_retrievals r USING(service_id)
             WHERE s.service_id=?""",
             (service_id,),
         ).fetchone()
@@ -375,13 +452,26 @@ def credentials(service_id, key=None):
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         if row["status"] != "awaiting_customer":
             raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+        if row["infrastructure_status"] != "ready":
+            raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+        operation_statuses = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
+        active_operation = db.execute(
+            f"""SELECT 1 FROM operations
+            WHERE instance_id=? AND status IN ({operation_statuses})
+            LIMIT 1""",
+            (row["instance_id"], *sorted(ACTIVE_OPERATION_STATUSES)),
+        ).fetchone()
+        if active_operation:
+            raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
         guard_instance(db, row["instance_id"])
         previous_key_hash = row["credentials_retrieval_key_hash"]
         recovered = False
         if row["credentials_retrieved_at"]:
             if not key_hash or not previous_key_hash or not compare_digest(key_hash, previous_key_hash):
                 raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
-            recovered = _credential_recovery_open(row["credentials_retrieved_at"])
+            if not _credential_recovery_open(row["credentials_retrieved_at"]):
+                raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+            recovered = True
         secrets = decrypt(row["secrets_encrypted"])
         if row["application_id"] == "nextcloud":
             result = {
@@ -426,110 +516,132 @@ def credentials(service_id, key=None):
 
 
 def cancel(job_id, key, stopped=False):
-    def builder(db):
-        row = db.execute(
-            "SELECT * FROM service_jobs WHERE job_id=?", (job_id,)
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
-        if row["status"] == "cancelled":
-            operation = db.execute(
-                """SELECT o.operation_id
-                FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
-                JOIN operations o ON o.operation_id=i.operation_id
-                WHERE s.service_id=? AND s.status='cancelled' AND o.phase='service_cancelled'""",
-                (row["service_id"],),
+    with _stopped_execution_lock(job_id, stopped):
+        def builder(db):
+            row = db.execute(
+                "SELECT * FROM service_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
-            if operation:
-                operation_id = operation["operation_id"]
-                return {"job_id": job_id, "status": "cancelled", "operation_id": operation_id}, operation_id
-        if row["status"] not in {"queued", "blocked"} and not (
-            row["status"] == "uncertain" and stopped
-        ):
-            raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RUNNING_OR_UNCERTAIN")
-        service = _current_job(db, row)
-        if row["action"] == "handoff" and row["status"] == "queued" and row["generation"] == 0:
-            db.execute("UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?", (now(), job_id))
-            return {"job_id": job_id, "status": "cancelled"}, None
-        if row["action"] != "install":
-            raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RECOVERY")
-
-        cancelled_operation_id = None
-        if service["infrastructure_status"] == "pending" and service["vmid"] is None:
-            updated = db.execute(
-                """UPDATE operations SET status='failed', phase='service_cancelled',
-                error='SERVICE_CANCELLED', finished_at=?
-                WHERE operation_id=? AND instance_id=? AND command='provision'
-                AND status='pending' AND worker_id IS NULL AND vmid IS NULL AND started_at IS NULL
-                AND attempt_count=0 AND workspace_path IS NULL""",
-                (now(), service["operation_id"], service["instance_id"]),
-            )
-            if updated.rowcount:
-                cancelled_operation_id = service["operation_id"]
+            if not row:
+                raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
+            if row["status"] == "cancelled":
+                operation = db.execute(
+                    """SELECT o.operation_id
+                    FROM service_instances s JOIN instances i ON i.instance_id=s.instance_id
+                    JOIN operations o ON o.operation_id=i.operation_id
+                    WHERE s.service_id=? AND s.status='cancelled' AND o.phase='service_cancelled'""",
+                    (row["service_id"],),
+                ).fetchone()
+                if operation:
+                    operation_id = operation["operation_id"]
+                    return {
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "operation_id": operation_id,
+                    }, operation_id
+            if row["status"] not in {"queued", "blocked"} and not (
+                row["status"] == "uncertain" and stopped
+            ):
+                raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RUNNING_OR_UNCERTAIN")
+            service = _current_job(db, row)
+            if row["action"] == "handoff" and row["status"] == "queued" and row["generation"] == 0:
                 db.execute(
-                    "UPDATE instances SET status='deleted', updated_at=? WHERE instance_id=?",
-                    (now(), service["instance_id"]),
+                    "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
+                    (now(), job_id),
                 )
-                emit(db, cancelled_operation_id, "operation.cancelled", "failed", "SERVICE_CANCELLED")
-        if service["infrastructure_status"] == "failed" and service["vmid"] is None:
-            failed = db.execute(
-                """UPDATE operations SET phase='service_cancelled' WHERE operation_id=? AND instance_id=?
-                AND command='provision' AND status='failed' AND vmid IS NULL
-                AND NOT EXISTS (SELECT 1 FROM vmid_leases l WHERE l.operation_id=operations.operation_id AND l.status='held')
-                AND NOT EXISTS (SELECT 1 FROM ip_allocations a WHERE a.instance_id=operations.instance_id AND a.status<>'released')
-                AND NOT EXISTS (SELECT 1 FROM operations other WHERE other.instance_id=operations.instance_id
-                  AND other.status IN ('pending','running','planning','applying','destroying','powering','uncertain'))""",
-                (service["operation_id"], service["instance_id"]),
-            )
-            if failed.rowcount:
-                cancelled_operation_id = service["operation_id"]
-                db.execute("UPDATE instances SET status='deleted', updated_at=? WHERE instance_id=?",
-                           (now(), service["instance_id"]))
-                emit(db, cancelled_operation_id, "operation.cancelled", "failed", "SERVICE_CANCELLED_AFTER_PROVISION_FAILURE")
-        clean_without_vm = cancelled_operation_id or service["infrastructure_status"] == "deleted"
-        if not clean_without_vm:
-            active = db.execute(
-                """SELECT 1 FROM operations WHERE instance_id=?
-                AND status IN ('pending','running','planning','applying','destroying','powering','uncertain') LIMIT 1""",
-                (service["instance_id"],),
-            ).fetchone()
-            if active:
-                raise HTTPException(409, "INFRASTRUCTURE_OPERATION_ACTIVE")
-            if service["infrastructure_status"] != "ready" or service["power_state"] != "running":
-                raise HTTPException(409, "SERVICE_CLEANUP_REQUIRES_RUNNING_VM")
-        db.execute(
-            "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
-            (now(), job_id),
-        )
-        if not clean_without_vm:
-            cleanup_job_id = str(uuid.uuid4())
+                return {"job_id": job_id, "status": "cancelled"}, None
+            if row["action"] != "install":
+                raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RECOVERY")
+
+            cancelled_operation_id = None
+            if service["infrastructure_status"] == "pending" and service["vmid"] is None:
+                updated = db.execute(
+                    """UPDATE operations SET status='failed', phase='service_cancelled',
+                    error='SERVICE_CANCELLED', finished_at=?
+                    WHERE operation_id=? AND instance_id=? AND command='provision'
+                    AND status='pending' AND worker_id IS NULL AND vmid IS NULL AND started_at IS NULL
+                    AND attempt_count=0 AND workspace_path IS NULL""",
+                    (now(), service["operation_id"], service["instance_id"]),
+                )
+                if updated.rowcount:
+                    cancelled_operation_id = service["operation_id"]
+                    db.execute(
+                        "UPDATE instances SET status='deleted', updated_at=? WHERE instance_id=?",
+                        (now(), service["instance_id"]),
+                    )
+                    emit(db, cancelled_operation_id, "operation.cancelled", "failed", "SERVICE_CANCELLED")
+            if service["infrastructure_status"] == "failed" and service["vmid"] is None:
+                failed = db.execute(
+                    """UPDATE operations SET phase='service_cancelled' WHERE operation_id=? AND instance_id=?
+                    AND command='provision' AND status='failed' AND vmid IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM vmid_leases l WHERE l.operation_id=operations.operation_id AND l.status='held')
+                    AND NOT EXISTS (SELECT 1 FROM ip_allocations a WHERE a.instance_id=operations.instance_id AND a.status<>'released')
+                    AND NOT EXISTS (SELECT 1 FROM operations other WHERE other.instance_id=operations.instance_id
+                      AND other.status IN ('pending','running','planning','applying','destroying','powering','uncertain'))""",
+                    (service["operation_id"], service["instance_id"]),
+                )
+                if failed.rowcount:
+                    cancelled_operation_id = service["operation_id"]
+                    db.execute(
+                        "UPDATE instances SET status='deleted', updated_at=? WHERE instance_id=?",
+                        (now(), service["instance_id"]),
+                    )
+                    emit(
+                        db,
+                        cancelled_operation_id,
+                        "operation.cancelled",
+                        "failed",
+                        "SERVICE_CANCELLED_AFTER_PROVISION_FAILURE",
+                    )
+            clean_without_vm = cancelled_operation_id or service["infrastructure_status"] == "deleted"
+            if not clean_without_vm:
+                active = db.execute(
+                    """SELECT 1 FROM operations WHERE instance_id=?
+                    AND status IN ('pending','running','planning','applying','destroying','powering','uncertain')
+                    LIMIT 1""",
+                    (service["instance_id"],),
+                ).fetchone()
+                if active:
+                    raise HTTPException(409, "INFRASTRUCTURE_OPERATION_ACTIVE")
+                if service["infrastructure_status"] != "ready" or service["power_state"] != "running":
+                    raise HTTPException(409, "SERVICE_CLEANUP_REQUIRES_RUNNING_VM")
             db.execute(
-                """INSERT INTO service_jobs(job_id, service_id, action, status, created_at)
-                VALUES (?, ?, 'cleanup', 'queued', ?)""",
-                (cleanup_job_id, row["service_id"], now()),
+                "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
+                (now(), job_id),
             )
+            if not clean_without_vm:
+                cleanup_job_id = str(uuid.uuid4())
+                db.execute(
+                    """INSERT INTO service_jobs(job_id, service_id, action, status, created_at)
+                    VALUES (?, ?, 'cleanup', 'queued', ?)""",
+                    (cleanup_job_id, row["service_id"], now()),
+                )
+                db.execute(
+                    "UPDATE service_instances SET status='cancelling', updated_at=? WHERE service_id=?",
+                    (now(), row["service_id"]),
+                )
+                return {
+                    "job_id": cleanup_job_id,
+                    "cancelled_job_id": job_id,
+                    "status": "queued",
+                }, None
             db.execute(
-                "UPDATE service_instances SET status='cancelling', updated_at=? WHERE service_id=?",
+                """UPDATE service_instances SET status='cancelled', secrets_encrypted=NULL, updated_at=?
+                WHERE service_id=?""",
                 (now(), row["service_id"]),
             )
-            return {"job_id": cleanup_job_id, "cancelled_job_id": job_id, "status": "queued"}, None
-        db.execute(
-            """UPDATE service_instances SET status='cancelled', secrets_encrypted=NULL, updated_at=?
-            WHERE service_id=?""",
-            (now(), row["service_id"]),
-        )
-        result = {"job_id": job_id, "status": "cancelled"}
-        if cancelled_operation_id:
-            result["operation_id"] = cancelled_operation_id
-        return result, cancelled_operation_id
+            result = {"job_id": job_id, "status": "cancelled"}
+            if cancelled_operation_id:
+                result["operation_id"] = cancelled_operation_id
+            return result, cancelled_operation_id
 
-    response = _idempotent_mutation(
-        scope=f"POST:service-jobs:{job_id}:cancel",
-        idempotency_key=key,
-        body={"stopped": True} if stopped else {},
-        builder=builder,
-    )
-    if operation_id := response.get("operation_id"):
+        response = _idempotent_mutation(
+            scope=f"POST:service-jobs:{job_id}:cancel",
+            idempotency_key=key,
+            body={"stopped": True} if stopped else {},
+            builder=builder,
+        )
+        operation_id = response.get("operation_id")
+    if operation_id:
         # Se limpia tras confirmar la cancelación. Repetir la misma petición
         # también completa la limpieza si la respuesta o el proceso se perdieron.
         with database() as db:

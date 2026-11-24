@@ -1,5 +1,30 @@
 # Catálogo de servicios y agentes — integración piloto
 
+## Candidato de recertificación — 2026-11-23
+
+La configuración local en revisión incorpora seis workers de aplicaciones con
+concurrencia máxima seis. Los workers 1 y 2 usan el perfil Compose `services`;
+los workers 3 a 6 usan `service-workers-3-6`. Ambos grupos comparten el volumen
+de trabajo del stack para serializar ejecución, recuperación y reintentos de un
+mismo trabajo. El manifiesto de Dev y el de producción declaran seis workers;
+esto describe el candidato local, no un despliegue ni una certificación.
+
+La matriz propuesta contempla 24 casos de aplicaciones Ubuntu 24.04: 12 validan
+acceso SSH con seis llaves y seis contraseñas; 12 validan GUI, credenciales y
+persistencia, con seis casos de n8n y seis de Nextcloud. La matriz KVM contempla
+48 combinaciones de seis imágenes, cuatro planes y dos modos SSH. La ejecución
+física requiere seis workers sanos e idle y conserva evidencia separada por
+entorno.
+
+Los servicios nuevos con HTTPS por IP renuevan certificados cada tres días con
+un trabajo de worker. La renovación mantiene el estado del servicio, verifica
+HTTPS con la CA vigente y restaura el certificado anterior si falla la
+verificación. El binding almacena cifrada una llave SSH de mantenimiento para
+permitir renovaciones después de entregar las credenciales del cliente; no se
+incluye en la entrega. Los bindings históricos sin esta llave no entran en la
+renovación automática y requieren una recuperación compatible antes de poder
+certificarlos.
+
 ## Alcance y estado
 
 ### Política vigente de sistema operativo — 2026-11-18
@@ -24,8 +49,9 @@ pruebas de código; cada alcance conserva su evidencia y fecha en las adendas.
 
 Las seis plazas de infraestructura permanecen independientes de las plazas de
 servicios. `IACP_SERVICE_MAX_CONCURRENT` define la capacidad del pool y el manifiesto
-declara cuántos contenedores deben estar activos. El stack dev se prepara con cuatro;
-el valor predeterminado y el manifiesto productivo conservan dos hasta una promoción.
+declara cuántos contenedores deben estar activos. El candidato de recertificación
+declara seis workers de servicios tanto en Dev como en producción; el estado
+desplegado se confirma aparte con `scripts/go_live.py`.
 La API guarda pedido y dependencia en una transacción; el pool consulta
 la VM y no consume un trabajo antes de `ready` + `running`. No se introducen brokers.
 
@@ -40,10 +66,14 @@ Las instalaciones están deshabilitadas por defecto:
 
 - `IACP_SERVICES_ENABLED=0`: no aceptar pedidos de aplicación.
 - `IACP_SERVICE_EXECUTION_ENABLED=0`: bloquear ejecución Ansible incluso si hay pedidos.
-- Perfil Compose `services`: los dos workers base se incluyen solo al activarlo.
-- Perfil Compose `service-workers-3-4`: agrega los workers 3 y 4 solo cuando el manifiesto declara cuatro.
-- `IACP_SERVICE_CONFIG_DIR`: directorio del operador, preferiblemente absoluto,
-  montado en API y workers como `/run/iacp-services`, solo lectura. No montar el socket Docker.
+- Perfil Compose `services`: los dos primeros workers se incluyen al activarlo.
+- Perfil Compose `service-workers-3-6`: agrega los workers 3 a 6 cuando el manifiesto declara cuatro o seis.
+- `IACP_SERVICE_CONFIG_DIR`: directorio absoluto del operador. La API recibe
+  únicamente `key` y `pilot-ca.crt` en montajes individuales de solo lectura;
+  nunca monta `pilot-ca.key`. Los workers de servicios montan el directorio
+  completo en `/run/iacp-services`, solo lectura, porque firman certificados
+  para las instancias. Cada worker de infraestructura recibe únicamente `key`
+  en `/run/iacp-services/key`, también solo lectura. No montar el socket Docker.
 
 Contenido requerido del directorio (no incorporar secretos a Git):
 
@@ -52,11 +82,14 @@ Contenido requerido del directorio (no incorporar secretos a Git):
    Su copia de recuperación debe mantenerse separada de PostgreSQL; perderla impide
    continuar instalaciones y recuperar sus credenciales. La rotación requiere recifrar
    los sobres antes de sustituirla; no existe aún una utilidad automática de rotación.
-2. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
+2. `pilot-ca.key` y `pilot-ca.crt`: clave privada de firma con permisos 600 y
+   certificado público. La API recibe únicamente el certificado público; los
+   workers de servicios usan ambos para emitir certificados de acceso por IP.
+3. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
    PostgreSQL, después de verificar identidad y pertenencia al pool de la VM.
    `bindings/<instance_id>.json` se conserva únicamente como alternativa operativa
    verificada por el administrador; no se acepta automáticamente una salida de ssh-keyscan.
-3. Las releases probadas se incluyen en `/app/services/releases.json`. Un archivo
+4. Las releases probadas se incluyen en `/app/services/releases.json`. Un archivo
    externo es opcional y se selecciona con `IACP_SERVICE_RELEASES_FILE`.
    La primera instalación fija la huella; no se actualizan instancias por cambiar etiquetas.
 
@@ -305,7 +338,7 @@ sudo /ruta/al/release/.venv/bin/python scripts/prepare_develop.py \
 ```
 
 El resultado fija dominio `dev-iac.cyberfuel.com`, esquema 3, seis operaciones KVM,
-cuatro workers de servicios, rango 40000–49999, Wasabi apagado y ejecución Ansible
+seis workers de servicios, rango 40000–49999, Wasabi apagado y ejecución Ansible
 deshabilitada inicialmente. El archivo productivo solo se lee. El token y pool
 deben existir y tener los permisos verificados por el operador antes del preflight.
 
@@ -491,9 +524,13 @@ vigente para nuevas provisiones queda registrada al inicio de este documento.
 Los contenedores mantienen sus digests fijados. La evidencia histórica de esas
 matrices no amplía la lista de imágenes habilitadas hoy.
 
-`configuration.agent_mode="local"` permite validar Hermes/OpenClaw sin credencial
-real de proveedor. El modo predeterminado `connected` sigue exigiendo modelo y
-clave. La aprobación local excluye inferencia, Telegram y conexiones externas.
+La revisión del 2026-11-24 retira `configuration.agent_mode="local"`: Hermes y
+OpenClaw solo admiten `connected`, con modelo y `provider_api_key` obligatorios.
+Los workers también rechazan configuraciones persistidas con el modo anterior o
+sin credenciales, en vez de sustituirlas por valores ficticios. Los alcances
+`local-docker-without-external-provider` de `services/releases.json` describen
+validaciones históricas de imagen/arranque; no certifican inferencia real ni
+permiten aprovisionar agentes sin proveedor.
 
 `scripts/wan_matrix.py` ejecuta una categoría y ciclo con 16 combinaciones y dos
 controles adicionales, en tres tandas de seis. Requiere el runtime dev idle y
@@ -608,3 +645,34 @@ NODE_PATH=/ruta/de/playwright/node_modules node tests/browser_services.cjs
 Esta prueba comprueba el contrato, los filtros de imágenes, la redacción de
 contraseña, la consulta única explícita de credenciales y la entrega. La matriz
 física se ejecuta por separado y conserva sus evidencias.
+
+### Revisión de fiabilidad y matriz de seis workers — 2026-11-23
+
+El candidato eleva ambos pools a seis: seis workers de infraestructura y seis
+workers de servicios, cada uno con su propia cola y límite de concurrencia. Los
+perfiles Compose `service-workers-3-4` y `service-workers-5-6` permiten comprobar
+también el escalado intermedio de cuatro sin iniciar workers adicionales.
+La configuración de Dev y Producción debe declarar seis en el manifiesto y en
+`IACP_SERVICE_MAX_CONCURRENT`.
+
+El runner de servicios genera 24 casos para Ubuntu 24.04: doce accesos SSH
+(llave y contraseña para n8n y Nextcloud a través de los cuatro planes) y doce
+validaciones de acceso GUI y persistencia tras reinicios. El runner KVM genera
+48 casos con seis imágenes, cuatro planes y ambos métodos de acceso SSH. La
+matriz física exige `prod_static`, NetBox, seis workers sanos e idle y seis
+aprovisionamientos simultáneos; ejecutar primero en `dev-iac.cyberfuel.com`.
+
+Los certificados hoja para acceso HTTPS por IP duran siete días y se renuevan
+automáticamente antes de expirar mediante la clave SSH de mantenimiento cifrada
+en `service_bindings`. Esa clave se elimina al completar la entrega o cuando la
+API confirma la eliminación de la VM. La CA nueva se genera con vigencia de diez
+años; su rotación sigue requiriendo un procedimiento coordinado con los clientes
+que instalaron el certificado público. Los servicios históricos que no tengan
+clave de mantenimiento necesitan recuperación antes de certificar renovación.
+
+El API obliga `Idempotency-Key` en `POST /v1/operations`, aplica un límite
+predeterminado de cien operaciones pendientes y devuelve como máximo los cien
+trabajos más recientes en el detalle de un servicio (`jobs_total` indica si el
+historial está truncado). Las reservas IP se confirman contra ownership/estado
+activo de NetBox y las liberaciones vuelven a buscar el marcador si el ID local
+ya no existe.

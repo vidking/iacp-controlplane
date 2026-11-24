@@ -11,6 +11,7 @@ from scripts import go_live
 
 IMAGE_TAG = "a" * 40
 IMAGE_REPOSITORY = "scm.cyberfuel.com/cyberfuel/iacp-controlplane"
+IMAGE_DIGEST = "sha256:" + "c" * 64
 
 
 def test_local_compose_declares_six_workers_with_shared_capacity():
@@ -41,7 +42,6 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         "IACP_SERVICE_MAX_CONCURRENT": "2",
         "IACP_VMID_MIN": "30000" if stage == "production" else "40000",
         "IACP_VMID_MAX": "39999" if stage == "production" else "49999",
-        "IACP_REQUIRE_API_TOKEN": "1",
         "PGHOST": "postgres",
         "PGPORT": "5432",
         "PGDATABASE": database_name,
@@ -81,7 +81,7 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
         worker_environment.update({"IACP_WASABI_ACCESS_KEY_ID": "access-key-value", "IACP_WASABI_SECRET_ACCESS_KEY": "secret-key-value"})
     worker_names = tuple(f"worker-{number}" for number in range(1, 7))
     services = {
-        name: {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
+        name: {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"}
         for name in ("api", *worker_names)
     }
     services["api"]["environment"] = api_environment
@@ -126,6 +126,12 @@ def _manifest(stage="production", **overrides):
         "vmid_max": 39999 if stage == "production" else 49999,
         "image_repository": IMAGE_REPOSITORY,
         "image_tag": IMAGE_TAG,
+        "image_digest": IMAGE_DIGEST,
+        "dynamic_config": (
+            "/etc/iacp/tls/dynamic/iacp.yml"
+            if stage == "production"
+            else "/etc/iacp/tls/dynamic/dev-iac.yml"
+        ),
     }
     result.update(overrides)
     return result
@@ -136,6 +142,33 @@ def _private_env(tmp_path):
     path.write_text("PRIVATE_TEST_VALUE=not-a-secret\n", encoding="utf-8")
     path.chmod(0o600)
     return path
+
+
+def _development_isolation_files(tmp_path, config, manifest):
+    api_environment = go_live._service_env(config, "api")
+    development_values = {
+        "POSTGRES_PASSWORD": go_live._service_env(config, "postgres")["POSTGRES_PASSWORD"],
+        "IACP_API_TOKEN": api_environment["IACP_API_TOKEN"],
+        "IACP_PROXMOX_MNG_API_TOKEN": api_environment["IACP_PROXMOX_MNG_API_TOKEN"],
+    }
+    development = tmp_path / "dev.env"
+    development.write_text(
+        "".join(f"{key}={value}\n" for key, value in development_values.items()),
+        encoding="utf-8",
+    )
+    development.chmod(0o600)
+    production_values = dict(development_values)
+    production_values["POSTGRES_PASSWORD"] = "production-postgres-distinct-value"
+    production_values["IACP_API_TOKEN"] = "production-api-distinct-value"
+    production = tmp_path / "prod.env"
+    production.write_text(
+        "".join(f"{key}={value}\n" for key, value in production_values.items()),
+        encoding="utf-8",
+    )
+    production.chmod(0o600)
+    manifest["isolation_reference_environment_file"] = str(production)
+    manifest["mng_credentials_shared"] = True
+    return development
 
 
 def test_private_environment_uses_stdlib_parser_without_interpolation(tmp_path):
@@ -163,6 +196,8 @@ def test_production_configuration_passes_policy(tmp_path):
 
 def test_development_rejects_wasabi_credentials(tmp_path):
     config = _configuration(stage="develop", include_aws=False)
+    manifest = _manifest("develop")
+    development_env = _development_isolation_files(tmp_path, config, manifest)
     for name in (f"worker-{number}" for number in range(1, 7)):
         config["services"][name]["environment"].update({
             "IACP_WASABI_ACCESS_KEY_ID": "unexpected-access",
@@ -170,9 +205,9 @@ def test_development_rejects_wasabi_credentials(tmp_path):
         })
     with pytest.raises(go_live.GateError, match="no debe recibir credenciales Wasabi"):
         go_live._check_policy(
-            _manifest("develop"),
+            manifest,
             config,
-            _private_env(tmp_path),
+            development_env,
         )
 
 
@@ -185,15 +220,83 @@ def test_stack_rejects_api_and_postgres_on_separate_internal_networks(tmp_path):
 
 
 def test_development_configuration_passes_without_wasabi(tmp_path):
+    config = _configuration(stage="develop", include_aws=False)
+    manifest = _manifest("develop")
+    development_env = _development_isolation_files(tmp_path, config, manifest)
     summary = go_live._check_policy(
-        _manifest("develop"),
-        _configuration(stage="develop", include_aws=False),
-        _private_env(tmp_path),
+        manifest,
+        config,
+        development_env,
     )
     assert summary["backend"] == "local"
     assert summary["state_prefix"] == ""
     assert summary["prx_enabled"] is False
     assert summary["vmid_range"] == {"min": 40000, "max": 49999}
+
+
+def test_stack_rejects_explicit_local_auth_bypass(tmp_path):
+    config = _configuration()
+    config["services"]["api"]["environment"]["IACP_ALLOW_INSECURE_LOCAL_DEV"] = "1"
+
+    with pytest.raises(go_live.GateError, match="modo local sin autenticación"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
+
+
+def test_policy_rejects_weak_root_password_minimum(tmp_path):
+    config = _configuration()
+    config["services"]["api"]["environment"]["IACP_ROOT_PASSWORD_MIN_LENGTH"] = "1"
+    with pytest.raises(go_live.GateError, match="al menos 12"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
+
+
+def test_policy_pins_proxmox_credentials_to_https_mng_host(tmp_path):
+    config = _configuration()
+    for service in ("api", *(f"worker-{number}" for number in range(1, 7))):
+        environment = config["services"][service]["environment"]
+        environment["IACP_PROXMOX_MNG_ENDPOINT"] = "https://attacker.example:8006/"
+        environment["IACP_PROXMOX_ENDPOINT"] = "https://attacker.example:8006/"
+    with pytest.raises(go_live.GateError, match="mng01.cyberfuel.com"):
+        go_live._check_policy(_manifest(), config, _private_env(tmp_path))
+
+
+def test_development_checks_secret_isolation_even_without_service_workers(tmp_path):
+    config = _configuration(stage="develop", include_aws=False)
+    environment = config["services"]["api"]["environment"]
+    development_values = {
+        "POSTGRES_PASSWORD": config["services"]["postgres"]["environment"]["POSTGRES_PASSWORD"],
+        "IACP_API_TOKEN": environment["IACP_API_TOKEN"],
+        "IACP_PROXMOX_MNG_API_TOKEN": environment["IACP_PROXMOX_MNG_API_TOKEN"],
+    }
+    development_file = tmp_path / "dev.env"
+    development_file.write_text("".join(f"{key}={value}\n" for key, value in development_values.items()))
+    development_file.chmod(0o600)
+    production_file = tmp_path / "prod.env"
+    production_values = dict(development_values)
+    production_values["IACP_API_TOKEN"] = development_values["IACP_API_TOKEN"]
+    production_values["IACP_PROXMOX_MNG_API_TOKEN"] = "different-production-mng-token"
+    production_file.write_text("".join(f"{key}={value}\n" for key, value in production_values.items()))
+    production_file.chmod(0o600)
+    manifest = _manifest(
+        "develop",
+        isolation_reference_environment_file=str(production_file),
+    )
+
+    with pytest.raises(go_live.GateError, match="credencial exclusiva"):
+        go_live._check_policy(manifest, config, development_file)
+
+
+def test_production_deploy_refuses_to_replace_the_active_candidate(tmp_path):
+    route = tmp_path / "traefik.yml"
+    route.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://iacp-controlplane-api-prod:8080\n"
+    )
+    manifest = {
+        "stage": "production",
+        "dynamic_config": str(route),
+        "service_alias": "iacp-controlplane-api-prod",
+    }
+    with pytest.raises(go_live.GateError, match="alias candidato está activo"):
+        go_live._assert_production_candidate_inactive(manifest)
 
 
 def test_production_domain_can_run_lab_with_local_state_and_wasabi_disabled(tmp_path, monkeypatch):
@@ -384,7 +487,7 @@ def test_external_health_retries_until_traefik_serves_the_candidate(monkeypatch)
 
 def test_verify_checks_runtime_contract_and_served_revision(monkeypatch):
     services = [
-        {"service": name, "state": "running", "health": "healthy" if name in {"postgres", "api"} else "", "image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
+        {"service": name, "state": "running", "health": "healthy" if name in {"postgres", "api"} else "", "image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"}
         for name in ("postgres", "api", *(f"worker-{number}" for number in range(1, 7)))
     ]
     monkeypatch.setattr(go_live, "_inventory", lambda *args: {"containers": services})
@@ -592,9 +695,9 @@ def test_legacy_restore_gate_stops_when_api_is_unhealthy(monkeypatch):
 def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
     config = {
         "services": {
-            "api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"},
             **{
-                f"worker-{number}": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}
+                f"worker-{number}": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"}
                 for number in range(1, 7)
             },
             "postgres": {"image": "postgres:17.6"},
@@ -604,7 +707,13 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
 
     def inspect(command, *, label, timeout=120):
         calls.append((command, label, timeout))
-        return "sha256:" + "b" * 64 + "\n"
+        if command[4] == "{{.Id}}":
+            return "sha256:" + "b" * 64 + "\n"
+        if command[4] == "{{json .RepoDigests}}":
+            return json.dumps([f"{IMAGE_REPOSITORY}@{IMAGE_DIGEST}"])
+        if "org.opencontainers.image.revision" in command[4]:
+            return IMAGE_TAG
+        raise AssertionError(command)
 
     monkeypatch.setattr(go_live, "_run", inspect)
     verified = go_live._verify_preloaded_images(config)
@@ -612,12 +721,13 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
     assert [item["service"] for item in verified] == [
         "api", "postgres", *(f"worker-{number}" for number in range(1, 7))
     ]
-    assert len(calls) == 8
+    assert len(calls) == 22
     assert all(call[0][:3] == ["docker", "image", "inspect"] for call in calls)
+    assert {item.get("registry_digest") for item in verified if item["service"] != "postgres"} == {IMAGE_DIGEST}
 
 
 def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
-    config = {"services": {"api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"}}}
+    config = {"services": {"api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"}}}
 
     def missing(*_args, **_kwargs):
         raise go_live.GateError("La imagen local no existe")
@@ -631,18 +741,63 @@ def _service_configuration(tmp_path, worker_count=2):
     config = _configuration(stage="develop", include_aws=False)
     config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
     config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
+    config['services']['api']['environment']['IACP_SERVICE_KEY_FILE'] = '/run/iacp-service-key'
+    config['services']['api']['environment']['IACP_SERVICE_CA_CERT_FILE'] = '/run/iacp-pilot-ca.crt'
+    service_config = tmp_path / "services"
+    service_config.mkdir(mode=0o700)
+    key_file = service_config / "key"
+    key_file.write_text("test-only-key-material", encoding="utf-8")
+    key_file.chmod(0o600)
+    ca_key_file = service_config / "pilot-ca.key"
+    ca_key_file.write_text("test-only-ca-private-key", encoding="utf-8")
+    ca_key_file.chmod(0o600)
+    ca_cert_file = service_config / "pilot-ca.crt"
+    ca_cert_file.write_text("test-only-ca-certificate", encoding="utf-8")
+    ca_cert_file.chmod(0o644)
+    (service_config / "bindings").mkdir(mode=0o700)
+    config['services']['api']['volumes'] = [
+        {
+            "type": "bind",
+            "source": str(key_file),
+            "target": "/run/iacp-service-key",
+            "read_only": True,
+        },
+        {
+            "type": "bind",
+            "source": str(ca_cert_file),
+            "target": "/run/iacp-pilot-ca.crt",
+            "read_only": True,
+        },
+    ]
+    for number in range(1, 7):
+        worker = config["services"][f"worker-{number}"]
+        worker["environment"]["IACP_SERVICE_KEY_FILE"] = "/run/iacp-services/key"
+        worker["volumes"] = [{
+            "type": "bind",
+            "source": str(key_file),
+            "target": "/run/iacp-services/key",
+            "read_only": True,
+        }]
     for number in range(1, worker_count + 1):
         config['services'][f'service-worker-{number}']={
-            'image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}',
+            'image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}',
             'environment':{key:value for key,value in config['services']['api']['environment'].items()
                            if key in {'PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD'}} | {
                 'IACP_SERVICES_ENABLED':'1','IACP_SERVICE_EXECUTION_ENABLED':'0',
-                'IACP_SERVICE_MAX_CONCURRENT':str(worker_count)}}
+                'IACP_SERVICE_MAX_CONCURRENT':str(worker_count),
+                'IACP_SERVICE_KEY_FILE':'/run/iacp-services/key'}}
+        config['services'][f'service-worker-{number}']['volumes'] = [{
+            "type": "bind",
+            "source": str(service_config),
+            "target": "/run/iacp-services",
+            "read_only": True,
+        }]
     dev=_private_env(tmp_path)
     dev.write_text(''.join(f'{key}={value}\n' for key,value in {
         'POSTGRES_PASSWORD':config['services']['postgres']['environment']['POSTGRES_PASSWORD'],
         'IACP_API_TOKEN':config['services']['api']['environment']['IACP_API_TOKEN'],
         'IACP_PROXMOX_MNG_API_TOKEN':config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']}.items()))
+    dev.write_text(dev.read_text() + f'IACP_SERVICE_CONFIG_DIR={service_config}\n')
     reference=tmp_path/'prod.env'
     reference.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=prod-api-token\nIACP_PROXMOX_MNG_API_TOKEN=prod-proxmox-token\n')
     reference.chmod(0o600)
@@ -663,6 +818,7 @@ def test_service_development_policy_and_profile(tmp_path):
 def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
     config,env,manifest=_service_configuration(tmp_path)
     env.write_text('POSTGRES_PASSWORD=prod-password\nIACP_API_TOKEN=dev-api-token\nIACP_PROXMOX_MNG_API_TOKEN=dev-proxmox-token\n')
+    env.write_text(env.read_text() + f'IACP_SERVICE_CONFIG_DIR={env.parent / "services"}\n')
     config['services']['postgres']['environment']['POSTGRES_PASSWORD']='prod-password'
     config['services']['api']['environment']['IACP_API_TOKEN']='dev-api-token'
     config['services']['api']['environment']['IACP_PROXMOX_MNG_API_TOKEN']='dev-proxmox-token'
@@ -676,15 +832,19 @@ def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
 def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
     import ast
     manifest=_manifest('develop',schema_version=3,services_enabled=True)
-    statuses=[{'service':name,'state':'running','health':'healthy','image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}'}
+    statuses=[{'service':name,'state':'running','health':'healthy','image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}'}
               for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],'service-worker-1','service-worker-2']]
     monkeypatch.setattr(go_live,'_inventory',lambda *_:{'containers':statuses})
     payload={'health':'ready','api_version':'1.0.0','provision_path':True,'build_revision':IMAGE_TAG,
              'schema_version':3,'ip_allocations_table':True,'worker_ids':[f'worker-{i}' for i in range(1,7)],
              'service_worker_ids':['service-worker-1','service-worker-2'],'service_tables':True,
-             'service_max_concurrent':2,'service_key_ready':True,'service_api':True,
+             'service_max_concurrent':2,'service_key_ready':True,'service_ca_cert_ready':True,'service_api':True,
              'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
+        if "exec" in command and any(name in command for name in (f"worker-{i}" for i in range(1, 7))):
+            return "IACP_SERVICE_KEY_READY"
+        if "exec" in command and any(name in command for name in (f"service-worker-{i}" for i in range(1, 7))):
+            return "IACP_SERVICE_CA_SIGNER_READY"
         ast.parse(command[-1])
         assert "EXPECTED_SERVICE_WORKERS" not in command[-1]
         assert repr(['service-worker-1','service-worker-2']) in command[-1]
@@ -712,11 +872,53 @@ def test_service_policy_allows_only_authorized_shared_mng(tmp_path):
         go_live._check_policy(manifest, config, env)
 
 
-def test_service_policy_supports_four_workers_without_changing_infra_pool(tmp_path):
-    config, env, manifest = _service_configuration(tmp_path, worker_count=4)
+def test_service_policy_supports_six_workers_without_changing_infra_pool(tmp_path):
+    config, env, manifest = _service_configuration(tmp_path, worker_count=6)
     result = go_live._check_policy(manifest, config, env)
-    assert result["service_workers"] == [f"service-worker-{number}" for number in range(1, 5)]
-    assert go_live._compose_args(manifest, Path("compose.yml"), env)[-4:] == [
-        "--profile", "services", "--profile", "service-workers-3-4"
+    assert result["service_workers"] == [f"service-worker-{number}" for number in range(1, 7)]
+    assert go_live._compose_args(manifest, Path("compose.yml"), env)[-6:] == [
+        "--profile", "services", "--profile", "service-workers-3-4",
+        "--profile", "service-workers-5-6"
     ]
     assert len([name for name in config["services"] if name.startswith("worker-")]) == 6
+
+
+@pytest.mark.parametrize("defect", ["missing_env", "missing_mount", "writable_mount"])
+def test_services_enabled_policy_requires_private_key_on_each_infra_worker(tmp_path, defect):
+    config, env, manifest = _service_configuration(tmp_path)
+    worker = config["services"]["worker-4"]
+    if defect == "missing_env":
+        worker["environment"].pop("IACP_SERVICE_KEY_FILE")
+    elif defect == "missing_mount":
+        worker["volumes"] = []
+    else:
+        worker["volumes"][0]["read_only"] = False
+
+    with pytest.raises(go_live.GateError, match="clave de servicios|IACP_SERVICE_KEY_FILE"):
+        go_live._check_policy(manifest, config, env)
+
+
+@pytest.mark.parametrize(
+    "defect", ["full_directory", "private_ca_key", "ancestor_directory"]
+)
+def test_services_enabled_policy_keeps_private_ca_key_out_of_api(tmp_path, defect):
+    config, env, manifest = _service_configuration(tmp_path)
+    service_config = Path(go_live._private_environment(env)["IACP_SERVICE_CONFIG_DIR"])
+    if defect == "full_directory":
+        source = service_config
+        target = "/run/iacp-services"
+    elif defect == "ancestor_directory":
+        source = service_config.parent
+        target = "/run/iacp"
+    else:
+        source = service_config / "pilot-ca.key"
+        target = "/run/iacp-ca.key"
+    config["services"]["api"]["volumes"].append({
+        "type": "bind",
+        "source": str(source),
+        "target": target,
+        "read_only": True,
+    })
+
+    with pytest.raises(go_live.GateError, match="API no debe montar"):
+        go_live._check_policy(manifest, config, env)

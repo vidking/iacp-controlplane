@@ -55,7 +55,7 @@ def catalog() -> list[dict]:
             image_id="ubuntu-2404",
             supported_image_ids=supported_image_ids(key),
             access_modes=["domain", "ip"] if key in {"nextcloud", "n8n"} else ["ssh"],
-            agent_modes=["connected", "local"] if key in {"hermes", "openclaw"} else [],
+            agent_modes=["connected"] if key in {"hermes", "openclaw"} else [],
             enabled=enabled("IACP_SERVICES_ENABLED"),
             **value,
         )

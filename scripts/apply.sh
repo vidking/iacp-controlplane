@@ -7,7 +7,8 @@ if [[ -z "${IACP_PLAN_OPERATION_ID:-}" ]]; then
 fi
 api_url="${IACP_API_URL:-http://localhost:8080}"
 payload="$(IACP_PLAN_OPERATION_ID="$IACP_PLAN_OPERATION_ID" python3 -c 'import json, os; print(json.dumps({"command":"apply", "action":"provision", "plan_operation_id":os.environ["IACP_PLAN_OPERATION_ID"]}))')"
-curl_args=(-fsS -X POST "${api_url}/v1/operations" -H 'Content-Type: application/json' -d "${payload}")
+idempotency_key="${IACP_IDEMPOTENCY_KEY:-iacp-apply-${IACP_PLAN_OPERATION_ID}}"
+curl_args=(-fsS -X POST "${api_url}/v1/operations" -H 'Content-Type: application/json' -H "Idempotency-Key: ${idempotency_key}" -d "${payload}")
 if [[ -n "${IACP_API_TOKEN:-}" ]]; then
   curl_args+=(-H "Authorization: Bearer ${IACP_API_TOKEN}")
 fi

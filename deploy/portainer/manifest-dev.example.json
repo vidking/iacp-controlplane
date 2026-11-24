@@ -15,12 +15,13 @@
   "vmid_max": 49999,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
   "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
+  "image_digest": "REEMPLAZAR_CON_SHA256_DEL_ARTEFACTO",
   "dynamic_config": "/etc/iacp/tls/dynamic/dev-iac.yml",
   "tls_certificate_file": "/etc/iacp/tls/certs/fullchain.pem",
   "route_template": "deploy/portainer/traefik-dev.yml",
   "schema_version": 3,
   "services_enabled": true,
-  "service_worker_count": 4,
-  "service_execution_enabled": false,
+  "service_worker_count": 6,
+  "service_execution_enabled": true,
   "isolation_reference_environment_file": "/etc/iacp/stacks/prod.env"
 }

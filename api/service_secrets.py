@@ -25,19 +25,30 @@ def decrypt(value: str) -> dict:
 
 
 def installation_credentials() -> dict:
-    key = ed25519.Ed25519PrivateKey.generate()
-    return {
-        "ssh_private_key": key.private_bytes(
+    def keypair(comment: str) -> tuple[str, str]:
+        key = ed25519.Ed25519PrivateKey.generate()
+        private = key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.OpenSSH,
             serialization.NoEncryption(),
-        ).decode(),
-        "ssh_public_key": key.public_key()
-        .public_bytes(
-            serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+        ).decode()
+        public = (
+            key.public_key()
+            .public_bytes(
+                serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+            )
+            .decode()
+            + f" {comment}"
         )
-        .decode()
-        + " iacp-installer",
+        return private, public
+
+    installer_private, installer_public = keypair("iacp-installer")
+    maintenance_private, maintenance_public = keypair("iacp-maintenance")
+    return {
+        "ssh_private_key": installer_private,
+        "ssh_public_key": installer_public,
+        "management_ssh_private_key": maintenance_private,
+        "management_ssh_public_key": maintenance_public,
         "admin_password": secrets.token_hex(32),
         "database_password": secrets.token_hex(32),
         "encryption_key": secrets.token_hex(32),

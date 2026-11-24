@@ -8,7 +8,28 @@ class RecipeError(RuntimeError):
     pass
 
 
+def validated_domain(value):
+    if not isinstance(value, str) or len(value) > 253 or "." not in value:
+        raise RecipeError("SERVICE_DOMAIN_INVALID")
+    labels = value.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in labels
+    ):
+        raise RecipeError("SERVICE_DOMAIN_INVALID")
+    return value
+
+
 def render(application, configuration, secrets, release):
+    if application in {"hermes", "openclaw"} and (
+        not isinstance(configuration.get("model"), str)
+        or not configuration["model"].strip()
+        or not isinstance(secrets.get("provider_api_key"), str)
+        or not secrets["provider_api_key"].strip()
+    ):
+        raise RecipeError("SERVICE_AGENT_CONFIGURATION_REQUIRED")
     expected = {
         "nextcloud": {"app", "postgres", "redis", "caddy"},
         "n8n": {"app", "postgres", "caddy"},
@@ -51,7 +72,7 @@ def render(application, configuration, secrets, release):
         result["services"]["postgres"] = db
         result["volumes"]["database"] = {}
         app["depends_on"] = {"postgres": {"condition": "service_healthy"}}
-        domain = configuration["domain"]
+        domain = validated_domain(configuration.get("domain"))
         port = 80 if application == "nextcloud" else 5678
         result["services"]["caddy"] = {
             "image": images["caddy"],
@@ -136,22 +157,20 @@ def render(application, configuration, secrets, release):
         # La autenticación pertenece a n8n. Un Basic Auth en Caddy presenta un
         # diálogo del navegador y oculta la pantalla de alta/login de la aplicación.
         files["Caddyfile"] = (
-            f"https://{configuration['domain']} {{\n{tls} reverse_proxy app:5678\n}}\n"
+            f"https://{validated_domain(configuration.get('domain'))} {{\n{tls} reverse_proxy app:5678\n}}\n"
         )
     elif application == "hermes":
         app["volumes"] = ["./data:/opt/data:Z"]
         app["command"] = ["gateway", "run"]
         app["environment"] = env(
             {
-                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
-                or "local-validation-no-provider"
+                "OPENROUTER_API_KEY": secrets["provider_api_key"]
             }
         )
         files["data/config.yaml"] = json.dumps(
             {
                 "model": {
-                    "default": configuration.get("model")
-                    or "openrouter/local-validation",
+                    "default": configuration["model"],
                     "provider": "openrouter",
                 }
             }
@@ -171,14 +190,13 @@ def render(application, configuration, secrets, release):
         app["volumes"] = ["app_data:/home/node/.openclaw"]
         app["environment"] = env(
             {
-                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
-                or "local-validation-no-provider",
+                "OPENROUTER_API_KEY": secrets["provider_api_key"],
                 "OPENCLAW_GATEWAY_TOKEN": secrets["gateway_token"],
             }
         )
         app["command"] = ["node", "openclaw.mjs", "gateway", "--bind", "loopback"]
     if application in {"nextcloud", "n8n"} and configuration.get("access_mode") == "ip":
         # Los clientes que usan una IP omiten SNI; Docker presenta otra IP local a Caddy.
-        files["Caddyfile"] = "{\n default_sni " + configuration["domain"] + "\n}\n" + files["Caddyfile"]
+        files["Caddyfile"] = "{\n default_sni " + validated_domain(configuration.get("domain")) + "\n}\n" + files["Caddyfile"]
     # Sin puertos publicados en agentes: acceso SSH hasta configurar un frontend autenticado.
     return result, files

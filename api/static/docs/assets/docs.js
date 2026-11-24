@@ -179,7 +179,15 @@
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
+  function requireSecureBearerTransport() {
+    const localHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    if (state.token && window.location.protocol !== "https:" && !localHost) {
+      throw new Error("El Bearer solo se enviará a la API por HTTPS.");
+    }
+  }
+
   async function api(path, options = {}) {
+    requireSecureBearerTransport();
     const { idempotencyKey, ...requestOptions } = options;
     const headers = {
       ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
@@ -432,7 +440,11 @@
     const query = new URLSearchParams({ limit: String(state.route === "delete" ? 200 : state.pagination.instances.limit) });
     if (state.route !== "delete") query.set("offset", String(state.pagination.instances.offset));
     if (["create", "console", "instances", "lifecycle"].includes(state.route)) {
-      const status = state.route === "instances" ? ($("instance-status-filter")?.value || "ready") : "ready";
+      // Las vistas operativas también deben mostrar estados que requieren
+      // reconciliación; filtrar por "ready" los ocultaba del equipo de operaciones.
+      const status = state.route === "instances"
+        ? ($("instance-status-filter")?.value || "all")
+        : state.route === "create" ? "ready" : "all";
       query.set("status", status);
     } else if (state.route === "delete") {
       query.set("status", "all");
@@ -813,8 +825,9 @@
       || (service.credential_receipt_required && !attempt?.receipt)
       || service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
     $("service-power-start").disabled = !kvmReady || service.power_state !== "stopped";
-    $("service-power-shutdown").disabled = !kvmReady || service.power_state !== "running";
-    $("service-reboot").disabled = !kvmReady || service.power_state !== "running";
+    const serviceJobActive = service.jobs.some((item) => ["queued", "running", "uncertain"].includes(item.status));
+    $("service-power-shutdown").disabled = !kvmReady || service.power_state !== "running" || serviceJobActive;
+    $("service-reboot").disabled = !kvmReady || service.power_state !== "running" || serviceJobActive;
     const noPhysicalVmToClean = service.vmid == null && ["failed", "uncertain"].includes(service.infrastructure_status);
     $("delete-service").disabled = service.infrastructure_status === "deleted" || service.status === "deleted" || !(service.power_state === "stopped" || noPhysicalVmToClean);
     return service;
@@ -827,9 +840,11 @@
       if (terminalStatuses.includes(operation.status)) {
         if (operation.status !== "completed") throw new Error(`${label} terminó en ${operation.status}. Revisa la operación ${operationId}.`);
         if (label === "Eliminación") {
-          state.selectedServiceId = null;
-          clearServiceCredentials();
-          $("service-detail").classList.add("hidden");
+          if (state.selectedServiceId === service.service_id) {
+            state.selectedServiceId = null;
+            clearServiceCredentials();
+            $("service-detail").classList.add("hidden");
+          }
         }
         await refreshServices();
         showToast(`${label} completada.`);
@@ -908,6 +923,7 @@
   async function downloadServiceCa() {
     if (!state.selectedServiceId) return;
     try {
+      requireSecureBearerTransport();
       const response = await fetch(`/v1/service-instances/${state.selectedServiceId}/tls-ca`, { headers: { Authorization: `Bearer ${state.token}` } });
       if (!response.ok) throw new Error(`No se pudo descargar la CA (${response.status}).`);
       const url = URL.createObjectURL(await response.blob());
