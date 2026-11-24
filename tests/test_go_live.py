@@ -799,7 +799,7 @@ def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
         go_live._verify_preloaded_images(config)
 
 
-def _service_configuration(tmp_path, worker_count=2):
+def _service_configuration(tmp_path, worker_count=6):
     config = _configuration(stage="develop", include_aws=False)
     config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
     config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
@@ -880,8 +880,9 @@ def test_service_development_policy_and_profile(tmp_path):
     config,env,manifest=_service_configuration(tmp_path)
     result=go_live._check_policy(manifest,config,env)
     assert result['schema_version']==3
-    assert result['service_workers']==['service-worker-1','service-worker-2']
-    assert go_live._compose_args(manifest,Path('compose.yml'),env)[-2:]==['--profile','services']
+    assert result['service_workers']==[f'service-worker-{n}' for n in range(1,7)]
+    assert go_live._compose_args(manifest,Path('compose.yml'),env)[-6:]==[
+        '--profile','services','--profile','service-workers-3-4','--profile','service-workers-5-6']
 
 
 def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
@@ -902,12 +903,12 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
     import ast
     manifest=_manifest('develop',schema_version=3,services_enabled=True)
     statuses=[{'service':name,'state':'running','health':'healthy','image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}'}
-              for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],'service-worker-1','service-worker-2']]
+              for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],*[f'service-worker-{i}' for i in range(1,7)]]]
     monkeypatch.setattr(go_live,'_inventory',lambda *_:{'containers':statuses})
     payload={'health':'ready','api_version':'1.0.0','provision_path':True,'build_revision':IMAGE_TAG,
              'schema_version':3,'ip_allocations_table':True,'worker_ids':[f'worker-{i}' for i in range(1,7)],
-             'service_worker_ids':['service-worker-1','service-worker-2'],'service_tables':True,
-             'service_max_concurrent':2,'service_key_ready':True,'service_ca_cert_ready':True,'service_api':True,
+             'service_worker_ids':[f'service-worker-{i}' for i in range(1,7)],'service_tables':True,
+             'service_max_concurrent':6,'service_key_ready':True,'service_ca_cert_ready':True,'service_api':True,
              'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
         if "exec" in command and any(name in command for name in (f"worker-{i}" for i in range(1, 7))):
@@ -916,7 +917,7 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
             return "IACP_SERVICE_CA_SIGNER_READY"
         ast.parse(command[-1])
         assert "EXPECTED_SERVICE_WORKERS" not in command[-1]
-        assert repr(['service-worker-1','service-worker-2']) in command[-1]
+        assert repr([f'service-worker-{i}' for i in range(1,7)]) in command[-1]
         return json.dumps(payload)
     monkeypatch.setattr(go_live,'_run',run)
     assert go_live._verify(manifest,Path('compose.yml'),Path('private.env'))['api']['schema_version']==3
@@ -1092,3 +1093,21 @@ def test_la_proteccion_del_candidato_activo_sigue_vigente_por_defecto(tmp_path):
     }
     with pytest.raises(go_live.GateError, match="alias candidato está activo"):
         go_live._assert_production_candidate_inactive(manifiesto)
+
+
+@pytest.mark.parametrize("cantidad", [0, 2, 4, 5, 7, "6", None])
+def test_el_pool_de_servicios_debe_ser_de_seis_workers(cantidad):
+    with pytest.raises(go_live.GateError, match="service_worker_count debe ser 6"):
+        go_live._service_worker_names({"services_enabled": True, "service_worker_count": cantidad})
+
+
+def test_el_pool_de_servicios_es_de_seis_por_omision():
+    nombres = go_live._service_worker_names({"services_enabled": True})
+    assert nombres == tuple(f"service-worker-{n}" for n in range(1, 7))
+
+
+@pytest.mark.parametrize("ejemplo", ["manifest-dev.example.json", "manifest-prod.example.json"])
+def test_los_manifiestos_de_ejemplo_declaran_seis_y_seis(ejemplo):
+    datos = json.loads((go_live.ROOT / "deploy" / "portainer" / ejemplo).read_text())
+    assert datos["service_worker_count"] == 6
+    assert datos["max_concurrent"] == 6

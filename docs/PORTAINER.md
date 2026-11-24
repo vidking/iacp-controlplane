@@ -18,7 +18,10 @@ son `iacp_controlplane_dev_postgres`, `iacp_controlplane_dev_workdata`,
 compartas volúmenes entre stacks ni montes el volumen del runtime anterior.
 La base comienza vacía; no se importan operaciones ni instancias antiguas.
 
-El stack declara PostgreSQL 17 y seis workers (`worker-1` a `worker-6`). La cola
+El stack declara PostgreSQL 17, seis workers de infraestructura (`worker-1` a
+`worker-6`) y seis workers de servicios (`service-worker-1` a `service-worker-6`);
+`iacpctl` rechaza un manifiesto con otro tamaño de pool (`service_worker_count: 6`
+y `IACP_SERVICE_MAX_CONCURRENT=6`) en desarrollo y en producción. La cola
 usa locks transaccionales y admite globalmente hasta seis operaciones activas.
 El límite está sincronizado entre API y workers en Compose y en el manifiesto.
 

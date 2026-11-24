@@ -89,9 +89,11 @@ def _compose_args(data: dict, compose: Path, env_file: Path) -> list[str]:
 def _service_worker_names(data: dict) -> tuple[str, ...]:
     if not data.get("services_enabled", False):
         return ()
-    count = data.get("service_worker_count", 2)
-    if type(count) is not int or count not in {2, 4, 6}:
-        raise GateError("service_worker_count debe ser 2, 4 o 6")
+    # Desarrollo y producción operan con seis workers de infraestructura y seis
+    # de servicios; un pool menor ya no se acepta ni por omisión en el manifiesto.
+    count = data.get("service_worker_count", 6)
+    if type(count) is not int or count != 6:
+        raise GateError("service_worker_count debe ser 6 (seis workers de servicios por stack)")
     return tuple(f"service-worker-{number}" for number in range(1, count + 1))
 
 
