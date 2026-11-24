@@ -1246,6 +1246,33 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 assert image_pull_tasks[0]["retries"] == 3
                 assert image_pull_tasks[0]["delay"] == 10
                 assert image_pull_tasks[0]["until"] == "application_image_pull.rc == 0"
+                start_argv = application_start_tasks[0]["ansible.builtin.command"]["argv"]
+                if application == "nextcloud":
+                    assert start_argv[-3:] == ["app", "postgres", "redis"]
+                    cron_start = next(
+                        task
+                        for task in service_tasks
+                        if task.get("name") == "Iniciar cron de Nextcloud"
+                    )
+                    assert cron_start["ansible.builtin.command"]["argv"] == [
+                        *start_argv[:-3],
+                        "cron",
+                    ]
+                    assert service_tasks.index(cron_start) > next(
+                        index
+                        for index, task in enumerate(service_tasks)
+                        if task.get("name") == "Verificar Nextcloud"
+                    )
+                    assert service_tasks.index(cron_start) < next(
+                        index
+                        for index, task in enumerate(service_tasks)
+                        if task.get("name") == "Verificación funcional revisada"
+                    )
+                else:
+                    assert not any(
+                        task.get("name") == "Iniciar cron de Nextcloud"
+                        for task in service_tasks
+                    )
             else:
                 assert image_pull_tasks == []
                 assert application_start_tasks == []
@@ -1834,3 +1861,24 @@ def test_service_inventory_paginates_without_exposing_secrets(client, monkeypatc
     assert detail['credentials_available'] is False
     monkeypatch.setenv('IACP_API_TOKEN', 'token-ficticio-inventario')
     assert client.get('/v1/service-instances').status_code == 401
+
+
+def test_renew_tls_cierra_el_job_aunque_la_lectura_inicial_falle(client):
+    """Regresión: la rama renew_tls no debe depender de la lectura inicial."""
+    order = create(client)
+    ready(order["instance_id"])
+    with database() as db:
+        db.execute("UPDATE service_instances SET status='delivered' WHERE service_id=?", (order["service_id"],))
+        db.execute(
+            "UPDATE service_jobs SET action='renew_tls', status='queued' WHERE job_id=?",
+            (order["job_id"],),
+        )
+    job = services.claim("renovador")
+    assert job is not None and job["action"] == "renew_tls"
+    # La lectura inicial no encuentra el servicio (``fetchone()`` devuelve None).
+    services.process("renovador", {**job, "service_id": "servicio-inexistente-en-lectura"})
+    with database() as db:
+        row = db.execute(
+            "SELECT status FROM service_jobs WHERE job_id=?", (order["job_id"],)
+        ).fetchone()
+    assert row is not None

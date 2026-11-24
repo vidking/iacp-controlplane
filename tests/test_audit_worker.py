@@ -59,7 +59,6 @@ def test_state_reconciliado_requiere_identidad_de_terraform(tmp_path: Path):
         main.require_reconciled_terraform_state(str(tmp_path), 40000)
 
 
-@pytest.mark.no_database
 def test_netbox_conserva_direccion_asignada(monkeypatch):
     client = object.__new__(NetBoxClient)
     client.config = SimpleNamespace(expected_prefix="190.0.231.0/24", gateway_tag="reservada")

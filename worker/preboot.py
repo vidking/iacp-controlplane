@@ -98,9 +98,9 @@ def _int(value: object) -> int | None:
 
 
 def _boolean(value: object) -> bool | None:
-    if value in {1, "1", True, "true", "yes", "on"}:
+    if value in {1, "1", "true", "yes", "on"}:
         return True
-    if value in {0, "0", False, "false", "no", "off", None, ""}:
+    if value in {0, "0", "false", "no", "off", None, ""}:
         return False
     return None
 
@@ -164,7 +164,7 @@ def mismatches(
     check("name", config.get("name") == name == instance.get("vm_name"))
     check("vmid", _int(expected.get("vmid")) == int(vmid) == _int(instance.get("vm_id")))
     check("node", expected.get("node") == node == instance.get("node_name"))
-    check("template", config.get("template") not in {1, "1", True})
+    check("template", config.get("template") not in {1, "1"})
     check("power_state", power_state == "stopped" if require_stopped else power_state in {"stopped", "running"})
     check("terraform_started", instance.get("started") is False)
     check("cpu_sockets", _int(config.get("sockets", 1)) == _int(instance.get("cpu_sockets", 1)))

@@ -97,7 +97,7 @@ def _certified_hardware_mismatches(raw: dict, disk: dict, cloudinit: dict, efi_d
         failures.append("cpu")
     if not str(raw.get("agent", "")).startswith("enabled=1"):
         failures.append("agent")
-    if raw.get("onboot") not in {None, 0, "0", False}:
+    if raw.get("onboot") not in {None, 0, "0"}:
         failures.append("onboot")
     if disk.get("interface") != "scsi0" or disk.get("size_gb") != 20:
         failures.append("boot_disk")
@@ -155,9 +155,9 @@ def _hardware_signature(raw: dict) -> dict:
     # Proxmox omite estos valores cuando usa el mismo default efectivo:
     # onboot=0 y tamaño 4M para la unidad Cloud-Init.
     onboot = raw.get("onboot")
-    if onboot in {None, 0, "0", False}:
+    if onboot in {None, 0, "0"}:
         signature["onboot"] = False
-    elif onboot in {1, "1", True}:
+    elif onboot in {1, "1"}:
         signature["onboot"] = True
     if signature.get("onboot") is None:
         signature["onboot"] = False

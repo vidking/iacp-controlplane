@@ -7,6 +7,7 @@ from scripts.wan_matrix import (
     application_certification_matrix,
     allocate_matrix_names,
     cases,
+    credential_delivery_headers,
     kvm_certification_matrix,
     matrix_capacity_batch,
     matrix_netbox_tags,
@@ -23,6 +24,7 @@ from scripts.wan_matrix import (
     verify_netbox_state,
     wan_nic_config,
 )
+from scripts import wan_matrix
 
 
 def test_wan_matrices_cover_exact_combinations_and_six_item_batches():
@@ -70,6 +72,70 @@ def test_application_certification_matrix_covers_12_ssh_and_12_gui_cases():
 def test_application_certification_matrix_rejects_non_ubuntu_image():
     with pytest.raises(ValueError, match="APPLICATION_MATRIX_REQUIRES_UBUNTU_2404"):
         application_certification_matrix(["almalinux-9"])
+
+
+def test_matrix_sends_credential_receipt_and_sanitizes_delivery_errors(monkeypatch):
+    import io
+    import threading
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    receipt = "r" * 43
+    delivery_headers = credential_delivery_headers({"credential_receipt": receipt})
+    assert delivery_headers == {"X-IACP-Credential-Receipt": receipt}
+    with pytest.raises(RuntimeError, match="SERVICE_CREDENTIAL_RECEIPT_MISSING"):
+        credential_delivery_headers({})
+
+    class Response(io.BytesIO):
+        def __init__(self, body):
+            super().__init__(body)
+            self.headers = Message()
+            self.headers["X-IACP-Build-Revision"] = "revision-under-test"
+
+    captured = {}
+
+    def successful_urlopen(request, timeout):
+        captured["receipt"] = next(
+            value
+            for name, value in request.header_items()
+            if name.lower() == "x-iacp-credential-receipt"
+        )
+        return Response(b'{"job_id":"job-1","status":"queued"}')
+
+    monkeypatch.setattr(wan_matrix, "urlopen", successful_urlopen)
+    matrix = Matrix.__new__(Matrix)
+    matrix.token = "test-token"
+    matrix.base = "https://dev-iac.example.invalid"
+    matrix.env = {"IACP_IMAGE_TAG": "revision-under-test"}
+    matrix.abort = threading.Event()
+    matrix.api_lock = threading.Lock()
+    matrix.last_request = 0.0
+    response = matrix.api(
+        "POST",
+        "/v1/service-instances/service-1/deliver",
+        key="delivery-test",
+        extra_headers=delivery_headers,
+    )
+    assert response == {"job_id": "job-1", "status": "queued"}
+    assert captured["receipt"] == receipt
+
+    def conflict_urlopen(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            409,
+            "conflict",
+            Message(),
+            io.BytesIO(b'{"detail":"SERVICE_CREDENTIAL_RECEIPT_REQUIRED"}'),
+        )
+
+    monkeypatch.setattr(wan_matrix, "urlopen", conflict_urlopen)
+    with pytest.raises(RuntimeError, match="API_409_POST_SERVICE-INSTANCES"):
+        matrix.api(
+            "POST",
+            "/v1/service-instances/service-1/deliver",
+            key="delivery-test",
+            extra_headers=delivery_headers,
+        )
 
 
 def test_service_default_matrix_is_eight_n8n_and_eight_nextcloud_on_ubuntu_2404():

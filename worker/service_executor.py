@@ -966,6 +966,12 @@ def execute(service, job, heartbeat):
                     "no_log": True,
                 }
             )
+            tasks.append(
+                {
+                    "name": "Iniciar cron de Nextcloud",
+                    **command(up + ["cron"]),
+                }
+            )
         tasks.append(
             {
                 "name": "Verificación funcional revisada",
