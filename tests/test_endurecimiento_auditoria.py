@@ -186,3 +186,70 @@ def test_dockerfile_deja_el_codigo_de_solo_lectura_para_el_usuario_de_runtime():
     assert "chown -R iacp:iacp /var/lib/iacp-controlplane" in texto
     assert "chmod -R go-w,a+rX /app" in texto
     assert "\nUSER iacp\n" in texto
+
+
+def _entorno_firmador(monkeypatch, tmp_path):
+    from cryptography.fernet import Fernet
+
+    clave = Fernet.generate_key()
+    ruta = tmp_path / "service-key"
+    ruta.write_bytes(clave + b"\n")
+    _con_token(monkeypatch)
+    monkeypatch.setenv("IACP_SERVICE_KEY_FILE", str(ruta))
+    monkeypatch.setenv("IACP_SERVICES_ENABLED", "1")
+    monkeypatch.setenv("IACP_SERVICE_IP_TLS_ENABLED", "1")
+    return clave.decode()
+
+
+def test_firmador_tls_es_alcanzable_por_workers_con_el_token_derivado(monkeypatch, tmp_path):
+    """Regresión: la guardia exigía el token de la API y el endpoint devolvía 401."""
+    from api.service_secrets import signer_token
+
+    _entorno_firmador(monkeypatch, tmp_path)
+    ruta = "/v1/internal/service-jobs/job-inexistente/tls-certificate"
+    with TestClient(app) as client:
+        respuesta = client.post(ruta, headers={"Authorization": f"Bearer {signer_token()}"})
+    # Llega al endpoint: la autenticación pasó y falla después por el job inexistente.
+    assert respuesta.status_code == 404
+    assert respuesta.json()["detail"] == "SERVICE_JOB_NOT_FOUND"
+
+
+def test_firmador_tls_rechaza_clave_maestra_token_de_api_y_ausencia(monkeypatch, tmp_path):
+    clave = _entorno_firmador(monkeypatch, tmp_path)
+    monkeypatch.setenv("IACP_AUTH_MAX_FAILURES", "50")  # aquí se prueba la autenticación, no el limitador
+    ruta = "/v1/internal/service-jobs/job/tls-certificate"
+    with TestClient(app) as client:
+        for cabeceras in (
+            {"Authorization": f"Bearer {clave}"},  # la clave maestra ya no es una credencial
+            {"Authorization": f"Bearer {TOKEN}"},  # el token de la API tampoco
+            {"Authorization": "Bearer ñandú".encode("utf-8")},  # no ASCII: antes provocaba TypeError/500
+            {},
+        ):
+            respuesta = client.post(ruta, headers=cabeceras)
+            assert respuesta.status_code == 401, cabeceras
+            assert respuesta.json()["detail"] == "SERVICE_SIGNER_UNAUTHORIZED"
+
+
+def test_firmador_tls_limita_intentos_pero_no_bloquea_al_worker_legitimo(monkeypatch, tmp_path):
+    from api.service_secrets import signer_token
+
+    _entorno_firmador(monkeypatch, tmp_path)
+    ruta = "/v1/internal/service-jobs/job/tls-certificate"
+    with TestClient(app) as client:
+        for _ in range(3):
+            assert client.post(ruta, headers={"Authorization": "Bearer mal"}).status_code == 401
+        assert client.post(ruta, headers={"Authorization": "Bearer mal"}).status_code == 429
+        legitimo = client.post(ruta, headers={"Authorization": f"Bearer {signer_token()}"})
+        assert legitimo.status_code == 404  # autenticado; el job no existe
+
+
+@pytest.mark.no_database
+def test_token_derivado_no_revela_la_clave_y_cambia_con_ella(tmp_path):
+    from api.service_secrets import signer_token
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.write_bytes(b"clave-uno\n")
+    b.write_bytes(b"clave-dos\n")
+    token = signer_token(str(a))
+    assert token == signer_token(str(a)) != signer_token(str(b))
+    assert "clave-uno" not in token and len(token) == 64

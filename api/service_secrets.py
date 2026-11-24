@@ -1,5 +1,7 @@
 """Sobres cifrados; la clave maestra se monta fuera de PostgreSQL."""
 
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -22,6 +24,23 @@ def cipher() -> Fernet:
     # La caché se invalida si la clave se rota (cambia mtime o tamaño).
     stat = os.stat(path)
     return _cipher_for(path, stat.st_mtime_ns, stat.st_size)
+
+
+def signer_token(path: str | None = None) -> str:
+    """Credencial derivada para la firma de certificados TLS.
+
+    Los workers la presentan como bearer en lugar de la clave maestra: si el
+    token se filtra (logs, proxy, captura de red), no permite descifrar los
+    secretos de servicios. Es determinista, así que API y workers coinciden
+    sin configuración adicional.
+    """
+    key_path = path or os.getenv("IACP_SERVICE_KEY_FILE", "")
+    if not key_path:
+        raise RuntimeError("SERVICE_KEY_NOT_CONFIGURED")
+    key = Path(key_path).read_bytes().strip()
+    if not key:
+        raise RuntimeError("SERVICE_KEY_NOT_CONFIGURED")
+    return hmac.new(key, b"iacp-service-tls-signer-v1", hashlib.sha256).hexdigest()
 
 
 def encrypt(value: dict) -> str:

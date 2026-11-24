@@ -95,9 +95,11 @@ def test_api_signer_uses_only_active_service_job_binding(tmp_path, monkeypatch):
         "issue_service_tls_certificate",
         lambda address: {"issued_for": address},
     )
+    from api.service_secrets import signer_token
+
     request = Request({
         "type": "http",
-        "headers": [(b"authorization", b"Bearer stack-service-auth-key")],
+        "headers": [(b"authorization", f"Bearer {signer_token()}".encode())],
     })
     assert main.issue_service_job_tls_certificate("job-active", request) == {
         "issued_for": "190.0.231.2"

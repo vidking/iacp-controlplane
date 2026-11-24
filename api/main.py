@@ -225,6 +225,22 @@ def _presented_token_is_valid(headers: Headers) -> bool:
     return hmac.compare_digest(token.encode("utf-8"), configured.encode("utf-8"))
 
 
+def _signer_token_valid(headers) -> bool:
+    """Valida el bearer derivado de la clave de servicios (rutas internas).
+
+    Lanza OSError/RuntimeError si la clave no está disponible.
+    """
+    from api.service_secrets import signer_token
+
+    scheme, token = get_authorization_scheme_param(headers.get("authorization"))
+    if scheme.lower() != "bearer" or not token:
+        return False
+    return hmac.compare_digest(
+        token.encode("utf-8"),
+        signer_token().encode("utf-8"),
+    )
+
+
 class HTTPGuards:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -268,11 +284,19 @@ class HTTPGuards:
                 await JSONResponse({"detail": "cuerpo de la solicitud demasiado grande"}, 413)(scope, receive, send_with_headers)
                 return
 
-        if (
-            path.startswith("/v1/")
-            and os.getenv("IACP_API_TOKEN", "").strip()
-            and not _presented_token_is_valid(Headers(scope=scope))
-        ):
+        # Las rutas /v1/internal/ las consumen los workers con su propia
+        # credencial (bearer derivado de la clave de servicios), no con el
+        # token de la API: se validan en el endpoint, no en esta guardia.
+        internal = path.startswith("/v1/internal/")
+        presented_valid = True
+        if internal:
+            try:
+                presented_valid = _signer_token_valid(Headers(scope=scope))
+            except (OSError, RuntimeError):
+                presented_valid = False
+        elif path.startswith("/v1/") and os.getenv("IACP_API_TOKEN", "").strip():
+            presented_valid = _presented_token_is_valid(Headers(scope=scope))
+        if not presented_valid:
             wait = AUTH_THROTTLE.retry_after(source)
             if wait:
                 response = JSONResponse(
@@ -286,11 +310,12 @@ class HTTPGuards:
         if path.startswith("/v1/") and scope["method"] in {"POST", "PUT", "PATCH", "DELETE"}:
             scheme, token = get_authorization_scheme_param(Headers(scope=scope).get("authorization"))
             credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=token) if scheme.lower() == "bearer" else None
-            try:
-                authorize(credentials, Request(scope))
-            except HTTPException as error:
-                await JSONResponse({"detail": error.detail}, error.status_code)(scope, receive, send_with_headers)
-                return
+            if not internal:
+                try:
+                    authorize(credentials, Request(scope))
+                except HTTPException as error:
+                    await JSONResponse({"detail": error.detail}, error.status_code)(scope, receive, send_with_headers)
+                    return
             body = bytearray()
             try:
                 async with asyncio.timeout(20):
@@ -1327,14 +1352,11 @@ def service_tls_ca(service_id: str):
 @app.post("/v1/internal/service-jobs/{job_id}/tls-certificate", include_in_schema=False)
 def issue_service_job_tls_certificate(job_id: str, request: Request):
     """Firma un certificado solo para el servicio y trabajo actualmente asignados."""
-    authorization = request.headers.get("authorization", "")
-    scheme, token = get_authorization_scheme_param(authorization)
-    key_file = os.getenv("IACP_SERVICE_KEY_FILE", "")
     try:
-        expected = Path(key_file).read_text(encoding="ascii").strip()
-    except (OSError, UnicodeError):
+        authorized = _signer_token_valid(request.headers)
+    except (OSError, RuntimeError):
         raise HTTPException(503, "SERVICE_SIGNER_UNAVAILABLE") from None
-    if scheme.lower() != "bearer" or not expected or not hmac.compare_digest(token, expected):
+    if not authorized:
         raise HTTPException(401, "SERVICE_SIGNER_UNAUTHORIZED")
     if os.getenv("IACP_SERVICES_ENABLED", "0") != "1" or os.getenv(
         "IACP_SERVICE_IP_TLS_ENABLED", "0"

@@ -31,8 +31,9 @@ NEXTCLOUD_READY_ATTEMPTS = NEXTCLOUD_READY_MAX_SECONDS // NEXTCLOUD_READY_POLL_S
 
 def request_service_tls_certificate(job_id: str, address: str) -> dict[str, str]:
     """Solicita al API el certificado vinculado al job y al IP del binding."""
-    key_path = Path(os.getenv("IACP_SERVICE_KEY_FILE", "/run/iacp-services/key"))
-    token = key_path.read_text(encoding="ascii").strip()
+    from api.service_secrets import signer_token
+
+    token = signer_token(os.getenv("IACP_SERVICE_KEY_FILE", "/run/iacp-services/key"))
     request = Request(
         f"{os.getenv('IACP_SERVICE_SIGNER_URL', 'http://api:8080').rstrip('/')}/v1/internal/service-jobs/{job_id}/tls-certificate",
         data=json.dumps({"address": address}).encode(),
