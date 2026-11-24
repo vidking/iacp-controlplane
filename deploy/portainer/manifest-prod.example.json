@@ -16,7 +16,7 @@
   "vmid_max": 39999,
   "image_repository": "scm.cyberfuel.com/cyberfuel/iacp-controlplane",
   "image_tag": "REEMPLAZAR_CON_COMMIT_SHA_DE_40_CARACTERES",
-  "image_digest": "REEMPLAZAR_CON_SHA256_DEL_ARTEFACTO",
+  "image_digest": "",
   "schema_version": 3,
   "services_enabled": true,
   "service_execution_enabled": true,

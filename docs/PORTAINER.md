@@ -72,6 +72,26 @@ En desarrollo configura `IACP_RUNTIME_STAGE=develop` y
 `IACP_WASABI_ENABLED=false`. No añadas llaves Wasabi ni un prefijo S3 al stack
 de desarrollo.
 
+## Digest de imagen opcional y reemplazo bajo petición
+
+El equipo de desarrollo actualiza los stacks por commit. Por eso `IACP_IMAGE_DIGEST`
+y `image_digest` del manifiesto son **opcionales**: sin digest, el Compose usa
+`repositorio:commit`; con digest, `iacpctl` sigue exigiendo que Compose, manifiesto
+y contenido local coincidan. El tag sigue siendo el SHA completo del commit
+(trazabilidad con la etiqueta `org.opencontainers.image.revision`), y PostgreSQL
+acepta `postgres:17.6` con o sin su digest.
+
+Si el candidato de producción ya recibe tráfico, `deploy` se detiene por
+defecto. Cuando el equipo decide actualizarlo, se añade `--replace-active`:
+
+```bash
+python3 scripts/iacpctl --manifest <manifiesto> --evidence-dir <nuevo> deploy --replace-active
+```
+
+El flag no omite el respaldo previo, el drenaje de la cola ni la verificación
+posterior. La activación de producción sigue exigiendo la certificación física
+PASS de la misma revisión (y de su digest, solo si el manifiesto lo declara).
+
 ## Despliegue con imágenes precargadas
 
 Si el registry no está disponible, conserva el archivo de imagen dentro del
