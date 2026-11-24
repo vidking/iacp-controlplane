@@ -13,7 +13,6 @@ import uuid
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from urllib.parse import quote
 
 from api.catalog import cluster_nodes, load_catalog
 from api.db import database, initialize, runtime_write_gate_open
