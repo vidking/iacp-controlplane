@@ -1,14 +1,14 @@
 """Ejecutor Ansible. Los bindings SSH y releases son entradas del operador, no del consumidor."""
 
 import base64
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import quote
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from cryptography import x509
@@ -34,17 +34,25 @@ def request_service_tls_certificate(job_id: str, address: str) -> dict[str, str]
     from api.service_secrets import signer_token
 
     token = signer_token(os.getenv("IACP_SERVICE_KEY_FILE", "/run/iacp-services/key"))
-    request = Request(
-        f"{os.getenv('IACP_SERVICE_SIGNER_URL', 'http://api:8080').rstrip('/')}/v1/internal/service-jobs/{job_id}/tls-certificate",
-        data=json.dumps({"address": address}).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        method="POST",
-    )
+    connection = HTTPConnection("api", 8080, timeout=15)
     try:
-        with urlopen(request, timeout=15) as response:
-            material = json.load(response)
-    except (OSError, HTTPError, URLError, ValueError) as error:
+        connection.request(
+            "POST",
+            f"/v1/internal/service-jobs/{quote(job_id, safe='')}/tls-certificate",
+            body=json.dumps({"address": address}).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        if not 200 <= response.status < 300:
+            raise ValueError("SERVICE_IP_TLS_SIGNER_UNAVAILABLE")
+        body = response.read(64 * 1024 + 1)
+        if len(body) > 64 * 1024:
+            raise ValueError("SERVICE_IP_TLS_SIGNER_RESPONSE_INVALID")
+        material = json.loads(body)
+    except (OSError, HTTPException, ValueError) as error:
         raise ValueError("SERVICE_IP_TLS_SIGNER_UNAVAILABLE") from error
+    finally:
+        connection.close()
     if not isinstance(material, dict) or set(material) != {"pilot.crt", "pilot.key", "pilot-ca.crt"}:
         raise ValueError("SERVICE_IP_TLS_SIGNER_RESPONSE_INVALID")
     return material
@@ -683,10 +691,13 @@ def execute(service, job, heartbeat):
         except (OSError, ValueError):
             raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
     root = f"/opt/iacp-services/{service['service_id']}"
-    command = lambda argv: {
-        "ansible.builtin.command": {"argv": argv},
-        "changed_when": False,
-    }
+
+    def command(argv):
+        return {
+            "ansible.builtin.command": {"argv": argv},
+            "changed_when": False,
+        }
+
     tasks = [{"name": "Esperar cloud-init", **command(["cloud-init", "status", "--wait", "--long"]),
               "register": "cloud_init", "failed_when": "cloud_init.rc not in [0, 2] or 'status: done' not in cloud_init.stdout"}]
     base = ["docker", "compose", "--project-directory", root]

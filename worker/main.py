@@ -6,12 +6,14 @@ import json
 import os
 import shutil
 import signal
+import secrets
 import subprocess
 import tempfile
 import time
 import uuid
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from functools import partial
 
 from api.catalog import cluster_nodes, load_catalog
@@ -46,7 +48,12 @@ ACTIVE_WORK_OPERATION_STATUSES = (
     "powering",
 )
 
-DESTROY_PLACEHOLDER_PASSWORD = "IacpDestroyOnly!2026A"
+class PhysicalObservation(str, Enum):
+    """Resultado de verificar un VMID sin convertir falta de acceso en ausencia."""
+
+    PRESENT = "present"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
 
 
 def operation_output(value: object, secret: str | None = None) -> str:
@@ -63,6 +70,11 @@ def operation_output(value: object, secret: str | None = None) -> str:
     head = available // 3
     tail = available - head
     return f"{text[:head]}{marker}{text[-tail:]}"
+
+
+def destroy_validation_password() -> str:
+    """Genera una variable efímera para validar Terraform durante destroy."""
+    return secrets.token_urlsafe(48)
 
 
 def stale_operation_seconds() -> float:
@@ -919,11 +931,11 @@ def _release_static_allocation(instance_id: str | None, operation_id: str) -> bo
         instance = instance_identity(instance_id)
         if instance.get("vmid") is not None:
             fence = _FENCE.get()
-            heartbeat_callback = (
-                lambda: heartbeat(fence[0], "running", fence[1], phase="ipam_verify")
-                if fence is not None
-                else None
-            )
+
+            def heartbeat_callback():
+                if fence is not None:
+                    heartbeat(fence[0], "running", fence[1], phase="ipam_verify")
+
             if not reconcile_physical(
                 ProxmoxClient(),
                 int(instance["vmid"]),
@@ -1196,7 +1208,10 @@ def run_commands(
         # after provisioning, so provide a destroy-only value that is never
         # persisted or applied to a guest. The existing resource identity and
         # state are what determine the objects removed by this command.
-        environment["TF_VAR_root_password"] = DESTROY_PLACEHOLDER_PASSWORD
+        # Generar un valor desechable por intento evita una credencial fija en
+        # el código; también se pasa a la función de lectura para redactarlo.
+        password = destroy_validation_password()
+        environment["TF_VAR_root_password"] = password
     for args in commands:
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
@@ -1387,15 +1402,17 @@ def require_free_provision_target(
     assert_lease_owner(vmid, owner)
     deadline = time.monotonic() + max(10.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20")))
     for observation in range(2):
-        if not physical_presence(
+        observed = _physical_absence_observation(
             client,
             vmid,
-            False,
             node=node,
             heartbeat_callback=heartbeat_callback,
             deadline=deadline,
-        ):
+        )
+        if observed is PhysicalObservation.PRESENT:
             raise ProxmoxError("VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT", uncertain=True)
+        if observed is PhysicalObservation.UNKNOWN:
+            raise ProxmoxError("VMID_PHYSICAL_ABSENCE_UNCONFIRMED", uncertain=True)
         if observation == 0:
             if heartbeat_callback is not None:
                 heartbeat_callback()
@@ -1409,32 +1426,34 @@ def _physical_absence_observation(
     node: str | None,
     heartbeat_callback=None,
     deadline: float | None = None,
-) -> bool:
-    """Confirma la ausencia con inventario y con ``/cluster/nextid``.
+) -> PhysicalObservation:
+    """Distingue presencia, ausencia probada y falta de visibilidad del VMID.
 
-    El inventario de clúster solo muestra las VMs que el token puede auditar.
-    Para una VM inexistente Proxmox responde 403 al sondeo por nodo (evalúa el
-    permiso ``/vms/<id>`` antes que la existencia), de modo que un 404 nunca
-    llega y toda creación quedaba bloqueada. ``/cluster/nextid?vmid=N`` no
-    depende de ACL: devuelve el VMID si está libre y 400 «already exists» si
-    existe en cualquier pool o nodo. Cualquier otro resultado no confirma la
-    ausencia (falla cerrada).
+    El inventario puede omitir recursos que el token no puede auditar y los
+    sondeos de configuración por nodo responden 403 antes de revelar si un
+    VMID libre existe. ``/cluster/nextid?vmid=N`` devuelve N si está libre y
+    HTTP 400 si ya está ocupado; respuestas ambiguas quedan como UNKNOWN.
     """
-    record = physical_record(
-        client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
-    )
-    if record is not None or not node:
-        return False
+    try:
+        record = physical_record(
+            client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
+        )
+    except ProxmoxError:
+        return PhysicalObservation.UNKNOWN
+    if record is not None:
+        return PhysicalObservation.PRESENT
+    if not node:
+        return PhysicalObservation.UNKNOWN
     if heartbeat_callback is not None:
         heartbeat_callback()
     getter = getattr(client, "get", None)
     if not callable(getter):
-        return False
+        return PhysicalObservation.UNKNOWN
     timeout = None
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return False
+            return PhysicalObservation.UNKNOWN
         timeout = min(remaining, max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))))
     try:
         free = getter(
@@ -1443,9 +1462,13 @@ def _physical_absence_observation(
             timeout=timeout,
             attempts=1 if deadline is not None else None,
         )
-    except ProxmoxError:
-        return False
-    return str(free).strip() == str(int(vmid))
+    except ProxmoxError as error:
+        if error.status == 400:
+            return PhysicalObservation.PRESENT
+        return PhysicalObservation.UNKNOWN
+    if str(free).strip() == str(int(vmid)):
+        return PhysicalObservation.ABSENT
+    return PhysicalObservation.UNKNOWN
 
 
 def physical_presence(
@@ -1465,7 +1488,7 @@ def physical_presence(
             node=node,
             heartbeat_callback=heartbeat_callback,
             deadline=deadline,
-        )
+        ) is PhysicalObservation.ABSENT
     record = physical_record(
         client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
     )
@@ -1764,6 +1787,127 @@ def assert_destroy_physical_identity(
     )
 
 
+def assert_partial_provision_clone_identity(
+    client: ProxmoxClient,
+    vmid: int,
+    node: str,
+    name: str,
+    owner: str,
+    workspace: str,
+) -> None:
+    """Prueba un clon detenido que falló antes de entrar al state de Terraform.
+
+    Esta excepción estrecha requiere un state legible sin recursos gestionados,
+    lease y operación de provision incierta del mismo titular, identidad
+    física exacta y una tarea qmclone reciente desde la imagen esperada. No
+    acepta VMs en ejecución ni etiquetas de titularidad distintas.
+    """
+
+    source = find_operation(owner)
+    if source is None:
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+    try:
+        payload = json.loads(source.get("payload_json") or "{}")
+        spec = payload.get("spec") or {}
+    except (TypeError, ValueError):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True) from None
+    marker = payload.get("physical_identity_tag")
+    instance_id = source.get("instance_id")
+    identity = instance_identity(instance_id)
+    persisted_spec = instance_spec(instance_id)
+    expected_workspace = (
+        os.path.join(source["workspace_path"], source_stack_directory("mng01"))
+        if source.get("workspace_path")
+        else None
+    )
+    state_path = os.path.join(workspace, "terraform.tfstate")
+    try:
+        with open(state_path, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True) from None
+    resources = state.get("resources")
+    has_managed_resources = not isinstance(resources, list) or any(
+        not isinstance(resource, dict)
+        or resource.get("mode", "managed") == "managed"
+        for resource in resources
+    )
+    if (
+        source.get("command") != "provision"
+        or source.get("status") != "uncertain"
+        or source.get("error") != "VM_PHYSICAL_OWNER_MISMATCH"
+        or source.get("stack") != "mng01"
+        or not source.get("started_at")
+        or not source.get("finished_at")
+        or not instance_id
+        or identity.get("instance_id") != instance_id
+        or identity.get("operation_id") != owner
+        or identity.get("status") not in {"planning", "uncertain"}
+        or identity.get("name") != name
+        or int(identity.get("vmid") or -1) != int(vmid)
+        or identity.get("node") != node
+        or int(source.get("vmid") or -1) != int(vmid)
+        or source.get("target_node") != node
+        or not isinstance(spec, dict)
+        or spec.get("name") != name
+        or not spec.get("image")
+        or persisted_spec.get("name") != name
+        or persisted_spec.get("image") != spec.get("image")
+        or marker != f"iacp-owned-{owner}"
+        or not expected_workspace
+        or os.path.realpath(workspace) != os.path.realpath(expected_workspace)
+        or has_managed_resources
+        or not int(os.getenv("IACP_VMID_MIN", "40001"))
+        <= int(vmid)
+        <= int(os.getenv("IACP_VMID_MAX", "49999"))
+        or is_protected_vmid(vmid)
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    assert_lease_owner(int(vmid), owner)
+    pool = configured_pool_id()
+    record = physical_record(client, int(vmid))
+    if (
+        record is None
+        or record.get("name") != name
+        or record.get("node") != node
+        or record.get("pool") != pool
+        or record.get("status") != "stopped"
+        or bool(record.get("template"))
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    config = client.vm_config(node, int(vmid))
+    tags = config.get("tags") or []
+    if isinstance(tags, str):
+        tags = tags.split(";")
+    if (
+        config.get("name") != name
+        or bool(config.get("template"))
+        or not isinstance(tags, list)
+        or marker in tags
+        or any(str(tag).startswith("iacp-owned-") for tag in tags)
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+    from worker.golden import catalog as golden_catalog
+
+    template = (golden_catalog().get(spec["image"]) or {}).get("template_vm_id")
+    clone_proof = getattr(client, "completed_clone_task_during", None)
+    if (
+        not template
+        or not callable(clone_proof)
+        or not clone_proof(
+            node,
+            int(vmid),
+            int(template),
+            source["started_at"],
+            source["finished_at"],
+        )
+    ):
+        raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
+
+
 def remove_orphan_vm(
     client: ProxmoxClient,
     operation_id: str,
@@ -1772,6 +1916,7 @@ def remove_orphan_vm(
     workspace: str | None,
     *,
     heartbeat_callback=None,
+    allow_partial_provision_clone: bool = False,
 ) -> bool:
     """Elimina una VM que quedó fuera del state de Terraform.
 
@@ -1822,7 +1967,19 @@ def remove_orphan_vm(
     if reasons:
         emit(operation_id, "destroy.orphan.retained", "uncertain", ",".join(reasons))
         return False
-    assert_physical_identity(client, int(vmid), node, identity["name"], lease["operation_id"])
+    try:
+        assert_physical_identity(client, int(vmid), node, identity["name"], lease["operation_id"])
+    except ProxmoxError as error:
+        if not allow_partial_provision_clone or str(error) != "VM_PHYSICAL_OWNER_MISMATCH":
+            raise
+        assert_partial_provision_clone_identity(
+            client,
+            int(vmid),
+            node,
+            identity["name"],
+            lease["operation_id"],
+            workspace or "",
+        )
     client.permissions(node, int(vmid), mutate=True)
     config = client.vm_config(node, int(vmid))
     if config.get("name") != identity.get("name") or config.get("template"):
@@ -2471,14 +2628,29 @@ def close_source_after_reconciliation(
                 # La ausencia física ya fue confirmada y se liberó la reserva.
                 # El VMID histórico permanece en operations, pero no debe
                 # seguir siendo la identidad activa de esta instancia.
-                db.execute(
-                    """UPDATE instances
-                    SET status='failed', vmid=NULL, power_state='unknown',
-                        node=COALESCE(?,node), updated_at=?
-                    WHERE instance_id=? AND status IN ('uncertain','failed')
-                      AND (vmid=? OR vmid IS NULL)""",
-                    (node, now(), instance_id, vmid),
-                )
+                if source_operation["command"] == "provision":
+                    # Un fallo entre planificar y materializar la VM deja la
+                    # instancia en ``planning``. Tras probar que el clon se
+                    # eliminó, converge solo si esta sigue perteneciendo a la
+                    # misma operación y conserva su VMID original.
+                    db.execute(
+                        """UPDATE instances
+                        SET status='failed', vmid=NULL, power_state='unknown',
+                            node=COALESCE(?,node), updated_at=?
+                        WHERE instance_id=? AND operation_id=?
+                          AND status IN ('planning','provisioning','uncertain','failed')
+                          AND (vmid=? OR vmid IS NULL)""",
+                        (node, now(), instance_id, source_id, vmid),
+                    )
+                else:
+                    db.execute(
+                        """UPDATE instances
+                        SET status='failed', vmid=NULL, power_state='unknown',
+                            node=COALESCE(?,node), updated_at=?
+                        WHERE instance_id=? AND status IN ('uncertain','failed')
+                          AND (vmid=? OR vmid IS NULL)""",
+                        (node, now(), instance_id, vmid),
+                    )
             else:
                 db.execute(
                     """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
@@ -2944,8 +3116,52 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
                 source_stack_directory(source_stack),
             )
             if _FENCE.get() is not None:
-                assert_physical_identity(client, int(vmid), node, name, identity.get("operation_id"))
-                require_reconciled_terraform_state(source_workspace, int(vmid))
+                try:
+                    assert_physical_identity(client, int(vmid), node, name, identity.get("operation_id"))
+                    require_reconciled_terraform_state(source_workspace, int(vmid))
+                except ProxmoxError as identity_error:
+                    if (
+                        source_command != "provision"
+                        or str(identity_error) != "VM_PHYSICAL_OWNER_MISMATCH"
+                        or source.get("error") != "VM_PHYSICAL_OWNER_MISMATCH"
+                    ):
+                        raise
+                    detail = "Clon parcial eliminado tras validar lease, state vacío, identidad y tarea qmclone."
+                    removed = remove_orphan_vm(
+                        client,
+                        operation_id,
+                        instance_id,
+                        int(vmid),
+                        source_workspace,
+                        heartbeat_callback=lambda: heartbeat(
+                            worker_id, "running", operation_id, phase="reconcile"
+                        ),
+                        allow_partial_provision_clone=True,
+                    )
+                    if not removed:
+                        raise identity_error
+                    if not close_source_after_reconciliation(
+                        source,
+                        instance_id,
+                        int(vmid),
+                        node,
+                        source_payload,
+                        succeeded=False,
+                        detail="VM_PARTIAL_CLONE_REMOVED",
+                    ):
+                        raise ProxmoxError("IPAM_RELEASE_PENDING", uncertain=True)
+                    update_operation(
+                        operation_id,
+                        status="succeeded",
+                        phase="completed",
+                        finished_at=now(),
+                        last_heartbeat=now(),
+                        exit_code=0,
+                        output=detail,
+                        error="",
+                    )
+                    emit(operation_id, "recovery.completed", "succeeded", detail)
+                    return
             expected_preboot = operation_preboot_expectation(
                 source_workspace,
                 spec,

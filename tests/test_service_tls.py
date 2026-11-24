@@ -108,3 +108,49 @@ def test_api_signer_uses_only_active_service_job_binding(tmp_path, monkeypatch):
     row["job_status"] = "uncertain"
     with pytest.raises(HTTPException, match="SERVICE_SIGNER_JOB_NOT_ACTIVE"):
         main.issue_service_job_tls_certificate("job-active", request)
+
+
+@pytest.mark.no_database
+def test_worker_signer_sends_credential_only_to_internal_api(monkeypatch):
+    from api import service_secrets
+    from worker import service_executor
+
+    calls = {}
+
+    class FakeResponse:
+        status = 200
+
+        @staticmethod
+        def read(_limit):
+            return json.dumps({"pilot.crt": "cert", "pilot.key": "key", "pilot-ca.crt": "ca"}).encode()
+
+    class FakeConnection:
+        def __init__(self, host, port, timeout):
+            calls["connection"] = (host, port, timeout)
+
+        def request(self, method, path, *, body, headers):
+            calls["request"] = (method, path, json.loads(body), headers)
+
+        @staticmethod
+        def getresponse():
+            return FakeResponse()
+
+        @staticmethod
+        def close():
+            calls["closed"] = True
+
+    monkeypatch.setattr(service_secrets, "signer_token", lambda _path: "derived-token")
+    monkeypatch.setattr(service_executor, "HTTPConnection", FakeConnection)
+    monkeypatch.setenv("IACP_SERVICE_SIGNER_URL", "https://attacker.example/collect")
+
+    result = service_executor.request_service_tls_certificate("job/segment", "190.0.231.2")
+
+    assert calls["connection"] == ("api", 8080, 15)
+    assert calls["request"] == (
+        "POST",
+        "/v1/internal/service-jobs/job%2Fsegment/tls-certificate",
+        {"address": "190.0.231.2"},
+        {"Authorization": "Bearer derived-token", "Content-Type": "application/json"},
+    )
+    assert calls["closed"] is True
+    assert result == {"pilot.crt": "cert", "pilot.key": "key", "pilot-ca.crt": "ca"}

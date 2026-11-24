@@ -739,6 +739,76 @@ def _plan_source(db, plan_operation_id: str):
     return source
 
 
+def _partial_clone_cleanup_retry_is_safe(db, instance, source) -> bool:
+    """Allow one more read-only reconciliation after proven clone removal.
+
+    The first cleanup may have removed the physical clone and released its
+    reservations while an older instance state prevented the logical row from
+    converging. Retry is limited to that exact provision/source/VMID and only
+    when the successful prior recovery has both cleanup audit events.
+    """
+
+    source_id = source["operation_id"]
+    vmid = source["vmid"]
+    if (
+        source["command"] != "provision"
+        or source["status"] != "failed"
+        or source["error"] != "VM_PARTIAL_CLONE_REMOVED"
+        or source["stack"] != "mng01"
+        or source["target_node"] != "mng01"
+        or vmid is None
+        or instance["operation_id"] != source_id
+        or instance["status"] not in {"planning", "provisioning"}
+        or instance["vmid"] != vmid
+    ):
+        return False
+
+    lease = db.execute(
+        """SELECT status FROM vmid_leases
+        WHERE vmid=? AND operation_id=?""",
+        (vmid, source_id),
+    ).fetchone()
+    if lease is None or lease["status"] != "released":
+        return False
+    active_allocation = db.execute(
+        """SELECT 1 FROM ip_allocations
+        WHERE instance_id=? AND status IN ('allocating','allocated','release_pending')
+        LIMIT 1""",
+        (instance["instance_id"],),
+    ).fetchone()
+    if active_allocation is not None:
+        return False
+
+    recovery = db.execute(
+        """SELECT 1 FROM operations AS recovery
+        WHERE recovery.instance_id=? AND recovery.command='reconcile'
+          AND recovery.status='succeeded'
+          AND recovery.payload_json::jsonb ->> 'source_operation_id'=?
+          AND EXISTS (
+            SELECT 1 FROM events AS removed
+            WHERE removed.operation_id=recovery.operation_id
+              AND removed.kind='destroy.orphan.completed'
+              AND removed.status='succeeded'
+              AND removed.detail=?
+          )
+          AND EXISTS (
+            SELECT 1 FROM events AS completed
+            WHERE completed.operation_id=recovery.operation_id
+              AND completed.kind='recovery.completed'
+              AND completed.status='succeeded'
+              AND completed.detail=?
+          )
+        LIMIT 1""",
+        (
+            instance["instance_id"],
+            source_id,
+            f"VMID {vmid}",
+            "Clon parcial eliminado tras validar lease, state vacío, identidad y tarea qmclone.",
+        ),
+    ).fetchone()
+    return recovery is not None
+
+
 def _reconciliation_source(db, instance, source_id: str | None):
     instance_id = instance["instance_id"]
     if source_id:
@@ -748,7 +818,10 @@ def _reconciliation_source(db, instance, source_id: str | None):
         ).fetchone()
         if source is None:
             raise HTTPException(404, "source_operation_id no pertenece a la instancia")
-        if source["status"] != "uncertain":
+        if source["status"] != "uncertain" and not (
+            _partial_clone_cleanup_retry_is_safe(db, instance, source)
+            or _failed_provision_reconciliation_is_safe(db, instance, source)
+        ):
             raise HTTPException(409, "source_operation_id no está en uncertain")
         if source["command"] == "reconcile":
             raise HTTPException(409, "seleccione la operación incierta de origen")
@@ -771,6 +844,40 @@ def _reconciliation_source(db, instance, source_id: str | None):
             else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
         )
     return source
+
+
+def _failed_provision_reconciliation_is_safe(db, instance, source) -> bool:
+    """Permite observar una provisión fallida solo con su lease aún propio.
+
+    El worker de reconcile confirma presencia o ausencia física y libera las
+    reservas únicamente después de verificarla. Este gate estrecho permite
+    recuperar fallos terminales que conservaron un VMID, sin abrir una ruta
+    genérica para reintentar operaciones fallidas.
+    """
+
+    vmid = source["vmid"]
+    if (
+        source["status"] != "failed"
+        or source["command"] != "provision"
+        or source["stack"] != "mng01"
+        or not vmid
+        or instance["status"] != "failed"
+        or instance["operation_id"] != source["operation_id"]
+        or instance["vmid"] != vmid
+        or not instance["node"]
+        or (
+            source["target_node"] is not None
+            and instance["node"] != source["target_node"]
+        )
+        or is_protected_vmid(vmid)
+    ):
+        return False
+    lease = db.execute(
+        """SELECT status FROM vmid_leases
+        WHERE vmid=? AND operation_id=?""",
+        (vmid, source["operation_id"]),
+    ).fetchone()
+    return lease is not None and lease["status"] in {"held", "released"}
 
 
 def _insert_operation(

@@ -230,6 +230,15 @@ sudo /opt/iacp/releases/<release>/scripts/iacpctl verify \
   --evidence-dir /opt/iacp/evidence/verify-dev-<fecha>
 ```
 
+Cuando las operaciones `uncertain` no tienen worker activo y el despliegue
+incluye la corrección necesaria para reconciliarlas, `deploy --allow-uncertain`
+permite continuar sin descartar ni reescribir esas intenciones. El operador
+mantiene bloqueados los trabajos en ejecución, las colas y los workers ocupados,
+y registra las operaciones inciertas en la evidencia. Después de actualizar,
+reconciliar cada intención por el endpoint autenticado, confirmando el estado
+físico y la liberación atribuible de sus reservas; no liberar leases o
+direcciones IP a mano. Este flujo no equivale a aprobar una matriz física.
+
 Si después de la activación se decide restaurar el servicio legacy, ejecutar la
 acción manual desde el release como root y guardar evidencia nueva:
 

@@ -362,6 +362,67 @@ def _current_job(db, job):
     return service
 
 
+def _failed_provision_waiting_job_is_safe_to_cancel(db, service, job) -> bool:
+    """Solo cancela el trabajo de servicio; no altera una VM fallida.
+
+    El worker de servicios no puede reclamar un job si la instancia no está
+    ready y encendida. En este caso limitado se permite retirar de la cola un
+    install todavía sin asignar para que el equipo de operaciones pueda
+    reconciliar por separado la provisión que conserva el lease.
+    """
+
+    vmid = service["vmid"]
+    if (
+        job["action"] != "install"
+        or job["status"] != "queued"
+        or job["phase"] != "waiting_vm"
+        or job["worker_id"] is not None
+        or job["generation"] != 0
+        or service["infrastructure_status"] != "failed"
+        or service["status"] != "waiting_vm"
+        or not vmid
+    ):
+        return False
+    source = db.execute(
+        """SELECT o.status, o.command, o.stack, o.vmid, o.target_node,
+        i.status AS instance_status, i.operation_id, i.vmid AS instance_vmid,
+        i.node AS instance_node
+        FROM operations o JOIN instances i ON i.instance_id=o.instance_id
+        WHERE o.operation_id=? AND i.instance_id=?""",
+        (service["operation_id"], service["instance_id"]),
+    ).fetchone()
+    if (
+        source is None
+        or source["status"] != "failed"
+        or source["command"] != "provision"
+        or source["stack"] != "mng01"
+        or source["instance_status"] != "failed"
+        or source["operation_id"] != service["operation_id"]
+        or source["vmid"] != vmid
+        or source["instance_vmid"] != vmid
+        or not source["instance_node"]
+        or (
+            source["target_node"] is not None
+            and source["instance_node"] != source["target_node"]
+        )
+    ):
+        return False
+    lease = db.execute(
+        """SELECT status FROM vmid_leases
+        WHERE vmid=? AND operation_id=?""",
+        (vmid, service["operation_id"]),
+    ).fetchone()
+    if lease is None or lease["status"] not in {"held", "released"}:
+        return False
+    active = db.execute(
+        """SELECT 1 FROM operations WHERE instance_id=?
+        AND status IN ('pending','running','planning','applying','destroying','powering','uncertain')
+        LIMIT 1""",
+        (service["instance_id"],),
+    ).fetchone()
+    return active is None
+
+
 def _require_running_instance(db, instance_id):
     instance = db.execute(
         """SELECT i.status, i.power_state, EXISTS (
@@ -586,6 +647,22 @@ def cancel(job_id, key, stopped=False):
                 return {"job_id": job_id, "status": "cancelled"}, None
             if row["action"] != "install":
                 raise HTTPException(409, "SERVICE_CANNOT_CANCEL_RECOVERY")
+
+            if _failed_provision_waiting_job_is_safe_to_cancel(db, service, row):
+                changed = db.execute(
+                    """UPDATE service_jobs SET status='cancelled', finished_at=?
+                    WHERE job_id=? AND status='queued' AND worker_id IS NULL
+                    AND generation=0 AND phase='waiting_vm'""",
+                    (now(), job_id),
+                )
+                if changed.rowcount != 1:
+                    raise HTTPException(409, "SERVICE_JOB_STATE_CHANGED")
+                db.execute(
+                    """INSERT INTO service_events(job_id, phase, status, occurred_at)
+                    VALUES (?, 'cancelled', 'cancelled', ?)""",
+                    (job_id, now()),
+                )
+                return {"job_id": job_id, "status": "cancelled"}, None
 
             cancelled_operation_id = None
             if service["infrastructure_status"] == "pending" and service["vmid"] is None:

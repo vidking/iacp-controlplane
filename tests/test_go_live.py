@@ -18,6 +18,9 @@ def test_backup_counts_use_the_current_worker_ownership_columns():
     assert "current_operation_id IS NOT NULL" in go_live._COUNT_SQL
     assert "FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL" not in go_live._COUNT_SQL
     assert "FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL" in go_live._COUNT_SQL
+    assert "queued_operations" in go_live._COUNT_SQL
+    assert "queued_service_jobs" in go_live._COUNT_SQL
+    assert "runnable_queued_service_jobs" in go_live._COUNT_SQL
 
 
 def test_local_compose_declares_six_workers_with_shared_capacity():
@@ -1118,6 +1121,8 @@ def _conteos(**extra):
         "active_operations": 0, "active_service_jobs": 0,
         "running_operations": 0, "running_service_jobs": 0,
         "uncertain_operations": 0, "uncertain_service_jobs": 0,
+        "queued_operations": 0, "queued_service_jobs": 0,
+        "runnable_queued_service_jobs": 0,
         "busy_infrastructure_workers": 0, "busy_service_workers": 0,
     }
     base.update(extra)
@@ -1137,8 +1142,21 @@ def test_allow_uncertain_no_espera_intenciones_sin_worker_y_las_registra(monkeyp
     assert resultado["uncertain_operations"] == 6 and resultado["uncertain_deferred"] is True
 
 
+def test_drenaje_difiere_jobs_queued_que_worker_no_puede_ejecutar(monkeypatch):
+    monkeypatch.setattr(
+        go_live,
+        "_database_counts",
+        lambda _p: _conteos(queued_service_jobs=2, runnable_queued_service_jobs=0),
+    )
+    resultado = go_live._wait_for_stack_quiescence(["docker"], timeout=0)
+    assert resultado["queued_service_jobs"] == 2
+    assert resultado["non_runnable_queued_service_jobs_deferred"] == 2
+
+
 @pytest.mark.parametrize("ocupado", [
     {"running_operations": 1}, {"running_service_jobs": 1},
+    {"queued_operations": 1},
+    {"runnable_queued_service_jobs": 1},
     {"busy_infrastructure_workers": 1}, {"busy_service_workers": 1},
 ])
 def test_allow_uncertain_sigue_esperando_el_trabajo_en_ejecucion(monkeypatch, ocupado):

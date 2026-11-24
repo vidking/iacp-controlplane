@@ -5,10 +5,68 @@
 (bandit, ruff, pyright), revisión manual de autenticación, secretos,
 contenedores y despliegue, y pruebas locales contra PostgreSQL 16 desechable.
 
-**Dictamen:** pruebas locales PASS (607). No equivale a certificación: no se
+**Dictamen histórico:** pruebas locales PASS (607). No equivale a certificación: no se
 ejecutó la matriz física en el IACP Control Plane (VM 104) ni en el clúster
 MNG. Ese dictamen queda **PENDIENTE** hasta desplegar la imagen en
 `dev-iac.cyberfuel.com` y correr la matriz de seis aprovisionamientos.
+
+## Reauditoría y matrices — 24 de noviembre de 2026
+
+Esta actualización revisa la rama remota integrada en `8371323` más los
+cambios de corrección que se incluyen con esta actualización.
+
+### Verificación local
+
+- La suite Docker aislada 6+6 terminó en **624 PASS, 0 FAIL**, con una
+  advertencia deprecada de Starlette/httpx. Evidencia local:
+  `/tmp/iacp-validation-8371323-release-candidate`.
+- Ruff, reglas `E4,E7,E9,F`, pasó en los cinco archivos modificados.
+- Bandit no reportó hallazgos de severidad alta. El escaneo completo aún muestra
+  18 alertas medias y 13 bajas; incluye SQL generado con marcadores y listas
+  controladas, además de hallazgos de subprocess y valores de ejemplo. Esas
+  alertas requieren mantener la revisión manual documentada; no se declara un
+  PASS estático global.
+- Se cerraron en el código dos alertas revisadas: el firmador TLS ahora envía su
+  bearer únicamente al servicio interno fijo `api:8080`; el valor efímero que
+  Terraform necesita durante `destroy` ya no es una contraseña fija en el
+  código. La observación de VMID ahora diferencia `present`, `absent` y
+  `unknown`.
+- Pyright, ejecutado sobre los módulos principales, aún devuelve diagnósticos de
+  tipos de filas PostgreSQL, valores opcionales y flujo no acotado. No se declara
+  PASS de tipado estático.
+
+### Desarrollo físico
+
+- El runtime desplegado durante el ensayo siguió en `e5aabca`; tenía seis
+  workers de infraestructura y seis de servicios sanos.
+- La matriz KVM de 48 casos lanzó un lote de seis y registró **12 comprobaciones
+  A01/A02 PASS**. Se detuvo antes de Terraform apply. El resultado es
+  **BLOCKED**, no PASS: las seis operaciones quedaron `uncertain`, con VMID
+  40855–40860 e IPAM/leases retenidos. El token de Proxmox devuelve HTTP 403 al
+  consultar esos VMID, y el inventario no los muestra; eso no demuestra que
+  estén físicamente ausentes. Evidencia:
+  `/opt/iacp/evidence/matrix-dev-kvm48-e5a-20261124`.
+- El preflight solo lectura de la matriz de servicios de 24 pasó NetBox,
+  Ubuntu 24.04, `prod_static`, bridge, capacidad y plantilla; terminó en
+  `RUNTIME_NOT_IDLE` por las seis operaciones inciertas. No creó recursos.
+  Evidencia:
+  `/opt/iacp/evidence/matrix-preflight-dev-services-e5a-20261124-rerun`.
+- El token requiere visibilidad `VM.Audit` suficiente para confirmar presencia o
+  404 sobre los VMID del pool. Hasta poder distinguir 403 de 404, no se deben
+  liberar IPs/leases ni lanzar otro lote. La reconciliación debe continuar por
+  el procedimiento oficial después de confirmar cada recurso en MNG.
+
+### Producción y dictamen
+
+- No se promovió ni modificó Producción: permanece en `5cd54b1`, con seis
+  workers de infraestructura y cuatro de servicios.
+- No se ejecutaron las matrices físicas de Producción ni las matrices de
+  servicios de Desarrollo/Producción; el preflight de Desarrollo no está idle.
+- La certificación integral permanece **BLOCKED**. El candidato nuevo no debe
+  desplegarse mientras el gate oficial detecte operaciones inciertas. Primero
+  hay que restablecer lectura de VMID y reconciliar las seis reservas de forma
+  verificada; después se repiten las matrices completas en Desarrollo, se
+  promueve el mismo digest y se ejecutan las matrices de Producción.
 
 ## Hallazgos y resolución
 

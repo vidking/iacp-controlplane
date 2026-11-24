@@ -16,6 +16,7 @@ from worker.allocation import allocate, release
 from worker.golden import configured_pool_id, validate_pool, variables
 from worker.main import (
     claim,
+    destroy_validation_password,
     execute,
     execute_power,
     execute_reconcile,
@@ -25,6 +26,7 @@ from worker.main import (
     local_variables,
     operation_output,
     physical_presence,
+    require_free_provision_target,
     recover_stale_operations,
     select_target_node,
     secret_path_for_command,
@@ -741,6 +743,8 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
 
 
 def test_physical_absence_uses_cluster_nextid_not_acl_dependent_node_probes():
+    from worker.main import PhysicalObservation, _physical_absence_observation
+
     class Cluster:
         def __init__(self, nextid):
             self.paths = []
@@ -757,11 +761,16 @@ def test_physical_absence_uses_cluster_nextid_not_acl_dependent_node_probes():
 
     libre = Cluster("40000")
     assert physical_presence(libre, 40000, False, node="mng01") is True
+    assert _physical_absence_observation(libre, 40000, node="mng01") is PhysicalObservation.ABSENT
     # Una sola consulta, sin sondeos por nodo que Proxmox rechaza con 403.
-    assert libre.paths == ["/cluster/nextid?vmid=40000"]
+    assert libre.paths[-1] == "/cluster/nextid?vmid=40000"
 
     existe = Cluster(ProxmoxError("PROXMOX_REJECTED", 400))
     assert physical_presence(existe, 40000, False, node="mng01") is False
+    assert _physical_absence_observation(existe, 40000, node="mng01") is PhysicalObservation.PRESENT
+
+    ambiguo = Cluster(ProxmoxError("PROXMOX_FORBIDDEN", 403))
+    assert _physical_absence_observation(ambiguo, 40000, node="mng01") is PhysicalObservation.UNKNOWN
 
 
 def test_physical_absence_fails_closed_without_a_clear_answer():
@@ -788,6 +797,36 @@ def test_physical_absence_fails_closed_without_a_clear_answer():
             raise AssertionError("no debe consultar nextid con la VM visible")
 
     assert physical_presence(Visible("40000"), 40000, False, node="mng01") is False
+
+
+def test_free_vmid_guard_distinguishes_presence_from_unverifiable_absence(monkeypatch):
+    import worker.main as worker_main
+
+    monkeypatch.setattr(worker_main, "assert_lease_owner", lambda *_args: None)
+    monkeypatch.setattr(worker_main.time, "sleep", lambda *_args: None)
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.PRESENT,
+    )
+    with pytest.raises(ProxmoxError, match="VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT"):
+        require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01")
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.UNKNOWN,
+    )
+    with pytest.raises(ProxmoxError, match="VMID_PHYSICAL_ABSENCE_UNCONFIRMED"):
+        require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01")
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.ABSENT,
+    )
+    assert require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01") is None
 
 
 def test_power_permission_zero_is_denied():
@@ -2134,6 +2173,14 @@ def test_operation_output_is_bounded_and_redacts_secret(monkeypatch):
     assert len(value) <= 4096
 
 
+@pytest.mark.no_database
+def test_destroy_validation_password_is_ephemeral():
+    first = destroy_validation_password()
+    second = destroy_validation_password()
+    assert first != second
+    assert len(first) >= 64
+
+
 def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
     import worker.main as main
     allocation = {"allocation_id": "allocation-test", "marker": "iacp-instance=test"}
@@ -2347,6 +2394,55 @@ def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, ex
     with database() as db:
         assert db.execute("SELECT status FROM instances WHERE instance_id='deleted-instance'").fetchone()['status'] == expected
         assert db.execute("SELECT status FROM operations WHERE operation_id='old-source'").fetchone()['status'] == ('failed' if released else 'uncertain')
+
+
+def test_reconcile_absent_partial_provision_clears_owned_planning_instance(monkeypatch):
+    from worker import main
+
+    initialize()
+    with database() as db:
+        db.execute(
+            """INSERT INTO operations(
+              operation_id, command, status, payload_json, instance_id, vmid, created_at
+            ) VALUES ('partial-source', 'provision', 'uncertain', '{}', 'partial-instance', 40018, 'now')"""
+        )
+        db.execute(
+            """INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (
+              'partial-instance', 'partial-source', 'partial-clone', 'ubuntu-2404',
+              40018, 'mng01', 'planning', 'unknown', '{}', 'now', 'now'
+            )"""
+        )
+        db.execute(
+            "INSERT INTO vmid_leases(vmid, operation_id, status, created_at) VALUES (40018, 'partial-source', 'held', 'now')"
+        )
+
+    monkeypatch.setattr(main, "_release_static_allocation", lambda *_: True)
+    assert main.close_source_after_reconciliation(
+        {"operation_id": "partial-source", "command": "provision"},
+        "partial-instance",
+        40018,
+        "mng01",
+        {},
+        succeeded=False,
+        detail="VM_PARTIAL_CLONE_REMOVED",
+    ) is True
+
+    with database() as db:
+        instance = db.execute(
+            "SELECT status, vmid FROM instances WHERE instance_id='partial-instance'"
+        ).fetchone()
+        source = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='partial-source'"
+        ).fetchone()
+        lease = db.execute(
+            "SELECT status FROM vmid_leases WHERE vmid=40018"
+        ).fetchone()
+    assert (instance["status"], instance["vmid"]) == ("failed", None)
+    assert (source["status"], source["error"]) == ("failed", "VM_PARTIAL_CLONE_REMOVED")
+    assert lease["status"] == "released"
 
 
 def test_reconcile_missing_provision_deletes_root_password_secret(tmp_path, monkeypatch):

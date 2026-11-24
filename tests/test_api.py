@@ -1064,6 +1064,180 @@ def test_reconcile_can_retry_terminal_uncertain_attempt_without_parallelizing(
             assert response.json()["source_operation_id"] == source_id
 
 
+def test_reconcile_can_recheck_proven_partial_clone_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-partial-clone-recheck"},
+            json=public_body("partial-clone-recheck"),
+        )
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        recovery_id = "partial-clone-removal-proof"
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', error='VM_PARTIAL_CLONE_REMOVED',
+                vmid=40000, target_node='mng01', finished_at='2026-11-24T00:00:02Z'
+                WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='planning', vmid=40000, power_state='unknown'
+                WHERE instance_id=?""",
+                (instance_id,),
+            )
+            db.execute(
+                """INSERT INTO vmid_leases(vmid, operation_id, status, created_at, released_at)
+                VALUES (40000, ?, 'released', '2026-11-24T00:00:00Z', '2026-11-24T00:00:03Z')""",
+                (source_id,),
+            )
+            db.execute(
+                """INSERT INTO ip_allocations(
+                allocation_id, instance_id, operation_id, provider, profile, marker,
+                status, created_at, released_at, address
+                ) VALUES ('partial-clone-ip', ?, ?, 'netbox', 'prod_static', ?,
+                'released', '2026-11-24T00:00:00Z', '2026-11-24T00:00:03Z', '190.0.231.20/24')""",
+                (instance_id, source_id, f"iacp-instance={instance_id}"),
+            )
+            db.execute(
+                """INSERT INTO operations(
+                operation_id, command, action, status, payload_json, instance_id, stack, created_at
+                ) VALUES (?, 'reconcile', 'reconcile', 'succeeded', ?, ?, 'mng01', '2026-11-24T00:00:01Z')""",
+                (recovery_id, json.dumps({"source_operation_id": source_id}), instance_id),
+            )
+            db.execute(
+                """INSERT INTO events(operation_id, kind, status, occurred_at, detail)
+                VALUES (?, 'destroy.orphan.completed', 'succeeded', '2026-11-24T00:00:02Z', 'VMID 40000')""",
+                (recovery_id,),
+            )
+            db.execute(
+                """INSERT INTO events(operation_id, kind, status, occurred_at, detail)
+                VALUES (?, 'recovery.completed', 'succeeded', '2026-11-24T00:00:03Z',
+                'Clon parcial eliminado tras validar lease, state vacío, identidad y tarea qmclone.')""",
+                (recovery_id,),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "recheck-partial-clone-after-removal"},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["source_operation_id"] == source_id
+    assert response.json()["command"] == "reconcile"
+
+
+def test_reconcile_rejects_failed_provision_without_cleanup_proof(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-unproven-partial-clone"},
+            json=public_body("unproven-partial-clone"),
+        )
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', error='VM_PARTIAL_CLONE_REMOVED',
+                vmid=40000, target_node='mng01' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='planning', vmid=40000
+                WHERE instance_id=?""",
+                (instance_id,),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reject-unproven-partial-clone"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "source_operation_id no está en uncertain"
+
+
+@pytest.mark.parametrize("lease_status", ["held", "released"])
+def test_reconcile_allows_exact_failed_provision_with_owned_vmid_lease(
+    tmp_path, monkeypatch, lease_status
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": f"create-failed-provision-with-lease-{lease_status}"},
+            json=public_body("failed-provision-with-lease"),
+        )
+        assert created.status_code == 202, created.text
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', vmid=40000,
+                target_node=NULL, stack='mng01' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='failed', vmid=40000,
+                node='mng01', power_state=NULL WHERE instance_id=?""",
+                (instance_id,),
+            )
+            db.execute(
+                """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
+                VALUES (40000, ?, ?, '2026-11-24T00:00:00Z')""",
+                (source_id, lease_status),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": f"reconcile-failed-provision-with-lease-{lease_status}"},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["source_operation_id"] == source_id
+    assert response.json()["command"] == "reconcile"
+
+
+def test_reconcile_rejects_failed_provision_with_foreign_vmid_lease(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-failed-provision-foreign-lease"},
+            json=public_body("failed-provision-foreign-lease"),
+        )
+        assert created.status_code == 202, created.text
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', vmid=40000,
+                target_node='mng01', stack='mng01' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='failed', vmid=40000,
+                node='mng01', power_state=NULL WHERE instance_id=?""",
+                (instance_id,),
+            )
+            db.execute(
+                """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
+                VALUES (40000, 'different-operation', 'held', '2026-11-24T00:00:00Z')"""
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reject-reconcile-failed-provision-foreign-lease"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "source_operation_id no está en uncertain"
+
+
 def test_unrelated_lifecycle_remains_blocked_by_uncertain_reconcile_attempt(
     tmp_path, monkeypatch
 ):

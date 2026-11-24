@@ -1016,6 +1016,57 @@ def test_cancel_order_after_definitive_failure_without_resources(client):
     assert response.json()["status"] == "cancelled"
 
 
+@pytest.mark.parametrize("lease_status", ["held", "released"])
+def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lease(
+    client, lease_status
+):
+    order = create(client, name=f"failed-provision-queued-install-{lease_status}")
+    with database() as db:
+        db.execute(
+            """UPDATE operations SET status='failed', vmid=40990,
+            target_node=NULL, stack='mng01' WHERE operation_id=?""",
+            (order["operation_id"],),
+        )
+        db.execute(
+            """UPDATE instances SET status='failed', vmid=40990, node='mng01',
+            power_state=NULL WHERE instance_id=?""",
+            (order["instance_id"],),
+        )
+        db.execute(
+            """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
+            VALUES (40990, ?, ?, '2026-11-24T00:00:00Z')""",
+            (order["operation_id"], lease_status),
+        )
+
+    response = client.post(
+        f"/v1/service-jobs/{order['job_id']}/cancel",
+        headers={"Idempotency-Key": "cancel-failed-provision-waiting-install"},
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "cancelled"
+    with database() as db:
+        job = db.execute(
+            "SELECT status, worker_id, generation FROM service_jobs WHERE job_id=?",
+            (order["job_id"],),
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, vmid FROM instances WHERE instance_id=?",
+            (order["instance_id"],),
+        ).fetchone()
+        lease = db.execute(
+            "SELECT operation_id, status FROM vmid_leases WHERE vmid=40990"
+        ).fetchone()
+        destroys = db.execute(
+            "SELECT COUNT(*) AS n FROM operations WHERE instance_id=? AND command='destroy'",
+            (order["instance_id"],),
+        ).fetchone()["n"]
+    assert dict(job) == {"status": "cancelled", "worker_id": None, "generation": 0}
+    assert dict(instance) == {"status": "failed", "vmid": 40990}
+    assert dict(lease) == {"operation_id": order["operation_id"], "status": lease_status}
+    assert destroys == 0
+
+
 def test_cancel_queued_order_cancels_unused_provision_and_clears_credentials(client):
     order = create(client)
     from pathlib import Path
