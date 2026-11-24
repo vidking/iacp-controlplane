@@ -18,6 +18,8 @@ def test_backup_counts_use_the_current_worker_ownership_columns():
     assert "current_operation_id IS NOT NULL" in go_live._COUNT_SQL
     assert "FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL" not in go_live._COUNT_SQL
     assert "FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL" in go_live._COUNT_SQL
+    assert "instance.operation_id=o.operation_id AND instance.vmid=o.vmid" in go_live._COUNT_SQL
+    assert "instance.status='uncertain'" in go_live._COUNT_SQL
 
 
 def test_local_compose_declares_six_workers_with_shared_capacity():
@@ -799,7 +801,7 @@ def test_preloaded_images_fails_when_a_service_image_is_missing(monkeypatch):
         go_live._verify_preloaded_images(config)
 
 
-def _service_configuration(tmp_path, worker_count=2):
+def _service_configuration(tmp_path, worker_count=6):
     config = _configuration(stage="develop", include_aws=False)
     config['services']['api']['environment']['IACP_SERVICES_ENABLED']='1'
     config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
@@ -880,8 +882,9 @@ def test_service_development_policy_and_profile(tmp_path):
     config,env,manifest=_service_configuration(tmp_path)
     result=go_live._check_policy(manifest,config,env)
     assert result['schema_version']==3
-    assert result['service_workers']==['service-worker-1','service-worker-2']
-    assert go_live._compose_args(manifest,Path('compose.yml'),env)[-2:]==['--profile','services']
+    assert result['service_workers']==[f'service-worker-{n}' for n in range(1,7)]
+    assert go_live._compose_args(manifest,Path('compose.yml'),env)[-6:]==[
+        '--profile','services','--profile','service-workers-3-4','--profile','service-workers-5-6']
 
 
 def test_service_policy_rejects_shared_credentials_and_missing_worker(tmp_path):
@@ -902,12 +905,12 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
     import ast
     manifest=_manifest('develop',schema_version=3,services_enabled=True)
     statuses=[{'service':name,'state':'running','health':'healthy','image':f'{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}'}
-              for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],'service-worker-1','service-worker-2']]
+              for name in ['api','postgres',*[f'worker-{i}' for i in range(1,7)],*[f'service-worker-{i}' for i in range(1,7)]]]
     monkeypatch.setattr(go_live,'_inventory',lambda *_:{'containers':statuses})
     payload={'health':'ready','api_version':'1.0.0','provision_path':True,'build_revision':IMAGE_TAG,
              'schema_version':3,'ip_allocations_table':True,'worker_ids':[f'worker-{i}' for i in range(1,7)],
-             'service_worker_ids':['service-worker-1','service-worker-2'],'service_tables':True,
-             'service_max_concurrent':2,'service_key_ready':True,'service_ca_cert_ready':True,'service_api':True,
+             'service_worker_ids':[f'service-worker-{i}' for i in range(1,7)],'service_tables':True,
+             'service_max_concurrent':6,'service_key_ready':True,'service_ca_cert_ready':True,'service_api':True,
              'infrastructure_workers_fresh':True}
     def run(command,**kwargs):
         if "exec" in command and any(name in command for name in (f"worker-{i}" for i in range(1, 7))):
@@ -916,7 +919,7 @@ def test_verify_service_runtime_requires_schema_and_pool(monkeypatch):
             return "IACP_SERVICE_CA_SIGNER_READY"
         ast.parse(command[-1])
         assert "EXPECTED_SERVICE_WORKERS" not in command[-1]
-        assert repr(['service-worker-1','service-worker-2']) in command[-1]
+        assert repr([f'service-worker-{i}' for i in range(1,7)]) in command[-1]
         return json.dumps(payload)
     monkeypatch.setattr(go_live,'_run',run)
     assert go_live._verify(manifest,Path('compose.yml'),Path('private.env'))['api']['schema_version']==3
@@ -1080,6 +1083,119 @@ def test_replace_active_solo_se_acepta_con_deploy(capsys):
     assert "--replace-active solo se permite con la acción deploy" in capsys.readouterr().err
 
 
+def test_recover_uncertain_solo_se_acepta_con_deploy(capsys):
+    with pytest.raises(SystemExit):
+        go_live.main(["verify", "--manifest", "m.json", "--evidence-dir", "e", "--recover-uncertain"])
+    assert "--recover-uncertain solo se permite con la acción deploy" in capsys.readouterr().err
+
+
+def test_recover_uncertain_rechaza_produccion_antes_de_tocar_runtime(tmp_path, monkeypatch, capsys):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    compose = tmp_path / "compose.yaml"
+    env_file = tmp_path / "runtime.env"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        go_live,
+        "_manifest",
+        lambda *_args, **_kwargs: ({"stage": "production"}, compose, env_file),
+    )
+    monkeypatch.setattr(go_live, "_new_evidence_dir", lambda _path: evidence)
+
+    result = go_live.main([
+        "deploy", "--manifest", str(manifest_path), "--evidence-dir", str(tmp_path / "evidence-root"),
+        "--recover-uncertain",
+    ])
+
+    assert result == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["passed"] is False
+    assert payload["reason"] == "--recover-uncertain solo se permite en el stack develop"
+
+
+def test_quiescence_allows_only_classified_uncertain_operations(monkeypatch):
+    counts = {
+        "active_operations": 6,
+        "uncertain_operations": 6,
+        "active_service_jobs": 0,
+        "queued_operations": 0,
+        "queued_service_jobs": 0,
+        "busy_infrastructure_workers": 0,
+        "busy_service_workers": 0,
+    }
+    monkeypatch.setattr(go_live, "_database_counts", lambda _prefix: counts)
+
+    assert go_live._wait_for_stack_quiescence([], timeout=0, allow_uncertain=True) == counts
+    with pytest.raises(go_live.GateError, match="no terminó de drenar"):
+        go_live._wait_for_stack_quiescence([], timeout=0)
+
+
+def test_recuperacion_dev_verifica_workers_y_ausencia_fisica(monkeypatch):
+    candidates = [
+        {"operation_id": f"operation-{vmid}", "instance_id": f"instance-{vmid}", "vmid": vmid}
+        for vmid in range(40855, 40861)
+    ]
+    monkeypatch.setattr(
+        go_live,
+        "_database_counts",
+        lambda _prefix: {
+            "uncertain_operations": len(candidates),
+            "uncertain_recovery_candidates": candidates,
+        },
+    )
+    calls = []
+
+    def fake_run(command, *, label, timeout=120):
+        calls.append((command, label))
+        if label.startswith("Procesos físicos"):
+            return "[]"
+        if label.startswith("Confirmación de ausencia"):
+            return json.dumps({str(vmid): "absent" for vmid in range(40855, 40861)})
+        raise AssertionError(label)
+
+    monkeypatch.setattr(go_live, "_run", fake_run)
+    result = go_live._verify_dev_uncertain_recovery(
+        {
+            "stage": "develop",
+            "vmid_min": 40000,
+            "vmid_max": 49999,
+            "services_enabled": True,
+            "service_worker_count": 6,
+        },
+        ["docker", "compose"],
+    )
+
+    assert result["operation_count"] == 6
+    assert result["vmids"] == list(range(40855, 40861))
+    assert result["physical_absence_confirmed"] is True
+    assert len(calls) == 13  # doce workers y una consulta física de Proxmox
+
+
+def test_recuperacion_dev_falla_cerrada_si_no_hay_ausencia_confirmada(monkeypatch):
+    candidate = {"operation_id": "operation-1", "instance_id": "instance-1", "vmid": 40855}
+    monkeypatch.setattr(
+        go_live,
+        "_database_counts",
+        lambda _prefix: {
+            "uncertain_operations": 1,
+            "uncertain_recovery_candidates": [candidate],
+        },
+    )
+
+    def fake_run(_command, *, label, timeout=120):
+        if label.startswith("Procesos físicos"):
+            return "[]"
+        return json.dumps({"40855": "unknown"})
+
+    monkeypatch.setattr(go_live, "_run", fake_run)
+    with pytest.raises(go_live.GateError, match="no tiene ausencia física confirmada"):
+        go_live._verify_dev_uncertain_recovery(
+            {"stage": "develop", "vmid_min": 40000, "vmid_max": 49999},
+            ["docker", "compose"],
+        )
+
+
 def test_la_proteccion_del_candidato_activo_sigue_vigente_por_defecto(tmp_path):
     ruta = tmp_path / "traefik.yml"
     ruta.write_text(
@@ -1108,9 +1224,27 @@ def test_certificacion_productiva_ata_commit_y_digest(tmp_path, monkeypatch):
 
     assert go_live._load_production_certificate(manifiesto)["image_digest"] == IMAGE_DIGEST
 
-    manifiesto["image_digest"] = "sha256:" + "c" * 64
+    manifiesto["image_digest"] = "sha256:" + "d" * 64
     with pytest.raises(go_live.GateError, match="no corresponde al commit y digest"):
         go_live._load_production_certificate(manifiesto)
 
     manifiesto["image_digest"] = ""
     assert go_live._load_production_certificate(manifiesto)["image_tag"] == IMAGE_TAG
+
+
+@pytest.mark.parametrize("cantidad", [0, 2, 4, 5, 7, "6", None])
+def test_el_pool_de_servicios_debe_ser_de_seis_workers(cantidad):
+    with pytest.raises(go_live.GateError, match="service_worker_count debe ser 6"):
+        go_live._service_worker_names({"services_enabled": True, "service_worker_count": cantidad})
+
+
+def test_el_pool_de_servicios_es_de_seis_por_omision():
+    nombres = go_live._service_worker_names({"services_enabled": True})
+    assert nombres == tuple(f"service-worker-{n}" for n in range(1, 7))
+
+
+@pytest.mark.parametrize("ejemplo", ["manifest-dev.example.json", "manifest-prod.example.json"])
+def test_los_manifiestos_de_ejemplo_declaran_seis_y_seis(ejemplo):
+    datos = json.loads((go_live.ROOT / "deploy" / "portainer" / ejemplo).read_text())
+    assert datos["service_worker_count"] == 6
+    assert datos["max_concurrent"] == 6

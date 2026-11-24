@@ -15,7 +15,6 @@ from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import partial
-from urllib.parse import quote
 
 from api.catalog import cluster_nodes, load_catalog
 from api.db import database, initialize, runtime_write_gate_open
@@ -1428,7 +1427,13 @@ def _physical_absence_observation(
     heartbeat_callback=None,
     deadline: float | None = None,
 ) -> PhysicalObservation:
-    """Distingue presencia, ausencia probada y falta de visibilidad del VMID."""
+    """Distingue presencia, ausencia probada y falta de visibilidad del VMID.
+
+    El inventario puede omitir recursos que el token no puede auditar y los
+    sondeos de configuración por nodo responden 403 antes de revelar si un
+    VMID libre existe. ``/cluster/nextid?vmid=N`` devuelve N si está libre y
+    HTTP 400 si ya está ocupado; respuestas ambiguas quedan como UNKNOWN.
+    """
     try:
         record = physical_record(
             client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
@@ -1441,59 +1446,29 @@ def _physical_absence_observation(
         return PhysicalObservation.UNKNOWN
     if heartbeat_callback is not None:
         heartbeat_callback()
+    getter = getattr(client, "get", None)
+    if not callable(getter):
+        return PhysicalObservation.UNKNOWN
     timeout = None
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return PhysicalObservation.UNKNOWN
         timeout = min(remaining, max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))))
-    getter = getattr(client, "get", None)
-    if not callable(getter):
-        return PhysicalObservation.UNKNOWN
     try:
-        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-        if remaining is not None and remaining <= 0:
-            return PhysicalObservation.UNKNOWN
-        nodes = getter(
-            "/nodes",
+        free = getter(
+            f"/cluster/nextid?vmid={int(vmid)}",
             uncertain=True,
-            timeout=remaining,
-            attempts=1 if remaining is not None else None,
+            timeout=timeout,
+            attempts=1 if deadline is not None else None,
         )
-    except ProxmoxError:
+    except ProxmoxError as error:
+        if error.status == 400:
+            return PhysicalObservation.PRESENT
         return PhysicalObservation.UNKNOWN
-    if not isinstance(nodes, list) or not nodes:
-        return PhysicalObservation.UNKNOWN
-    node_names = {
-        str(row.get("node", "")).strip()
-        for row in nodes
-        if isinstance(row, dict) and str(row.get("node", "")).strip()
-    }
-    if len(node_names) != len(nodes) or node not in node_names:
-        return PhysicalObservation.UNKNOWN
-    for observed_node in sorted(node_names):
-        if heartbeat_callback is not None:
-            heartbeat_callback()
-        remaining = None if deadline is None else deadline - time.monotonic()
-        if remaining is not None and remaining <= 0:
-            return PhysicalObservation.UNKNOWN
-        timeout = None if remaining is None else min(
-            remaining,
-            max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))),
-        )
-        try:
-            getter(
-                f"/nodes/{quote(observed_node, safe='')}/qemu/{vmid}/config?current=1",
-                uncertain=True,
-                timeout=timeout,
-                attempts=1 if deadline is not None else None,
-            )
-        except ProxmoxError as error:
-            if error.status == 404:
-                continue
-            return PhysicalObservation.UNKNOWN
-        return PhysicalObservation.PRESENT
-    return PhysicalObservation.ABSENT
+    if str(free).strip() == str(int(vmid)):
+        return PhysicalObservation.ABSENT
+    return PhysicalObservation.UNKNOWN
 
 
 def physical_presence(

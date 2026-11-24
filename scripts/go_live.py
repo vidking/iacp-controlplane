@@ -89,9 +89,11 @@ def _compose_args(data: dict, compose: Path, env_file: Path) -> list[str]:
 def _service_worker_names(data: dict) -> tuple[str, ...]:
     if not data.get("services_enabled", False):
         return ()
-    count = data.get("service_worker_count", 2)
-    if type(count) is not int or count not in {2, 4, 6}:
-        raise GateError("service_worker_count debe ser 2, 4 o 6")
+    # Desarrollo y producción operan con seis workers de infraestructura y seis
+    # de servicios; un pool menor ya no se acepta ni por omisión en el manifiesto.
+    count = data.get("service_worker_count", 6)
+    if type(count) is not int or count != 6:
+        raise GateError("service_worker_count debe ser 6 (seis workers de servicios por stack)")
     return tuple(f"service-worker-{number}" for number in range(1, count + 1))
 
 
@@ -1116,9 +1118,23 @@ _COUNT_SQL = (
     "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
     "('running','planning','applying','destroying','powering','uncertain')) ,"
     "'active_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status IN ('running','uncertain')) ,"
+    "'queued_operations', (SELECT COUNT(*) FROM operations WHERE status IN ('pending','queued')) ,"
+    "'queued_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='queued') ,"
     "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR current_operation_id IS NOT NULL) ,"
     "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
-    "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
+    "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held') ,"
+    "'uncertain_operations', (SELECT COUNT(*) FROM operations WHERE status='uncertain') ,"
+    "'uncertain_recovery_candidates', COALESCE(("
+    "SELECT json_agg(json_build_object('operation_id', o.operation_id, 'instance_id', o.instance_id, 'vmid', o.vmid) ORDER BY o.vmid) "
+    "FROM operations AS o JOIN vmid_leases AS lease "
+    "ON lease.vmid=o.vmid AND lease.operation_id=o.operation_id AND lease.status='held' "
+    "JOIN instances AS instance ON instance.instance_id=o.instance_id "
+    "AND instance.operation_id=o.operation_id AND instance.vmid=o.vmid "
+    "WHERE o.status='uncertain' AND o.command='provision' AND o.phase='recovery_required' "
+    "AND instance.status='uncertain' "
+    "AND o.finished_at IS NOT NULL AND o.instance_id IS NOT NULL AND o.vmid IS NOT NULL "
+    "AND NOT EXISTS (SELECT 1 FROM events AS e WHERE e.operation_id=o.operation_id AND e.kind LIKE '%apply.started')"
+    "), '[]'::json))"
 )
 
 
@@ -1225,23 +1241,129 @@ def _runtime_write_gate(prefix: list[str]):
             process.stdout.close()
 
 
-def _wait_for_stack_quiescence(prefix: list[str], *, timeout: float = 2100) -> dict:
+def _wait_for_stack_quiescence(
+    prefix: list[str], *, timeout: float = 2100, allow_uncertain: bool = False
+) -> dict:
     deadline = time.monotonic() + timeout
     while True:
         counts = _database_counts(prefix)
+        active_operations = int(counts.get("active_operations") or 0)
+        if allow_uncertain:
+            active_operations = max(
+                0, active_operations - int(counts.get("uncertain_operations") or 0)
+            )
         if not any(
-            int(counts.get(key) or 0)
-            for key in (
-                "active_operations",
-                "active_service_jobs",
-                "busy_infrastructure_workers",
-                "busy_service_workers",
+            (
+                active_operations,
+                int(counts.get("active_service_jobs") or 0),
+                int(counts.get("queued_operations") or 0),
+                int(counts.get("queued_service_jobs") or 0),
+                int(counts.get("busy_infrastructure_workers") or 0),
+                int(counts.get("busy_service_workers") or 0),
+                0 if allow_uncertain else int(counts.get("uncertain_operations") or 0),
             )
         ):
             return counts
         if time.monotonic() >= deadline:
             raise GateError("El stack no terminó de drenar operaciones y workers activos")
         time.sleep(5)
+
+
+def _verify_dev_uncertain_recovery(data: dict, prefix: list[str]) -> dict:
+    """Autoriza solo una actualización Dev para reconciliar altas pre-apply.
+
+    Conserva las operaciones, leases e IPAM. Exige intents inciertos de
+    aprovisionamiento ya terminados, sin evento de apply y con lease propio;
+    confirma los VMID ausentes mediante /cluster/nextid y verifica que ningún
+    worker ejecute Terraform, Tofu, Ansible o SSH antes de reiniciar el stack.
+    """
+    if data.get("stage") != "develop":
+        raise GateError("La recuperación durante deploy solo aplica al stack develop")
+    counts = _database_counts(prefix)
+    uncertain = int(counts.get("uncertain_operations") or 0)
+    candidates = counts.get("uncertain_recovery_candidates")
+    if not isinstance(candidates, list) or uncertain != len(candidates):
+        raise GateError(
+            "Hay operaciones uncertain fuera del alcance seguro de recuperación pre-apply"
+        )
+    if not candidates:
+        return {"operation_count": 0, "vmids": [], "physical_absence_confirmed": True}
+    lower = int(data["vmid_min"])
+    upper = int(data["vmid_max"])
+    vmids = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise GateError("La base no devolvió una lista válida de operaciones recuperables")
+        vmid = candidate.get("vmid")
+        if (
+            type(vmid) is not int
+            or vmid < lower
+            or vmid > upper
+            or not candidate.get("operation_id")
+            or not candidate.get("instance_id")
+        ):
+            raise GateError("Una operación uncertain no tiene identidad recuperable dentro del rango Dev")
+        vmids.append(vmid)
+    if len(set(vmids)) != len(vmids):
+        raise GateError("Las operaciones uncertain comparten un VMID y requieren revisión")
+
+    process_check = """
+import json
+from pathlib import Path
+names = set()
+for path in Path('/proc').glob('[0-9]*/comm'):
+    try:
+        names.add(path.read_text().strip())
+    except OSError:
+        continue
+print(json.dumps(sorted(names & {'terraform', 'tofu', 'ansible-playbook', 'ssh'})))
+"""
+    worker_names = [f"worker-{number}" for number in range(1, 7)]
+    worker_names.extend(_service_worker_names(data))
+    for worker_name in worker_names:
+        output = _run(
+            prefix + ["exec", "-T", worker_name, "python", "-c", process_check],
+            label=f"Procesos físicos antes de recuperar en {worker_name}",
+        )
+        try:
+            active = json.loads(output.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as error:
+            raise GateError(f"No se pudo comprobar procesos activos en {worker_name}") from error
+        if active:
+            raise GateError(f"{worker_name} conserva procesos físicos activos; se conserva el runtime")
+
+    absence_check = """
+import json
+import sys
+from worker.proxmox import ProxmoxClient, ProxmoxError
+client = ProxmoxClient()
+results = {}
+for raw in sys.argv[1:]:
+    try:
+        vmid = int(raw)
+        value = client.get(f'/cluster/nextid?vmid={vmid}', uncertain=True, attempts=1)
+        results[raw] = 'absent' if str(value).strip() == raw else 'unknown'
+    except ProxmoxError as error:
+        results[raw] = 'present' if error.status == 400 else 'unknown'
+print(json.dumps(results, sort_keys=True))
+"""
+    output = _run(
+        prefix + ["exec", "-T", "worker-1", "python", "-c", absence_check, *map(str, vmids)],
+        label="Confirmación de ausencia física de VMID para recuperación Dev",
+    )
+    try:
+        physical = json.loads(output.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as error:
+        raise GateError("Proxmox no devolvió una comprobación válida de ausencia de VMID") from error
+    if not isinstance(physical, dict) or any(physical.get(str(vmid)) != "absent" for vmid in vmids):
+        raise GateError("Al menos un VMID uncertain existe o no tiene ausencia física confirmada")
+    return {
+        "operation_count": len(candidates),
+        "operation_ids": sorted(str(candidate["operation_id"]) for candidate in candidates),
+        "instance_ids": sorted(str(candidate["instance_id"]) for candidate in candidates),
+        "vmids": sorted(vmids),
+        "physical_absence_confirmed": True,
+    }
 
 
 def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dict:
@@ -1675,6 +1797,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--recover-uncertain",
+        action="store_true",
+        help=(
+            "Permite actualizar solo Dev con operaciones uncertain de provision pre-apply; "
+            "requiere leases propios, cola vacía y ausencia física de cada VMID confirmada"
+        ),
+    )
+    parser.add_argument(
         "--backup-dir",
         type=Path,
         help="Directorio nuevo (backup) o existente (backup-verify) fuera del checkout",
@@ -1686,6 +1816,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--replace-active solo se permite con la acción deploy")
     if args.preloaded_images and args.action != "deploy":
         parser.error("--preloaded-images solo se permite con la acción deploy")
+    if args.recover_uncertain and args.action != "deploy":
+        parser.error("--recover-uncertain solo se permite con la acción deploy")
     evidence = None
     result = {"action": args.action, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": socket.gethostname()}
     try:
@@ -1695,6 +1827,8 @@ def main(argv: list[str] | None = None) -> int:
             require_runtime=args.action not in {"restore-legacy", "disable-develop", "backup-verify"},
         )
         result["manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+        if args.recover_uncertain and data.get("stage") != "develop":
+            raise GateError("--recover-uncertain solo se permite en el stack develop")
         if args.action == "restore-legacy":
             result["activation"] = _restore_legacy(data, evidence)
             result["external_health"] = _check_external(
@@ -1742,7 +1876,13 @@ def main(argv: list[str] | None = None) -> int:
                     _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
                 with _runtime_write_gate(prefix):
-                    result["drain"] = _wait_for_stack_quiescence(prefix)
+                    result["drain"] = _wait_for_stack_quiescence(
+                        prefix, allow_uncertain=args.recover_uncertain
+                    )
+                    if args.recover_uncertain:
+                        result["uncertain_recovery"] = _verify_dev_uncertain_recovery(
+                            data, prefix
+                        )
                     if args.preloaded_images:
                         result["preloaded_images"] = _verify_preloaded_images(config)
                     else:
