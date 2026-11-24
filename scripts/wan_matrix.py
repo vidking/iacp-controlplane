@@ -117,7 +117,7 @@ def require_expected_golden_images(images, inventory, vm_config):
         if node is None:
             raise RuntimeError("GOLDEN_IMAGE_NOT_READY")
         config = vm_config(node, vmid)
-        if config.get("template") not in {1, "1", True}:
+        if config.get("template") not in {1, "1"}:
             raise RuntimeError("GOLDEN_IMAGE_NOT_TEMPLATE")
     return [
         {"image_id": image_id, "template_vm_id": vmid}
@@ -841,7 +841,7 @@ class Matrix:
             root_disk = str(config.get("scsi0", ""))
             cloudinit_disk = str(config.get("scsi1", "")).lower()
             if (
-                config.get("template") not in {1, "1", True}
+                config.get("template") not in {1, "1"}
                 or "enabled=1" not in str(config.get("agent", ""))
                 or not root_disk.startswith("DS_CYBERFUEL:")
                 or "cloudinit" not in cloudinit_disk
@@ -897,7 +897,7 @@ class Matrix:
             for key in ("ide2", "scsi1", "sata1", "virtio1")
         )
         if (
-            config.get("template") not in {1, "1", True}
+            config.get("template") not in {1, "1"}
             or config.get("ostype") != "l26"
             or config.get("bios") != "ovmf"
             or config.get("machine") != "q35"

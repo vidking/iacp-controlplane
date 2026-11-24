@@ -263,7 +263,13 @@ def _process_locked(worker_id, job):
         )
         if changed.rowcount:
             if job["action"] == "renew_tls":
-                next_status = service["status"]
+                # Estado vigente leído dentro de la transacción: la variable
+                # ``service`` puede no existir si la lectura inicial falló.
+                current = db.execute(
+                    "SELECT status FROM service_instances WHERE service_id=?",
+                    (job["service_id"],),
+                ).fetchone()
+                next_status = current["status"] if current else status
             elif status == "succeeded":
                 next_status = {"handoff": "delivered", "cleanup": "cancelled"}.get(
                     job["action"], "awaiting_customer"
