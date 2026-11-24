@@ -445,7 +445,7 @@ def _ensure(
     permission_path = f"/pool/{pool_id}"
     permissions = client.get("/access/permissions?" + urlencode({"path": permission_path}))
     grants = permissions.get(permission_path, {}) if isinstance(permissions, dict) else {}
-    if grants.get("VM.GuestAgent.Unrestricted") not in {1, True}:
+    if grants.get("VM.GuestAgent.Unrestricted") not in {1}:
         raise GuestIdentityError("GUEST_IDENTITY_PERMISSION_REQUIRED")
 
     max_wait = timeout if timeout is not None else max(60.0, float(os.getenv("IACP_GUEST_IDENTITY_TIMEOUT", "360")))

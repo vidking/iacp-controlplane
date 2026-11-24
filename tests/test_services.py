@@ -1861,3 +1861,24 @@ def test_service_inventory_paginates_without_exposing_secrets(client, monkeypatc
     assert detail['credentials_available'] is False
     monkeypatch.setenv('IACP_API_TOKEN', 'token-ficticio-inventario')
     assert client.get('/v1/service-instances').status_code == 401
+
+
+def test_renew_tls_cierra_el_job_aunque_la_lectura_inicial_falle(client):
+    """Regresión: la rama renew_tls no debe depender de la lectura inicial."""
+    order = create(client)
+    ready(order["instance_id"])
+    with database() as db:
+        db.execute("UPDATE service_instances SET status='delivered' WHERE service_id=?", (order["service_id"],))
+        db.execute(
+            "UPDATE service_jobs SET action='renew_tls', status='queued' WHERE job_id=?",
+            (order["job_id"],),
+        )
+    job = services.claim("renovador")
+    assert job is not None and job["action"] == "renew_tls"
+    # La lectura inicial no encuentra el servicio (``fetchone()`` devuelve None).
+    services.process("renovador", {**job, "service_id": "servicio-inexistente-en-lectura"})
+    with database() as db:
+        row = db.execute(
+            "SELECT status FROM service_jobs WHERE job_id=?", (order["job_id"],)
+        ).fetchone()
+    assert row is not None

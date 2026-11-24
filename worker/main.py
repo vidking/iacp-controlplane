@@ -952,7 +952,7 @@ def select_target_node(client: ProxmoxClient) -> str:
             storage = client.storage_status(node, storage_id) if storage_id else {}
         except ProxmoxError:
             continue
-        if storage and storage.get("active") in {0, False}:
+        if storage and storage.get("active") in {0}:
             continue
         candidates.append(node)
     if not candidates:

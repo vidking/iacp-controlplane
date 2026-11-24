@@ -734,7 +734,7 @@ def vm_identity_matches(vmid: int, node: str, expected_name: str) -> bool:
         and int(status.get("vmid", vmid)) == int(vmid)
         and isinstance(config, dict)
         and config.get("name") == expected_name
-        and config.get("template", 0) in {0, "0", False, None}
+        and config.get("template", 0) in {0, "0", None}
     )
 
 
