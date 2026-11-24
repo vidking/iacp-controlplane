@@ -1004,3 +1004,113 @@ def test_service_workers_never_receive_the_ca_private_key(tmp_path):
     })
     with pytest.raises(go_live.GateError, match="workers de servicios no deben recibir"):
         go_live._check_policy(manifest, config, env)
+
+
+def _sin_digest(config):
+    for nombre, servicio in config["services"].items():
+        if nombre != "postgres":
+            servicio["image"] = f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"
+    return config
+
+
+def test_el_digest_es_opcional_si_manifiesto_y_compose_coinciden(tmp_path):
+    configuracion = _sin_digest(_configuration())
+    manifiesto = _manifest(image_digest="")
+    resumen = go_live._check_policy(manifiesto, configuracion, _private_env(tmp_path))
+    assert resumen["image_tag"] == IMAGE_TAG
+
+
+def test_con_digest_declarado_se_sigue_exigiendo_coherencia(tmp_path):
+    configuracion = _sin_digest(_configuration())  # compose sin digest
+    with pytest.raises(go_live.GateError, match="no coincide con la imagen declarada"):
+        go_live._check_policy(_manifest(), configuracion, _private_env(tmp_path))
+
+
+def test_un_digest_mal_formado_sigue_rechazandose(tmp_path):
+    with pytest.raises(go_live.GateError, match="sha256:<64 hex>"):
+        go_live._check_policy(
+            _manifest(image_digest="sha256:corto"), _configuration(), _private_env(tmp_path)
+        )
+
+
+def test_postgres_se_acepta_con_o_sin_digest_pero_no_otra_version(tmp_path):
+    sin_digest = _configuration()
+    sin_digest["services"]["postgres"]["image"] = go_live.POSTGRES_IMAGE.split("@", 1)[0]
+    assert go_live._check_policy(_manifest(), sin_digest, _private_env(tmp_path))
+    otra = _configuration()
+    otra["services"]["postgres"]["image"] = "postgres:16.1"
+    with pytest.raises(go_live.GateError, match="versión aprobada"):
+        go_live._check_policy(_manifest(), otra, _private_env(tmp_path))
+
+
+def test_imagenes_precargadas_sin_digest_solo_verifican_revision(monkeypatch):
+    config = {
+        "services": {
+            "api": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "worker-1": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}"},
+            "postgres": {"image": go_live.POSTGRES_IMAGE.split("@", 1)[0]},
+        }
+    }
+    consultas = []
+
+    def inspect(command, *, label, timeout=120):
+        consultas.append(command[4])
+        if command[4] == "{{.Id}}":
+            return "sha256:" + "b" * 64 + "\n"
+        if "org.opencontainers.image.revision" in command[4]:
+            return IMAGE_TAG
+        raise AssertionError(f"no debe consultar RepoDigests sin digest declarado: {command}")
+
+    monkeypatch.setattr(go_live, "_run", inspect)
+    verificadas = go_live._verify_preloaded_images(config)
+    assert {item["registry_digest"] for item in verificadas} == {""}
+    assert "{{json .RepoDigests}}" not in consultas
+
+
+def test_imagenes_precargadas_siguen_exigiendo_el_commit_como_tag(monkeypatch):
+    config = {"services": {"api": {"image": f"{IMAGE_REPOSITORY}:develop"}}}
+    monkeypatch.setattr(go_live, "_run", lambda *_a, **_k: "sha256:" + "b" * 64)
+    with pytest.raises(go_live.GateError, match="fijada por commit"):
+        go_live._verify_preloaded_images(config)
+
+
+def test_replace_active_solo_se_acepta_con_deploy(capsys):
+    with pytest.raises(SystemExit):
+        go_live.main(["verify", "--manifest", "m.json", "--evidence-dir", "e", "--replace-active"])
+    assert "--replace-active solo se permite con la acción deploy" in capsys.readouterr().err
+
+
+def test_la_proteccion_del_candidato_activo_sigue_vigente_por_defecto(tmp_path):
+    ruta = tmp_path / "traefik.yml"
+    ruta.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://iacp-controlplane-api-prod:8080\n"
+    )
+    manifiesto = {
+        "stage": "production",
+        "dynamic_config": str(ruta),
+        "service_alias": "iacp-controlplane-api-prod",
+    }
+    with pytest.raises(go_live.GateError, match="alias candidato está activo"):
+        go_live._assert_production_candidate_inactive(manifiesto)
+
+
+def test_certificacion_productiva_ata_commit_y_digest(tmp_path, monkeypatch):
+    ruta = tmp_path / "controlplane-v1.json"
+    ruta.write_text(json.dumps({
+        "result": "PASS",
+        "image_tag": IMAGE_TAG,
+        "image_digest": IMAGE_DIGEST,
+        "checks": {key: "PASS" for key in go_live.PRODUCTION_CERTIFICATION_CHECKS},
+    }))
+    ruta.chmod(0o600)
+    monkeypatch.setattr(go_live, "PRODUCTION_CERTIFICATION_PATH", ruta)
+    manifiesto = _manifest(certification_file=str(ruta))
+
+    assert go_live._load_production_certificate(manifiesto)["image_digest"] == IMAGE_DIGEST
+
+    manifiesto["image_digest"] = "sha256:" + "c" * 64
+    with pytest.raises(go_live.GateError, match="no corresponde al commit y digest"):
+        go_live._load_production_certificate(manifiesto)
+
+    manifiesto["image_digest"] = ""
+    assert go_live._load_production_certificate(manifiesto)["image_tag"] == IMAGE_TAG

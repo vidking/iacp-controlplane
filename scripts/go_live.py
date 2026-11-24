@@ -368,8 +368,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
 
     worker_envs = [_service_env(config, name) for name in worker_names]
     postgres_env = _service_env(config, "postgres")
-    if config["services"]["postgres"].get("image") != POSTGRES_IMAGE:
-        raise GateError("PostgreSQL no está fijado al digest aprobado")
+    if config["services"]["postgres"].get("image") not in POSTGRES_ALLOWED_IMAGES:
+        raise GateError("PostgreSQL debe usar la versión aprobada (postgres:17.6)")
     api_service = config["services"]["api"]
     api_networks = api_service.get("networks", {})
     proxy_aliases = api_networks.get("proxy", {}).get("aliases", []) if isinstance(api_networks, dict) else []
@@ -528,9 +528,12 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     repository = str(data.get("image_repository", "scm.cyberfuel.com/cyberfuel/iacp-controlplane"))
     if repository != "scm.cyberfuel.com/cyberfuel/iacp-controlplane":
         raise GateError("El repositorio de imagen no coincide con el artefacto aprobado")
-    image_digest = str(data.get("image_digest", ""))
-    if not IMAGE_DIGEST.fullmatch(image_digest):
-        raise GateError("El manifiesto debe fijar el digest sha256 del artefacto")
+    # El digest es opcional (equipo de desarrollo: se actualiza por commit). Si
+    # el manifiesto lo declara, se exige coherencia con la imagen del Compose.
+    image_digest = str(data.get("image_digest") or "")
+    if image_digest and not IMAGE_DIGEST.fullmatch(image_digest):
+        raise GateError("image_digest, si se declara, debe tener la forma sha256:<64 hex>")
+    digest_suffix = f"@{image_digest}" if image_digest else ""
     image_tags = set()
     for service in app_names:
         image = config["services"][service].get("image", "")
@@ -539,8 +542,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         tag = image.split("@", 1)[0].rsplit(":", 1)[-1]
         if not COMMIT_TAG.fullmatch(tag):
             raise GateError(f"La imagen de {service} no está fijada a un commit inmutable")
-        if image != f"{repository}:{tag}@{image_digest}":
-            raise GateError(f"La imagen de {service} no coincide con el digest del manifiesto")
+        if image != f"{repository}:{tag}{digest_suffix}":
+            raise GateError(f"La imagen de {service} no coincide con la imagen declarada en el manifiesto")
         image_tags.add(tag)
     if len(image_tags) != 1 or data.get("image_tag") not in image_tags:
         raise GateError("Los servicios y el manifiesto deben fijar la misma revisión de imagen")
@@ -561,6 +564,7 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "project": data["project"],
         "domain": data["domain"],
         "image_tag": next(iter(image_tags)),
+        "image_digest": image_digest,
         "volumes": sorted(named_volumes),
         "backend": data["backend"],
         "state_prefix": data["state_prefix"],
@@ -1096,8 +1100,14 @@ print(json.dumps(payload))
 BACKUP_FORMAT = 1
 BACKUP_FILES = ("postgres.dump", "workdata.tar.gz")
 WORKDATA_PATH = "/var/lib/iacp-controlplane"
+PRODUCTION_CERTIFICATION_PATH = Path("/etc/iacp/certification/controlplane-v1.json")
+PRODUCTION_CERTIFICATION_CHECKS = {
+    "unit_tests", "api_contract", "physical_provision", "physical_delete",
+    "reconciliation", "state_lock", "protected_vmids", "mng_isolation",
+}
 POSTGRES_IMAGE = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
 RESTORE_IMAGE = POSTGRES_IMAGE
+POSTGRES_ALLOWED_IMAGES = {POSTGRES_IMAGE, POSTGRES_IMAGE.split("@", 1)[0]}
 _COUNT_SQL = (
     "SELECT json_build_object("
     "'schema_version', (SELECT MAX(version) FROM schema_migrations),"
@@ -1371,26 +1381,28 @@ def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
             raise GateError(f"La imagen precargada de {service_name} no devolvió un digest local válido")
         item = {"service": service_name, "image": image, "image_id": image_id}
         match = re.fullmatch(
-            r"(?P<repository>[^@]+):(?P<tag>[^@]+)@(?P<digest>sha256:[0-9a-f]{64})",
+            r"(?P<repository>[^@]+):(?P<tag>[^@]+)(?:@(?P<digest>sha256:[0-9a-f]{64}))?",
             image,
         )
         if match is None:
-            raise GateError(f"La imagen de {service_name} no está fijada por tag y digest")
-        if service_name == "postgres" and image != POSTGRES_IMAGE:
-            raise GateError("PostgreSQL no coincide con el digest aprobado por el operador")
+            raise GateError(f"La imagen de {service_name} no tiene un formato repositorio:tag[@digest] válido")
+        if service_name == "postgres" and image not in POSTGRES_ALLOWED_IMAGES:
+            raise GateError("PostgreSQL no usa la versión aprobada por el operador")
         if service_name != "postgres" and not re.fullmatch(r"[0-9a-f]{40}", match["tag"]):
-            raise GateError(f"La imagen de {service_name} no está fijada por commit y digest")
-        repo_digests = _run(
-            ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
-            label=f"Digest de registro de {service_name}",
-        ).strip()
-        try:
-            recorded_digests = json.loads(repo_digests)
-        except json.JSONDecodeError as error:
-            raise GateError(f"Docker no devolvió RepoDigests válidos para {service_name}") from error
-        expected_repo_digest = f"{match['repository']}@{match['digest']}"
-        if not isinstance(recorded_digests, list) or expected_repo_digest not in recorded_digests:
-            raise GateError(f"El contenido local de {service_name} no coincide con el digest aprobado")
+            raise GateError(f"La imagen de {service_name} no está fijada por commit")
+        if match["digest"]:
+            # Con digest declarado, el contenido local debe coincidir con él.
+            repo_digests = _run(
+                ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+                label=f"Digest de registro de {service_name}",
+            ).strip()
+            try:
+                recorded_digests = json.loads(repo_digests)
+            except json.JSONDecodeError as error:
+                raise GateError(f"Docker no devolvió RepoDigests válidos para {service_name}") from error
+            expected_repo_digest = f"{match['repository']}@{match['digest']}"
+            if not isinstance(recorded_digests, list) or expected_repo_digest not in recorded_digests:
+                raise GateError(f"El contenido local de {service_name} no coincide con el digest declarado")
         if service_name != "postgres":
             revision = _run(
                 [
@@ -1405,9 +1417,9 @@ def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
                 expected_application_image_id = image_id
             elif image_id != expected_application_image_id:
                 raise GateError("API y workers no usan los mismos bytes de imagen")
-            item["registry_digest"] = match["digest"]
+            item["registry_digest"] = match["digest"] or ""
         else:
-            item["registry_digest"] = match["digest"]
+            item["registry_digest"] = match["digest"] or ""
         verified.append(item)
     if not verified:
         raise GateError("La configuración no contiene imágenes para el despliegue precargado")
@@ -1440,31 +1452,7 @@ def _activate_production(data: dict, evidence: Path) -> dict:
         raise GateError("La activación productiva requiere el manifiesto production")
     if os.geteuid() != 0:
         raise GateError("La activación productiva requiere ejecutar el operador como root")
-    certification_path = Path(data.get("certification_file", ""))
-    if certification_path != Path("/etc/iacp/certification/controlplane-v1.json"):
-        raise GateError("La certificación debe proceder del directorio protegido de evidencias")
-    if not certification_path.is_file():
-        raise GateError("Falta la certificación física PASS ligada a esta imagen")
-    cert_stat = certification_path.stat()
-    cert_directory_stat = certification_path.parent.stat()
-    if cert_stat.st_mode & 0o077 or cert_directory_stat.st_mode & 0o077:
-        raise GateError("La certificación y su directorio deben ser privados para el equipo de operaciones")
-    try:
-        certificate = json.loads(certification_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise GateError("La certificación no se puede leer") from error
-    image_tag = str(data.get("image_tag", ""))
-    required = {
-        "unit_tests", "api_contract", "physical_provision", "physical_delete",
-        "reconciliation", "state_lock", "protected_vmids", "mng_isolation",
-    }
-    results = certificate.get("checks", {}) if isinstance(certificate, dict) else {}
-    if certificate.get("result") != "PASS" or certificate.get("image_tag") != image_tag:
-        raise GateError("La certificación no corresponde al release que se va a activar")
-    if certificate.get("image_digest") != data.get("image_digest"):
-        raise GateError("La certificación no corresponde al digest de imagen que se va a activar")
-    if not required.issubset(results) or any(results.get(key) != "PASS" for key in required):
-        raise GateError("La certificación no cubre todos los gates productivos")
+    _load_production_certificate(data)
     route = Path(data["dynamic_config"]).resolve()
     if route != Path("/etc/iacp/tls/dynamic/iacp.yml"):
         raise GateError("La activación productiva está limitada a la ruta Traefik autorizada")
@@ -1477,6 +1465,45 @@ def _activate_production(data: dict, evidence: Path) -> dict:
         "already_active": update.get("already_active", False),
         "target": target,
     }
+
+
+def _load_production_certificate(data: dict) -> dict:
+    """Exige evidencia PASS privada ligada al mismo commit y al digest si se declara."""
+    if data.get("stage") != "production":
+        raise GateError("La certificación requiere el manifiesto production")
+    image_digest = str(data.get("image_digest") or "")
+    if image_digest and not IMAGE_DIGEST.fullmatch(image_digest):
+        raise GateError("image_digest, si se declara, debe tener la forma sha256:<64 hex>")
+    certification_path = Path(data.get("certification_file", ""))
+    if certification_path != PRODUCTION_CERTIFICATION_PATH:
+        raise GateError("La certificación debe proceder del directorio protegido de evidencias")
+    if not certification_path.is_file():
+        raise GateError("Falta la certificación física PASS ligada a esta imagen")
+    cert_stat = certification_path.stat()
+    cert_directory_stat = certification_path.parent.stat()
+    if cert_stat.st_mode & 0o077 or cert_directory_stat.st_mode & 0o077:
+        raise GateError("La certificación y su directorio deben ser privados para el equipo de operaciones")
+    try:
+        certificate = json.loads(certification_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise GateError("La certificación no se puede leer") from error
+    image_tag = str(data.get("image_tag", ""))
+    if not isinstance(certificate, dict):
+        raise GateError("La certificación no tiene un formato válido")
+    results = certificate.get("checks", {})
+    if not isinstance(results, dict):
+        raise GateError("La certificación no contiene el conjunto de verificaciones")
+    if (
+        certificate.get("result") != "PASS"
+        or certificate.get("image_tag") != image_tag
+        or (image_digest and certificate.get("image_digest") != image_digest)
+    ):
+        raise GateError("La certificación no corresponde al commit y digest declarado")
+    if not PRODUCTION_CERTIFICATION_CHECKS.issubset(results) or any(
+        results.get(key) != "PASS" for key in PRODUCTION_CERTIFICATION_CHECKS
+    ):
+        raise GateError("La certificación no cubre todos los gates productivos")
+    return certificate
 
 
 def _restore_legacy(data: dict, evidence: Path) -> dict:
@@ -1640,6 +1667,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Verifica las imágenes locales fijadas en el manifiesto y despliega sin descargarlas",
     )
     parser.add_argument(
+        "--replace-active",
+        action="store_true",
+        help=(
+            "Permite que deploy reemplace el candidato de producción que ya recibe tráfico. "
+            "Mantiene el respaldo, el drenaje de la cola y la verificación posterior"
+        ),
+    )
+    parser.add_argument(
         "--backup-dir",
         type=Path,
         help="Directorio nuevo (backup) o existente (backup-verify) fuera del checkout",
@@ -1647,6 +1682,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.action in {"backup", "backup-verify"} and args.backup_dir is None:
         parser.error("--backup-dir es obligatorio para backup y backup-verify")
+    if args.replace_active and args.action != "deploy":
+        parser.error("--replace-active solo se permite con la acción deploy")
     if args.preloaded_images and args.action != "deploy":
         parser.error("--preloaded-images solo se permite con la acción deploy")
     evidence = None
@@ -1692,7 +1729,17 @@ def main(argv: list[str] | None = None) -> int:
                 state_backend = _check_runtime_backend(data, config)
                 if state_backend is not None:
                     result["state_backend"] = state_backend
-                _assert_production_candidate_inactive(data)
+                if args.replace_active:
+                    if data.get("stage") != "production":
+                        raise GateError("--replace-active solo aplica a un release productivo certificado")
+                    certificate = _load_production_certificate(data)
+                    result["replace_active"] = True
+                    result["production_certification"] = {
+                        "image_tag": certificate["image_tag"],
+                        "image_digest": certificate["image_digest"],
+                    }
+                else:
+                    _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
                 with _runtime_write_gate(prefix):
                     result["drain"] = _wait_for_stack_quiescence(prefix)

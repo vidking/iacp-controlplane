@@ -99,7 +99,7 @@ x-worker-environment: &worker-environment
 
 x-worker-common: &worker-common
   <<: *worker-health
-  image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+  image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
   restart: unless-stopped
   init: true
   read_only: true
@@ -167,7 +167,7 @@ services:
       retries: 20
 
   api:
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     restart: unless-stopped
     logging: *default-logging
     init: true
@@ -264,7 +264,7 @@ services:
 
   service-worker-1:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [services]
     restart: unless-stopped
     init: true
@@ -303,7 +303,7 @@ services:
 
   service-worker-2:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [services]
     restart: unless-stopped
     init: true
@@ -342,7 +342,7 @@ services:
 
   service-worker-3:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [service-workers-3-4]
     restart: unless-stopped
     init: true
@@ -381,7 +381,7 @@ services:
 
   service-worker-4:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [service-workers-3-4]
     restart: unless-stopped
     init: true
@@ -420,7 +420,7 @@ services:
 
   service-worker-5:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [service-workers-5-6]
     restart: unless-stopped
     init: true
@@ -459,7 +459,7 @@ services:
 
   service-worker-6:
     <<: *worker-health
-    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}@${IACP_IMAGE_DIGEST:?Definir IACP_IMAGE_DIGEST}
+    image: ${IACP_IMAGE_REPOSITORY:?Definir IACP_IMAGE_REPOSITORY}:${IACP_IMAGE_TAG:?Definir IACP_IMAGE_TAG}${IACP_IMAGE_DIGEST:+@${IACP_IMAGE_DIGEST}}
     profiles: [service-workers-5-6]
     restart: unless-stopped
     init: true
