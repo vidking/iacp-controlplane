@@ -1411,7 +1411,16 @@ def _physical_absence_observation(
     heartbeat_callback=None,
     deadline: float | None = None,
 ) -> bool:
-    """Exige inventario ausente y un 404 puntual en cada nodo del clúster."""
+    """Confirma la ausencia con inventario y con ``/cluster/nextid``.
+
+    El inventario de clúster solo muestra las VMs que el token puede auditar.
+    Para una VM inexistente Proxmox responde 403 al sondeo por nodo (evalúa el
+    permiso ``/vms/<id>`` antes que la existencia), de modo que un 404 nunca
+    llega y toda creación quedaba bloqueada. ``/cluster/nextid?vmid=N`` no
+    depende de ACL: devuelve el VMID si está libre y 400 «already exists» si
+    existe en cualquier pool o nodo. Cualquier otro resultado no confirma la
+    ausencia (falla cerrada).
+    """
     record = physical_record(
         client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
     )
@@ -1419,59 +1428,25 @@ def _physical_absence_observation(
         return False
     if heartbeat_callback is not None:
         heartbeat_callback()
+    getter = getattr(client, "get", None)
+    if not callable(getter):
+        return False
     timeout = None
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         timeout = min(remaining, max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))))
-    getter = getattr(client, "get", None)
-    if not callable(getter):
-        return False
     try:
-        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-        if remaining is not None and remaining <= 0:
-            return False
-        nodes = getter(
-            "/nodes",
+        free = getter(
+            f"/cluster/nextid?vmid={int(vmid)}",
             uncertain=True,
-            timeout=remaining,
-            attempts=1 if remaining is not None else None,
+            timeout=timeout,
+            attempts=1 if deadline is not None else None,
         )
     except ProxmoxError:
         return False
-    if not isinstance(nodes, list) or not nodes:
-        return False
-    node_names = {
-        str(row.get("node", "")).strip()
-        for row in nodes
-        if isinstance(row, dict) and str(row.get("node", "")).strip()
-    }
-    if len(node_names) != len(nodes) or node not in node_names:
-        return False
-    for observed_node in sorted(node_names):
-        if heartbeat_callback is not None:
-            heartbeat_callback()
-        remaining = None if deadline is None else deadline - time.monotonic()
-        if remaining is not None and remaining <= 0:
-            return False
-        timeout = None if remaining is None else min(
-            remaining,
-            max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))),
-        )
-        try:
-            getter(
-                f"/nodes/{quote(observed_node, safe='')}/qemu/{vmid}/config?current=1",
-                uncertain=True,
-                timeout=timeout,
-                attempts=1 if deadline is not None else None,
-            )
-        except ProxmoxError as error:
-            if error.status == 404:
-                continue
-            return False
-        return False
-    return True
+    return str(free).strip() == str(int(vmid))
 
 
 def physical_presence(

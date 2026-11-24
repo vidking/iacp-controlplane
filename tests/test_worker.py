@@ -740,45 +740,54 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
     assert physical_presence(client, 40000, True, name="other", node="mng01") is False
 
 
-def test_physical_absence_requires_point_404_on_every_cluster_node():
-    class EmptyCluster:
-        def __init__(self, *, missing_on="all"):
+def test_physical_absence_uses_cluster_nextid_not_acl_dependent_node_probes():
+    class Cluster:
+        def __init__(self, nextid):
             self.paths = []
-            self.missing_on = missing_on
+            self.nextid = nextid
 
         def inventory(self, *, uncertain=False):
             return []
 
         def get(self, path, **_kwargs):
-            if path == "/nodes":
-                return [{"node": "mng01"}, {"node": "mng02"}]
             self.paths.append(path)
-            if self.missing_on == "all" or path.startswith(f"/nodes/{self.missing_on}/"):
-                raise ProxmoxError("VM_NOT_FOUND", 404)
-            raise ProxmoxError("PROXMOX_NODE_UNAVAILABLE", 503)
+            if isinstance(self.nextid, Exception):
+                raise self.nextid
+            return self.nextid
 
-    client = EmptyCluster()
-    assert physical_presence(client, 40000, False, node="mng01") is True
-    assert client.paths == [
-        "/nodes/mng01/qemu/40000/config?current=1",
-        "/nodes/mng02/qemu/40000/config?current=1",
-    ]
+    libre = Cluster("40000")
+    assert physical_presence(libre, 40000, False, node="mng01") is True
+    # Una sola consulta, sin sondeos por nodo que Proxmox rechaza con 403.
+    assert libre.paths == ["/cluster/nextid?vmid=40000"]
 
-    client = EmptyCluster(missing_on="mng01")
-    assert physical_presence(client, 40000, False, node="mng01") is False
+    existe = Cluster(ProxmoxError("PROXMOX_REJECTED", 400))
+    assert physical_presence(existe, 40000, False, node="mng01") is False
 
 
-def test_physical_absence_fails_closed_when_node_inventory_is_incomplete():
-    class IncompleteCluster:
+def test_physical_absence_fails_closed_without_a_clear_answer():
+    class Cluster:
+        def __init__(self, answer):
+            self.answer = answer
+
         def inventory(self, *, uncertain=False):
             return []
 
         def get(self, path, **_kwargs):
-            if path == "/nodes":
-                return []
-            raise ProxmoxError("VM_NOT_FOUND", 404)
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
 
-    assert physical_presence(IncompleteCluster(), 40000, False, node="mng01") is False
+    for respuesta in (None, "", "40001", {"vmid": 40000}, ProxmoxError("TIMEOUT"), ProxmoxError("X", 403)):
+        assert physical_presence(Cluster(respuesta), 40000, False, node="mng01") is False
+    # Si el inventario ya muestra la VM, ni siquiera se consulta nextid.
+    class Visible(Cluster):
+        def inventory(self, *, uncertain=False):
+            return [{"vmid": 40000, "name": "x", "node": "mng01"}]
+
+        def get(self, path, **_kwargs):
+            raise AssertionError("no debe consultar nextid con la VM visible")
+
+    assert physical_presence(Visible("40000"), 40000, False, node="mng01") is False
 
 
 def test_power_permission_zero_is_denied():

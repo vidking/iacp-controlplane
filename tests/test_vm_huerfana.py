@@ -32,6 +32,8 @@ class FakeClient:
     def get(self, path, uncertain=False, **_kwargs):
         if path == "/nodes":
             return [{"node": "mng01"}, {"node": "mng02"}]
+        if path.startswith("/cluster/nextid?vmid="):
+            return path.rsplit("=", 1)[1]
         if "/qemu/" in path and path.endswith("config?current=1"):
             raise ProxmoxError("VM_NOT_FOUND", status=404)
         return {"status": "stopped", "exitstatus": "OK"}
