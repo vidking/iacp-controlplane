@@ -87,11 +87,11 @@ def idle(worker):
         return worker.get("status") == "idle" and not worker.get("job_id") and 0 <= age < 60
     except (KeyError, TypeError, ValueError):
         return False
-ready = state.get("max_concurrent") == 4 and len(workers) == 4 and all(idle(w) for w in workers)
+ready = state.get("max_concurrent") == 6 and len(workers) == 6 and all(idle(w) for w in workers)
 print("service_workers=PASS" if ready else "service_workers=BLOCKED")
 sys.exit(0 if ready else 1)
 '; then
-  printf '%s\n' 'BLOCKED: se requieren cuatro workers de servicios idle con heartbeat reciente.' >&2
+  printf '%s\n' 'BLOCKED: se requieren seis workers de servicios idle con heartbeat reciente.' >&2
   exit 1
 fi
 printf '%s\n' 'Preflight WAN, API y workers: PASS'

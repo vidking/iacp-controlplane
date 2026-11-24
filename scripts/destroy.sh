@@ -21,6 +21,8 @@ if os.environ["IACP_PLAN_OPERATION_ID"]: body["plan_operation_id"] = os.environ[
 if os.environ["IACP_INSTANCE_ID"]: body["instance_id"] = os.environ["IACP_INSTANCE_ID"]
 print(json.dumps(body))')"
 curl_args=(-fsS -X POST "${api_url}/v1/operations" -H 'Content-Type: application/json' -d "${payload}")
+idempotency_key="${IACP_IDEMPOTENCY_KEY:-iacp-destroy-${IACP_PLAN_OPERATION_ID:-${IACP_INSTANCE_ID:-unknown}}}"
+curl_args+=(-H "Idempotency-Key: ${idempotency_key}")
 if [[ -n "${IACP_API_TOKEN:-}" ]]; then
   curl_args+=(-H "Authorization: Bearer ${IACP_API_TOKEN}")
 fi

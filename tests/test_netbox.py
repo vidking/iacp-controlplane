@@ -111,7 +111,15 @@ def test_netbox_allocation_creates_and_confirms_exact_ip(monkeypatch):
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
 
-    record = {"id": 88, "address": "198.51.100.10/24", "comments": "iacp-instance=instance-1"}
+    record = {
+        "id": 88,
+        "address": "198.51.100.10/24",
+        "status": {"value": "active"},
+        "assigned_object": None,
+        "assigned_object_id": None,
+        "assigned_object_type": None,
+        "comments": "iacp-instance=instance-1",
+    }
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
 
     def request(method, path, payload=None, **_kwargs):
@@ -229,7 +237,7 @@ def test_lost_post_reuses_owned_address_and_preserves_external_tags(monkeypatch)
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
     monkeypatch.setattr(client, "ensure_identity_tag", lambda _: 8)
-    owned = {"id": 44, "address": "198.51.100.3/24", "tags": [{"id": 99}], "comments": "iacp-instance=mine"}
+    owned = {"id": 44, "address": "198.51.100.3/24", "status": "active", "tags": [{"id": 99}], "comments": "iacp-instance=mine"}
     monkeypatch.setattr(client, "owned_allocation", lambda *_: owned)
     monkeypatch.setattr(client, "_ip_records", lambda _: [owned])
     requests = []
@@ -250,7 +258,7 @@ def test_lost_post_reuses_owned_address_and_preserves_external_tags(monkeypatch)
 def test_release_unknown_post_recovers_marker_before_delete(monkeypatch):
     client = fake_client()
     calls = []
-    record = {"id": 90, "address": "198.51.100.8/24", "comments": "iacp-instance=lost"}
+    record = {"id": 90, "address": "198.51.100.8/24", "status": "active", "comments": "iacp-instance=lost"}
     monkeypatch.setattr(client, "owned_allocation", lambda *_: record)
     monkeypatch.setattr(
         client,
@@ -262,6 +270,58 @@ def test_release_unknown_post_recovers_marker_before_delete(monkeypatch):
         ("GET", "/ipam/ip-addresses/90/"),
         ("DELETE", "/ipam/ip-addresses/90/"),
     ]
+
+
+def test_release_follows_recreated_owned_object_after_old_id_returns_404(monkeypatch):
+    client = fake_client()
+    marker = "iacp-instance=mine"
+    replacement = {
+        "id": 91,
+        "address": "198.51.100.8/24",
+        "status": "active",
+        "comments": marker,
+    }
+    calls = []
+
+    def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if method == "GET" and path.endswith("/90/"):
+            raise NetBoxError("IPAM_NOT_FOUND", 404)
+        if method == "GET":
+            return replacement
+        return None
+
+    monkeypatch.setattr(client, "_request", request)
+    monkeypatch.setattr(client, "owned_allocation", lambda *_: replacement)
+    client._release_locked(
+        {"netbox_ip_id": 90, "address": replacement["address"]}, marker=marker
+    )
+    assert calls == [
+        ("GET", "/ipam/ip-addresses/90/"),
+        ("GET", "/ipam/ip-addresses/91/"),
+        ("DELETE", "/ipam/ip-addresses/91/"),
+    ]
+
+
+def test_uncertain_identity_tag_post_never_leaves_ip_allocation_uncertain(monkeypatch):
+    client = fake_client()
+    calls = 0
+
+    def lookup(_slug):
+        nonlocal calls
+        calls += 1
+        raise NetBoxError("IPAM_TAG_NOT_FOUND")
+
+    def post(method, _path, *_args, **_kwargs):
+        assert method == "POST"
+        raise NetBoxError("IPAM_UNAVAILABLE", 503, uncertain=True)
+
+    monkeypatch.setattr(client, "_tag_id", lookup)
+    monkeypatch.setattr(client, "_request", post)
+    with pytest.raises(NetBoxError, match="IPAM_TAG_OPERATION_UNCONFIRMED") as failure:
+        client.ensure_identity_tag("app-nextcloud")
+    assert not failure.value.uncertain
+    assert calls == 2
 
 
 def test_release_rejects_wrong_address_and_marker_substring(monkeypatch):
@@ -294,7 +354,7 @@ def test_atomic_post_timeout_does_not_allocate_again(monkeypatch):
     calls = []
     monkeypatch.setattr(client, "validate_gateway", lambda _: "198.51.100.1")
     monkeypatch.setattr(client, "_tag_id", lambda _: 7)
-    record = {"id": 90, "address": "198.51.100.10/24", "comments": "iacp-instance=lost"}
+    record = {"id": 90, "address": "198.51.100.10/24", "status": "active", "comments": "iacp-instance=lost"}
     results = iter([None, record])
     monkeypatch.setattr(client, "owned_allocation", lambda *_: next(results))
     monkeypatch.setattr(client, "_ip_records", lambda parent: [record] if parent.prefixlen == 32 else [])
@@ -380,7 +440,7 @@ def test_netbox_does_not_retry_a_rejection_without_evidence_of_occupation(monkey
 
 def test_netbox_duplicate_after_success_blocks_provisioning(monkeypatch):
     client = netbox_for_allocation(monkeypatch)
-    record = {"id": 90, "address": "198.51.100.10/24", "comments": "iacp-instance=ours"}
+    record = {"id": 90, "address": "198.51.100.10/24", "status": "active", "comments": "iacp-instance=ours"}
     other = {"id": 91, "address": "198.51.100.10/32", "comments": "otro propietario"}
     calls = []
 

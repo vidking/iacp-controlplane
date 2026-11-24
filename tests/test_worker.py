@@ -1145,7 +1145,7 @@ def test_reconcile_starts_recovered_provision_vm_before_guest_identity(tmp_path,
         def set_heartbeat(self, _callback):
             pass
 
-        def inventory(self, *, uncertain=False):
+        def inventory(self, *, uncertain=False, timeout=None, attempts=None):
             return [{"vmid": 40002, "name": "reconcile-stopped-provision", "node": "mng01"}]
 
         def power_state(self, node, vmid, name):
@@ -1259,7 +1259,7 @@ def test_reconcile_marks_present_guest_failure_terminal_without_releasing_resour
         def set_heartbeat(self, _callback):
             pass
 
-        def inventory(self, *, uncertain=False):
+        def inventory(self, *, uncertain=False, timeout=None, attempts=None):
             return [{"vmid": 40044, "name": name, "node": "mng01"}]
 
         def power_state(self, node, vmid, requested_name):
@@ -1557,7 +1557,7 @@ def test_execute_starts_physically_recovered_vm_before_guest_identity(tmp_path, 
         def set_heartbeat(self, _callback):
             pass
 
-        def inventory(self, *, uncertain=False):
+        def inventory(self, *, uncertain=False, timeout=None, attempts=None):
             return [{"vmid": 40010, "name": spec["name"], "node": "mng01"}]
 
         def power_state(self, node, vmid, name):
@@ -1713,6 +1713,57 @@ def test_stale_worker_claim_is_closed_and_reconciled_once(tmp_path, monkeypatch)
     assert recover_stale_operations() == 0
 
 
+def test_stale_worker_with_live_execution_lock_is_not_reconciled(tmp_path, monkeypatch):
+    import worker.main as main
+
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_WORKDATA_DIR", str(tmp_path / "workdata"))
+    monkeypatch.setenv("IACP_OPERATION_STALE_SECONDS", "30")
+    initialize()
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, action, status, payload_json, instance_id,
+              vmid, stack, created_at, started_at, last_heartbeat, phase
+            ) VALUES (?, 'provision', 'provision', 'running', ?, ?, 40001, 'mng01', ?, ?, ?, 'apply')
+            """,
+            (
+                "locked-stale-operation",
+                json.dumps({"command": "provision", "action": "provision", "instance_id": "locked-stale-instance"}),
+                "locked-stale-instance",
+                old,
+                old,
+                old,
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (?, ?, 'locked-stale-vm', 'ubuntu-2404', 40001, 'mng01', 'applying', 'unknown', '{}', ?, ?)
+            """,
+            ("locked-stale-instance", "locked-stale-operation", old, old),
+        )
+
+    with main.operation_execution_lock("locked-stale-operation"):
+        assert main.recover_stale_operations() == 0
+        with database() as db:
+            source = db.execute(
+                "SELECT status FROM operations WHERE operation_id=?",
+                ("locked-stale-operation",),
+            ).fetchone()
+            recovery_count = db.execute(
+                "SELECT COUNT(*) AS n FROM operations WHERE command='reconcile'"
+            ).fetchone()["n"]
+        assert source["status"] == "running"
+        assert recovery_count == 0
+
+    assert main.recover_stale_operations() == 1
+
+
 def test_operation_output_is_bounded_and_redacts_secret(monkeypatch):
     monkeypatch.setenv("IACP_OPERATION_OUTPUT_MAX_CHARS", "4096")
     value = operation_output("root-secret\n" + ("x" * 10000), "root-secret")
@@ -1754,7 +1805,7 @@ def test_static_ipam_keeps_vmbr3_without_tag(monkeypatch):
             "status": "allocating",
         },
     )
-    monkeypatch.setattr(main, "_complete_ip_allocation", lambda *_: None)
+    monkeypatch.setattr(main, "_complete_ip_allocation", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "emit", lambda *_: None)
     monkeypatch.setattr(main, "_update_operation_payload", lambda *_: None)
     monkeypatch.setattr(main, "_update_instance_spec", lambda *_: None)
@@ -1819,6 +1870,33 @@ def test_operation_spec_preserves_ipam_resolved_payload():
     old = {"payload_json": json.dumps({"spec": {"network_profile": "prod_static", "ipv4_cidr": None}})}
     resolved = {"spec": {"network_profile": "prod_static", "ipv4_cidr": "190.0.231.2/24", "ipv4_gateway": "190.0.231.1"}}
     assert operation_spec(old, resolved) == resolved["spec"]
+
+
+@pytest.mark.no_database
+def test_reconcile_inventory_requests_fit_inside_deadline(monkeypatch):
+    import worker.main as worker_main
+
+    monkeypatch.setenv("IACP_RECONCILE_TIMEOUT", "5")
+    monkeypatch.setenv("IACP_RECONCILE_BACKOFF", "2")
+    clock = [0.0]
+    monkeypatch.setattr(worker_main.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        worker_main.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def inventory(self, *, uncertain=False, timeout=None, attempts=None):
+            self.calls.append((uncertain, timeout, attempts))
+            raise ProxmoxError("PROXMOX_UNAVAILABLE", 503)
+
+    client = Client()
+    assert not worker_main.reconcile_physical(client, 40001, False)
+    assert [call[1:] for call in client.calls] == [(5.0, 1), (3.0, 1), (1.0, 1)]
+    assert all(call[0] for call in client.calls)
+    assert clock[0] == 5.0
 
 
 def test_reboot_recovery_requires_unique_matching_task_and_time(monkeypatch):

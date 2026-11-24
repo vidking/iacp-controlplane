@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Construir y comprobar el runtime 6+2 en Docker local, sin conectarse a MNG."""
+"""Construir y comprobar el runtime 6+6 en Docker local, sin conectarse a MNG."""
 
 import argparse
 import json
@@ -39,6 +39,10 @@ def validate(image, evidence):
         str(compose),
         "--profile",
         "services",
+        "--profile",
+        "service-workers-3-4",
+        "--profile",
+        "service-workers-5-6",
     ]
 
     def cp(*args, check=True):
@@ -58,11 +62,12 @@ def validate(image, evidence):
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_WASABI_ENABLED": "false",
         "IACP_MAX_CONCURRENT": "6",
+        "IACP_MAX_QUEUE_DEPTH": "100",
         "IACP_VMID_MIN": "40000",
         "IACP_VMID_MAX": "49999",
         "IACP_SERVICES_ENABLED": "1",
         "IACP_SERVICE_EXECUTION_ENABLED": "0",
-        "IACP_SERVICE_MAX_CONCURRENT": "2",
+        "IACP_SERVICE_MAX_CONCURRENT": "6",
         "IACP_SERVICE_KEY_FILE": "/run/iacp-services/key",
         "IACP_PROXMOX_MNG_ENDPOINT": "https://mng.test.invalid:8006/",
         "IACP_PROXMOX_MNG_API_TOKEN": "local-test-only-no-valid-credential",
@@ -117,7 +122,7 @@ def validate(image, evidence):
             command=["python", "-m", "worker.main", "--worker-id", f"worker-{i}"],
             depends_on={"api": {"condition": "service_healthy"}},
         )
-    for i in (1, 2):
+    for i in range(1, 7):
         env = {
             k: v
             for k, v in environment.items()
@@ -126,8 +131,17 @@ def validate(image, evidence):
         services[f"service-worker-{i}"] = dict(
             common,
             environment=env,
-            volumes=["config:/run/iacp-services:ro"],
-            profiles=["services"],
+            volumes=[
+                "config:/run/iacp-services:ro",
+                "workdata:/var/lib/iacp-controlplane",
+            ],
+            profiles=(
+                ["services"]
+                if i <= 2
+                else ["service-workers-3-4"]
+                if i <= 4
+                else ["service-workers-5-6"]
+            ),
             command=[
                 "python",
                 "-m",
@@ -144,6 +158,7 @@ def validate(image, evidence):
         "read_only": True,
         "tmpfs": ["/tmp:rw,nosuid,size=512m"],
         "environment": {
+            "IACP_DATABASE_URL": "postgresql://postgres@postgres:5432/iacp_test",
             "IACP_TEST_DATABASE_URL": "postgresql://postgres@postgres:5432/iacp_test"
         },
         "command": ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"],
@@ -224,6 +239,7 @@ USER iacp
             "image_tag": "local-uncommitted-validation",
             "schema_version": 3,
             "services_enabled": True,
+            "service_worker_count": 6,
         }
         verification = go_live._verify(manifest, compose, env_file)
         (evidence / "runtime.json").write_text(json.dumps(verification, indent=2))

@@ -6,7 +6,9 @@ import re
 import secrets
 import stat
 import tempfile
+import logging
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -26,6 +28,18 @@ from api.models import Action, Command, CommercialContext, InstanceCreateRequest
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, write_secret
 from api.network_policy import apply_to_spec, selected_profile
+
+
+_MUTATION_CLEANUPS: ContextVar[list[Callable[[], None]] | None] = ContextVar(
+    "iacp_mutation_cleanups", default=None
+)
+_LOGGER = logging.getLogger(__name__)
+
+
+def register_idempotent_rollback_cleanup(callback: Callable[[], None]) -> None:
+    callbacks = _MUTATION_CLEANUPS.get()
+    if callbacks is not None:
+        callbacks.append(callback)
 
 
 def now() -> str:
@@ -52,6 +66,7 @@ ACTIVE_OPERATION_STATUSES = {
     "applying",
     "destroying",
     "powering",
+    "uncertain",
 }
 
 PUBLIC_OPERATION_STATUS = {
@@ -164,7 +179,13 @@ def public_instance_status(row) -> str:
     return PUBLIC_INSTANCE_STATUS.get(raw_status, raw_status)
 
 
-def _active_instance_operation(db, instance_id: str, *, allow_queued_service: bool = False):
+def _active_instance_operation(
+    db,
+    instance_id: str,
+    *,
+    allow_queued_service: bool = False,
+    ignore_operation_id: str | None = None,
+):
     from api.applications import guard_instance
     guard_instance(db, instance_id, allow_queued=allow_queued_service)
     placeholders = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
@@ -173,10 +194,11 @@ def _active_instance_operation(db, instance_id: str, *, allow_queued_service: bo
         SELECT operation_id, command, action, status
         FROM operations
         WHERE instance_id = ? AND status IN ({placeholders})
+          AND (CAST(? AS TEXT) IS NULL OR operation_id <> ?)
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        (instance_id, *sorted(ACTIVE_OPERATION_STATUSES)),
+        (instance_id, *sorted(ACTIVE_OPERATION_STATUSES), ignore_operation_id, ignore_operation_id),
     ).fetchone()
 
 
@@ -534,6 +556,8 @@ def _idempotent_mutation(
             """,
             (scope, key, request_hash, now()),
         )
+        cleanups: list[Callable[[], None]] = []
+        token = _MUTATION_CLEANUPS.set(cleanups)
         try:
             response, operation_id = builder(db)
             response = dict(response)
@@ -549,8 +573,17 @@ def _idempotent_mutation(
             db.execute("COMMIT")
             return response
         except Exception:
-            db.execute("ROLLBACK")
+            try:
+                db.execute("ROLLBACK")
+            finally:
+                for cleanup in reversed(cleanups):
+                    try:
+                        cleanup()
+                    except OSError:
+                        _LOGGER.exception("Falló la compensación local de una mutación")
             raise
+        finally:
+            _MUTATION_CLEANUPS.reset(token)
 
 
 def _image_for_plan(image_id: str, plan: dict) -> dict:
@@ -771,6 +804,7 @@ def _insert_operation(
             db, instance_id,
             allow_queued_service=command == Command.reconcile
             or (command == Command.power and request.power_action == PowerAction.start),
+            ignore_operation_id=(source["operation_id"] if command == Command.reconcile else None),
         )
         if active is not None:
             raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")
@@ -783,17 +817,18 @@ def _insert_operation(
     if secret_path:
         payload["secret_ref"] = "operation-secret"
 
-    max_queue_depth = max(0, int(os.getenv("IACP_MAX_QUEUE_DEPTH", "0")))
-    if max_queue_depth:
-        queued = db.execute(
-            "SELECT COUNT(*) AS count FROM operations WHERE status='pending'"
-        ).fetchone()["count"]
-        if queued >= max_queue_depth:
-            raise HTTPException(
-                status_code=429,
-                detail="la cola de operaciones está llena; reintente después",
-                headers={"Retry-After": "5"},
-            )
+    max_queue_depth = int(os.getenv("IACP_MAX_QUEUE_DEPTH", "100"))
+    if max_queue_depth <= 0:
+        max_queue_depth = 100
+    queued = db.execute(
+        "SELECT COUNT(*) AS count FROM operations WHERE status='pending'"
+    ).fetchone()["count"]
+    if queued >= max_queue_depth:
+        raise HTTPException(
+            status_code=429,
+            detail="la cola de operaciones está llena; reintente después",
+            headers={"Retry-After": "5"},
+        )
 
     context_json = _commercial_json(commercial_context)
     db.execute(
@@ -853,7 +888,22 @@ def _insert_operation(
     return response, operation_id
 
 
-def create_operation(request: OperationRequest) -> dict:
+def create_operation(
+    request: OperationRequest, idempotency_key: str | None = None
+) -> dict:
+    if idempotency_key is not None:
+        if not idempotency_key.strip():
+            raise HTTPException(422, "Idempotency-Key es obligatorio")
+
+        def builder(db):
+            return _insert_operation(db, request)
+
+        return _idempotent_mutation(
+            scope="POST:/v1/operations",
+            idempotency_key=idempotency_key,
+            body=request.model_dump(mode="json"),
+            builder=builder,
+        )
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         response, _ = _insert_operation(db, request)
@@ -872,6 +922,7 @@ def create_instance(request: InstanceCreateRequest, idempotency_key: str | None)
         secret_path = None
         if password is not None:
             secret_path = str(write_secret(operation_id, password))
+            register_idempotent_rollback_cleanup(lambda: delete_secret(secret_path))
         operation_request = OperationRequest(
             command=Command.provision,
             action=Action.provision,

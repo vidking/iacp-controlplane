@@ -49,7 +49,7 @@ def isolated_postgres_schema(monkeypatch, tmp_path, request):
     monkeypatch.setenv("IACP_WORKDATA_DIR", str(tmp_path / "workdata"))
     monkeypatch.setenv("IACP_ROOT_PASSWORD_MIN_LENGTH", "12")
     monkeypatch.setenv("IACP_API_TOKEN", "")
-    monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "0")
+    monkeypatch.setenv("IACP_ALLOW_INSECURE_LOCAL_DEV", "1")
     monkeypatch.setenv("IACP_MAX_CONCURRENT", "6")
     monkeypatch.setenv("IACP_MAX_QUEUE_DEPTH", "0")
     monkeypatch.delenv("IACP_PRX_ENABLED", raising=False)

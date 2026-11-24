@@ -432,7 +432,11 @@
     const query = new URLSearchParams({ limit: String(state.route === "delete" ? 200 : state.pagination.instances.limit) });
     if (state.route !== "delete") query.set("offset", String(state.pagination.instances.offset));
     if (["create", "console", "instances", "lifecycle"].includes(state.route)) {
-      const status = state.route === "instances" ? ($("instance-status-filter")?.value || "ready") : "ready";
+      // Las vistas operativas también deben mostrar estados que requieren
+      // reconciliación; filtrar por "ready" los ocultaba del equipo de operaciones.
+      const status = state.route === "instances"
+        ? ($("instance-status-filter")?.value || "all")
+        : state.route === "create" ? "ready" : "all";
       query.set("status", status);
     } else if (state.route === "delete") {
       query.set("status", "all");

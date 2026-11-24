@@ -87,7 +87,7 @@ def prepare(
         "IACP_ENABLED_ENVIRONMENTS": "lab",
         "IACP_WASABI_ENABLED": "false",
         "IACP_MAX_CONCURRENT": "6",
-        "IACP_SERVICE_MAX_CONCURRENT": "4",
+        "IACP_SERVICE_MAX_CONCURRENT": "6",
         "IACP_ENFORCE_WAN_ONLY": "0",
         "IACP_VMID_MIN": "40000",
         "IACP_VMID_MAX": "49999",

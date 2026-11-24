@@ -130,6 +130,34 @@ def test_service_egress_preflight_stops_when_dns_lookup_hangs():
 
 
 @pytest.mark.no_database
+def test_tls_renewal_playbook_contains_verified_rollback_and_no_shell():
+    from worker.service_executor import tls_renewal_tasks
+
+    tasks = tls_renewal_tasks(
+        ["docker", "compose", "--project-directory", "/opt/iacp-services/123"],
+        "/opt/iacp-services/123",
+        "123e4567-e89b-12d3-a456-426614174000",
+    )
+    renewal = tasks[0]
+    block = renewal["block"]
+    restore = renewal["rescue"]
+    assert any(task.get("name") == "Verificar HTTPS tras renovar certificado" for task in block)
+    assert any(task.get("name") == "Confirmar activación del certificado renovado" for task in block)
+    assert any(task.get("name") == "Restaurar certificado anterior" for task in restore)
+    assert any(task.get("name") == "Restaurar clave anterior" for task in restore)
+    assert any(task.get("name") == "Verificar HTTPS restaurado" for task in restore)
+    assert "shell" not in json.dumps(tasks)
+    python_copy = next(
+        task for task in block if task.get("name") == "Activar certificado renovado"
+    )
+    compile(
+        python_copy["ansible.builtin.command"]["argv"][2],
+        "tls-renewal-copy",
+        "exec",
+    )
+
+
+@pytest.mark.no_database
 def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
     from worker.service_executor import NEXTCLOUD_READY_SCRIPT
 
@@ -278,6 +306,11 @@ def test_atomic_idempotent_order_and_encrypted_credentials(client):
             secrets["ssh_public_key"]
             in json.loads(operation)["spec"]["ssh_public_keys"]
         )
+        assert (
+            secrets["management_ssh_public_key"]
+            in json.loads(operation)["spec"]["ssh_public_keys"]
+        )
+        assert secrets["management_ssh_private_key"] not in operation
     assert services.claim("service-1") is None
     ready(order["instance_id"])
     claimed = services.claim("service-1")
@@ -292,7 +325,7 @@ def test_atomic_idempotent_order_and_encrypted_credentials(client):
     )
 
 
-def test_password_only_service_injects_only_an_internal_temporary_key(client):
+def test_password_only_service_injects_internal_installer_and_maintenance_keys(client):
     request = body("service-password-only")
     request["instance"]["access"]["ssh_public_keys"] = []
     response = client.post(
@@ -307,9 +340,12 @@ def test_password_only_service_injects_only_an_internal_temporary_key(client):
         )
         service = db.execute("SELECT * FROM service_instances").fetchone()
         secrets = decrypt(service["secrets_encrypted"])
-    assert operation["spec"]["ssh_public_keys"] == [secrets["ssh_public_key"]]
+    assert set(operation["spec"]["ssh_public_keys"]) == {
+        secrets["ssh_public_key"], secrets["management_ssh_public_key"]
+    }
     assert "ssh-ed25519 AAAAexample" not in operation["spec"]["ssh_public_keys"]
     assert secrets["ssh_private_key"] not in json.dumps(operation)
+    assert secrets["management_ssh_private_key"] not in json.dumps(operation)
 
 
 def test_password_only_service_requires_a_root_password(client):
@@ -569,6 +605,115 @@ def test_recovery_requires_explicit_stop_and_generation_changes(client):
         services.heartbeat("lost", job)
 
 
+def test_stale_service_job_with_live_execution_lock_is_not_recovered(client):
+    from worker.service_locks import service_job_execution_lock
+
+    order = create(client, "stale-service-lock")
+    ready(order["instance_id"])
+    job = services.claim("service-live")
+    with database() as db:
+        db.execute(
+            "UPDATE service_jobs SET last_heartbeat='2000-01-01T00:00:00+00:00' WHERE job_id=?",
+            (job["job_id"],),
+        )
+    with service_job_execution_lock(job["job_id"]):
+        services.recover()
+        with database() as db:
+            state = db.execute(
+                "SELECT status FROM service_jobs WHERE job_id=?", (job["job_id"],)
+            ).fetchone()["status"]
+        assert state == "running"
+    services.recover()
+    with database() as db:
+        state = db.execute(
+            "SELECT status FROM service_jobs WHERE job_id=?", (job["job_id"],)
+        ).fetchone()["status"]
+    assert state == "uncertain"
+
+
+def test_uncertain_service_retry_requires_the_execution_lock_to_be_free(client):
+    from worker.service_locks import service_job_execution_lock
+
+    order = create(client, "uncertain-service-lock")
+    ready(order["instance_id"])
+    job = services.claim("service-lost")
+    with database() as db:
+        db.execute(
+            "UPDATE service_jobs SET status='uncertain' WHERE job_id=?",
+            (job["job_id"],),
+        )
+        db.execute(
+            "UPDATE service_instances SET status='uncertain' WHERE service_id=?",
+            (order["service_id"],),
+        )
+    path = f"/v1/service-jobs/{job['job_id']}/retry"
+    with service_job_execution_lock(job["job_id"]):
+        response = client.post(
+            path,
+            json={"previous_execution_stopped": True},
+            headers={"Idempotency-Key": "locked-service-retry"},
+        )
+        assert response.status_code == 409
+    response = client.post(
+        path,
+        json={"previous_execution_stopped": True},
+        headers={"Idempotency-Key": "unlocked-service-retry"},
+    )
+    assert response.status_code == 202
+
+
+def test_ip_service_tls_renewal_is_scheduled_before_expiration(client):
+    from datetime import datetime, timedelta, timezone
+    from api.service_secrets import encrypt
+
+    request = body("tls-renewal-service")
+    request["configuration"] = {"access_mode": "ip"}
+    order_response = client.post(
+        "/v1/service-instances",
+        json=request,
+        headers={"Idempotency-Key": "tls-renewal-order"},
+    )
+    assert order_response.status_code == 202
+    order = order_response.json()
+    ready(order["instance_id"])
+    old_success = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    access = {
+        "private_key": "encrypted-management-private-key",
+        "public_key": "ssh-ed25519 AAAAmaintenance iacp-maintenance",
+        "installer_public_key": "ssh-ed25519 AAAAinstaller iacp-installer",
+    }
+    binding = {
+        "instance_id": order["instance_id"],
+        "vmid": 40001,
+        "address": "198.51.100.24",
+        "host_key": "ssh-ed25519 AAAAexample",
+        "domain": None,
+        "maintenance_access_encrypted": encrypt(access),
+    }
+    with database() as db:
+        db.execute(
+            "UPDATE service_instances SET status='awaiting_customer' WHERE service_id=?",
+            (order["service_id"],),
+        )
+        db.execute(
+            "UPDATE service_jobs SET status='succeeded', finished_at=? WHERE job_id=?",
+            (old_success, order["job_id"]),
+        )
+        db.execute(
+            "INSERT INTO service_bindings(service_id,binding_json,observed_at) VALUES (?,?,?)",
+            (order["service_id"], json.dumps(binding), old_success),
+        )
+        db.execute("BEGIN IMMEDIATE")
+        assert services.schedule_due_tls_renewals(db) == 1
+        assert services.schedule_due_tls_renewals(db) == 0
+        db.execute("COMMIT")
+        job = db.execute(
+            "SELECT action,status FROM service_jobs WHERE service_id=? ORDER BY created_at DESC LIMIT 1",
+            (order["service_id"],),
+        ).fetchone()
+    assert (job["action"], job["status"]) == ("renew_tls", "queued")
+
+
 def test_delivery_one_time_and_secret_removal(client, monkeypatch):
     order = create(client)
     ready(order["instance_id"])
@@ -582,16 +727,29 @@ def test_delivery_one_time_and_secret_removal(client, monkeypatch):
         ).status_code
         == 409
     )
-    credentials = client.post(path + "/credentials")
+    assert client.post(path + "/credentials").status_code == 422
+    credentials = client.post(
+        path + "/credentials", headers={"Idempotency-Key": "delivery-credentials"}
+    )
     assert credentials.status_code == 200
     assert credentials.headers["cache-control"] == "no-store"
-    assert client.post(path + "/credentials").status_code == 409
-    assert (
-        client.post(
-            path + "/deliver", headers={"Idempotency-Key": "deliver-2"}
-        ).status_code
-        == 202
+    assert client.post(
+        path + "/credentials", headers={"Idempotency-Key": "delivery-credentials"}
+    ).json() == credentials.json()
+    assert client.post(
+        path + "/credentials", headers={"Idempotency-Key": "second-disclosure"}
+    ).status_code == 409
+    assert client.post(
+        path + "/deliver", headers={"Idempotency-Key": "deliver-2"}
+    ).status_code == 409
+    delivery = client.post(
+        path + "/deliver",
+        headers={
+            "Idempotency-Key": "deliver-3",
+            "X-IACP-Credential-Receipt": credentials.json()["credential_receipt"],
+        },
     )
+    assert delivery.status_code == 202
     services.process("b", services.claim("b"))
     with database() as db:
         assert (
@@ -632,7 +790,7 @@ def test_credential_receipt_recovers_disclosure_until_delivery(client, monkeypat
         assert db.execute("SELECT count(*) AS n FROM service_credential_retrievals").fetchone()["n"] == 0
 
 
-def test_expired_disclosure_renews_only_for_original_key(client, monkeypatch):
+def test_expired_disclosure_cannot_be_renewed_with_original_key(client, monkeypatch):
     order = create(client)
     ready(order["instance_id"])
     monkeypatch.setattr(services, "execute", lambda *_: None)
@@ -647,9 +805,73 @@ def test_expired_disclosure_renews_only_for_original_key(client, monkeypatch):
             ("2000-01-01T00:00:00+00:00", order["service_id"]),
         )
     assert client.post(path + "/credentials", headers={"Idempotency-Key": "new-attempt"}).status_code == 409
-    recovered = client.post(path + "/credentials", headers=disclosure)
-    assert recovered.status_code == 200
-    assert recovered.json()["credential_receipt"] != first.json()["credential_receipt"]
+    assert client.post(path + "/credentials", headers=disclosure).status_code == 409
+    detail = client.get(path).json()
+    assert detail["credential_receipt_required"] is True
+    assert detail["credentials_recovery_possible"] is False
+    with database() as db:
+        row = db.execute(
+            "SELECT credentials_retrieved_at FROM service_instances WHERE service_id=?",
+            (order["service_id"],),
+        ).fetchone()
+    assert row["credentials_retrieved_at"] == "2000-01-01T00:00:00+00:00"
+    assert first.json()["credential_receipt"]
+
+
+def test_recover_deleted_service_clears_encrypted_maintenance_binding(client):
+    order = create(client)
+    with database() as db:
+        db.execute(
+            "UPDATE instances SET status='deleted' WHERE instance_id=?",
+            (order["instance_id"],),
+        )
+        db.execute(
+            "UPDATE service_instances SET status='delivered' WHERE service_id=?",
+            (order["service_id"],),
+        )
+        db.execute(
+            "INSERT INTO service_bindings(service_id,binding_json,observed_at) VALUES (?,?,?)",
+            (
+                order["service_id"],
+                json.dumps({"maintenance_access_encrypted": "encrypted-test-key"}),
+                "2026-11-23T00:00:00+00:00",
+            ),
+        )
+    services.recover()
+    with database() as db:
+        service = db.execute(
+            "SELECT status,secrets_encrypted FROM service_instances WHERE service_id=?",
+            (order["service_id"],),
+        ).fetchone()
+        binding = db.execute(
+            "SELECT 1 FROM service_bindings WHERE service_id=?",
+            (order["service_id"],),
+        ).fetchone()
+    assert service["status"] == "deleted"
+    assert service["secrets_encrypted"] is None
+    assert binding is None
+
+
+def test_service_detail_bounds_returned_job_history(client):
+    order = create(client)
+    with database() as db:
+        for index in range(105):
+            db.execute(
+                """INSERT INTO service_jobs(job_id,service_id,action,status,created_at)
+                VALUES (?,?, 'renew_tls','succeeded',?)""",
+                (
+                    f"history-{index:03d}",
+                    order["service_id"],
+                    f"2027-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                ),
+            )
+    detail = client.get(f"/v1/service-instances/{order['service_id']}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert len(body["jobs"]) == 100
+    assert body["jobs_total"] == 106
+    assert body["jobs_truncated"] is True
+    assert body["jobs"][-1]["job_id"] == "history-104"
 
 
 def test_cancel_order_after_definitive_failure_without_resources(client):
@@ -829,7 +1051,10 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     "ansible.builtin.setup": {"gather_subset": ["min"]},
                 },
             ]
-            service_tasks = playbook[0]["tasks"][1]["block"]
+            transaction = playbook[0]["tasks"][0]
+            assert transaction["block"][0]["name"] == "Adquirir exclusión remota"
+            assert transaction["always"][0]["name"] == "Liberar exclusión remota"
+            service_tasks = transaction["block"][1:]
             if application == "nextcloud" and expected_action == "install":
                 compose = json.loads((control.parent / "payload/compose.yaml").read_text())
                 admin_environment = compose["services"]["app"]["environment"]
@@ -969,8 +1194,8 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             ]
             if application == "n8n" and expected_action == "install":
                 assert len(owner_setup_tasks) == 1
-                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante el alta de n8n")
-                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar propietario de n8n")
+                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante la configuración inicial")
+                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar la aplicación")
                 start = application_start_tasks[0]
                 assert start["ansible.builtin.command"]["argv"][-2:] == ["app", "postgres"]
                 assert proxy_stop["ansible.builtin.command"]["argv"][-2:] == ["stop", "caddy"]
@@ -988,6 +1213,14 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                 assert owner_input["password"] == "local-n8n-password"
             else:
                 assert owner_setup_tasks == []
+            if application == "nextcloud" and expected_action == "install":
+                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante la configuración inicial")
+                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar la aplicación")
+                start = application_start_tasks[0]
+                assert start["ansible.builtin.command"]["argv"][-3:] == ["app", "postgres", "redis"]
+                assert proxy_stop["ansible.builtin.command"]["argv"][-2:] == ["stop", "caddy"]
+                assert service_tasks.index(proxy_stop) < service_tasks.index(start)
+                assert service_tasks.index(start) < service_tasks.index(proxy_start)
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(
@@ -1031,7 +1264,7 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
         elif application == "nextcloud":
             secrets["admin_password"] = "nextcloud-local-test-password"
         service = {
-            "service_id": "service-1",
+            "service_id": "123e4567-e89b-12d3-a456-426614174001",
             "instance_id": "instance-1",
             "vmid": 40001,
             "application_id": application,
@@ -1050,11 +1283,23 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             "secrets_encrypted": encrypt(secrets),
         }
         expected_action = "install"
-        service_executor.execute(service, {"action": "install"}, lambda: None)
+        service_executor.execute(
+            service,
+            {"action": "install", "job_id": "job-install", "generation": 1},
+            lambda: None,
+        )
         expected_action = "handoff"
-        service_executor.execute(service, {"action": "handoff"}, lambda: None)
+        service_executor.execute(
+            service,
+            {"action": "handoff", "job_id": "job-handoff", "generation": 1},
+            lambda: None,
+        )
         expected_action = "cleanup"
-        service_executor.execute(service, {"action": "cleanup"}, lambda: None)
+        service_executor.execute(
+            service,
+            {"action": "cleanup", "job_id": "job-cleanup", "generation": 1},
+            lambda: None,
+        )
 
 
 def test_six_infrastructure_slots_and_two_services_are_independent(client):
@@ -1089,6 +1334,23 @@ def test_service_pool_capacity_can_expand_to_four(client, monkeypatch):
     assert sum(claim is not None for claim in claims) == 4
     assert services.claim("service-extra") is None
     assert client.get("/v1/service-workers").json()["max_concurrent"] == 4
+
+
+def test_service_pool_capacity_can_expand_to_six(client, monkeypatch):
+    monkeypatch.setenv("IACP_SERVICE_MAX_CONCURRENT", "6")
+    orders = [
+        create(client, f"service-capacity-six-{index}", f"capacity-six-{index}")
+        for index in range(7)
+    ]
+    for order in orders:
+        ready(order["instance_id"])
+    with ThreadPoolExecutor(max_workers=7) as pool:
+        claims = list(
+            pool.map(services.claim, [f"service-six-{index}" for index in range(7)])
+        )
+    assert sum(claim is not None for claim in claims) == 6
+    assert services.claim("service-six-extra") is None
+    assert client.get("/v1/service-workers").json()["max_concurrent"] == 6
 
 
 def test_order_validation_rolls_back_everything(client):
@@ -1214,6 +1476,19 @@ def test_n8n_recipe_leaves_authentication_to_n8n():
     assert compose['services']['app']['environment']['N8N_PROTOCOL'] == 'https'
 
 
+def test_service_recipe_rejects_caddy_hostname_injection():
+    from pathlib import Path
+
+    release = json.loads((Path(__file__).parents[1] / 'services/releases.json').read_text())['n8n']
+    with pytest.raises(RecipeError, match='SERVICE_DOMAIN_INVALID'):
+        render(
+            'n8n',
+            {'domain': 'valid.example\nreverse_proxy attacker.invalid', 'access_mode': 'domain'},
+            {'database_password': 'safe', 'encryption_key': 'safe'},
+            release,
+        )
+
+
 def test_n8n_generates_owner_when_order_omits_credentials(client, monkeypatch):
     request = body('prueba-service-n8n-instrucciones')
     request['application_id'] = 'n8n'
@@ -1232,7 +1507,8 @@ def test_n8n_generates_owner_when_order_omits_credentials(client, monkeypatch):
     monkeypatch.setattr(services, 'execute', lambda *_: None)
     services.process('service-worker-test', services.claim('service-worker-test'))
     response = client.post(
-        f"/v1/service-instances/{order['service_id']}/credentials"
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "n8n-generated-credentials"},
     )
     assert response.status_code == 200
     access = response.json()
@@ -1267,16 +1543,20 @@ def test_nextcloud_gui_credentials_are_applied_encrypted_and_delivered_once(clie
     monkeypatch.setattr(services, 'execute', lambda *_: None)
     services.process('service-worker-test', services.claim('service-worker-test'))
     credentials = client.post(
-        f"/v1/service-instances/{order['service_id']}/credentials"
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "nextcloud-gui-disclosure"},
     )
     assert credentials.status_code == 200
-    assert credentials.json() == {
+    received_credentials = credentials.json()
+    assert {key: value for key, value in received_credentials.items() if key != "credential_receipt"} == {
         'admin_user': 'cliente_admin',
         'admin_password': 'Nextcloud-Ficticio-2026',
     }
+    assert received_credentials["credential_receipt"]
     assert credentials.headers['cache-control'] == 'no-store'
     assert client.post(
-        f"/v1/service-instances/{order['service_id']}/credentials"
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "nextcloud-second-disclosure"},
     ).status_code == 409
 
 
@@ -1312,19 +1592,23 @@ def test_n8n_owner_credentials_are_applied_encrypted_and_delivered_once(client, 
     monkeypatch.setattr(services, 'execute', lambda *_: None)
     services.process('service-worker-test', services.claim('service-worker-test'))
     credentials = client.post(
-        f"/v1/service-instances/{order['service_id']}/credentials"
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "n8n-owner-disclosure"},
     )
     assert credentials.status_code == 200
-    assert credentials.json() == {
+    received_credentials = credentials.json()
+    assert {key: value for key, value in received_credentials.items() if key != "credential_receipt"} == {
         'owner_email': 'owner@example.invalid',
         'owner_first_name': 'Prueba',
         'owner_last_name': 'Local',
         'owner_password': 'N8n-Ficticio-2026',
         'owner_setup_required': False,
     }
+    assert received_credentials["credential_receipt"]
     assert credentials.headers['cache-control'] == 'no-store'
     assert client.post(
-        f"/v1/service-instances/{order['service_id']}/credentials"
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "n8n-second-disclosure"},
     ).status_code == 409
 
 

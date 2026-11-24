@@ -8,6 +8,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from ipaddress import ip_address
+from datetime import datetime, timedelta, timezone
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 from api.service_catalog import load_service_release, service_release_digest
 from api.service_secrets import decrypt
 from worker.service_recipes import render, RecipeError
@@ -16,6 +20,7 @@ from worker.service_diagnostics import (
     ServiceExecutionUncertain,
     safe_execution_error,
 )
+from worker.service_locks import current_service_job_lock_fd
 
 
 NEXTCLOUD_READY_MAX_SECONDS = 20 * 60
@@ -287,11 +292,181 @@ def pin_release(service_id, release):
         db.execute("COMMIT")
 
 
+def tls_renewal_tasks(base, root, service_id):
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", service_id):
+        raise ServiceBlocked("SERVICE_BINDING_IDENTITY_MISMATCH")
+    certificate = root + "/pilot.crt"
+    key = root + "/pilot.key"
+    next_certificate = certificate + ".next"
+    next_key = key + ".next"
+    previous_certificate = certificate + ".previous"
+    previous_key = key + ".previous"
+
+    def inplace_copy(source, destination, mode, *, name="Activar certificado renovado"):
+        # Caddy monta los archivos como bind mounts; escribir sobre el inode
+        # conserva el montaje visible dentro del contenedor.
+        script = (
+            "from pathlib import Path\n"
+            "import os,sys\n"
+            "src=Path(sys.argv[1]); dst=Path(sys.argv[2])\n"
+            "data=src.read_bytes()\n"
+            "with dst.open('wb') as stream:\n"
+            " stream.write(data); stream.flush(); os.fsync(stream.fileno())\n"
+            "dst.chmod(int(sys.argv[3],8))\n"
+        )
+        return {
+            "name": name,
+            "ansible.builtin.command": {
+                "argv": ["python3", "-c", script, source, destination, mode]
+            },
+            "no_log": True,
+        }
+
+    block = [
+        {
+            "name": "Guardar certificado anterior",
+            "ansible.builtin.copy": {
+                "src": certificate,
+                "dest": previous_certificate,
+                "remote_src": True,
+                "mode": "0644",
+            },
+            "no_log": True,
+        },
+        {
+            "name": "Guardar clave anterior",
+            "ansible.builtin.copy": {
+                "src": key,
+                "dest": previous_key,
+                "remote_src": True,
+                "mode": "0600",
+            },
+            "no_log": True,
+        },
+        {
+            "name": "Escribir certificado temporal",
+            "ansible.builtin.copy": {
+                "src": "payload/pilot.crt",
+                "dest": next_certificate,
+                "mode": "0644",
+            },
+            "no_log": True,
+        },
+        {
+            "name": "Escribir clave temporal",
+            "ansible.builtin.copy": {
+                "src": "payload/pilot.key",
+                "dest": next_key,
+                "mode": "0600",
+            },
+            "no_log": True,
+        },
+        inplace_copy(next_certificate, certificate, "0644"),
+        inplace_copy(next_key, key, "0600"),
+        {"name": "Reiniciar Caddy", **{
+            "ansible.builtin.command": {
+                "argv": base + ["restart", "caddy"]
+            },
+            "changed_when": False,
+        }},
+        {
+            "name": "Verificar HTTPS tras renovar certificado",
+            "ansible.builtin.uri": {
+                "url": "https://{{ ansible_host }}/",
+                "validate_certs": True,
+                "ca_path": root + "/pilot-ca.crt",
+                "status_code": [200],
+            },
+            "register": "renewed_https_result",
+            "until": "renewed_https_result is succeeded",
+            "retries": 6,
+            "delay": 5,
+            "no_log": True,
+        },
+        {
+            "name": "Confirmar activación del certificado renovado",
+            "ansible.builtin.set_fact": {"tls_renewal_committed": True},
+        },
+    ]
+    return [
+        {
+            "name": "Renovar certificado TLS para acceso por IP",
+            "block": block,
+            "rescue": [
+                inplace_copy(
+                    previous_certificate,
+                    certificate,
+                    "0644",
+                    name="Restaurar certificado anterior",
+                ),
+                inplace_copy(
+                    previous_key,
+                    key,
+                    "0600",
+                    name="Restaurar clave anterior",
+                ),
+                {
+                    "name": "Restaurar Caddy tras fallo de renovación",
+                    "ansible.builtin.command": {
+                        "argv": base + ["restart", "caddy"]
+                    },
+                    "changed_when": False,
+                },
+                {
+                    "name": "Verificar HTTPS restaurado",
+                    "ansible.builtin.uri": {
+                        "url": "https://{{ ansible_host }}/",
+                        "validate_certs": True,
+                        "ca_path": root + "/pilot-ca.crt",
+                        "status_code": [200],
+                    },
+                    "register": "restored_https_result",
+                    "until": "restored_https_result is succeeded",
+                    "retries": 6,
+                    "delay": 5,
+                    "no_log": True,
+                },
+                {
+                    "name": "Marcar restauración del certificado anterior",
+                    "ansible.builtin.set_fact": {"tls_renewal_restored": True},
+                },
+                {
+                    "name": "Informar fallo de renovación TLS",
+                    "ansible.builtin.fail": {
+                        "msg": "SERVICE_TLS_RENEWAL_VERIFICATION_FAILED"
+                    },
+                },
+            ],
+            "always": [
+                {
+                    "name": "Retirar archivos nuevos de renovación TLS",
+                    "ansible.builtin.file": {
+                        "path": "{{ item }}",
+                        "state": "absent",
+                    },
+                    "loop": [next_certificate, next_key],
+                    "no_log": True,
+                },
+                {
+                    "name": "Retirar copias de seguridad TLS verificadas",
+                    "ansible.builtin.file": {
+                        "path": "{{ item }}",
+                        "state": "absent",
+                    },
+                    "loop": [previous_certificate, previous_key],
+                    "when": "tls_renewal_committed | default(false) or tls_renewal_restored | default(false)",
+                    "no_log": True,
+                },
+            ],
+        }
+    ]
+
+
 def execute(service, job, heartbeat):
     if os.getenv("IACP_SERVICE_EXECUTION_ENABLED", "0") != "1":
         raise ServiceBlocked("SERVICE_EXECUTION_DISABLED")
     installing = job["action"] == "install"
-    if not installing and job["action"] not in {"handoff", "cleanup"}:
+    if not installing and job["action"] not in {"handoff", "cleanup", "renew_tls"}:
         raise ServiceBlocked("SERVICE_ACTION_UNSUPPORTED")
     directory = Path(
         os.environ.get("IACP_SERVICE_BINDINGS_DIR", "/etc/iacp/service-bindings")
@@ -314,6 +489,11 @@ def execute(service, job, heartbeat):
     if (
         binding.get("instance_id") != service["instance_id"]
         or binding.get("vmid") != service["vmid"]
+    ):
+        raise ServiceBlocked("SERVICE_BINDING_IDENTITY_MISMATCH")
+    if not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        str(service["service_id"]),
     ):
         raise ServiceBlocked("SERVICE_BINDING_IDENTITY_MISMATCH")
     from ipaddress import ip_address
@@ -347,7 +527,32 @@ def execute(service, job, heartbeat):
     spec = json.loads(service.get("spec_json") or "{}")
     if spec.get("ipv4_cidr") and str(ip_interface(spec["ipv4_cidr"]).ip) != address:
         raise ServiceBlocked("SERVICE_ADDRESS_IDENTITY_MISMATCH")
-    secrets = decrypt(service["secrets_encrypted"])
+    secrets = decrypt(service["secrets_encrypted"]) if service.get("secrets_encrypted") else {}
+    maintenance_access = None
+    if job["action"] in {"cleanup", "renew_tls"} and binding.get(
+        "maintenance_access_encrypted"
+    ):
+        try:
+            from api.service_secrets import decrypt as decrypt_service_secret
+
+            maintenance_access = decrypt_service_secret(
+                binding["maintenance_access_encrypted"]
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ServiceBlocked("SERVICE_MAINTENANCE_KEY_UNAVAILABLE") from None
+    if job["action"] == "renew_tls" or (
+        job["action"] == "cleanup" and not secrets
+    ):
+        if not maintenance_access or not all(
+            maintenance_access.get(key)
+            for key in ("private_key", "public_key", "installer_public_key")
+        ):
+            raise ServiceBlocked("SERVICE_MAINTENANCE_KEY_UNAVAILABLE")
+        secrets.update(
+            ssh_private_key=maintenance_access["private_key"],
+            management_ssh_public_key=maintenance_access["public_key"],
+            ssh_public_key=maintenance_access["installer_public_key"],
+        )
     files = {}
     if installing:
         try:
@@ -386,6 +591,32 @@ def execute(service, job, heartbeat):
             except (OSError, ValueError):
                 raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
         pin_release(service["service_id"], release)
+    elif job["action"] == "renew_tls":
+        if (
+            service["application_id"] not in {"nextcloud", "n8n"}
+            or configuration.get("access_mode") != "ip"
+        ):
+            raise ServiceBlocked("SERVICE_TLS_RENEWAL_UNSUPPORTED")
+        configuration["domain"] = address
+        from worker.service_tls import issue
+
+        try:
+            files.update(issue(address))
+            certificate = x509.load_pem_x509_certificate(files["pilot.crt"].encode())
+            private_key = serialization.load_pem_private_key(
+                files["pilot.key"].encode(), password=None
+            )
+            san = certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value.get_values_for_type(x509.IPAddress)
+            if (
+                san != [ip_address(address)]
+                or certificate.not_valid_after_utc <= datetime.now(timezone.utc) + timedelta(days=5)
+                or certificate.public_key().public_numbers() != private_key.public_key().public_numbers()
+            ):
+                raise ValueError("SERVICE_TLS_RENEWAL_CERTIFICATE_INVALID")
+        except (OSError, ValueError):
+            raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
     root = f"/opt/iacp-services/{service['service_id']}"
     command = lambda argv: {
         "ansible.builtin.command": {"argv": argv},
@@ -394,7 +625,9 @@ def execute(service, job, heartbeat):
     tasks = [{"name": "Esperar cloud-init", **command(["cloud-init", "status", "--wait", "--long"]),
               "register": "cloud_init", "failed_when": "cloud_init.rc not in [0, 2] or 'status: done' not in cloud_init.stdout"}]
     base = ["docker", "compose", "--project-directory", root]
-    if not installing:
+    if job["action"] == "renew_tls":
+        tasks.extend(tls_renewal_tasks(base, root, service["service_id"]))
+    elif not installing:
         from worker.service_bootstrap import installer_key_pattern
 
         if job["action"] == "cleanup":
@@ -424,17 +657,32 @@ def execute(service, job, heartbeat):
                     "no_log": True,
                 },
             ])
-        tasks.append(
-            {
-                "name": "Retirar clave temporal",
-                "ansible.builtin.lineinfile": {
-                    "path": "/root/.ssh/authorized_keys",
-                    "regexp": installer_key_pattern(secrets["ssh_public_key"]),
-                    "state": "absent",
-                },
-                "no_log": True,
-            }
-        )
+        if job["action"] in {"handoff", "cleanup"}:
+            tasks.append(
+                {
+                    "name": "Retirar clave temporal",
+                    "ansible.builtin.lineinfile": {
+                        "path": "/root/.ssh/authorized_keys",
+                        "regexp": installer_key_pattern(secrets["ssh_public_key"]),
+                        "state": "absent",
+                    },
+                    "no_log": True,
+                }
+            )
+        if job["action"] == "cleanup" and maintenance_access:
+            tasks.append(
+                {
+                    "name": "Retirar clave de mantenimiento",
+                    "ansible.builtin.lineinfile": {
+                        "path": "/root/.ssh/authorized_keys",
+                        "regexp": installer_key_pattern(
+                            maintenance_access["public_key"]
+                        ),
+                        "state": "absent",
+                    },
+                    "no_log": True,
+                }
+            )
     else:
         # El host lock evita dos Ansible simultáneos; las pérdidas de worker requieren revisión explícita.
         tasks += [
@@ -559,15 +807,21 @@ def execute(service, job, heartbeat):
                 }
             )
         up = base + ["up", "-d", "--wait", "--wait-timeout", "300"]
-        if service["application_id"] == "n8n":
+        if service["application_id"] in {"n8n", "nextcloud"}:
             tasks.append({
-                "name": "Cerrar proxy durante el alta de n8n",
+                "name": "Cerrar proxy durante la configuración inicial",
                 **command(base + ["stop", "caddy"]),
             })
         tasks += [
             {
                 "name": "Arrancar aplicación",
-                **command(up + ["app", "postgres"] if service["application_id"] == "n8n" else up),
+                **command(
+                    up + ["app", "postgres"]
+                    if service["application_id"] == "n8n"
+                    else up + ["app", "postgres", "redis"]
+                    if service["application_id"] == "nextcloud"
+                    else up
+                ),
             }
         ]
         if service["application_id"] == "n8n":
@@ -677,9 +931,9 @@ def execute(service, job, heartbeat):
                 "no_log": True,
             }
         )
-        if service["application_id"] == "n8n":
+        if service["application_id"] in {"n8n", "nextcloud"}:
             tasks.append({
-                "name": "Publicar proxy tras verificar propietario de n8n",
+                "name": "Publicar proxy tras verificar la aplicación",
                 **command(up + ["caddy"]),
             })
         if configuration.get("domain") and service["application_id"] in {
@@ -730,10 +984,58 @@ def execute(service, job, heartbeat):
         (folder / "inventory.json").write_text(json.dumps(inventory))
         # La revocación de la clave es idempotente. Una pérdida durante el handoff requiere
         # comprobar su ausencia por el canal del operador antes de cerrar la entrega.
-        # Bloqueo persistente en el invitado, con generación explícita. No expira automáticamente.
+        # La identidad remota permite retirar solo el bloqueo de una ejecución
+        # anterior cuya exclusión local ya se adquirió. Así una interrupción de
+        # Ansible no deja un directorio vacío que bloquee todos los reintentos.
         lock = "/var/lib/iacp-service-install.lock"
-        lock_tasks = [{"name": "Adquirir exclusión remota", **command(["mkdir", lock])}]
-        cleanup = [{"name": "Liberar exclusión remota", **command(["rmdir", lock])}]
+        owner = {
+            "service_id": service["service_id"],
+            "job_id": job["job_id"],
+            "generation": job["generation"],
+        }
+        previous_job_id = str(job.get("previous_job_id") or "")
+        acquire_lock_script = (
+            "import json,os,sys\n"
+            "from pathlib import Path\n"
+            "lock=Path(sys.argv[1]); current=json.loads(sys.argv[2]); previous=sys.argv[3]\n"
+            "if lock.exists() or lock.is_symlink():\n"
+            " if lock.is_symlink() or not lock.is_dir(): raise SystemExit(73)\n"
+            " owner_path=lock/'owner.json'\n"
+            " try: old=json.loads(owner_path.read_text())\n"
+            " except FileNotFoundError: old=None\n"
+            " except (OSError,ValueError): raise SystemExit(73)\n"
+            " entries=list(lock.iterdir())\n"
+            " if old is None:\n"
+            "  if entries or (current['generation'] <= 1 and not previous): raise SystemExit(73)\n"
+            " elif not (old.get('service_id')==current['service_id'] and ((old.get('job_id')==current['job_id'] and type(old.get('generation')) is int and old['generation']<current['generation']) or old.get('job_id')==previous)):\n"
+            "  raise SystemExit(73)\n"
+            " if old is not None and entries != [owner_path]: raise SystemExit(73)\n"
+            " if old is not None: owner_path.unlink()\n"
+            " lock.rmdir()\n"
+            "os.mkdir(lock,0o700)\n"
+            "with (lock/'owner.json').open('x') as stream:\n"
+            " json.dump(current,stream,separators=(',',':')); stream.flush(); os.fsync(stream.fileno())\n"
+        )
+        release_lock_script = (
+            "import json,sys\n"
+            "from pathlib import Path\n"
+            "lock=Path(sys.argv[1]); expected=json.loads(sys.argv[2]); owner=lock/'owner.json'\n"
+            "if not lock.exists() and not lock.is_symlink(): raise SystemExit(0)\n"
+            "if lock.is_symlink() or not lock.is_dir(): raise SystemExit(73)\n"
+            "try: actual=json.loads(owner.read_text())\n"
+            "except (OSError,ValueError): raise SystemExit(73)\n"
+            "if actual != expected or list(lock.iterdir()) != [owner]: raise SystemExit(73)\n"
+            "owner.unlink(); lock.rmdir()\n"
+        )
+        owner_json = json.dumps(owner, separators=(",", ":"))
+        lock_tasks = [{
+            "name": "Adquirir exclusión remota",
+            **command(["python3", "-c", acquire_lock_script, lock, owner_json, previous_job_id]),
+        }]
+        cleanup = [{
+            "name": "Liberar exclusión remota",
+            **command(["python3", "-c", release_lock_script, lock, owner_json]),
+        }]
         playbook = [
             {
                 "hosts": "all",
@@ -757,7 +1059,7 @@ def execute(service, job, heartbeat):
                         "ansible.builtin.setup": {"gather_subset": ["min"]},
                     },
                 ],
-                "tasks": lock_tasks + [{"block": tasks, "always": cleanup}],
+                "tasks": [{"block": lock_tasks + tasks, "always": cleanup}],
             }
         ]
         (folder / "playbook.json").write_text(json.dumps(playbook))
@@ -795,6 +1097,9 @@ def execute(service, job, heartbeat):
                 stdout=output,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                pass_fds=(
+                    (lock_fd,) if (lock_fd := current_service_job_lock_fd()) is not None else ()
+                ),
             )
             import time
 

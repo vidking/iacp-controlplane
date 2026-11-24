@@ -74,5 +74,6 @@ def test_error_de_modelo_conserva_esquema_sin_reflejar_entrada():
 def test_inicio_exige_token_antes_de_inicializar_postgres(monkeypatch):
     monkeypatch.delenv("IACP_REQUIRE_API_TOKEN", raising=False)
     monkeypatch.delenv("IACP_API_TOKEN", raising=False)
+    monkeypatch.delenv("IACP_ALLOW_INSECURE_LOCAL_DEV", raising=False)
     with pytest.raises(RuntimeError, match="IACP_API_TOKEN"):
         startup()

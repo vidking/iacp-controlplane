@@ -72,8 +72,11 @@ def _compose_args(data: dict, compose: Path, env_file: Path) -> list[str]:
     profiles = []
     if data.get("services_enabled", False):
         profiles.extend(["--profile", "services"])
-        if len(_service_worker_names(data)) > 2:
+        worker_count = len(_service_worker_names(data))
+        if worker_count > 2:
             profiles.extend(["--profile", "service-workers-3-4"])
+        if worker_count > 4:
+            profiles.extend(["--profile", "service-workers-5-6"])
     return [
         "docker", "compose", "--project-name", data["project"],
         "--env-file", str(env_file), "-f", str(compose),
@@ -84,8 +87,8 @@ def _service_worker_names(data: dict) -> tuple[str, ...]:
     if not data.get("services_enabled", False):
         return ()
     count = data.get("service_worker_count", 2)
-    if type(count) is not int or count not in {2, 4}:
-        raise GateError("service_worker_count debe ser 2 o 4")
+    if type(count) is not int or count not in {2, 4, 6}:
+        raise GateError("service_worker_count debe ser 2, 4 o 6")
     return tuple(f"service-worker-{number}" for number in range(1, count + 1))
 
 

@@ -712,11 +712,12 @@ def test_service_policy_allows_only_authorized_shared_mng(tmp_path):
         go_live._check_policy(manifest, config, env)
 
 
-def test_service_policy_supports_four_workers_without_changing_infra_pool(tmp_path):
-    config, env, manifest = _service_configuration(tmp_path, worker_count=4)
+def test_service_policy_supports_six_workers_without_changing_infra_pool(tmp_path):
+    config, env, manifest = _service_configuration(tmp_path, worker_count=6)
     result = go_live._check_policy(manifest, config, env)
-    assert result["service_workers"] == [f"service-worker-{number}" for number in range(1, 5)]
-    assert go_live._compose_args(manifest, Path("compose.yml"), env)[-4:] == [
-        "--profile", "services", "--profile", "service-workers-3-4"
+    assert result["service_workers"] == [f"service-worker-{number}" for number in range(1, 7)]
+    assert go_live._compose_args(manifest, Path("compose.yml"), env)[-6:] == [
+        "--profile", "services", "--profile", "service-workers-3-4",
+        "--profile", "service-workers-5-6"
     ]
     assert len([name for name in config["services"] if name.startswith("worker-")]) == 6

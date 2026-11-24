@@ -9,7 +9,7 @@ from cryptography.fernet import InvalidToken
 from api.db import database
 from api.protection import is_protected_vmid
 from api.service import now
-from api.service_secrets import decrypt
+from api.service_secrets import decrypt, encrypt
 from worker.guest_identity import (
     GuestIdentityError,
     _mac_from_config,
@@ -253,7 +253,7 @@ print(json.dumps({'instance_id':identifier,'mac_address':mac,'host_key':' '.join
 def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
     with database() as db:
         service = db.execute(
-            "SELECT service_id, configuration_json, status FROM service_instances WHERE instance_id=?",
+            "SELECT service_id, configuration_json, secrets_encrypted, status FROM service_instances WHERE instance_id=?",
             (instance_id,),
         ).fetchone()
         instance = db.execute(
@@ -427,11 +427,23 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
     }
     if not service:
         return binding
+    if not service["secrets_encrypted"]:
+        raise GuestIdentityError("SERVICE_MAINTENANCE_CREDENTIALS_UNAVAILABLE")
+    credentials = decrypt(service["secrets_encrypted"])
+    maintenance_access = {
+        "private_key": credentials.get("management_ssh_private_key"),
+        "public_key": credentials.get("management_ssh_public_key"),
+        "installer_public_key": credentials.get("ssh_public_key"),
+    }
+    if not all(maintenance_access.values()):
+        raise GuestIdentityError("SERVICE_MAINTENANCE_CREDENTIALS_UNAVAILABLE")
+    stored_binding = dict(binding)
+    stored_binding["maintenance_access_encrypted"] = encrypt(maintenance_access)
     with database() as db:
         db.execute(
             """INSERT INTO service_bindings VALUES (?, ?, ?) ON CONFLICT(service_id)
             DO UPDATE SET binding_json=excluded.binding_json, observed_at=excluded.observed_at""",
-            (service["service_id"], json.dumps(binding), now()),
+            (service["service_id"], json.dumps(stored_binding), now()),
         )
     return binding
 

@@ -16,6 +16,9 @@ x-app-environment: &app-environment
   IACP_PROXMOX_MNG_ENDPOINT: ${IACP_PROXMOX_MNG_ENDPOINT:?Definir el endpoint MNG}
   IACP_PROXMOX_MNG_API_TOKEN: ${IACP_PROXMOX_MNG_API_TOKEN:?Definir el token MNG}
   IACP_PROXMOX_MNG_POOL_ID: ${IACP_PROXMOX_MNG_POOL_ID:-iacp-lab}
+  IACP_PROXMOX_ENDPOINT: ${IACP_PROXMOX_MNG_ENDPOINT:?Definir el endpoint MNG}
+  IACP_PROXMOX_API_TOKEN: ${IACP_PROXMOX_MNG_API_TOKEN:?Definir el token MNG}
+  IACP_PROXMOX_POOL_ID: ${IACP_PROXMOX_MNG_POOL_ID:-iacp-lab}
   IACP_VMID_MIN: ${IACP_VMID_MIN:-40000}
   IACP_VMID_MAX: ${IACP_VMID_MAX:-49999}
   IACP_VMID_REUSE: ${IACP_VMID_REUSE:-1}
@@ -76,13 +79,13 @@ services:
       <<: *app-environment
       IACP_WORKDATA_DIR: /var/lib/iacp-controlplane
       IACP_API_TOKEN: ${IACP_API_TOKEN:-}
-      IACP_REQUIRE_API_TOKEN: ${IACP_REQUIRE_API_TOKEN:-0}
+      IACP_ALLOW_INSECURE_LOCAL_DEV: ${IACP_ALLOW_INSECURE_LOCAL_DEV:-0}
       IACP_ROOT_PASSWORD_MIN_LENGTH: ${IACP_ROOT_PASSWORD_MIN_LENGTH:-12}
       IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
-      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-2}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
       IACP_SERVICE_KEY_FILE: /run/iacp-services/key
-      IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-0}
+      IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-100}
       IACP_WORKER_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
     extra_hosts:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
@@ -264,7 +267,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
-      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-2}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
       IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
       IACP_PROD_STATIC_BRIDGE: ${IACP_PROD_STATIC_BRIDGE:-vmbr0}
       IACP_SERVICE_KEY_FILE: /run/iacp-services/key
@@ -272,6 +275,7 @@ services:
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
       - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy
@@ -295,7 +299,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
-      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-2}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
       IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
       IACP_PROD_STATIC_BRIDGE: ${IACP_PROD_STATIC_BRIDGE:-vmbr0}
       IACP_SERVICE_KEY_FILE: /run/iacp-services/key
@@ -303,6 +307,7 @@ services:
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
       - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy
@@ -326,13 +331,14 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
-      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-2}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
       IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
       IACP_SERVICE_KEY_FILE: /run/iacp-services/key
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
       - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy
@@ -356,13 +362,78 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
-      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-2}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
       IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
       IACP_SERVICE_KEY_FILE: /run/iacp-services/key
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
       - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  service-worker-5:
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    profiles: [service-workers-5-6]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [python, -m, worker.services, --worker-id, service-worker-5]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-iacp_controlplane}
+      PGUSER: ${POSTGRES_USER:-iacp}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
+      IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
+      IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
+      IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
+      IACP_PROD_STATIC_BRIDGE: ${IACP_PROD_STATIC_BRIDGE:-vmbr0}
+      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
+      IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
+      IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
+    volumes:
+      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
+    depends_on:
+      api:
+        condition: service_healthy
+
+  service-worker-6:
+    image: ${IACP_API_IMAGE:-iacp-controlplane:local}
+    profiles: [service-workers-5-6]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [python, -m, worker.services, --worker-id, service-worker-6]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-iacp_controlplane}
+      PGUSER: ${POSTGRES_USER:-iacp}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD}
+      IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
+      IACP_SERVICE_EXECUTION_ENABLED: ${IACP_SERVICE_EXECUTION_ENABLED:-0}
+      IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
+      IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
+      IACP_PROD_STATIC_BRIDGE: ${IACP_PROD_STATIC_BRIDGE:-vmbr0}
+      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
+      IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
+      IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
+    volumes:
+      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
         condition: service_healthy

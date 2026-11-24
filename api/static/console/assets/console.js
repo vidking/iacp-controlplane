@@ -1,5 +1,12 @@
 (() => {
-  const state = { token: "", selectedId: null, images: [] };
+  const state = {
+    token: "",
+    selectedId: null,
+    detailId: null,
+    detailName: "",
+    images: [],
+    mutationsAvailable: false,
+  };
   const $ = (id) => document.getElementById(id);
 
   function showToast(message, error = false) {
@@ -149,20 +156,48 @@
   async function loadInstances() {
     if (!state.token) return;
     try {
-      renderInstances(await api("/v1/instances"));
+      renderInstances(await api("/v1/instances?status=all&limit=200"));
     } catch (error) { showToast(error.message, true); }
   }
 
   async function selectInstance(instanceId) {
     state.selectedId = instanceId;
+    clearDetail("Cargando instancia…");
     await refreshDetail();
     await loadInstances();
   }
 
+  function clearDetail(message = "Selecciona una instancia para cargar su ficha.") {
+    state.detailId = null;
+    state.detailName = "";
+    state.mutationsAvailable = false;
+    $("detail-content").classList.add("hidden");
+    $("detail-empty").classList.remove("hidden");
+    $("detail-empty").textContent = message;
+    $("detail-title").textContent = "Selecciona una instancia";
+    $("detail-status").textContent = "Sin selección";
+    $("detail-status").className = "badge muted";
+    $("detail-facts").replaceChildren();
+    $("operation-output").textContent = "Sin operación.";
+    renderPower("unknown", message, false);
+    $("delete-button").disabled = true;
+    $("reconcile-button").classList.add("hidden");
+    $("reconcile-button").disabled = true;
+  }
+
   async function refreshDetail() {
     if (!state.selectedId || !state.token) return;
+    const selectedId = state.selectedId;
+    state.mutationsAvailable = false;
+    state.detailId = null;
+    $("delete-button").disabled = true;
+    $("reconcile-button").disabled = true;
+    $("reconcile-button").classList.add("hidden");
     try {
-      const instance = await api(`/v1/instances/${state.selectedId}`);
+      const instance = await api(`/v1/instances/${selectedId}`);
+      if (state.selectedId !== selectedId) return;
+      state.detailId = selectedId;
+      state.detailName = instance.name;
       $("detail-empty").classList.add("hidden");
       $("detail-content").classList.remove("hidden");
       $("detail-title").textContent = instance.name;
@@ -177,18 +212,27 @@
       ].map(([label, value]) => `<div class="fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
       $("operation-output").textContent = operationPayload(instance.latest_operation || { status: "sin operación" });
       if (instance.vmid && !["pending", "provisioning", "deleting", "deleted"].includes(instance.status)) {
-        renderPower(instance.power_state, "Estado persistido; actualizando Proxmox…", true);
+        renderPower(instance.power_state, "Estado persistido; actualizando Proxmox…", false);
         try {
-          const power = await api(`/v1/instances/${state.selectedId}/power`);
+          const power = await api(`/v1/instances/${selectedId}/power`);
+          if (state.selectedId !== selectedId) return;
+          state.mutationsAvailable = Boolean(power.mutations_available);
           renderPower(power.power_state, power.blocked_reason || "Estado observado en Proxmox.", power.mutations_available);
         } catch (error) {
+          if (state.selectedId !== selectedId) return;
+          state.mutationsAvailable = false;
           renderPower(instance.power_state || "unknown", error.message, false);
         }
       } else {
+        state.mutationsAvailable = false;
         renderPower(instance.power_state || "unknown", "La instancia todavía está aprovisionándose.", false);
       }
-      updateActionButtons(instance);
-    } catch (error) { showToast(error.message, true); }
+      updateActionButtons(instance, state.mutationsAvailable);
+    } catch (error) {
+      if (state.selectedId !== selectedId) return;
+      clearDetail(`No se pudo cargar la instancia seleccionada. ${error.message}`);
+      showToast(error.message, true);
+    }
   }
 
   function renderPower(powerState, note, enabled) {
@@ -197,20 +241,27 @@
     document.querySelectorAll(".power-action").forEach((button) => { button.disabled = !enabled; });
   }
 
-  function updateActionButtons(instance) {
-    const busy = ["pending", "provisioning", "deleting"].includes(instance.status);
-    document.querySelectorAll(".power-action").forEach((button) => { button.disabled = busy || instance.status === "deleted"; });
-    $("delete-button").disabled = busy || instance.status === "deleted";
+  function updateActionButtons(instance, mutationsAvailable) {
+    const blocked = ["pending", "provisioning", "deleting", "uncertain", "failed", "deleted"].includes(instance.status);
+    const enabled = Boolean(mutationsAvailable) && !blocked;
+    document.querySelectorAll(".power-action").forEach((button) => { button.disabled = !enabled; });
+    $("delete-button").disabled = !enabled;
+    const canReconcile = instance.status === "uncertain" && state.detailId === state.selectedId;
+    $("reconcile-button").classList.toggle("hidden", !canReconcile);
+    $("reconcile-button").disabled = !canReconcile;
   }
 
   async function pollOperation(operationId, instanceId = state.selectedId) {
     for (let attempt = 0; attempt < 180; attempt += 1) {
       const operation = await api(`/v1/operations/${operationId}`);
-      $("operation-output").textContent = operationPayload(operation);
+      if (state.selectedId === instanceId && state.detailId === instanceId) {
+        $("operation-output").textContent = operationPayload(operation);
+      }
       if (["completed", "failed", "uncertain"].includes(operation.status)) {
-        if (instanceId) state.selectedId = instanceId;
-        await loadInstances();
-        await refreshDetail();
+        if (state.selectedId === instanceId) {
+          await loadInstances();
+          await refreshDetail();
+        }
         return operation;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
@@ -262,30 +313,55 @@
   }
 
   async function powerAction(action) {
-    if (!state.selectedId) return;
+    const instanceId = state.detailId;
+    if (!instanceId || state.selectedId !== instanceId || !state.mutationsAvailable) return;
     try {
-      const result = await api(`/v1/instances/${state.selectedId}/power/${action}`, {
+      const result = await api(`/v1/instances/${instanceId}/power/${action}`, {
         method: "POST",
         idempotencyKey: newIdempotencyKey(`console-${action}`),
       });
       showToast(`${action} encolado.`);
-      const operation = await pollOperation(result.operation_id);
+      const operation = await pollOperation(result.operation_id, instanceId);
       if (operation.status === "completed") showToast(`${action} completado.`);
       else showToast(`${action}: ${operation.error_code || operation.status}`, true);
     } catch (error) { showToast(error.message, true); }
   }
 
   async function destroyInstance() {
-    if (!state.selectedId || !window.confirm("¿Destruir esta instancia?")) return;
+    const instanceId = state.detailId;
+    if (!instanceId || state.selectedId !== instanceId || !state.mutationsAvailable) return;
+    const label = `${state.detailName || "instancia"} (${instanceId})`;
+    if (!window.confirm(`¿Destruir ${label}?`)) return;
     try {
-      const result = await api(`/v1/instances/${state.selectedId}`, {
+      const result = await api(`/v1/instances/${instanceId}`, {
         method: "DELETE",
         idempotencyKey: newIdempotencyKey("console-destroy"),
       });
       showToast("Destroy encolado.");
-      const operation = await pollOperation(result.operation_id);
+      const operation = await pollOperation(result.operation_id, instanceId);
       showToast(`Destroy terminó en ${operation.status}.`, operation.status !== "completed");
     } catch (error) { showToast(error.message, true); }
+  }
+
+  async function reconcileInstance() {
+    const instanceId = state.detailId;
+    if (!instanceId || state.selectedId !== instanceId) return;
+    const button = $("reconcile-button");
+    button.disabled = true;
+    try {
+      const result = await api(`/v1/instances/${instanceId}/reconcile`, {
+        method: "POST",
+        idempotencyKey: newIdempotencyKey("console-reconcile"),
+      });
+      showToast("Reconciliación encolada.");
+      const operation = await pollOperation(result.operation_id, instanceId);
+      showToast(`Reconciliación terminó en ${operation.status}.`, operation.status !== "completed");
+    } catch (error) { showToast(error.message, true); }
+    finally {
+      if (state.detailId === instanceId && state.selectedId === instanceId) {
+        button.disabled = false;
+      }
+    }
   }
 
   function statusClass(status) {
@@ -322,6 +398,7 @@
   $("network-profile").addEventListener("change", updateNetworkProfileHelp);
   $("refresh-detail").addEventListener("click", refreshDetail);
   $("delete-button").addEventListener("click", destroyInstance);
+  $("reconcile-button").addEventListener("click", reconcileInstance);
   document.querySelectorAll(".power-action").forEach((button) => button.addEventListener("click", () => powerAction(button.dataset.action)));
 
   window.setInterval(() => { if (state.token) { loadObservability(); loadInstances(); if (state.selectedId) refreshDetail(); } }, 10000);

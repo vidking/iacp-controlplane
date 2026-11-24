@@ -227,8 +227,12 @@ DOCS_DIR = Path(__file__).parent / "static" / "docs"
 bearer = HTTPBearer(auto_error=False, scheme_name="Bearer")
 
 
-def _require_api_token() -> bool:
-    return os.getenv("IACP_REQUIRE_API_TOKEN", "1").strip().lower() not in {"0", "false", "no", "off"}
+def _allow_insecure_local_development() -> bool:
+    return (
+        os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop"
+        and os.getenv("IACP_ALLOW_INSECURE_LOCAL_DEV", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
 
 
 def _max_concurrent() -> int:
@@ -240,9 +244,9 @@ def _max_concurrent() -> int:
 
 def _service_max_concurrent() -> int:
     try:
-        return max(1, int(os.getenv("IACP_SERVICE_MAX_CONCURRENT", "2")))
+        return max(1, int(os.getenv("IACP_SERVICE_MAX_CONCURRENT", "6")))
     except ValueError:
-        return 2
+        return 6
 
 
 def _heartbeat_age(value: str | None) -> float | None:
@@ -287,7 +291,9 @@ def authorize(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
     configured = os.getenv("IACP_API_TOKEN", "").strip()
-    if _require_api_token() and not configured:
+    if not configured:
+        if _allow_insecure_local_development():
+            return
         raise HTTPException(status_code=503, detail="API token no configurado")
     if configured and (
         credentials is None
@@ -301,8 +307,8 @@ def authorize(
 
 
 def startup() -> None:
-    if _require_api_token() and not os.getenv("IACP_API_TOKEN", "").strip():
-        raise RuntimeError("IACP_API_TOKEN es obligatorio cuando IACP_REQUIRE_API_TOKEN está activo")
+    if not os.getenv("IACP_API_TOKEN", "").strip() and not _allow_insecure_local_development():
+        raise RuntimeError("IACP_API_TOKEN es obligatorio")
     initialize()
     initialize_idempotency()
     prune_history()
@@ -469,12 +475,18 @@ def network_profiles():
     summary="Encolar una orden de orquestación",
     description=(
         "Acepta una orden de ciclo de vida en el entorno lógico lab. El servidor "
-        "resuelve el stack y el nodo físico; no se admite selección de infraestructura."
+        "resuelve el stack y el nodo físico; no se admite selección de infraestructura. "
+        "Idempotency-Key es obligatorio para que los reintentos no repitan efectos."
     ),
     operation_id="enqueueOperation",
 )
-def post_operation(request: OperationRequest):
-    return create_operation(request)
+def post_operation(
+    request: OperationRequest,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=1, max_length=255)
+    ],
+):
+    return create_operation(request, idempotency_key)
 
 
 @app.post(
@@ -1131,7 +1143,10 @@ def deliver_service(
 
 
 @app.post("/v1/service-instances/{service_id}/credentials", dependencies=[Depends(authorize)], tags=["applications"])
-def retrieve_service_credentials(service_id: str, idempotency_key: str | None = Header(default=None)):
+def retrieve_service_credentials(
+    service_id: str,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=255),
+):
     return JSONResponse(applications.credentials(service_id, idempotency_key), headers={"Cache-Control": "no-store"})
 
 

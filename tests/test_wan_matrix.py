@@ -4,8 +4,10 @@ pytestmark = pytest.mark.no_database
 
 from scripts.wan_matrix import (
     Matrix,
+    application_certification_matrix,
     allocate_matrix_names,
     cases,
+    kvm_certification_matrix,
     matrix_capacity_batch,
     matrix_netbox_tags,
     matrix_runtime,
@@ -15,7 +17,7 @@ from scripts.wan_matrix import (
     production_service_matrix,
     production_service_pilot_indexes,
     require_kvm_capacity,
-    require_four_idle_service_workers,
+    require_six_idle_service_workers,
     required_cycles,
     ssh_failure_category,
     verify_netbox_state,
@@ -40,6 +42,34 @@ def test_kvm_wan_matrix_covers_all_six_images_and_four_plans():
         for image in ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13")
         for plan in range(1, 5)
     }
+
+
+def test_kvm_certification_matrix_covers_all_image_plan_access_combinations():
+    matrix = kvm_certification_matrix()
+    assert len(matrix) == 48
+    assert len({(case["image"], case["plan"], case["access_mode"]) for case in matrix}) == 48
+    assert {case["access_mode"] for case in matrix} == {"ssh_key", "ssh_password"}
+    for image in ("ubuntu-2404", "ubuntu-2604", "almalinux-9", "almalinux-10", "fedora-45", "debian-13"):
+        for plan in range(1, 5):
+            assert sum(case["image"] == image and case["plan"] == f"kvm-{plan}" for case in matrix) == 2
+
+
+def test_application_certification_matrix_covers_12_ssh_and_12_gui_cases():
+    matrix = application_certification_matrix()
+    infrastructure = [case for case in matrix if case["certification_track"] == "infrastructure_access"]
+    gui = [case for case in matrix if case["certification_track"] == "gui_persistence"]
+    assert len(matrix) == 24 and len(infrastructure) == len(gui) == 12
+    assert sum(case["access_mode"] == "ssh_key" for case in infrastructure) == 6
+    assert sum(case["access_mode"] == "ssh_password" for case in infrastructure) == 6
+    assert sum(case["product"] == "n8n" for case in gui) == 6
+    assert sum(case["product"] == "nextcloud" for case in gui) == 6
+    assert {case["plan"] for case in matrix} == {f"kvm-{plan}" for plan in range(1, 5)}
+    assert all(case["image"] == "ubuntu-2404" for case in matrix)
+
+
+def test_application_certification_matrix_rejects_non_ubuntu_image():
+    with pytest.raises(ValueError, match="APPLICATION_MATRIX_REQUIRES_UBUNTU_2404"):
+        application_certification_matrix(["almalinux-9"])
 
 
 def test_service_default_matrix_is_eight_n8n_and_eight_nextcloud_on_ubuntu_2404():
@@ -469,27 +499,27 @@ def test_wan_nic_preflight_allows_only_vmbr3():
         wan_nic_config({"IACP_PROD_STATIC_BRIDGE": "vmbr0"})
 
 
-def test_wan_preflight_requires_exactly_four_fresh_idle_service_workers():
+def test_wan_preflight_requires_exactly_six_fresh_idle_service_workers():
     from datetime import UTC, datetime
 
     import pytest
 
     heartbeat = datetime.now(UTC).isoformat()
     state = {
-        "max_concurrent": 4,
+        "max_concurrent": 6,
         "workers": [
             {"worker_id": f"service-worker-{index}", "status": "idle", "job_id": None, "last_heartbeat": heartbeat}
-            for index in range(1, 5)
+            for index in range(1, 7)
         ],
     }
-    require_four_idle_service_workers(state)
-    with pytest.raises(RuntimeError, match="FOUR_SERVICE_WORKERS_REQUIRED"):
-        require_four_idle_service_workers({"max_concurrent": 2, "workers": state["workers"][:2]})
+    require_six_idle_service_workers(state)
+    with pytest.raises(RuntimeError, match="SIX_SERVICE_WORKERS_REQUIRED"):
+        require_six_idle_service_workers({"max_concurrent": 4, "workers": state["workers"][:4]})
     busy = {**state, "workers": [dict(worker) for worker in state["workers"]]}
     busy["workers"][0]["status"] = "running"
     busy["workers"][0]["job_id"] = "job-active"
     with pytest.raises(RuntimeError, match="SERVICE_WORKERS_NOT_IDLE"):
-        require_four_idle_service_workers(busy)
+        require_six_idle_service_workers(busy)
 
 
 def test_wan_preflight_uses_the_confirmed_almalinux_vmids():

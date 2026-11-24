@@ -136,7 +136,7 @@ class ProxmoxClient:
         )
         backoff = max(0.1, float(os.getenv("IACP_PROXMOX_RETRY_BACKOFF", "0.5")))
         request_timeout = max(
-            1.0,
+            0.1 if timeout is not None else 1.0,
             float(
                 timeout
                 if timeout is not None
@@ -210,8 +210,19 @@ class ProxmoxClient:
     def put(self, path: str, parameters: dict | list[tuple[str, str]] | None = None):
         return self._request("PUT", path, parameters, uncertain=True)
 
-    def inventory(self, *, uncertain: bool = False) -> list[dict]:
-        data = self.get("/cluster/resources?type=vm", uncertain=uncertain)
+    def inventory(
+        self,
+        *,
+        uncertain: bool = False,
+        timeout: float | None = None,
+        attempts: int | None = None,
+    ) -> list[dict]:
+        data = self.get(
+            "/cluster/resources?type=vm",
+            uncertain=uncertain,
+            timeout=timeout,
+            attempts=attempts,
+        )
         if not isinstance(data, list) or any(
             not isinstance(record, dict) or not str(record.get("vmid", "")).isdigit()
             for record in data

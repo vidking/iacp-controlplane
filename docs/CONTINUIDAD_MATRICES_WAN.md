@@ -490,3 +490,15 @@ aprovisionamientos simultáneos. La autorización amplía el alcance de ensayo d
 la API productiva y no autoriza cambios en Platinum/PRX. Los resultados se
 registran con el digest del runtime y el hash del harness; no declarar PASS
 antes de cerrar todos los casos y verificar limpieza/IPAM.
+
+
+### Revisión de capacidad y alcance — 2026-11-23
+
+El candidato actual eleva los workers de servicios de cuatro a seis en Dev y
+Producción. Su matriz final contiene 24 aprovisionamientos de Ubuntu 24.04:
+12 casos SSH con llave/contraseña distribuidos entre Nextcloud y n8n, más 12
+casos de acceso GUI con credenciales y persistencia después de reinicios. La
+matriz KVM se mantiene en 48 casos: seis imágenes por cuatro planes por dos
+métodos SSH. Ambas matrices usan `prod_static` y NetBox. Esta definición reemplaza
+el alcance futuro de 16 casos citado en las secciones históricas anteriores;
+los resultados históricos no se reinterpretan.

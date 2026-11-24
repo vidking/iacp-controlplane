@@ -37,6 +37,7 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
         assert client.get("/health/live").json()["status"] == "alive"
         response = client.post(
             "/v1/operations",
+            headers={"Idempotency-Key": "plan-local-first"},
             json={
                 "command": "plan",
                 "action": "provision",
@@ -53,8 +54,22 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
         assert detail.json()["environment"] == "lab"
         assert detail.json()["stack"] == "mng01"
         assert set(detail.json()["timings"]) == {"queue_seconds", "execution_seconds", "total_seconds"}
+        replay = client.post(
+            "/v1/operations",
+            headers={"Idempotency-Key": "plan-local-first"},
+            json={
+                "command": "plan",
+                "action": "provision",
+                "environment": "lab",
+                "plan_id": "kvm-1",
+                "spec": {"name": "lab-operation", "image": "ubuntu-2404"},
+            },
+        )
+        assert replay.status_code == 200
+        assert replay.json()["operation_id"] == operation_id
         physical_selection = client.post(
             "/v1/operations",
+            headers={"Idempotency-Key": "plan-physical-selection"},
             json={
                 "command": "plan",
                 "action": "provision",
@@ -66,6 +81,7 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
         assert physical_selection.status_code == 422
         nested_node_selection = client.post(
             "/v1/operations",
+            headers={"Idempotency-Key": "plan-nested-node-selection"},
             json={
                 "command": "plan",
                 "action": "provision",
@@ -75,6 +91,17 @@ def test_health_and_internal_operation(tmp_path, monkeypatch):
             },
         )
         assert nested_node_selection.status_code == 422
+        missing_key = client.post(
+            "/v1/operations",
+            json={
+                "command": "plan",
+                "action": "provision",
+                "environment": "lab",
+                "plan_id": "kvm-1",
+                "spec": {"name": "missing-idempotency-key", "image": "ubuntu-2404"},
+            },
+        )
+        assert missing_key.status_code == 422
 
 
 def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatch):
@@ -114,10 +141,16 @@ def test_catalog_exposes_stable_plan_and_golden_ids(tmp_path, monkeypatch):
     import api.main
 
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_RUNTIME_STAGE", "production")
     monkeypatch.setenv("IACP_REQUIRE_API_TOKEN", "0")
+    monkeypatch.delenv("IACP_ALLOW_INSECURE_LOCAL_DEV", raising=False)
     monkeypatch.setenv("IACP_API_TOKEN", "")
     monkeypatch.setattr(api.main, "startup", lambda: None)
     with TestClient(app) as client:
+        assert client.get("/v1/plans").status_code == 503
+        monkeypatch.setenv("IACP_API_TOKEN", "local-test-api-token")
+        assert client.get("/v1/plans").status_code == 401
+        client.headers["Authorization"] = "Bearer local-test-api-token"
         plans = client.get("/v1/plans")
         assert plans.status_code == 200
         assert plans.json()["plans"] == [
@@ -1210,10 +1243,11 @@ def test_initialize_migrates_existing_postgresql_schema():
 
 def test_both_network_profiles_in_pilot_and_wan_only_after_promotion(monkeypatch):
     monkeypatch.setenv('IACP_RUNTIME_STAGE','production')
+    monkeypatch.setenv('IACP_API_TOKEN','network-profile-test-token')
     monkeypatch.setenv('IACP_ENFORCE_WAN_ONLY','0')
     monkeypatch.setenv('IACP_PROD_STATIC_ENABLED','1')
     monkeypatch.setenv('IACP_NETBOX_URL','https://netbox.test.invalid/api')
-    with TestClient(app) as client:
+    with TestClient(app, headers={'Authorization': 'Bearer network-profile-test-token'}) as client:
         for profile in ['lab_dhcp','prod_static']:
             body=public_body('pilot-'+profile.replace('_','-'));body['network_profile']=profile
             result=client.post('/v1/instances',json=body,headers={'Idempotency-Key':profile})
