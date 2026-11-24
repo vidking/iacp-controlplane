@@ -171,7 +171,7 @@ def _seed_clon_parcial_sin_state(tmp_path, state_resources=None):
         db.execute(
             """UPDATE operations SET status='uncertain', error='VM_PHYSICAL_OWNER_MISMATCH',
             stack='mng01', target_node='mng01', started_at='2026-03-01T00:00:01+00:00',
-            finished_at='2026-03-01T00:00:10+00:00', workspace_path=?, payload_json=?
+            finished_at='2026-03-01T00:00:10+00:00', workspace_path=?, payload_json=?, vmid=40510
             WHERE operation_id='op-prov'""",
             (str(root), json.dumps(payload)),
         )

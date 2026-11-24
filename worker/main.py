@@ -2628,14 +2628,29 @@ def close_source_after_reconciliation(
                 # La ausencia física ya fue confirmada y se liberó la reserva.
                 # El VMID histórico permanece en operations, pero no debe
                 # seguir siendo la identidad activa de esta instancia.
-                db.execute(
-                    """UPDATE instances
-                    SET status='failed', vmid=NULL, power_state='unknown',
-                        node=COALESCE(?,node), updated_at=?
-                    WHERE instance_id=? AND status IN ('uncertain','failed')
-                      AND (vmid=? OR vmid IS NULL)""",
-                    (node, now(), instance_id, vmid),
-                )
+                if source_operation["command"] == "provision":
+                    # Un fallo entre planificar y materializar la VM deja la
+                    # instancia en ``planning``. Tras probar que el clon se
+                    # eliminó, converge solo si esta sigue perteneciendo a la
+                    # misma operación y conserva su VMID original.
+                    db.execute(
+                        """UPDATE instances
+                        SET status='failed', vmid=NULL, power_state='unknown',
+                            node=COALESCE(?,node), updated_at=?
+                        WHERE instance_id=? AND operation_id=?
+                          AND status IN ('planning','provisioning','uncertain','failed')
+                          AND (vmid=? OR vmid IS NULL)""",
+                        (node, now(), instance_id, source_id, vmid),
+                    )
+                else:
+                    db.execute(
+                        """UPDATE instances
+                        SET status='failed', vmid=NULL, power_state='unknown',
+                            node=COALESCE(?,node), updated_at=?
+                        WHERE instance_id=? AND status IN ('uncertain','failed')
+                          AND (vmid=? OR vmid IS NULL)""",
+                        (node, now(), instance_id, vmid),
+                    )
             else:
                 db.execute(
                     """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),

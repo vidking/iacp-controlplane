@@ -2396,6 +2396,55 @@ def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, ex
         assert db.execute("SELECT status FROM operations WHERE operation_id='old-source'").fetchone()['status'] == ('failed' if released else 'uncertain')
 
 
+def test_reconcile_absent_partial_provision_clears_owned_planning_instance(monkeypatch):
+    from worker import main
+
+    initialize()
+    with database() as db:
+        db.execute(
+            """INSERT INTO operations(
+              operation_id, command, status, payload_json, instance_id, vmid, created_at
+            ) VALUES ('partial-source', 'provision', 'uncertain', '{}', 'partial-instance', 40018, 'now')"""
+        )
+        db.execute(
+            """INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (
+              'partial-instance', 'partial-source', 'partial-clone', 'ubuntu-2404',
+              40018, 'mng01', 'planning', 'unknown', '{}', 'now', 'now'
+            )"""
+        )
+        db.execute(
+            "INSERT INTO vmid_leases(vmid, operation_id, status, created_at) VALUES (40018, 'partial-source', 'held', 'now')"
+        )
+
+    monkeypatch.setattr(main, "_release_static_allocation", lambda *_: True)
+    assert main.close_source_after_reconciliation(
+        {"operation_id": "partial-source", "command": "provision"},
+        "partial-instance",
+        40018,
+        "mng01",
+        {},
+        succeeded=False,
+        detail="VM_PARTIAL_CLONE_REMOVED",
+    ) is True
+
+    with database() as db:
+        instance = db.execute(
+            "SELECT status, vmid FROM instances WHERE instance_id='partial-instance'"
+        ).fetchone()
+        source = db.execute(
+            "SELECT status, error FROM operations WHERE operation_id='partial-source'"
+        ).fetchone()
+        lease = db.execute(
+            "SELECT status FROM vmid_leases WHERE vmid=40018"
+        ).fetchone()
+    assert (instance["status"], instance["vmid"]) == ("failed", None)
+    assert (source["status"], source["error"]) == ("failed", "VM_PARTIAL_CLONE_REMOVED")
+    assert lease["status"] == "released"
+
+
 def test_reconcile_missing_provision_deletes_root_password_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     monkeypatch.setenv("IACP_WORKDATA_DIR", str(tmp_path / "workdata"))
