@@ -23,6 +23,8 @@ MNG. Ese dictamen queda **PENDIENTE** hasta desplegar la imagen en
 | 7 | `chown -R iacp:iacp /app`: el usuario de runtime podía modificar código y proveedores | `/app` y la caché de proveedores quedan de root, solo lectura; solo el volumen de trabajo es escribible. Verificado: `terraform init` y `validate` pasan con el sistema de archivos de solo lectura |
 | 8 | Sin límites de memoria ni procesos | `mem_limit` y `pids_limit` en todos los contenedores, ajustables por variable |
 | 9 | PostgreSQL sin restricciones | `read_only`, `no-new-privileges`, `cap_drop: ALL` con las cinco capacidades que exige su entrypoint, límites. Verificado con volumen nuevo y reinicio sobre volumen existente |
+| 11 | **El firmador de certificados TLS por IP (`/v1/internal/service-jobs/{id}/tls-certificate`, commit `ccd2f0e`) era inalcanzable**: la guardia exigía el token de la API en todo POST bajo `/v1/` y el worker presenta otra credencial, por lo que respondía siempre 401. Las pruebas llamaban a la función directamente y no atravesaban el middleware | Las rutas `/v1/internal/` se validan con su propia credencial; pruebas que atraviesan el middleware real |
+| 12 | El worker enviaba la **clave maestra Fernet** como bearer a la API (HTTP interno). Una fuga del bearer permitía descifrar todos los secretos de servicios; además `compare_digest` con texto no ASCII provocaba `TypeError` (500) | Bearer derivado por HMAC-SHA256 de la clave (`signer_token`), comparación en bytes |
 | 10 | Duplicados en conjuntos (`{1, True}`), sumideros de socket HTTPError, clave maestra releída en cada operación | Corregidos |
 
 ## Notas operativas antes de promover
@@ -40,3 +42,15 @@ MNG. Ese dictamen queda **PENDIENTE** hasta desplegar la imagen en
   matriz de seis aprovisionamientos simultáneos y subirlos si hay `OOMKilled`.
 - Reversión: la imagen anterior sigue siendo la referencia inmutable; los cambios
   de Compose se revierten con el commit previo sin tocar volúmenes.
+
+## Coordinación con el trabajo en paralelo (Codex)
+
+- Ambas partes trabajan sobre `devops/features`. Convención: `git fetch` antes de
+  cada push, avance rápido (sin reescribir historial publicado) y commits pequeños
+  por tema. No usar `git stash` en este árbol de trabajo compartido.
+- Las pruebas de endpoints internos deben atravesar el middleware (`TestClient`),
+  no invocar la función del endpoint: así se detectó el hallazgo 11.
+- La imagen desplegada hoy en dev (`e5aabca`) **no incluye** los hallazgos 6 a 12.
+  Hay que construir una imagen nueva y repetir el despliegue en
+  `dev-iac.cyberfuel.com` antes de la matriz. Al desplegar, `IACP_API_TOKEN` debe
+  tener 32 o más caracteres.
