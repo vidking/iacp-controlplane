@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from cryptography import x509
@@ -11,10 +12,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 def prepare(directory: Path, uid: int = 999, gid: int = 999, validity_days: int = 3650):
-    if not directory.is_dir() or any(
-        (directory / name).exists() for name in ["pilot-ca.key", "pilot-ca.crt"]
-    ):
-        raise ValueError("Directorio ausente o CA existente; no sobrescribir")
     if type(validity_days) is not int or not 365 <= validity_days <= 3650:
         raise ValueError("La vigencia de CA debe estar entre 365 y 3650 días")
     key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
@@ -47,7 +44,7 @@ def prepare(directory: Path, uid: int = 999, gid: int = 999, validity_days: int 
         )
         .sign(key, hashes.SHA256())
     )
-    for name, data in [
+    files = [
         (
             "pilot-ca.key",
             key.private_bytes(
@@ -57,12 +54,41 @@ def prepare(directory: Path, uid: int = 999, gid: int = 999, validity_days: int 
             ),
         ),
         ("pilot-ca.crt", cert.public_bytes(serialization.Encoding.PEM)),
-    ]:
-        path = directory / name
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.chown(path, uid, gid)
+    ]
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        directory_fd = os.open(directory, directory_flags)
+    except OSError as error:
+        raise ValueError("El directorio de la CA debe existir y no ser un enlace") from error
+    created = []
+    try:
+        directory_info = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_mode & 0o077:
+            raise ValueError("El directorio de la CA debe tener permisos privados")
+        os.fchown(directory_fd, uid, gid)
+        for name, _data in files:
+            try:
+                os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise ValueError("CA existente; no sobrescribir")
+        for name, data in files:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+            descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
+            created.append(name)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fchown(handle.fileno(), uid, gid)
+    except Exception:
+        for name in created:
+            try:
+                os.unlink(name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(directory_fd)
     print("CA del piloto creada; clave privada conservada en el directorio protegido")
 
 

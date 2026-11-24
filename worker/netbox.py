@@ -238,7 +238,10 @@ class NetBoxClient:
                 raise NetBoxError(
                     _error_code(status),
                     status,
-                    uncertain=method != "GET" and status >= 500,
+                    # HTTP 408 no garantiza que el servidor no haya aplicado
+                    # una mutación antes de cerrar la respuesta. Mantener la
+                    # intención local para reconciliarla en el siguiente intento.
+                    uncertain=method != "GET" and (status == 408 or status >= 500),
                 ) from None
             except (URLError, TimeoutError, socket.timeout, ValueError):
                 if retry_get and attempt + 1 < self.config.attempts:
@@ -481,6 +484,55 @@ class NetBoxClient:
         ):
             raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
         return NetBoxAllocation(ip_id, address, str(prefix), gateway, marker)
+
+    def verify_allocation(self, allocation: JsonObject, *, marker: str) -> NetBoxAllocation:
+        """Confirma que NetBox aún reserva exactamente la IP asignada a IACP."""
+
+        parsed_prefix = ip_network(self.config.expected_prefix)
+        if not isinstance(parsed_prefix, IPv4Network):
+            raise NetBoxError("IPAM_PREFIX_INVALID")
+        try:
+            ip_id = _response_int(
+                allocation.get("netbox_ip_id") or allocation.get("ip_id") or 0
+            )
+        except (TypeError, ValueError):
+            ip_id = 0
+        address = allocation.get("address")
+        if (
+            ip_id <= 0
+            or not isinstance(address, str)
+            or allocation.get("marker") != marker
+            or allocation.get("status") not in {None, "allocated"}
+        ):
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+
+        try:
+            record = self._request(
+                "GET", f"/ipam/ip-addresses/{ip_id}/", retry_get=True
+            )
+        except NetBoxError as error:
+            if error.status == 404:
+                raise NetBoxError(
+                    "IPAM_ALLOCATION_CONFLICT", 404, uncertain=True
+                ) from error
+            raise NetBoxError(
+                "IPAM_REQUEST_UNCERTAIN", error.status, uncertain=True
+            ) from error
+
+        try:
+            gateway = self.validate_gateway(parsed_prefix)
+            verified = self._confirm_allocation(
+                record,
+                parsed_prefix,
+                gateway,
+                marker,
+                expected_address=address,
+            )
+        except NetBoxError as error:
+            raise NetBoxError(error.code, error.status, uncertain=True) from error
+        if allocation.get("gateway") != verified.gateway:
+            raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+        return verified
 
     def allocate(self, **kwargs) -> NetBoxAllocation:
         # Serializa los aprovisionadores IACP del mismo prefijo durante la llamada remota.

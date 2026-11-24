@@ -42,6 +42,19 @@ def register_idempotent_rollback_cleanup(callback: Callable[[], None]) -> None:
         callbacks.append(callback)
 
 
+def _idempotency_commit_state(scope: str, key: str) -> bool | None:
+    """Devuelve None si no se pudo resolver una respuesta ambigua de COMMIT."""
+
+    try:
+        with database() as db:
+            return db.execute(
+                "SELECT 1 FROM idempotency_keys WHERE scope=? AND idempotency_key=?",
+                (scope, key),
+            ).fetchone() is not None
+    except Exception:
+        return None
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -185,6 +198,7 @@ def _active_instance_operation(
     *,
     allow_queued_service: bool = False,
     ignore_operation_id: str | None = None,
+    ignore_uncertain_reconcile_source_id: str | None = None,
 ):
     from api.applications import guard_instance
     guard_instance(db, instance_id, allow_queued=allow_queued_service)
@@ -195,10 +209,22 @@ def _active_instance_operation(
         FROM operations
         WHERE instance_id = ? AND status IN ({placeholders})
           AND (CAST(? AS TEXT) IS NULL OR operation_id <> ?)
+          AND NOT (
+            command='reconcile' AND status='uncertain'
+            AND CAST(? AS TEXT) IS NOT NULL
+            AND payload_json::jsonb ->> 'source_operation_id' = ?
+          )
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        (instance_id, *sorted(ACTIVE_OPERATION_STATUSES), ignore_operation_id, ignore_operation_id),
+        (
+            instance_id,
+            *sorted(ACTIVE_OPERATION_STATUSES),
+            ignore_operation_id,
+            ignore_operation_id,
+            ignore_uncertain_reconcile_source_id,
+            ignore_uncertain_reconcile_source_id,
+        ),
     ).fetchone()
 
 
@@ -542,48 +568,64 @@ def _idempotent_mutation(
     key = _idempotency_key_or_error(idempotency_key)
     legacy_hash = _body_fingerprint(body)
     request_hash = _keyed_fingerprint(initialize_idempotency(), scope, key, legacy_hash)
-    with database() as db:
-        db.execute("BEGIN IMMEDIATE")
-        existing = _existing_idempotency(db, scope, key, request_hash, legacy_hash)
-        if existing is not None:
-            db.execute("COMMIT")
-            return existing
-        db.execute(
-            """
-            INSERT INTO idempotency_keys(
-              scope, idempotency_key, request_hash, response_json, status_code, operation_id, created_at
-            ) VALUES (?, ?, ?, '{}', 202, NULL, ?)
-            """,
-            (scope, key, request_hash, now()),
-        )
-        cleanups: list[Callable[[], None]] = []
-        token = _MUTATION_CLEANUPS.set(cleanups)
-        try:
-            response, operation_id = builder(db)
-            response = dict(response)
-            response.setdefault("idempotency_key", key)
-            db.execute(
-                """
-                UPDATE idempotency_keys
-                SET response_json=?, status_code=202, operation_id=?
-                WHERE scope=? AND idempotency_key=?
-                """,
-                (json.dumps(response), operation_id, scope, key),
-            )
-            db.execute("COMMIT")
-            return response
-        except Exception:
+    cleanups: list[Callable[[], None]] = []
+    token = _MUTATION_CLEANUPS.set(cleanups)
+    commit_attempted = False
+    try:
+        with database() as db:
             try:
-                db.execute("ROLLBACK")
-            finally:
-                for cleanup in reversed(cleanups):
-                    try:
-                        cleanup()
-                    except OSError:
-                        _LOGGER.exception("Falló la compensación local de una mutación")
-            raise
-        finally:
-            _MUTATION_CLEANUPS.reset(token)
+                db.execute("BEGIN IMMEDIATE")
+                existing = _existing_idempotency(db, scope, key, request_hash, legacy_hash)
+                if existing is not None:
+                    commit_attempted = True
+                    db.execute("COMMIT")
+                    return existing
+                db.execute(
+                    """
+                    INSERT INTO idempotency_keys(
+                      scope, idempotency_key, request_hash, response_json, status_code, operation_id, created_at
+                    ) VALUES (?, ?, ?, '{}', 202, NULL, ?)
+                    """,
+                    (scope, key, request_hash, now()),
+                )
+                response, operation_id = builder(db)
+                response = dict(response)
+                response.setdefault("idempotency_key", key)
+                db.execute(
+                    """
+                    UPDATE idempotency_keys
+                    SET response_json=?, status_code=202, operation_id=?
+                    WHERE scope=? AND idempotency_key=?
+                    """,
+                    (json.dumps(response), operation_id, scope, key),
+                )
+                commit_attempted = True
+                db.execute("COMMIT")
+                return response
+            except Exception:
+                try:
+                    db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+    except Exception:
+        commit_state = _idempotency_commit_state(scope, key) if commit_attempted else False
+        if commit_state is False:
+            for cleanup in reversed(cleanups):
+                try:
+                    cleanup()
+                except OSError:
+                    _LOGGER.exception("Falló la compensación local de una mutación")
+        elif commit_attempted:
+            # La fila puede haberse confirmado aunque se perdiera su respuesta.
+            # Conservar el secreto evita dejar una operación persistida sin el
+            # archivo que necesita el worker.
+            _LOGGER.warning(
+                "Resultado de COMMIT ambiguo para una mutación idempotente; se conserva el secreto hasta reconciliarla"
+            )
+        raise
+    finally:
+        _MUTATION_CLEANUPS.reset(token)
 
 
 def _image_for_plan(image_id: str, plan: dict) -> dict:
@@ -805,6 +847,9 @@ def _insert_operation(
             allow_queued_service=command == Command.reconcile
             or (command == Command.power and request.power_action == PowerAction.start),
             ignore_operation_id=(source["operation_id"] if command == Command.reconcile else None),
+            ignore_uncertain_reconcile_source_id=(
+                source["operation_id"] if command == Command.reconcile else None
+            ),
         )
         if active is not None:
             raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")

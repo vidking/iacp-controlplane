@@ -68,10 +68,12 @@ Las instalaciones están deshabilitadas por defecto:
 - `IACP_SERVICE_EXECUTION_ENABLED=0`: bloquear ejecución Ansible incluso si hay pedidos.
 - Perfil Compose `services`: los dos primeros workers se incluyen al activarlo.
 - Perfil Compose `service-workers-3-6`: agrega los workers 3 a 6 cuando el manifiesto declara cuatro o seis.
-- `IACP_SERVICE_CONFIG_DIR`: directorio absoluto del operador. La API y los
-  workers de servicios lo montan en `/run/iacp-services`, solo lectura; cada
-  worker de infraestructura recibe únicamente `key` en
-  `/run/iacp-services/key`, también solo lectura. No montar el socket Docker.
+- `IACP_SERVICE_CONFIG_DIR`: directorio absoluto del operador. La API recibe
+  únicamente `key` y `pilot-ca.crt` en montajes individuales de solo lectura;
+  nunca monta `pilot-ca.key`. Los workers de servicios montan el directorio
+  completo en `/run/iacp-services`, solo lectura, porque firman certificados
+  para las instancias. Cada worker de infraestructura recibe únicamente `key`
+  en `/run/iacp-services/key`, también solo lectura. No montar el socket Docker.
 
 Contenido requerido del directorio (no incorporar secretos a Git):
 
@@ -80,11 +82,14 @@ Contenido requerido del directorio (no incorporar secretos a Git):
    Su copia de recuperación debe mantenerse separada de PostgreSQL; perderla impide
    continuar instalaciones y recuperar sus credenciales. La rotación requiere recifrar
    los sobres antes de sustituirla; no existe aún una utilidad automática de rotación.
-2. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
+2. `pilot-ca.key` y `pilot-ca.crt`: clave privada de firma con permisos 600 y
+   certificado público. La API recibe únicamente el certificado público; los
+   workers de servicios usan ambos para emitir certificados de acceso por IP.
+3. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
    PostgreSQL, después de verificar identidad y pertenencia al pool de la VM.
    `bindings/<instance_id>.json` se conserva únicamente como alternativa operativa
    verificada por el administrador; no se acepta automáticamente una salida de ssh-keyscan.
-3. Las releases probadas se incluyen en `/app/services/releases.json`. Un archivo
+4. Las releases probadas se incluyen en `/app/services/releases.json`. Un archivo
    externo es opcional y se selecciona con `IACP_SERVICE_RELEASES_FILE`.
    La primera instalación fija la huella; no se actualizan instancias por cambiar etiquetas.
 
@@ -519,9 +524,13 @@ vigente para nuevas provisiones queda registrada al inicio de este documento.
 Los contenedores mantienen sus digests fijados. La evidencia histórica de esas
 matrices no amplía la lista de imágenes habilitadas hoy.
 
-`configuration.agent_mode="local"` permite validar Hermes/OpenClaw sin credencial
-real de proveedor. El modo predeterminado `connected` sigue exigiendo modelo y
-clave. La aprobación local excluye inferencia, Telegram y conexiones externas.
+La revisión del 2026-11-24 retira `configuration.agent_mode="local"`: Hermes y
+OpenClaw solo admiten `connected`, con modelo y `provider_api_key` obligatorios.
+Los workers también rechazan configuraciones persistidas con el modo anterior o
+sin credenciales, en vez de sustituirlas por valores ficticios. Los alcances
+`local-docker-without-external-provider` de `services/releases.json` describen
+validaciones históricas de imagen/arranque; no certifican inferencia real ni
+permiten aprovisionar agentes sin proveedor.
 
 `scripts/wan_matrix.py` ejecuta una categoría y ciclo con 16 combinaciones y dos
 controles adicionales, en tres tandas de seis. Requiere el runtime dev idle y

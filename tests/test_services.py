@@ -46,6 +46,48 @@ def test_ubuntu_apt_sources_are_upgraded_to_https_before_install():
 
 
 @pytest.mark.no_database
+def test_remote_service_lock_keeps_previous_owner_until_explicit_release(tmp_path):
+    import sys
+
+    from worker.service_executor import remote_service_lock_scripts
+
+    acquire, release = remote_service_lock_scripts()
+    lock = tmp_path / "remote.lock"
+    first_owner = {"service_id": "service-1", "job_id": "job-1", "generation": 1}
+    retry_owner = {"service_id": "service-1", "job_id": "job-1", "generation": 2}
+
+    created = subprocess.run(
+        [sys.executable, "-c", acquire, str(lock), json.dumps(first_owner)],
+        capture_output=True,
+        check=False,
+    )
+    assert created.returncode == 0
+    assert json.loads((lock / "owner.json").read_text()) == first_owner
+
+    retry = subprocess.run(
+        [sys.executable, "-c", acquire, str(lock), json.dumps(retry_owner)],
+        capture_output=True,
+        check=False,
+    )
+    assert retry.returncode == 73
+    assert json.loads((lock / "owner.json").read_text()) == first_owner
+
+    released = subprocess.run(
+        [sys.executable, "-c", release, str(lock), json.dumps(first_owner)],
+        capture_output=True,
+        check=False,
+    )
+    assert released.returncode == 0
+    retried = subprocess.run(
+        [sys.executable, "-c", acquire, str(lock), json.dumps(retry_owner)],
+        capture_output=True,
+        check=False,
+    )
+    assert retried.returncode == 0
+    assert json.loads((lock / "owner.json").read_text()) == retry_owner
+
+
+@pytest.mark.no_database
 def test_service_egress_preflight_checks_verified_https_endpoints_with_bounded_wait():
     from worker.service_executor import (
         SERVICE_EGRESS_PREFLIGHT_SCRIPT,
@@ -163,18 +205,18 @@ def test_nextcloud_install_wait_handles_transient_non_json_status(tmp_path):
 
     state = tmp_path / "attempt"
     state.write_text("0")
-    setup = f"""
-php() {{
+    setup = """
+php() {
   IFS= read -r status_calls < "$IACP_TEST_ATTEMPT"
   case "$status_calls" in
     0) printf 'Nextcloud setup in progress\\n' ;;
-    1) printf '{{"installed": false}}\\n' ;;
-    *) printf '{{ "installed" : true }}\\n' ;;
+    1) printf '{"installed": false}\\n' ;;
+    *) printf '{ "installed" : true }\\n' ;;
   esac
   status_calls=$((status_calls + 1))
   printf '%s' "$status_calls" > "$IACP_TEST_ATTEMPT"
-}}
-sleep() {{ :; }}
+}
+sleep() { :; }
 """
     environment = os.environ | {"IACP_TEST_ATTEMPT": str(state)}
 
@@ -289,6 +331,8 @@ def test_services_catalog_selects_only_ubuntu_2404(client):
     for application in catalog:
         assert catalog[application]["image_id"] == "ubuntu-2404"
         assert catalog[application]["supported_image_ids"] == ["ubuntu-2404"]
+    assert catalog["hermes"]["agent_modes"] == ["connected"]
+    assert catalog["openclaw"]["agent_modes"] == ["connected"]
 
 
 def test_atomic_idempotent_order_and_encrypted_credentials(client):
@@ -364,6 +408,7 @@ def test_service_url_is_hidden_until_application_installation_finishes(client):
         json=request,
         headers={"Idempotency-Key": "service-url-readiness"},
     ).json()
+    ready(order["instance_id"])
     with database() as db:
         db.execute(
             "INSERT INTO service_bindings VALUES (?, ?, ?)",
@@ -378,6 +423,10 @@ def test_service_url_is_hidden_until_application_installation_finishes(client):
         db.execute(
             "UPDATE service_instances SET status='awaiting_customer' WHERE service_id=?",
             (order["service_id"],),
+        )
+        db.execute(
+            "UPDATE service_jobs SET status='succeeded', finished_at=? WHERE job_id=?",
+            ("2026-11-17T00:00:00+00:00", order["job_id"]),
         )
     assert (
         client.get(f"/v1/service-instances/{order['service_id']}").json()["access_url"]
@@ -760,6 +809,41 @@ def test_delivery_one_time_and_secret_removal(client, monkeypatch):
         )
 
 
+def test_customer_credentials_are_blocked_when_instance_destroy_is_queued(
+    client, monkeypatch
+):
+    order = create(client, "credentials-before-destroy")
+    ready(order["instance_id"])
+    monkeypatch.setattr(services, "execute", lambda *_: None)
+    services.process("installer", services.claim("installer"))
+    with database() as db:
+        db.execute(
+            "UPDATE instances SET power_state='stopped' WHERE instance_id=?",
+            (order["instance_id"],),
+        )
+
+    deleted = client.delete(
+        f"/v1/service-instances/{order['service_id']}",
+        headers={"Idempotency-Key": "destroy-before-credentials"},
+    )
+    assert deleted.status_code == 202
+    detail = client.get(f"/v1/service-instances/{order['service_id']}").json()
+    assert detail["credentials_available"] is False
+    assert detail["access_url"] is None
+    credentials = client.post(
+        f"/v1/service-instances/{order['service_id']}/credentials",
+        headers={"Idempotency-Key": "credentials-after-destroy"},
+    )
+    assert credentials.status_code == 409
+    assert credentials.json()["detail"] == "CREDENTIALS_UNAVAILABLE"
+    with database() as db:
+        row = db.execute(
+            "SELECT credentials_retrieved_at FROM service_instances WHERE service_id=?",
+            (order["service_id"],),
+        ).fetchone()
+    assert row["credentials_retrieved_at"] is None
+
+
 def test_credential_receipt_recovers_disclosure_until_delivery(client, monkeypatch):
     order = create(client)
     ready(order["instance_id"])
@@ -940,6 +1024,13 @@ def test_superseded_service_job_cannot_be_retried_or_cancelled(client):
 def test_render_pins_no_agent_public_ports():
     with pytest.raises(RecipeError):
         render("hermes", {}, {}, {"images": {"app": "hermes:latest"}})
+    with pytest.raises(RecipeError, match="SERVICE_AGENT_CONFIGURATION_REQUIRED"):
+        render(
+            "hermes",
+            {"model": "test"},
+            {},
+            {"images": {"app": "example/hermes@sha256:" + "a" * 64}},
+        )
     compose, _ = render(
         "hermes",
         {"model": "test"},
@@ -1194,15 +1285,23 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             ]
             if application == "n8n" and expected_action == "install":
                 assert len(owner_setup_tasks) == 1
-                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante la configuración inicial")
-                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar la aplicación")
+                proxy_prepare = next(task for task in service_tasks if task.get("name") == "Preparar proxy cerrado para la instalación")
+                proxy_publish = next(task for task in service_tasks if task.get("name") == "Publicar configuración verificada del proxy")
+                proxy_restart = next(task for task in service_tasks if task.get("name") == "Reiniciar proxy con configuración verificada")
                 start = application_start_tasks[0]
                 assert start["ansible.builtin.command"]["argv"][-2:] == ["app", "postgres"]
-                assert proxy_stop["ansible.builtin.command"]["argv"][-2:] == ["stop", "caddy"]
-                assert proxy_start["ansible.builtin.command"]["argv"][-1] == "caddy"
-                assert service_tasks.index(proxy_stop) < service_tasks.index(start)
+                assert proxy_prepare["ansible.builtin.command"]["argv"][-1] == "caddy"
+                assert proxy_publish["no_log"] is True
+                assert proxy_publish["ansible.builtin.copy"]["dest"].endswith("/Caddyfile")
+                assert "reverse_proxy app:5678" in proxy_publish["ansible.builtin.copy"]["content"]
+                assert proxy_restart["ansible.builtin.command"]["argv"][-2:] == ["restart", "caddy"]
+                bootstrap_caddyfile = (control.parent / "payload/Caddyfile").read_text()
+                assert 'respond "Servicio en configuración" 503' in bootstrap_caddyfile
+                assert "reverse_proxy app:" not in bootstrap_caddyfile
+                assert service_tasks.index(proxy_prepare) < service_tasks.index(start)
                 assert service_tasks.index(start) < service_tasks.index(owner_setup_tasks[0])
-                assert service_tasks.index(owner_setup_tasks[0]) < service_tasks.index(proxy_start)
+                assert service_tasks.index(owner_setup_tasks[0]) < service_tasks.index(proxy_publish)
+                assert service_tasks.index(proxy_publish) < service_tasks.index(proxy_restart)
                 assert owner_setup_tasks[0]["no_log"] is True
                 owner_command = owner_setup_tasks[0]["ansible.builtin.command"]
                 assert "owner/setup" in owner_command["argv"][-1]
@@ -1214,13 +1313,23 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
             else:
                 assert owner_setup_tasks == []
             if application == "nextcloud" and expected_action == "install":
-                proxy_stop = next(task for task in service_tasks if task.get("name") == "Cerrar proxy durante la configuración inicial")
-                proxy_start = next(task for task in service_tasks if task.get("name") == "Publicar proxy tras verificar la aplicación")
+                proxy_prepare = next(task for task in service_tasks if task.get("name") == "Preparar proxy cerrado para la instalación")
+                proxy_publish = next(task for task in service_tasks if task.get("name") == "Publicar configuración verificada del proxy")
+                proxy_restart = next(task for task in service_tasks if task.get("name") == "Reiniciar proxy con configuración verificada")
+                proxy_resolve = next(task for task in service_tasks if task.get("name") == "Resolver proxy")
+                proxy_trust = next(task for task in service_tasks if task.get("name") == "Confiar en el proxy asignado")
                 start = application_start_tasks[0]
                 assert start["ansible.builtin.command"]["argv"][-3:] == ["app", "postgres", "redis"]
-                assert proxy_stop["ansible.builtin.command"]["argv"][-2:] == ["stop", "caddy"]
-                assert service_tasks.index(proxy_stop) < service_tasks.index(start)
-                assert service_tasks.index(start) < service_tasks.index(proxy_start)
+                assert proxy_prepare["ansible.builtin.command"]["argv"][-1] == "caddy"
+                assert service_tasks.index(proxy_prepare) < service_tasks.index(start)
+                assert service_tasks.index(start) < service_tasks.index(proxy_resolve)
+                assert service_tasks.index(proxy_resolve) < service_tasks.index(proxy_trust)
+                assert service_tasks.index(proxy_trust) < service_tasks.index(proxy_publish)
+                assert service_tasks.index(proxy_publish) < service_tasks.index(proxy_restart)
+                assert "reverse_proxy app:80" in proxy_publish["ansible.builtin.copy"]["content"]
+                bootstrap_caddyfile = (control.parent / "payload/Caddyfile").read_text()
+                assert 'respond "Servicio en configuración" 503' in bootstrap_caddyfile
+                assert "reverse_proxy app:" not in bootstrap_caddyfile
             with monkeypatch.context() as context:
                 context.setattr(subprocess, "Popen", original)
                 result = real_run(
@@ -1397,6 +1506,27 @@ def test_services_allow_only_ubuntu_2404_and_ip_mode():
         ServiceCreateRequest.model_validate(body)
 
 
+@pytest.mark.no_database
+def test_agents_reject_unsupported_local_mode():
+    from pydantic import ValidationError
+
+    from api.service_models import ServiceCreateRequest
+
+    request = {
+        "application_id": "hermes",
+        "instance": {
+            "name": "agent-local-mode",
+            "plan_id": "kvm-1",
+            "image_id": "ubuntu-2404",
+            "access": {"ssh_public_keys": ["ssh-ed25519 AAAAexample"]},
+        },
+        "configuration": {"agent_mode": "local", "model": "test/model"},
+        "secrets": {"provider_api_key": "test-key"},
+    }
+    with pytest.raises(ValidationError, match="connected"):
+        ServiceCreateRequest.model_validate(request)
+
+
 @pytest.mark.parametrize("application_id", ["nextcloud", "n8n", "hermes", "openclaw"])
 @pytest.mark.parametrize(
     "image_id",
@@ -1406,7 +1536,11 @@ def test_service_requests_reject_every_non_ubuntu_2404_image(application_id, ima
     from api.service_models import ServiceCreateRequest
     from pydantic import ValidationError
 
-    configuration = {"access_mode": "ip"} if application_id in {"nextcloud", "n8n"} else {"agent_mode": "local"}
+    configuration = (
+        {"access_mode": "ip"}
+        if application_id in {"nextcloud", "n8n"}
+        else {"agent_mode": "connected", "model": "test/model"}
+    )
     request = {
         "application_id": application_id,
         "instance": {

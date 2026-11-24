@@ -1987,6 +1987,64 @@ def test_reconcile_missing_vm_preserves_later_deletion(monkeypatch, released, ex
         assert db.execute("SELECT status FROM operations WHERE operation_id='old-source'").fetchone()['status'] == ('failed' if released else 'uncertain')
 
 
+def test_reconcile_missing_provision_deletes_root_password_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_WORKDATA_DIR", str(tmp_path / "workdata"))
+    from api.secrets import write_secret
+    from worker import main
+
+    initialize()
+    secret = write_secret("missing-provision", "test-only-password")
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(
+              operation_id, command, status, payload_json, instance_id,
+              vmid, secret_path, created_at
+            ) VALUES (
+              'missing-provision', 'provision', 'uncertain', '{}',
+              'missing-provision-instance', 40001, ?, 'now'
+            )
+            """,
+            (str(secret),),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (
+              'missing-provision-instance', 'missing-provision', 'missing-provision',
+              'ubuntu-2404', 40001, 'mng01', 'uncertain', 'unknown', '{}', 'now', 'now'
+            )
+            """
+        )
+    monkeypatch.setattr(main, "_release_static_allocation", lambda *_: True)
+    monkeypatch.setattr(main, "release", lambda *_args, **_kwargs: None)
+
+    main.close_source_after_reconciliation(
+        {
+            "operation_id": "missing-provision",
+            "command": "provision",
+            "secret_path": str(secret),
+        },
+        "missing-provision-instance",
+        40001,
+        "mng01",
+        {},
+        succeeded=False,
+        detail="RECONCILIATION_PHYSICAL_RESOURCE_ABSENT",
+    )
+
+    assert not secret.exists()
+    with database() as db:
+        row = db.execute(
+            "SELECT status, secret_path FROM operations WHERE operation_id='missing-provision'"
+        ).fetchone()
+    assert row["status"] == "failed"
+    assert row["secret_path"] is None
+
+
 def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     from worker import main as worker_main

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -861,6 +862,98 @@ def test_reconcile_route_is_idempotent_and_targets_uncertain_operation(tmp_path,
         assert "/v1/instances/{instance_id}/reconcile" in client.get("/openapi.json").json()["paths"]
 
 
+@pytest.mark.parametrize(
+    ("previous_reconcile_status", "expected_status"),
+    [("uncertain", 202), ("pending", 409), ("running", 409)],
+)
+def test_reconcile_can_retry_terminal_uncertain_attempt_without_parallelizing(
+    tmp_path, monkeypatch, previous_reconcile_status, expected_status
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": f"create-retry-reconcile-{previous_reconcile_status}"},
+            json=public_body(f"retry-reconcile-{previous_reconcile_status}"),
+        )
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='uncertain' WHERE operation_id=?",
+                (source_id,),
+            )
+            db.execute(
+                "UPDATE instances SET status='uncertain', vmid=40000, power_state='unknown' WHERE instance_id=?",
+                (instance_id,),
+            )
+            previous_id = f"previous-reconcile-{previous_reconcile_status}"
+            db.execute(
+                """
+                INSERT INTO operations(
+                  operation_id, command, action, status, payload_json,
+                  instance_id, stack, created_at
+                ) VALUES (?, 'reconcile', 'reconcile', ?, ?, ?, 'mng01', '2026-01-01T00:00:00Z')
+                """,
+                (
+                    previous_id,
+                    previous_reconcile_status,
+                    json.dumps({"source_operation_id": source_id}),
+                    instance_id,
+                ),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile",
+            headers={"Idempotency-Key": f"retry-reconcile-{previous_reconcile_status}"},
+        )
+        assert response.status_code == expected_status, response.text
+        if expected_status == 202:
+            assert response.json()["source_operation_id"] == source_id
+
+
+def test_unrelated_lifecycle_remains_blocked_by_uncertain_reconcile_attempt(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-reconcile-lifecycle-guard"},
+            json=public_body("reconcile-lifecycle-guard"),
+        )
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='succeeded' WHERE operation_id=?",
+                (source_id,),
+            )
+            db.execute(
+                "UPDATE instances SET status='ready', vmid=40000, power_state='stopped' WHERE instance_id=?",
+                (instance_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO operations(
+                  operation_id, command, action, status, payload_json,
+                  instance_id, stack, created_at
+                ) VALUES (
+                  'uncertain-reconcile-guard', 'reconcile', 'reconcile',
+                  'uncertain', ?, ?, 'mng01', '2026-01-01T00:00:00Z'
+                )
+                """,
+                (json.dumps({"source_operation_id": source_id}), instance_id),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/power/start",
+            headers={"Idempotency-Key": "start-with-uncertain-reconcile"},
+        )
+        assert response.status_code == 409
+        assert "uncertain-reconcile-guard" in response.text
+
+
 def test_reconcile_can_close_physical_uncertainty_after_instance_was_deleted(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
@@ -1143,6 +1236,63 @@ def test_configured_password_policy_rejects_short_root_password(tmp_path, monkey
         response = client.post("/v1/instances", json=body)
     assert response.status_code == 422
     assert "root_password" in response.text
+
+
+@pytest.mark.no_database
+def test_root_password_default_minimum_is_twelve(monkeypatch):
+    from pydantic import ValidationError
+
+    from api.models import AccessRequest
+
+    monkeypatch.delenv("IACP_ROOT_PASSWORD_MIN_LENGTH", raising=False)
+    with pytest.raises(ValidationError, match="al menos 12"):
+        AccessRequest(root_password="x")
+
+
+@pytest.mark.no_database
+def test_ambiguous_idempotency_commit_preserves_referenced_secret(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from api import service
+
+    state = {"committed": False}
+    cleanups = []
+
+    class Database:
+        def execute(self, statement, _parameters=()):
+            normalized = " ".join(statement.split())
+            if normalized == "COMMIT":
+                state["committed"] = True
+                raise ConnectionError("respuesta de commit perdida")
+            if normalized == "ROLLBACK":
+                return None
+            if normalized.startswith("SELECT 1 FROM idempotency_keys"):
+                return SimpleNamespace(fetchone=lambda: {"1": 1} if state["committed"] else None)
+            return SimpleNamespace(fetchone=lambda: None)
+
+    @contextmanager
+    def fake_database():
+        yield Database()
+
+    monkeypatch.setattr(service, "database", fake_database)
+    monkeypatch.setattr(service, "initialize_idempotency", lambda: b"k" * 32)
+    monkeypatch.setattr(service, "_existing_idempotency", lambda *_args: None)
+
+    def builder(_db):
+        service.register_idempotent_rollback_cleanup(lambda: cleanups.append("deleted"))
+        return {"operation_id": "operation-ambiguous"}, "operation-ambiguous"
+
+    with pytest.raises(ConnectionError, match="commit perdida"):
+        service._idempotent_mutation(
+            scope="POST:/v1/instances",
+            idempotency_key="ambiguous-commit-test",
+            body={"name": "instance-test"},
+            builder=builder,
+        )
+
+    assert state["committed"] is True
+    assert cleanups == []
 
 
 def test_queue_limit_returns_retryable_429(tmp_path, monkeypatch):

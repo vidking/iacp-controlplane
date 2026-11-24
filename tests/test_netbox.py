@@ -225,6 +225,66 @@ def test_netbox_lookup_failure_does_not_log_the_token(
     assert client.config.token not in caplog.text
 
 
+@pytest.mark.no_database
+def test_netbox_http_408_on_mutation_keeps_result_uncertain(monkeypatch):
+    client = fake_client()
+    requests = []
+
+    def open_request(request, **_kwargs):
+        requests.append(request.get_method())
+        raise HTTPError(request.full_url, 408, "request timeout", Message(), None)
+
+    monkeypatch.setattr(client, "opener", SimpleNamespace(open=open_request), raising=False)
+    with pytest.raises(NetBoxError) as failure:
+        client._request("POST", "/ipam/ip-addresses/", {"address": "198.51.100.8/24"})
+
+    assert failure.value.status == 408
+    assert failure.value.uncertain is True
+    assert requests == ["POST"]
+
+
+@pytest.mark.no_database
+def test_netbox_revalidates_existing_allocation_ownership(monkeypatch):
+    client = fake_client()
+    record = {
+        "id": 90,
+        "address": "198.51.100.8/24",
+        "status": "active",
+        "comments": "iacp-instance=instance-1",
+    }
+    requests = []
+    monkeypatch.setattr(client, "validate_gateway", lambda _prefix: "198.51.100.1")
+    monkeypatch.setattr(client, "_request", lambda method, path, **_kwargs: requests.append((method, path)) or record)
+    monkeypatch.setattr(client, "_ip_records", lambda _prefix: [record])
+
+    verified = client.verify_allocation(
+        {
+            "netbox_ip_id": 90,
+            "address": "198.51.100.8/24",
+            "gateway": "198.51.100.1",
+            "marker": "iacp-instance=instance-1",
+            "status": "allocated",
+        },
+        marker="iacp-instance=instance-1",
+    )
+    assert verified.ip_id == 90
+    assert requests == [("GET", "/ipam/ip-addresses/90/")]
+
+    record["comments"] = "iacp-instance=other-owner"
+    with pytest.raises(NetBoxError) as failure:
+        client.verify_allocation(
+            {
+                "netbox_ip_id": 90,
+                "address": "198.51.100.8/24",
+                "gateway": "198.51.100.1",
+                "marker": "iacp-instance=instance-1",
+                "status": "allocated",
+            },
+            marker="iacp-instance=instance-1",
+        )
+    assert failure.value.uncertain is True
+
+
 def test_netbox_rejects_supernet_before_sending_request(monkeypatch):
     client = fake_client()
     monkeypatch.setattr(client, "_request", lambda *_args: pytest.fail("Llamada fuera del alcance"))

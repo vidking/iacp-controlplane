@@ -72,7 +72,7 @@ class AccessRequest(BaseModel):
     def valid_root_password(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None:
             return value
-        minimum = max(1, int(os.getenv("IACP_ROOT_PASSWORD_MIN_LENGTH", "1")))
+        minimum = max(12, int(os.getenv("IACP_ROOT_PASSWORD_MIN_LENGTH", "12")))
         secret = value.get_secret_value()
         if len(secret) < minimum:
             raise ValueError(f"root_password debe tener al menos {minimum} caracteres")

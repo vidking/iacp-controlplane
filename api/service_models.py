@@ -20,7 +20,7 @@ class ApplicationConfiguration(BaseModel):
         default=None, max_length=253, pattern=r"^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
     )
     access_mode: Literal["domain", "ip"] = "domain"
-    agent_mode: Literal["connected", "local"] = "connected"
+    agent_mode: Literal["connected"] = "connected"
     admin_user: str = Field(
         default="admin",
         pattern=r"^[a-z][a-z0-9_-]{0,31}$",
@@ -127,10 +127,7 @@ class ServiceCreateRequest(BaseModel):
         if self.configuration.access_mode == "ip":
             if self.configuration.domain:
                 raise ValueError("access_mode=ip no admite domain")
-        if (
-            self.application_id in {"hermes", "openclaw"}
-            and self.configuration.agent_mode == "connected"
-        ):
+        if self.application_id in {"hermes", "openclaw"}:
             if not self.secrets.provider_api_key or not self.configuration.model:
                 raise ValueError(
                     "el agente requiere model y provider_api_key (OpenRouter en v1)"

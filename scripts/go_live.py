@@ -34,6 +34,7 @@ LEGACY_VOLUMES = {
     "iacp-controlplane_technical_postgres_data",
 }
 COMMIT_TAG = re.compile(r"^[0-9a-f]{40}$")
+IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class GateError(RuntimeError):
@@ -141,6 +142,16 @@ def _has_readonly_bind_mount(service: dict, *, source: str, target: str) -> bool
     return False
 
 
+def _bind_mount_overlaps(path: str, protected_directory: Path) -> bool:
+    source = Path(path).resolve(strict=False)
+    protected = protected_directory.resolve(strict=False)
+    return (
+        source == protected
+        or source in protected.parents
+        or protected in source.parents
+    )
+
+
 def _private_environment(path: Path) -> dict:
     try:
         from scripts.envfile import read_env_file
@@ -202,6 +213,13 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     for key in ("project", "domain", "service_alias"):
         if data[key] != expected_identity[key]:
             raise GateError(f"El manifiesto no coincide con la identidad autorizada de {stage}")
+    expected_dynamic_config = Path(
+        "/etc/iacp/tls/dynamic/iacp.yml"
+        if stage == "production"
+        else "/etc/iacp/tls/dynamic/dev-iac.yml"
+    )
+    if Path(data.get("dynamic_config", "")) != expected_dynamic_config:
+        raise GateError("La ruta dinámica de Traefik no coincide con el entorno autorizado")
     expected_vmid_range = (expected_identity["vmid_min"], expected_identity["vmid_max"])
     if (data.get("vmid_min"), data.get("vmid_max")) != expected_vmid_range:
         raise GateError(f"El rango VMID no coincide con el entorno {stage}")
@@ -235,9 +253,52 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         service_config_dir = runtime_environment.get("IACP_SERVICE_CONFIG_DIR", "")
         if not service_config_dir or not Path(service_config_dir).is_absolute():
             raise GateError("IACP_SERVICE_CONFIG_DIR debe apuntar a un directorio absoluto")
-        service_key = Path(service_config_dir) / "key"
-        if not service_key.is_file() or (service_key.stat().st_mode & 0o077):
+        service_directory = Path(service_config_dir)
+        if service_directory.is_symlink() or not service_directory.is_dir():
+            raise GateError("El directorio de servicios debe existir y no ser un enlace")
+        service_key = service_directory / "key"
+        if (
+            not service_key.is_file()
+            or service_key.is_symlink()
+            or (service_key.stat().st_mode & 0o077)
+        ):
             raise GateError("La clave de servicios debe existir como archivo privado")
+        service_ca_key = service_directory / "pilot-ca.key"
+        service_ca_cert = service_directory / "pilot-ca.crt"
+        if (
+            not service_ca_key.is_file()
+            or service_ca_key.is_symlink()
+            or (service_ca_key.stat().st_mode & 0o077)
+        ):
+            raise GateError("La clave privada de la CA debe existir como archivo privado")
+        if not service_ca_cert.is_file() or service_ca_cert.is_symlink():
+            raise GateError("El certificado público de la CA no existe")
+        if api_env.get("IACP_SERVICE_KEY_FILE") != "/run/iacp-service-key":
+            raise GateError("La API debe recibir la clave Fernet por un montaje de archivo dedicado")
+        if api_env.get("IACP_SERVICE_CA_CERT_FILE") != "/run/iacp-pilot-ca.crt":
+            raise GateError("La API debe recibir solo el certificado público de la CA")
+        api_service = config["services"]["api"]
+        if not _has_readonly_bind_mount(
+            api_service,
+            source=str(service_key),
+            target="/run/iacp-service-key",
+        ) or not _has_readonly_bind_mount(
+            api_service,
+            source=str(service_ca_cert),
+            target="/run/iacp-pilot-ca.crt",
+        ):
+            raise GateError("La API requiere montajes individuales y de solo lectura de la clave de servicios y CA pública")
+        for mount in api_service.get("volumes", []):
+            if not isinstance(mount, dict) or mount.get("type") != "bind":
+                continue
+            mount_source = str(mount.get("source", ""))
+            if _bind_mount_overlaps(mount_source, service_directory) and Path(
+                mount_source
+            ).resolve(strict=False) not in {
+                service_key.resolve(strict=False),
+                service_ca_cert.resolve(strict=False),
+            }:
+                raise GateError("La API no debe montar el directorio de servicios ni la clave privada de la CA")
         for name in worker_names:
             env = _service_env(config, name)
             service = config["services"][name]
@@ -249,18 +310,38 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
                 target="/run/iacp-services/key",
             ):
                 raise GateError(f"La clave de servicios debe montarse en solo lectura en {name}")
+            for mount in service.get("volumes", []):
+                if not isinstance(mount, dict) or mount.get("type") != "bind":
+                    continue
+                mount_source = str(mount.get("source", ""))
+                if (
+                    _bind_mount_overlaps(mount_source, service_directory)
+                    and Path(mount_source).resolve(strict=False)
+                    != service_key.resolve(strict=False)
+                ):
+                    raise GateError(f"{name} no debe recibir la clave privada de la CA")
         for name in service_worker_names:
             env = _service_env(config, name)
+            service_worker = config["services"][name]
             if str(env.get("IACP_SERVICES_ENABLED", "0")) != "1":
                 raise GateError("Todos los workers de servicios deben estar habilitados")
             if (str(env.get("IACP_SERVICE_EXECUTION_ENABLED", "0")) == "1") != execution:
                 raise GateError("El permiso de ejecución de servicios no coincide")
             if str(env.get("IACP_SERVICE_MAX_CONCURRENT", "2")) != str(len(service_worker_names)):
                 raise GateError("La concurrencia configurada no coincide con el pool de servicios")
+            if env.get("IACP_SERVICE_KEY_FILE") != "/run/iacp-services/key":
+                raise GateError(f"Falta la clave de servicios en {name}")
             if any(env.get(key) for key in ("IACP_PROXMOX_MNG_API_TOKEN", "IACP_PROXMOX_API_TOKEN")):
                 raise GateError("Los workers de servicios no deben recibir credenciales Proxmox")
+            if not _has_readonly_bind_mount(
+                service_worker,
+                source=service_config_dir,
+                target="/run/iacp-services",
+            ):
+                raise GateError("Los workers de servicios requieren su directorio privado de solo lectura")
         if str(api_env.get("IACP_SERVICE_MAX_CONCURRENT", "2")) != str(len(service_worker_names)):
             raise GateError("La API debe anunciar la misma concurrencia del pool de servicios")
+    if stage == "develop":
         _check_development_credentials(data, env_file, config)
 
     worker_envs = [_service_env(config, name) for name in worker_names]
@@ -327,6 +408,12 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
         "1", "true", "yes", "on",
     }:
         raise GateError("El stack no debe habilitar el modo local sin autenticación")
+    try:
+        root_password_minimum = int(api_env.get("IACP_ROOT_PASSWORD_MIN_LENGTH", "12"))
+    except (TypeError, ValueError) as error:
+        raise GateError("IACP_ROOT_PASSWORD_MIN_LENGTH debe ser un entero de al menos 12") from error
+    if root_password_minimum < 12:
+        raise GateError("IACP_ROOT_PASSWORD_MIN_LENGTH debe ser al menos 12")
     for key in ("IACP_API_TOKEN", "IACP_PROXMOX_MNG_API_TOKEN"):
         value = api_env.get(key)
         if not isinstance(value, str) or len(value.strip()) < 16 or "REEMPLAZAR" in value.upper():
@@ -338,6 +425,23 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
             or environment.get("IACP_TERRAFORM_DIR") != "environments/mng01"
         ):
             raise GateError("API y workers deben resolver el destino MNG y su Terraform canónico")
+        endpoint = str(environment.get("IACP_PROXMOX_MNG_ENDPOINT", ""))
+        try:
+            parsed_endpoint = urlsplit(endpoint)
+            endpoint_port = parsed_endpoint.port
+        except ValueError as error:
+            raise GateError("El endpoint Proxmox de MNG no es válido") from error
+        if (
+            parsed_endpoint.scheme != "https"
+            or parsed_endpoint.hostname != "mng01.cyberfuel.com"
+            or parsed_endpoint.username is not None
+            or parsed_endpoint.password is not None
+            or endpoint_port not in {None, 8006}
+            or parsed_endpoint.path not in {"", "/", "/api2/json"}
+            or parsed_endpoint.query
+            or parsed_endpoint.fragment
+        ):
+            raise GateError("El endpoint de MNG debe usar HTTPS hacia mng01.cyberfuel.com")
     database_password = postgres_env.get("POSTGRES_PASSWORD")
     if not isinstance(database_password, str) or len(database_password.strip()) < 16 or "REEMPLAZAR" in database_password.upper():
         raise GateError("Falta configurar POSTGRES_PASSWORD")
@@ -400,14 +504,19 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
     repository = str(data.get("image_repository", "scm.cyberfuel.com/cyberfuel/iacp-controlplane"))
     if repository != "scm.cyberfuel.com/cyberfuel/iacp-controlplane":
         raise GateError("El repositorio de imagen no coincide con el artefacto aprobado")
+    image_digest = str(data.get("image_digest", ""))
+    if not IMAGE_DIGEST.fullmatch(image_digest):
+        raise GateError("El manifiesto debe fijar el digest sha256 del artefacto")
     image_tags = set()
     for service in app_names:
         image = config["services"][service].get("image", "")
         if not image.startswith(repository + ":"):
             raise GateError(f"La imagen de {service} no usa el repositorio aprobado")
-        tag = image.rsplit(":", 1)[-1]
+        tag = image.split("@", 1)[0].rsplit(":", 1)[-1]
         if not COMMIT_TAG.fullmatch(tag):
             raise GateError(f"La imagen de {service} no está fijada a un commit inmutable")
+        if image != f"{repository}:{tag}@{image_digest}":
+            raise GateError(f"La imagen de {service} no coincide con el digest del manifiesto")
         image_tags.add(tag)
     if len(image_tags) != 1 or data.get("image_tag") not in image_tags:
         raise GateError("Los servicios y el manifiesto deben fijar la misma revisión de imagen")
@@ -584,6 +693,8 @@ def _swap_upstream(route: Path, evidence: Path, expected: str, target: str) -> d
         raise GateError("No se encontró una única línea del upstream esperado")
     old_line = matches[0]
     backup = evidence / "traefik-before.yml"
+    if backup.exists():
+        backup = evidence / "traefik-before-rollback.yml"
     shutil.copy2(route, backup)
     os.chmod(backup, 0o600)
     replacement = source.replace(old_line, line_options[old_line], 1)
@@ -879,6 +990,11 @@ while time.monotonic()<service_deadline:
 from api.service_secrets import cipher
 cipher()
 payload['service_key_ready'] = True
+from pathlib import Path
+from cryptography import x509
+ca_cert_path = Path(os.environ.get('IACP_SERVICE_CA_CERT_FILE', ''))
+x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+payload['service_ca_cert_ready'] = True
 payload['service_api'] = all(path in spec.get('paths', {}) for path in ['/v1/applications','/v1/service-instances','/v1/service-workers'])
 with database() as db:
     rows = db.execute('SELECT worker_id, status, last_heartbeat FROM workers ORDER BY worker_id').fetchall()
@@ -914,7 +1030,7 @@ print(json.dumps(payload))
         "worker_ids": [f"worker-{number}" for number in range(1, 7)],
     }
     if data.get("services_enabled", False):
-        expected_payload.update(service_worker_ids=expected_service_workers, service_max_concurrent=len(expected_service_workers), service_tables=True, service_key_ready=True, service_api=True, infrastructure_workers_fresh=True)
+        expected_payload.update(service_worker_ids=expected_service_workers, service_max_concurrent=len(expected_service_workers), service_tables=True, service_key_ready=True, service_ca_cert_ready=True, service_api=True, infrastructure_workers_fresh=True)
     if payload != expected_payload:
         raise GateError("API, PostgreSQL, migración y pools de workers no cumplen el contrato declarado")
     if data.get("services_enabled", False):
@@ -929,6 +1045,22 @@ print(json.dumps(payload))
             )
             if output.strip().splitlines()[-1:] != ["IACP_SERVICE_KEY_READY"]:
                 raise GateError(f"{worker_name} no puede leer la clave de servicios")
+        signer_check = (
+            "from pathlib import Path; import os; from cryptography import x509; "
+            "from cryptography.hazmat.primitives.serialization import load_pem_private_key; "
+            "p=Path(os.getenv('IACP_SERVICE_CA_DIR','/run/iacp-services')); "
+            "c=x509.load_pem_x509_certificate((p/'pilot-ca.crt').read_bytes()); "
+            "k=load_pem_private_key((p/'pilot-ca.key').read_bytes(),password=None); "
+            "assert c.public_key().public_numbers()==k.public_key().public_numbers(); "
+            "print('IACP_SERVICE_CA_SIGNER_READY')"
+        )
+        for service_worker_name in expected_service_workers:
+            output = _run(
+                prefix + ["exec", "-T", service_worker_name, "python", "-c", signer_check],
+                label=f"Verificación de firmador CA en {service_worker_name}",
+            )
+            if output.strip().splitlines()[-1:] != ["IACP_SERVICE_CA_SIGNER_READY"]:
+                raise GateError(f"{service_worker_name} no puede usar la CA de servicios")
     return {"services": statuses, "api": payload}
 
 
@@ -1104,6 +1236,7 @@ def _backup_verify(backup_dir: Path) -> dict:
 def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
     services = config.get("services", {})
     verified = []
+    expected_application_image_id = None
     for service_name in sorted(services):
         image = services[service_name].get("image")
         if not isinstance(image, str) or not image.strip():
@@ -1114,18 +1247,80 @@ def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
         ).strip()
         if not image_id.startswith("sha256:"):
             raise GateError(f"La imagen precargada de {service_name} no devolvió un digest local válido")
-        verified.append({"service": service_name, "image": image, "image_id": image_id})
+        item = {"service": service_name, "image": image, "image_id": image_id}
+        if service_name != "postgres":
+            match = re.fullmatch(
+                r"(?P<repository>[^@]+):(?P<tag>[0-9a-f]{40})@(?P<digest>sha256:[0-9a-f]{64})",
+                image,
+            )
+            if match is None:
+                raise GateError(f"La imagen de {service_name} no está fijada por commit y digest")
+            repo_digests = _run(
+                ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+                label=f"Digest de registro de {service_name}",
+            ).strip()
+            try:
+                recorded_digests = json.loads(repo_digests)
+            except json.JSONDecodeError as error:
+                raise GateError(f"Docker no devolvió RepoDigests válidos para {service_name}") from error
+            expected_repo_digest = f"{match['repository']}@{match['digest']}"
+            if not isinstance(recorded_digests, list) or expected_repo_digest not in recorded_digests:
+                raise GateError(f"El contenido local de {service_name} no coincide con el digest aprobado")
+            revision = _run(
+                [
+                    "docker", "image", "inspect", "--format",
+                    '{{index .Config.Labels "org.opencontainers.image.revision"}}', image,
+                ],
+                label=f"Revisión de imagen de {service_name}",
+            ).strip()
+            if revision != match["tag"]:
+                raise GateError(f"La etiqueta de revisión de {service_name} no coincide con el commit aprobado")
+            if expected_application_image_id is None:
+                expected_application_image_id = image_id
+            elif image_id != expected_application_image_id:
+                raise GateError("API y workers no usan los mismos bytes de imagen")
+            item["registry_digest"] = match["digest"]
+        verified.append(item)
     if not verified:
         raise GateError("La configuración no contiene imágenes para el despliegue precargado")
     return verified
 
 
+def _active_upstream(route: Path) -> str:
+    if not route.is_file():
+        raise GateError("No existe el archivo dinámico de Traefik")
+    try:
+        parsed = yaml.safe_load(route.read_text(encoding="utf-8")) or {}
+        return parsed["http"]["services"]["iacp-api"]["loadBalancer"]["servers"][0]["url"]
+    except (OSError, KeyError, IndexError, TypeError, yaml.YAMLError) as error:
+        raise GateError("La ruta de Traefik tiene una forma inesperada") from error
+
+
+def _assert_production_candidate_inactive(data: dict) -> None:
+    if data.get("stage") != "production":
+        return
+    route = Path(data["dynamic_config"])
+    candidate = f"http://{data['service_alias']}:8080"
+    if _active_upstream(route) == candidate:
+        raise GateError(
+            "El alias candidato está activo; no se puede reemplazar antes de verificar otra revisión"
+        )
+
+
 def _activate_production(data: dict, evidence: Path) -> dict:
     if data["stage"] != "production":
         raise GateError("La activación productiva requiere el manifiesto production")
+    if os.geteuid() != 0:
+        raise GateError("La activación productiva requiere ejecutar el operador como root")
     certification_path = Path(data.get("certification_file", ""))
+    if certification_path != Path("/etc/iacp/certification/controlplane-v1.json"):
+        raise GateError("La certificación debe proceder del directorio protegido de evidencias")
     if not certification_path.is_file():
         raise GateError("Falta la certificación física PASS ligada a esta imagen")
+    cert_stat = certification_path.stat()
+    cert_directory_stat = certification_path.parent.stat()
+    if cert_stat.st_mode & 0o077 or cert_directory_stat.st_mode & 0o077:
+        raise GateError("La certificación y su directorio deben ser privados para el equipo de operaciones")
     try:
         certificate = json.loads(certification_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -1138,16 +1333,21 @@ def _activate_production(data: dict, evidence: Path) -> dict:
     results = certificate.get("checks", {}) if isinstance(certificate, dict) else {}
     if certificate.get("result") != "PASS" or certificate.get("image_tag") != image_tag:
         raise GateError("La certificación no corresponde al release que se va a activar")
+    if certificate.get("image_digest") != data.get("image_digest"):
+        raise GateError("La certificación no corresponde al digest de imagen que se va a activar")
     if not required.issubset(results) or any(results.get(key) != "PASS" for key in required):
         raise GateError("La certificación no cubre todos los gates productivos")
     route = Path(data["dynamic_config"]).resolve()
+    if route != Path("/etc/iacp/tls/dynamic/iacp.yml"):
+        raise GateError("La activación productiva está limitada a la ruta Traefik autorizada")
     target = f"http://{data['service_alias']}:8080"
+    if _active_upstream(route) != target:
+        _require_legacy_api_healthy()
     update = _swap_upstream(route, evidence, "http://api:8000", target)
     return {
         "activated": update["changed"],
         "already_active": update.get("already_active", False),
         "target": target,
-        "automatic_rollback": False,
     }
 
 
@@ -1343,6 +1543,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_backend = _check_runtime_backend(data, config)
                 if state_backend is not None:
                     result["state_backend"] = state_backend
+                _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
                 if args.preloaded_images:
                     result["preloaded_images"] = _verify_preloaded_images(config)
@@ -1365,7 +1566,26 @@ def main(argv: list[str] | None = None) -> int:
                     result["state_backend"] = state_backend
                 result["verification"] = _verify(data, compose, env_file)
                 result["activation"] = _activate_production(data, evidence)
-                result["external_health"] = _check_external(data["domain"], data["image_tag"])
+                try:
+                    result["external_health"] = _check_external(data["domain"], data["image_tag"])
+                except GateError as activation_error:
+                    if result["activation"].get("activated"):
+                        route = Path(data["dynamic_config"]).resolve()
+                        candidate = f"http://{data['service_alias']}:8080"
+                        rollback = _swap_upstream(
+                            route, evidence, candidate, "http://api:8000"
+                        )
+                        result["automatic_rollback"] = rollback["changed"]
+                        try:
+                            result["rollback_external_health"] = _check_external(
+                                data["domain"], None,
+                                forbidden_revision=str(data.get("image_tag", "")),
+                            )
+                        except GateError as rollback_error:
+                            raise GateError(
+                                f"{activation_error}; se restauró la ruta legacy pero no se confirmó su readiness ({rollback_error})"
+                            ) from rollback_error
+                    raise
                 result["passed"] = True
             elif args.action == "activate-develop":
                 result["configuration"] = _check_policy(data, config, env_file)

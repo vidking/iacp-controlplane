@@ -817,6 +817,10 @@ def _ensure_static_allocation(
                 error=error.code,
             )
             raise
+    else:
+        # La reserva local es un ledger, no una fuente de verdad para el estado
+        # actual de NetBox. Revalidarla antes de reutilizarla en un plan.
+        client.verify_allocation(allocation, marker=marker)
     spec.update(
         {
             "network_profile": "prod_static",
@@ -831,6 +835,26 @@ def _ensure_static_allocation(
     _update_operation_payload(operation_id, payload)
     _update_instance_spec(instance_id, spec)
     return spec
+
+
+def _verify_static_allocation_for_apply(
+    *, worker_id: str, operation_id: str, instance_id: str | None
+) -> None:
+    if not instance_id:
+        raise NetBoxError("IPAM_INSTANCE_REQUIRED", uncertain=True)
+    allocation = _ip_allocation(instance_id)
+    marker = f"iacp-instance={instance_id}"
+    if (
+        allocation is None
+        or allocation.get("status") != "allocated"
+        or allocation.get("marker") != marker
+    ):
+        raise NetBoxError("IPAM_ALLOCATION_CONFLICT", uncertain=True)
+    client = NetBoxClient()
+    setter = getattr(client, "set_heartbeat", None)
+    if setter is not None:
+        setter(lambda: heartbeat(worker_id, "running", operation_id, phase="ipam_verify"))
+    client.verify_allocation(allocation, marker=marker)
 
 
 def _release_static_allocation(instance_id: str | None, operation_id: str) -> bool:
@@ -2220,6 +2244,13 @@ def close_source_after_reconciliation(
         released = True
         if source_operation["command"] in {"apply", "provision", "plan"}:
             released = _release_static_allocation(instance_id, source_id)
+        source_secret_deleted = False
+        source_secret_path = source_operation.get("secret_path")
+        if source_operation["command"] == "provision" and source_secret_path:
+            # Esta rama solo se usa tras confirmar la ausencia física. La
+            # contraseña ya no puede servir para una VM de esta operación.
+            delete_secret(source_secret_path)
+            source_secret_deleted = True
         terminal_status = "failed" if released else "uncertain"
         terminal_error = detail if released else "IPAM_RELEASE_PENDING"
         # Cerrar una intención anterior no revierte una eliminación posterior.
@@ -2229,11 +2260,17 @@ def close_source_after_reconciliation(
             fence = _FENCE.get()
             if fence is not None:
                 assert_active_operation_owned(db, *fence)
-            update_operation(
-                source_id, status=terminal_status,
-                finished_at=now(), last_heartbeat=now(), exit_code=1,
-                output="", error=terminal_error, connection=db,
-            )
+            source_updates = {
+                "status": terminal_status,
+                "finished_at": now(),
+                "last_heartbeat": now(),
+                "exit_code": 1,
+                "output": "",
+                "error": terminal_error,
+            }
+            if source_secret_deleted:
+                source_updates["secret_path"] = None
+            update_operation(source_id, connection=db, **source_updates)
             db.execute(
                 """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
                 node=COALESCE(?,node), updated_at=? WHERE instance_id=?
@@ -3163,6 +3200,12 @@ def execute(worker_id: str, operation: dict) -> None:
                     assert_stopped_plan(workspace, plan_path, (int(vmid), spec["name"], target_node))
                     if _FENCE.get() is not None:
                         require_free_provision_target(client, int(vmid), operation_id)
+                    if spec.get("network_profile") == "prod_static":
+                        _verify_static_allocation_for_apply(
+                            worker_id=worker_id,
+                            operation_id=operation_id,
+                            instance_id=instance_id,
+                        )
                 emit(operation_id, "terraform.apply.started", "running")
                 apply_code, apply_output, apply_error = run_commands(
                     worker_id,
@@ -3187,6 +3230,16 @@ def execute(worker_id: str, operation: dict) -> None:
                 )
                 if _FENCE.get() is not None:
                     require_free_provision_target(client, int(vmid), source_operation_id)
+                apply_spec = source_payload.get("spec") or {}
+                apply_profile = apply_spec.get("network_profile") or (
+                    "prod_static" if apply_spec.get("network_mode") == "static" else "lab_dhcp"
+                )
+                if apply_profile == "prod_static":
+                    _verify_static_allocation_for_apply(
+                        worker_id=worker_id,
+                        operation_id=operation_id,
+                        instance_id=instance_id,
+                    )
             emit(operation_id, f"terraform.{command}.started", "running")
             heartbeat(worker_id, "running", operation_id, phase=phase)
             return_code, output, error = run_commands(

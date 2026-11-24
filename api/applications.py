@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from api.db import database
 from api.models import Command, OperationRequest
 from api.service import (
+    ACTIVE_OPERATION_STATUSES,
     _idempotent_mutation,
     _idempotency_key_or_error,
     _insert_operation,
@@ -216,7 +217,26 @@ def get_service(service_id):
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         result = dict(row)
         retrieved_at = result.pop("credentials_retrieved_at")
-        awaiting_customer = result["status"] == "awaiting_customer"
+        active_operation_statuses = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
+        active_operation = db.execute(
+            f"""SELECT 1 FROM operations WHERE instance_id=?
+            AND status IN ({active_operation_statuses}) LIMIT 1""",
+            (result["instance_id"], *sorted(ACTIVE_OPERATION_STATUSES)),
+        ).fetchone()
+        active_service_job = db.execute(
+            """SELECT 1 FROM service_jobs WHERE service_id=?
+            AND status IN ('queued','running','uncertain') LIMIT 1""",
+            (service_id,),
+        ).fetchone()
+        infrastructure_ready = (
+            result["infrastructure_status"] == "ready"
+            and result["power_state"] == "running"
+            and active_operation is None
+            and active_service_job is None
+        )
+        awaiting_customer = (
+            result["status"] == "awaiting_customer" and infrastructure_ready
+        )
         result["credentials_available"] = retrieved_at is None and awaiting_customer
         result["credentials_recovery_possible"] = bool(
             result["credential_receipt_required"]
@@ -262,7 +282,10 @@ def get_service(service_id):
                 result["credentials_recovery_possible"] = False
             result["access_url"] = (
                 "https://" + host + "/"
-                if host and result["status"] in {"awaiting_customer", "delivered"} and not owner_review_required
+                if host
+                and result["status"] in {"awaiting_customer", "delivered"}
+                and infrastructure_ready
+                and not owner_review_required
                 else None
             )
         return result
@@ -364,8 +387,11 @@ def delivery(service_id, key, receipt=None):
 
     def builder(db):
         row = db.execute(
-            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
-            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            """SELECT s.*, i.status AS infrastructure_status,
+            r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            LEFT JOIN service_credential_retrievals r USING(service_id)
             WHERE s.service_id=?""",
             (service_id,),
         ).fetchone()
@@ -414,14 +440,28 @@ def credentials(service_id, key=None):
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            """SELECT s.*, r.request_hash AS credentials_retrieval_key_hash
-            FROM service_instances s LEFT JOIN service_credential_retrievals r USING(service_id)
+            """SELECT s.*, i.status AS infrastructure_status,
+            r.request_hash AS credentials_retrieval_key_hash
+            FROM service_instances s
+            JOIN instances i ON i.instance_id=s.instance_id
+            LEFT JOIN service_credential_retrievals r USING(service_id)
             WHERE s.service_id=?""",
             (service_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_NOT_FOUND")
         if row["status"] != "awaiting_customer":
+            raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+        if row["infrastructure_status"] != "ready":
+            raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
+        operation_statuses = ",".join("?" for _ in ACTIVE_OPERATION_STATUSES)
+        active_operation = db.execute(
+            f"""SELECT 1 FROM operations
+            WHERE instance_id=? AND status IN ({operation_statuses})
+            LIMIT 1""",
+            (row["instance_id"], *sorted(ACTIVE_OPERATION_STATUSES)),
+        ).fetchone()
+        if active_operation:
             raise HTTPException(409, "CREDENTIALS_UNAVAILABLE")
         guard_instance(db, row["instance_id"])
         previous_key_hash = row["credentials_retrieval_key_hash"]

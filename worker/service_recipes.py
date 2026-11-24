@@ -23,6 +23,13 @@ def validated_domain(value):
 
 
 def render(application, configuration, secrets, release):
+    if application in {"hermes", "openclaw"} and (
+        not isinstance(configuration.get("model"), str)
+        or not configuration["model"].strip()
+        or not isinstance(secrets.get("provider_api_key"), str)
+        or not secrets["provider_api_key"].strip()
+    ):
+        raise RecipeError("SERVICE_AGENT_CONFIGURATION_REQUIRED")
     expected = {
         "nextcloud": {"app", "postgres", "redis", "caddy"},
         "n8n": {"app", "postgres", "caddy"},
@@ -157,15 +164,13 @@ def render(application, configuration, secrets, release):
         app["command"] = ["gateway", "run"]
         app["environment"] = env(
             {
-                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
-                or "local-validation-no-provider"
+                "OPENROUTER_API_KEY": secrets["provider_api_key"]
             }
         )
         files["data/config.yaml"] = json.dumps(
             {
                 "model": {
-                    "default": configuration.get("model")
-                    or "openrouter/local-validation",
+                    "default": configuration["model"],
                     "provider": "openrouter",
                 }
             }
@@ -185,8 +190,7 @@ def render(application, configuration, secrets, release):
         app["volumes"] = ["app_data:/home/node/.openclaw"]
         app["environment"] = env(
             {
-                "OPENROUTER_API_KEY": secrets.get("provider_api_key")
-                or "local-validation-no-provider",
+                "OPENROUTER_API_KEY": secrets["provider_api_key"],
                 "OPENCLAW_GATEWAY_TOKEN": secrets["gateway_token"],
             }
         )

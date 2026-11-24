@@ -1188,7 +1188,13 @@ def service_tls_ca(service_id: str):
     service = applications.get_service(service_id)
     if service["configuration"].get("access_mode") != "ip":
         raise HTTPException(409, "SERVICE_NOT_USING_PILOT_CA")
-    certificate = Path(os.getenv("IACP_SERVICE_CA_DIR", "/run/iacp-services")) / "pilot-ca.crt"
+    certificate_file = os.getenv("IACP_SERVICE_CA_CERT_FILE")
+    certificate = (
+        Path(certificate_file)
+        if certificate_file
+        else Path(os.getenv("IACP_SERVICE_CA_DIR", "/run/iacp-services"))
+        / "pilot-ca.crt"
+    )
     if not certificate.is_file():
         raise HTTPException(503, "SERVICE_CA_NOT_CONFIGURED")
     return FileResponse(certificate, media_type="application/x-pem-file", filename="iacp-pilot-ca.crt", headers={"Cache-Control": "no-store"})

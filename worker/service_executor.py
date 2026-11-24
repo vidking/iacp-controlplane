@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from ipaddress import ip_address
 from datetime import datetime, timedelta, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -26,6 +25,32 @@ from worker.service_locks import current_service_job_lock_fd
 NEXTCLOUD_READY_MAX_SECONDS = 20 * 60
 NEXTCLOUD_READY_POLL_SECONDS = 5
 NEXTCLOUD_READY_ATTEMPTS = NEXTCLOUD_READY_MAX_SECONDS // NEXTCLOUD_READY_POLL_SECONDS
+
+
+def remote_service_lock_scripts() -> tuple[str, str]:
+    """Adquiere locks remotos solo cuando no existe una intención previa."""
+
+    acquire = (
+        "import json,os,sys\n"
+        "from pathlib import Path\n"
+        "lock=Path(sys.argv[1]); current=json.loads(sys.argv[2])\n"
+        "if lock.exists() or lock.is_symlink(): raise SystemExit(73)\n"
+        "os.mkdir(lock,0o700)\n"
+        "with (lock/'owner.json').open('x') as stream:\n"
+        " json.dump(current,stream,separators=(',',':')); stream.flush(); os.fsync(stream.fileno())\n"
+    )
+    release = (
+        "import json,sys\n"
+        "from pathlib import Path\n"
+        "lock=Path(sys.argv[1]); expected=json.loads(sys.argv[2]); owner=lock/'owner.json'\n"
+        "if not lock.exists() and not lock.is_symlink(): raise SystemExit(0)\n"
+        "if lock.is_symlink() or not lock.is_dir(): raise SystemExit(73)\n"
+        "try: actual=json.loads(owner.read_text())\n"
+        "except (OSError,ValueError): raise SystemExit(73)\n"
+        "if actual != expected or list(lock.iterdir()) != [owner]: raise SystemExit(73)\n"
+        "owner.unlink(); lock.rmdir()\n"
+    )
+    return acquire, release
 
 NEXTCLOUD_READY_SCRIPT = (
     "set -eu\n"
@@ -528,6 +553,7 @@ def execute(service, job, heartbeat):
     if spec.get("ipv4_cidr") and str(ip_interface(spec["ipv4_cidr"]).ip) != address:
         raise ServiceBlocked("SERVICE_ADDRESS_IDENTITY_MISMATCH")
     secrets = decrypt(service["secrets_encrypted"]) if service.get("secrets_encrypted") else {}
+    final_caddyfile = None
     maintenance_access = None
     if job["action"] in {"cleanup", "renew_tls"} and binding.get(
         "maintenance_access_encrypted"
@@ -577,12 +603,32 @@ def execute(service, job, heartbeat):
             raise ServiceBlocked("SERVICE_N8N_OWNER_REQUIRED")
         if configuration.get("access_mode") == "ip":
             configuration["domain"] = address
-        if configuration.get("agent_mode") == "local":
-            configuration["model"] = configuration.get("model") or "openrouter/local-validation"
+        if service["application_id"] in {"hermes", "openclaw"} and (
+            configuration.get("agent_mode", "connected") != "connected"
+            or not isinstance(configuration.get("model"), str)
+            or not configuration["model"].strip()
+            or not isinstance(secrets.get("provider_api_key"), str)
+            or not secrets["provider_api_key"].strip()
+        ):
+            raise ServiceBlocked("SERVICE_AGENT_CONFIGURATION_REQUIRED")
         try:
             compose, files = render(service["application_id"], configuration, secrets, release)
         except RecipeError as error:
             raise ServiceBlocked(str(error)) from None
+        if service["application_id"] in {"nextcloud", "n8n"}:
+            final_caddyfile = files.get("Caddyfile")
+            if not isinstance(final_caddyfile, str):
+                raise ServiceBlocked("SERVICE_PROXY_CONFIGURATION_REQUIRED")
+            bootstrap_caddyfile, replacements = re.subn(
+                r"(?m)^[ \t]*reverse_proxy app:(?:80|5678)[ \t]*$",
+                ' respond "Servicio en configuración" 503',
+                final_caddyfile,
+            )
+            if replacements != 1:
+                raise ServiceBlocked("SERVICE_PROXY_CONFIGURATION_INVALID")
+            # Mantener el alias Docker disponible para configurar trusted_proxies.
+            # Caddy solo responde 503 hasta que la aplicación quede verificada.
+            files["Caddyfile"] = bootstrap_caddyfile
         if configuration.get("access_mode") == "ip":
             from worker.service_tls import issue
 
@@ -809,8 +855,8 @@ def execute(service, job, heartbeat):
         up = base + ["up", "-d", "--wait", "--wait-timeout", "300"]
         if service["application_id"] in {"n8n", "nextcloud"}:
             tasks.append({
-                "name": "Cerrar proxy durante la configuración inicial",
-                **command(base + ["stop", "caddy"]),
+                "name": "Preparar proxy cerrado para la instalación",
+                **command(up + ["caddy"]),
             })
         tasks += [
             {
@@ -932,10 +978,25 @@ def execute(service, job, heartbeat):
             }
         )
         if service["application_id"] in {"n8n", "nextcloud"}:
-            tasks.append({
-                "name": "Publicar proxy tras verificar la aplicación",
-                **command(up + ["caddy"]),
-            })
+            if final_caddyfile is None:
+                raise ServiceBlocked("SERVICE_PROXY_CONFIGURATION_REQUIRED")
+            tasks.extend(
+                [
+                    {
+                        "name": "Publicar configuración verificada del proxy",
+                        "ansible.builtin.copy": {
+                            "content": final_caddyfile,
+                            "dest": root + "/Caddyfile",
+                            "mode": "0600",
+                        },
+                        "no_log": True,
+                    },
+                    {
+                        "name": "Reiniciar proxy con configuración verificada",
+                        **command(base + ["restart", "caddy"]),
+                    },
+                ]
+            )
         if configuration.get("domain") and service["application_id"] in {
             "nextcloud",
             "n8n",
@@ -984,53 +1045,20 @@ def execute(service, job, heartbeat):
         (folder / "inventory.json").write_text(json.dumps(inventory))
         # La revocación de la clave es idempotente. Una pérdida durante el handoff requiere
         # comprobar su ausencia por el canal del operador antes de cerrar la entrega.
-        # La identidad remota permite retirar solo el bloqueo de una ejecución
-        # anterior cuya exclusión local ya se adquirió. Así una interrupción de
-        # Ansible no deja un directorio vacío que bloquee todos los reintentos.
+        # Un lock remoto sobreviviente puede pertenecer a un proceso que continúe
+        # escribiendo tras perderse la sesión SSH. No retirarlo automáticamente:
+        # la recuperación requiere comprobar que la ejecución anterior terminó.
         lock = "/var/lib/iacp-service-install.lock"
         owner = {
             "service_id": service["service_id"],
             "job_id": job["job_id"],
             "generation": job["generation"],
         }
-        previous_job_id = str(job.get("previous_job_id") or "")
-        acquire_lock_script = (
-            "import json,os,sys\n"
-            "from pathlib import Path\n"
-            "lock=Path(sys.argv[1]); current=json.loads(sys.argv[2]); previous=sys.argv[3]\n"
-            "if lock.exists() or lock.is_symlink():\n"
-            " if lock.is_symlink() or not lock.is_dir(): raise SystemExit(73)\n"
-            " owner_path=lock/'owner.json'\n"
-            " try: old=json.loads(owner_path.read_text())\n"
-            " except FileNotFoundError: old=None\n"
-            " except (OSError,ValueError): raise SystemExit(73)\n"
-            " entries=list(lock.iterdir())\n"
-            " if old is None:\n"
-            "  if entries or (current['generation'] <= 1 and not previous): raise SystemExit(73)\n"
-            " elif not (old.get('service_id')==current['service_id'] and ((old.get('job_id')==current['job_id'] and type(old.get('generation')) is int and old['generation']<current['generation']) or old.get('job_id')==previous)):\n"
-            "  raise SystemExit(73)\n"
-            " if old is not None and entries != [owner_path]: raise SystemExit(73)\n"
-            " if old is not None: owner_path.unlink()\n"
-            " lock.rmdir()\n"
-            "os.mkdir(lock,0o700)\n"
-            "with (lock/'owner.json').open('x') as stream:\n"
-            " json.dump(current,stream,separators=(',',':')); stream.flush(); os.fsync(stream.fileno())\n"
-        )
-        release_lock_script = (
-            "import json,sys\n"
-            "from pathlib import Path\n"
-            "lock=Path(sys.argv[1]); expected=json.loads(sys.argv[2]); owner=lock/'owner.json'\n"
-            "if not lock.exists() and not lock.is_symlink(): raise SystemExit(0)\n"
-            "if lock.is_symlink() or not lock.is_dir(): raise SystemExit(73)\n"
-            "try: actual=json.loads(owner.read_text())\n"
-            "except (OSError,ValueError): raise SystemExit(73)\n"
-            "if actual != expected or list(lock.iterdir()) != [owner]: raise SystemExit(73)\n"
-            "owner.unlink(); lock.rmdir()\n"
-        )
+        acquire_lock_script, release_lock_script = remote_service_lock_scripts()
         owner_json = json.dumps(owner, separators=(",", ":"))
         lock_tasks = [{
             "name": "Adquirir exclusión remota",
-            **command(["python3", "-c", acquire_lock_script, lock, owner_json, previous_job_id]),
+            **command(["python3", "-c", acquire_lock_script, lock, owner_json]),
         }]
         cleanup = [{
             "name": "Liberar exclusión remota",

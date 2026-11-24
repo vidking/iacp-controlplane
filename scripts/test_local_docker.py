@@ -25,7 +25,9 @@ def validate(image, evidence):
     project = "iacp-local-check-" + uuid.uuid4().hex[:8]
     evidence.mkdir(mode=0o700, parents=True, exist_ok=False)
     test_image = project + ":tests"
-    key_volume = project + "-key"
+    service_volume = project + "-service-config"
+    api_volume = project + "-api-config"
+    infra_volume = project + "-infra-key"
     compose = evidence / "compose.json"
     env_file = evidence / "runtime.env"
     env_file.write_text("")
@@ -101,7 +103,8 @@ def validate(image, evidence):
     }
     services["api"] = dict(
         common,
-        volumes=common["volumes"] + ["config:/run/iacp-services:ro"],
+        environment=environment | {"IACP_SERVICE_CA_CERT_FILE": "/run/iacp-services/pilot-ca.crt"},
+        volumes=common["volumes"] + ["api-config:/run/iacp-services:ro"],
         healthcheck={
             "test": [
                 "CMD",
@@ -118,7 +121,7 @@ def validate(image, evidence):
     for i in range(1, 7):
         services[f"worker-{i}"] = dict(
             common,
-            volumes=common["volumes"] + ["config:/run/iacp-services:ro"],
+            volumes=common["volumes"] + ["infra-key:/run/iacp-services:ro"],
             command=["python", "-m", "worker.main", "--worker-id", f"worker-{i}"],
             depends_on={"api": {"condition": "service_healthy"}},
         )
@@ -132,7 +135,7 @@ def validate(image, evidence):
             common,
             environment=env,
             volumes=[
-                "config:/run/iacp-services:ro",
+                "service-config:/run/iacp-services:ro",
                 "workdata:/var/lib/iacp-controlplane",
             ],
             profiles=(
@@ -168,7 +171,9 @@ def validate(image, evidence):
         "volumes": {
             "workdata": {},
             "database": {},
-            "config": {"external": True, "name": key_volume},
+            "service-config": {"external": True, "name": service_volume},
+            "api-config": {"external": True, "name": api_volume},
+            "infra-key": {"external": True, "name": infra_volume},
         },
         "networks": {"default": {"internal": True}},
     }
@@ -212,8 +217,9 @@ USER iacp
         (evidence / "test-build.log").write_text(result.stdout + result.stderr)
         if result.returncode:
             raise RuntimeError("Falló la construcción de la imagen de pruebas")
-        run(["docker", "volume", "create", key_volume])
-        run(
+        for volume in (service_volume, api_volume, infra_volume):
+            run(["docker", "volume", "create", volume])
+        result = run(
             [
                 "docker",
                 "run",
@@ -223,13 +229,21 @@ USER iacp
                 "--user",
                 "root",
                 "-v",
-                key_volume + ":/run/iacp-services",
-                image,
+                service_volume + ":/service",
+                "-v",
+                api_volume + ":/api",
+                "-v",
+                infra_volume + ":/infra",
+                test_image,
                 "python",
                 "-c",
-                "from pathlib import Path; import os; from cryptography.fernet import Fernet; p=Path('/run/iacp-services'); (p/'key').write_bytes(Fernet.generate_key()); os.chmod(p,0o700); os.chmod(p/'key',0o600); os.chown(p,999,999); os.chown(p/'key',999,999)",
-            ]
+                "from pathlib import Path; import os,shutil; from cryptography.fernet import Fernet; from scripts.prepare_pilot_ca import prepare; s=Path('/service'); a=Path('/api'); i=Path('/infra'); [(os.chmod(p,0o700),os.chown(p,999,999)) for p in (s,a,i)]; prepare(s); key=Fernet.generate_key(); [(p/'key').write_bytes(key) for p in (s,a,i)]; [(os.chmod(p/'key',0o600),os.chown(p/'key',999,999)) for p in (s,a,i)]; shutil.copyfile(s/'pilot-ca.crt',a/'pilot-ca.crt'); os.chmod(a/'pilot-ca.crt',0o644); os.chown(a/'pilot-ca.crt',999,999)",
+            ],
+            check=False,
         )
+        (evidence / "config-seed.log").write_text(result.stdout + result.stderr)
+        if result.returncode:
+            raise RuntimeError("Falló la preparación de claves de prueba")
         result = cp("up", "-d", "--wait", "--wait-timeout", "90", check=False)
         (evidence / "startup.log").write_text(result.stdout + result.stderr)
         if result.returncode:
@@ -273,7 +287,7 @@ USER iacp
             check=False,
         ).stdout.split()
         cp("down", check=False)
-        for volume in [*volumes, key_volume]:
+        for volume in [*volumes, service_volume, api_volume, infra_volume]:
             run(["docker", "volume", "rm", volume], check=False)
 
 

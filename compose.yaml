@@ -85,15 +85,27 @@ services:
       IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
-      IACP_SERVICE_KEY_FILE: /run/iacp-services/key
+      IACP_SERVICE_KEY_FILE: /run/iacp-service-key
+      IACP_SERVICE_CA_CERT_FILE: /run/iacp-pilot-ca.crt
       IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-100}
       IACP_WORKER_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
     extra_hosts:
       - "${IACP_PROXMOX_MNG_HOSTNAME:-mng01.cyberfuel.com}:${IACP_PROXMOX_MNG_HOST_IP:?Definir IP verificada de MNG}"
     ports:
-      - "${IACP_API_PORT:-8080}:8080"
+      - "127.0.0.1:${IACP_API_PORT:-8080}:8080"
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-service-key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/pilot-ca.crt
+        target: /run/iacp-pilot-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       postgres:

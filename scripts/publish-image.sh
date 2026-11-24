@@ -20,7 +20,15 @@ docker buildx build \
   --tag "${repository}:${tag}" \
   --label "org.opencontainers.image.title=IACP Control Plane" \
   --label "org.opencontainers.image.version=${tag}" \
+  --label "org.opencontainers.image.revision=${tag}" \
   --provenance=false \
   --load \
   .
 docker push "${repository}:${tag}"
+published_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${repository}:${tag}")"
+image_digest="${published_ref##*@}"
+if [[ ! "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  echo "No se pudo comprobar el digest publicado" >&2
+  exit 1
+fi
+printf 'IACP_IMAGE_DIGEST=%s\n' "$image_digest"
