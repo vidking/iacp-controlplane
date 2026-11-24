@@ -607,6 +607,15 @@ def matrix_netbox_tags(name):
     return [name]
 
 
+def credential_delivery_headers(credentials):
+    """Build the one-time receipt header required after disclosing credentials."""
+
+    receipt = credentials.get("credential_receipt") if isinstance(credentials, dict) else None
+    if not isinstance(receipt, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", receipt):
+        raise RuntimeError("SERVICE_CREDENTIAL_RECEIPT_MISSING")
+    return {"X-IACP-Credential-Receipt": receipt}
+
+
 class Matrix:
     def __init__(self, args):
         self.abort = threading.Event()
@@ -979,13 +988,15 @@ class Matrix:
             evidence=evidence,
         )
 
-    def api(self, method, path, body=None, key=None, raw=False):
+    def api(self, method, path, body=None, key=None, raw=False, extra_headers=None):
         headers = {
             "Authorization": "Bearer " + self.token,
             "Content-Type": "application/json",
         }
         if key:
             headers["Idempotency-Key"] = key
+        if extra_headers:
+            headers.update(extra_headers)
         r = Request(
             self.base + path,
             headers=headers,
@@ -1020,9 +1031,8 @@ class Matrix:
                     )
                     time.sleep(delay)
                     continue
-                raise RuntimeError(
-                    f"API_{e.code}_{method}_{path.split('/')[2]}"
-                ) from None
+                endpoint = path.split("/")[2].upper()
+                raise RuntimeError(f"API_{e.code}_{method}_{endpoint}") from None
             except (URLError, TimeoutError, ConnectionError):
                 if (method == "GET" or key) and attempt < 3:
                     delay = retry_after_delay({}, attempt)
@@ -1943,12 +1953,21 @@ print(f"{jobs} {locks}")
             item, ["sh", "-c", "printf iacp-persistence > /root/iacp-validation.txt"]
         )
         self.check(item, "D01", "marcador sintético de persistencia escrito en el sistema")
+        delivery_headers = {}
         if item["product"] != "kvm":
-            item["credentials"] = self.api(
+            credential_response = self.api(
                 "POST",
                 "/v1/service-instances/" + item["service_id"] + "/credentials",
                 key="credentials-" + item["name"],
             )
+            delivery_headers = credential_delivery_headers(credential_response)
+            item["credential_receipt"] = delivery_headers["X-IACP-Credential-Receipt"]
+            self.secrets.append(item["credential_receipt"])
+            item["credentials"] = {
+                key: value
+                for key, value in credential_response.items()
+                if key != "credential_receipt"
+            }
             if item["credentials"].get("admin_password"):
                 self.secrets.append(item["credentials"]["admin_password"])
             if item["product"] == "nextcloud":
@@ -1973,6 +1992,7 @@ print(f"{jobs} {locks}")
                 "POST",
                 "/v1/service-instances/" + item["service_id"] + "/deliver",
                 key="delivery-" + item["name"],
+                extra_headers=delivery_headers,
             )
             self.wait_service(delivery["job_id"])
             self.check(item, "C01", "bootstrap del servicio completado por el worker y entrega canónica registrada")
