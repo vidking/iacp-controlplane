@@ -16,6 +16,7 @@ from worker.allocation import allocate, release
 from worker.golden import configured_pool_id, validate_pool, variables
 from worker.main import (
     claim,
+    destroy_validation_password,
     execute,
     execute_power,
     execute_reconcile,
@@ -25,6 +26,7 @@ from worker.main import (
     local_variables,
     operation_output,
     physical_presence,
+    require_free_provision_target,
     recover_stale_operations,
     select_target_node,
     secret_path_for_command,
@@ -741,6 +743,8 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
 
 
 def test_physical_absence_requires_point_404_on_every_cluster_node():
+    from worker.main import PhysicalObservation, _physical_absence_observation
+
     class EmptyCluster:
         def __init__(self, *, missing_on="all"):
             self.paths = []
@@ -759,6 +763,8 @@ def test_physical_absence_requires_point_404_on_every_cluster_node():
 
     client = EmptyCluster()
     assert physical_presence(client, 40000, False, node="mng01") is True
+    client.paths.clear()
+    assert _physical_absence_observation(client, 40000, node="mng01") is PhysicalObservation.ABSENT
     assert client.paths == [
         "/nodes/mng01/qemu/40000/config?current=1",
         "/nodes/mng02/qemu/40000/config?current=1",
@@ -766,6 +772,11 @@ def test_physical_absence_requires_point_404_on_every_cluster_node():
 
     client = EmptyCluster(missing_on="mng01")
     assert physical_presence(client, 40000, False, node="mng01") is False
+    assert _physical_absence_observation(client, 40000, node="mng01") is PhysicalObservation.UNKNOWN
+
+    client = EmptyCluster()
+    client.inventory = lambda **_kwargs: [{"vmid": 40000, "name": "other", "node": "mng02"}]
+    assert _physical_absence_observation(client, 40000, node="mng01") is PhysicalObservation.PRESENT
 
 
 def test_physical_absence_fails_closed_when_node_inventory_is_incomplete():
@@ -779,6 +790,36 @@ def test_physical_absence_fails_closed_when_node_inventory_is_incomplete():
             raise ProxmoxError("VM_NOT_FOUND", 404)
 
     assert physical_presence(IncompleteCluster(), 40000, False, node="mng01") is False
+
+
+def test_free_vmid_guard_distinguishes_presence_from_unverifiable_absence(monkeypatch):
+    import worker.main as worker_main
+
+    monkeypatch.setattr(worker_main, "assert_lease_owner", lambda *_args: None)
+    monkeypatch.setattr(worker_main.time, "sleep", lambda *_args: None)
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.PRESENT,
+    )
+    with pytest.raises(ProxmoxError, match="VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT"):
+        require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01")
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.UNKNOWN,
+    )
+    with pytest.raises(ProxmoxError, match="VMID_PHYSICAL_ABSENCE_UNCONFIRMED"):
+        require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01")
+
+    monkeypatch.setattr(
+        worker_main,
+        "_physical_absence_observation",
+        lambda *_args, **_kwargs: worker_main.PhysicalObservation.ABSENT,
+    )
+    assert require_free_provision_target(FakeProxmox(), 40855, "operation", "mng01") is None
 
 
 def test_power_permission_zero_is_denied():
@@ -2058,6 +2099,14 @@ def test_operation_output_is_bounded_and_redacts_secret(monkeypatch):
     assert "root-secret" not in value
     assert "output truncated" in value
     assert len(value) <= 4096
+
+
+@pytest.mark.no_database
+def test_destroy_validation_password_is_ephemeral():
+    first = destroy_validation_password()
+    second = destroy_validation_password()
+    assert first != second
+    assert len(first) >= 64
 
 
 def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):

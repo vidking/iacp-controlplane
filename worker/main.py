@@ -6,12 +6,14 @@ import json
 import os
 import shutil
 import signal
+import secrets
 import subprocess
 import tempfile
 import time
 import uuid
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from functools import partial
 from urllib.parse import quote
 
@@ -47,7 +49,12 @@ ACTIVE_WORK_OPERATION_STATUSES = (
     "powering",
 )
 
-DESTROY_PLACEHOLDER_PASSWORD = "IacpDestroyOnly!2026A"
+class PhysicalObservation(str, Enum):
+    """Resultado de verificar un VMID sin convertir falta de acceso en ausencia."""
+
+    PRESENT = "present"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
 
 
 def operation_output(value: object, secret: str | None = None) -> str:
@@ -64,6 +71,11 @@ def operation_output(value: object, secret: str | None = None) -> str:
     head = available // 3
     tail = available - head
     return f"{text[:head]}{marker}{text[-tail:]}"
+
+
+def destroy_validation_password() -> str:
+    """Genera una variable efímera para validar Terraform durante destroy."""
+    return secrets.token_urlsafe(48)
 
 
 def stale_operation_seconds() -> float:
@@ -920,11 +932,11 @@ def _release_static_allocation(instance_id: str | None, operation_id: str) -> bo
         instance = instance_identity(instance_id)
         if instance.get("vmid") is not None:
             fence = _FENCE.get()
-            heartbeat_callback = (
-                lambda: heartbeat(fence[0], "running", fence[1], phase="ipam_verify")
-                if fence is not None
-                else None
-            )
+
+            def heartbeat_callback():
+                if fence is not None:
+                    heartbeat(fence[0], "running", fence[1], phase="ipam_verify")
+
             if not reconcile_physical(
                 ProxmoxClient(),
                 int(instance["vmid"]),
@@ -1197,7 +1209,10 @@ def run_commands(
         # after provisioning, so provide a destroy-only value that is never
         # persisted or applied to a guest. The existing resource identity and
         # state are what determine the objects removed by this command.
-        environment["TF_VAR_root_password"] = DESTROY_PLACEHOLDER_PASSWORD
+        # Generar un valor desechable por intento evita una credencial fija en
+        # el código; también se pasa a la función de lectura para redactarlo.
+        password = destroy_validation_password()
+        environment["TF_VAR_root_password"] = password
     for args in commands:
         command_attempt = 0
         max_attempts = max(1, int(os.getenv("IACP_TERRAFORM_RETRY_ATTEMPTS", "4")))
@@ -1388,15 +1403,17 @@ def require_free_provision_target(
     assert_lease_owner(vmid, owner)
     deadline = time.monotonic() + max(10.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20")))
     for observation in range(2):
-        if not physical_presence(
+        observed = _physical_absence_observation(
             client,
             vmid,
-            False,
             node=node,
             heartbeat_callback=heartbeat_callback,
             deadline=deadline,
-        ):
+        )
+        if observed is PhysicalObservation.PRESENT:
             raise ProxmoxError("VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT", uncertain=True)
+        if observed is PhysicalObservation.UNKNOWN:
+            raise ProxmoxError("VMID_PHYSICAL_ABSENCE_UNCONFIRMED", uncertain=True)
         if observation == 0:
             if heartbeat_callback is not None:
                 heartbeat_callback()
@@ -1410,28 +1427,33 @@ def _physical_absence_observation(
     node: str | None,
     heartbeat_callback=None,
     deadline: float | None = None,
-) -> bool:
-    """Exige inventario ausente y un 404 puntual en cada nodo del clúster."""
-    record = physical_record(
-        client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
-    )
-    if record is not None or not node:
-        return False
+) -> PhysicalObservation:
+    """Distingue presencia, ausencia probada y falta de visibilidad del VMID."""
+    try:
+        record = physical_record(
+            client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
+        )
+    except ProxmoxError:
+        return PhysicalObservation.UNKNOWN
+    if record is not None:
+        return PhysicalObservation.PRESENT
+    if not node:
+        return PhysicalObservation.UNKNOWN
     if heartbeat_callback is not None:
         heartbeat_callback()
     timeout = None
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return False
+            return PhysicalObservation.UNKNOWN
         timeout = min(remaining, max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))))
     getter = getattr(client, "get", None)
     if not callable(getter):
-        return False
+        return PhysicalObservation.UNKNOWN
     try:
         remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
         if remaining is not None and remaining <= 0:
-            return False
+            return PhysicalObservation.UNKNOWN
         nodes = getter(
             "/nodes",
             uncertain=True,
@@ -1439,22 +1461,22 @@ def _physical_absence_observation(
             attempts=1 if remaining is not None else None,
         )
     except ProxmoxError:
-        return False
+        return PhysicalObservation.UNKNOWN
     if not isinstance(nodes, list) or not nodes:
-        return False
+        return PhysicalObservation.UNKNOWN
     node_names = {
         str(row.get("node", "")).strip()
         for row in nodes
         if isinstance(row, dict) and str(row.get("node", "")).strip()
     }
     if len(node_names) != len(nodes) or node not in node_names:
-        return False
+        return PhysicalObservation.UNKNOWN
     for observed_node in sorted(node_names):
         if heartbeat_callback is not None:
             heartbeat_callback()
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
-            return False
+            return PhysicalObservation.UNKNOWN
         timeout = None if remaining is None else min(
             remaining,
             max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))),
@@ -1469,9 +1491,9 @@ def _physical_absence_observation(
         except ProxmoxError as error:
             if error.status == 404:
                 continue
-            return False
-        return False
-    return True
+            return PhysicalObservation.UNKNOWN
+        return PhysicalObservation.PRESENT
+    return PhysicalObservation.ABSENT
 
 
 def physical_presence(
@@ -1491,7 +1513,7 @@ def physical_presence(
             node=node,
             heartbeat_callback=heartbeat_callback,
             deadline=deadline,
-        )
+        ) is PhysicalObservation.ABSENT
     record = physical_record(
         client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
     )

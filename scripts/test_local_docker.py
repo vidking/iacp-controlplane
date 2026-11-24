@@ -196,6 +196,7 @@ USER root
 RUN uv sync --locked --extra dev --no-install-project
 COPY tests /app/tests
 COPY scripts /app/scripts
+COPY Dockerfile /app/Dockerfile
 COPY compose.yaml /app/compose.yaml
 COPY deploy/portainer/docker-compose.yml /app/deploy/portainer/docker-compose.yml
 COPY deploy/portainer/traefik-dev.yml /app/deploy/portainer/traefik-dev.yml
