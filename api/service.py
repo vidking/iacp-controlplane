@@ -818,8 +818,9 @@ def _reconciliation_source(db, instance, source_id: str | None):
         ).fetchone()
         if source is None:
             raise HTTPException(404, "source_operation_id no pertenece a la instancia")
-        if source["status"] != "uncertain" and not _partial_clone_cleanup_retry_is_safe(
-            db, instance, source
+        if source["status"] != "uncertain" and not (
+            _partial_clone_cleanup_retry_is_safe(db, instance, source)
+            or _failed_provision_reconciliation_is_safe(db, instance, source)
         ):
             raise HTTPException(409, "source_operation_id no está en uncertain")
         if source["command"] == "reconcile":
@@ -843,6 +844,37 @@ def _reconciliation_source(db, instance, source_id: str | None):
             else "la instancia eliminada solo admite reconciliación de operaciones físicas inciertas",
         )
     return source
+
+
+def _failed_provision_reconciliation_is_safe(db, instance, source) -> bool:
+    """Permite observar una provisión fallida solo con su lease aún propio.
+
+    El worker de reconcile confirma presencia o ausencia física y libera las
+    reservas únicamente después de verificarla. Este gate estrecho permite
+    recuperar fallos terminales que conservaron un VMID, sin abrir una ruta
+    genérica para reintentar operaciones fallidas.
+    """
+
+    vmid = source["vmid"]
+    if (
+        source["status"] != "failed"
+        or source["command"] != "provision"
+        or source["stack"] != "mng01"
+        or not vmid
+        or instance["status"] != "failed"
+        or instance["operation_id"] != source["operation_id"]
+        or instance["vmid"] != vmid
+        or not source["target_node"]
+        or instance["node"] != source["target_node"]
+        or is_protected_vmid(vmid)
+    ):
+        return False
+    lease = db.execute(
+        """SELECT 1 FROM vmid_leases
+        WHERE vmid=? AND operation_id=? AND status='held'""",
+        (vmid, source["operation_id"]),
+    ).fetchone()
+    return lease is not None
 
 
 def _insert_operation(

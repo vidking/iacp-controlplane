@@ -1159,6 +1159,84 @@ def test_reconcile_rejects_failed_provision_without_cleanup_proof(tmp_path, monk
     assert response.json()["detail"] == "source_operation_id no está en uncertain"
 
 
+def test_reconcile_allows_exact_failed_provision_with_held_vmid_lease(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-failed-provision-with-lease"},
+            json=public_body("failed-provision-with-lease"),
+        )
+        assert created.status_code == 202, created.text
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', vmid=40000,
+                target_node='mng01', stack='mng01' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='failed', vmid=40000,
+                node='mng01', power_state=NULL WHERE instance_id=?""",
+                (instance_id,),
+            )
+            db.execute(
+                """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
+                VALUES (40000, ?, 'held', '2026-11-24T00:00:00Z')""",
+                (source_id,),
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reconcile-failed-provision-with-lease"},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["source_operation_id"] == source_id
+    assert response.json()["command"] == "reconcile"
+
+
+def test_reconcile_rejects_failed_provision_with_foreign_vmid_lease(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-failed-provision-foreign-lease"},
+            json=public_body("failed-provision-foreign-lease"),
+        )
+        assert created.status_code == 202, created.text
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', vmid=40000,
+                target_node='mng01', stack='mng01' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='failed', vmid=40000,
+                node='mng01', power_state=NULL WHERE instance_id=?""",
+                (instance_id,),
+            )
+            db.execute(
+                """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
+                VALUES (40000, 'different-operation', 'held', '2026-11-24T00:00:00Z')"""
+            )
+
+        response = client.post(
+            f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
+            headers={"Idempotency-Key": "reject-reconcile-failed-provision-foreign-lease"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "source_operation_id no está en uncertain"
+
+
 def test_unrelated_lifecycle_remains_blocked_by_uncertain_reconcile_attempt(
     tmp_path, monkeypatch
 ):

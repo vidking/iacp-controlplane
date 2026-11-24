@@ -1119,6 +1119,12 @@ _COUNT_SQL = (
     "'uncertain_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='uncertain') ,"
     "'queued_operations', (SELECT COUNT(*) FROM operations WHERE status IN ('pending','queued')) ,"
     "'queued_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status='queued') ,"
+    "'runnable_queued_service_jobs', (SELECT COUNT(*) FROM service_jobs j "
+    "JOIN service_instances s ON s.service_id=j.service_id "
+    "JOIN instances i ON i.instance_id=s.instance_id "
+    "WHERE j.status='queued' AND i.status='ready' AND i.power_state='running' "
+    "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id=i.instance_id "
+    "AND o.status IN ('pending','running','planning','applying','destroying','powering','uncertain'))) ,"
     "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR current_operation_id IS NOT NULL) ,"
     "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
     "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
@@ -1231,13 +1237,18 @@ def _runtime_write_gate(prefix: list[str]):
 def _wait_for_stack_quiescence(
     prefix: list[str], *, timeout: float = 2100, allow_uncertain: bool = False
 ) -> dict:
-    """Espera a que no haya trabajo en ejecución ni workers ocupados.
+    """Espera trabajo ejecutable y workers ocupados antes del despliegue.
 
     Una operación ``uncertain`` no la ejecuta ningún worker: es una intención a
     la espera de reconciliación. Por defecto bloquea el drenaje, pero eso crea un
     interbloqueo cuando la corrección que debe reconciliarla va en el propio
     despliegue. Con ``allow_uncertain`` solo se espera el trabajo en ejecución y
     las intenciones inciertas se conservan intactas y quedan registradas.
+
+    Un job de servicio ``queued`` solo bloquea cuando satisface el predicado de
+    ``worker.services.claim``: infraestructura lista, VM encendida y sin una
+    operación de infraestructura activa. Los demás permanecen en la base, se
+    devuelven como diferidos y no pueden ser reclamados durante el despliegue.
     """
 
     operation_key, job_key = (
@@ -1254,13 +1265,23 @@ def _wait_for_stack_quiescence(
                 operation_key,
                 job_key,
                 "queued_operations",
-                "queued_service_jobs",
+                "runnable_queued_service_jobs",
                 "busy_infrastructure_workers",
                 "busy_service_workers",
             )
         ):
             if allow_uncertain:
                 counts = dict(counts, uncertain_deferred=True)
+            deferred_service_jobs = max(
+                0,
+                int(counts.get("queued_service_jobs") or 0)
+                - int(counts.get("runnable_queued_service_jobs") or 0),
+            )
+            if deferred_service_jobs:
+                counts = dict(
+                    counts,
+                    non_runnable_queued_service_jobs_deferred=deferred_service_jobs,
+                )
             return counts
         if time.monotonic() >= deadline:
             raise GateError("El stack no terminó de drenar operaciones y workers activos")
