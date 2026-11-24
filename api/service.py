@@ -870,11 +870,11 @@ def _failed_provision_reconciliation_is_safe(db, instance, source) -> bool:
     ):
         return False
     lease = db.execute(
-        """SELECT 1 FROM vmid_leases
-        WHERE vmid=? AND operation_id=? AND status='held'""",
+        """SELECT status FROM vmid_leases
+        WHERE vmid=? AND operation_id=?""",
         (vmid, source["operation_id"]),
     ).fetchone()
-    return lease is not None
+    return lease is not None and lease["status"] in {"held", "released"}
 
 
 def _insert_operation(

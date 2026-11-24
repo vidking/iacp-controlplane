@@ -1016,8 +1016,11 @@ def test_cancel_order_after_definitive_failure_without_resources(client):
     assert response.json()["status"] == "cancelled"
 
 
-def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lease(client):
-    order = create(client, name="failed-provision-queued-install")
+@pytest.mark.parametrize("lease_status", ["held", "released"])
+def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lease(
+    client, lease_status
+):
+    order = create(client, name=f"failed-provision-queued-install-{lease_status}")
     with database() as db:
         db.execute(
             """UPDATE operations SET status='failed', vmid=40990,
@@ -1031,8 +1034,8 @@ def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lea
         )
         db.execute(
             """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
-            VALUES (40990, ?, 'held', '2026-11-24T00:00:00Z')""",
-            (order["operation_id"],),
+            VALUES (40990, ?, ?, '2026-11-24T00:00:00Z')""",
+            (order["operation_id"], lease_status),
         )
 
     response = client.post(
@@ -1060,7 +1063,7 @@ def test_cancel_queued_install_for_failed_provision_preserves_infrastructure_lea
         ).fetchone()["n"]
     assert dict(job) == {"status": "cancelled", "worker_id": None, "generation": 0}
     assert dict(instance) == {"status": "failed", "vmid": 40990}
-    assert dict(lease) == {"operation_id": order["operation_id"], "status": "held"}
+    assert dict(lease) == {"operation_id": order["operation_id"], "status": lease_status}
     assert destroys == 0
 
 

@@ -405,11 +405,11 @@ def _failed_provision_waiting_job_is_safe_to_cancel(db, service, job) -> bool:
     ):
         return False
     lease = db.execute(
-        """SELECT 1 FROM vmid_leases
-        WHERE vmid=? AND operation_id=? AND status='held'""",
+        """SELECT status FROM vmid_leases
+        WHERE vmid=? AND operation_id=?""",
         (vmid, service["operation_id"]),
     ).fetchone()
-    if lease is None:
+    if lease is None or lease["status"] not in {"held", "released"}:
         return False
     active = db.execute(
         """SELECT 1 FROM operations WHERE instance_id=?

@@ -1159,14 +1159,15 @@ def test_reconcile_rejects_failed_provision_without_cleanup_proof(tmp_path, monk
     assert response.json()["detail"] == "source_operation_id no está en uncertain"
 
 
-def test_reconcile_allows_exact_failed_provision_with_held_vmid_lease(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("lease_status", ["held", "released"])
+def test_reconcile_allows_exact_failed_provision_with_owned_vmid_lease(
+    tmp_path, monkeypatch, lease_status
 ):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     with TestClient(app) as client:
         created = client.post(
             "/v1/instances",
-            headers={"Idempotency-Key": "create-failed-provision-with-lease"},
+            headers={"Idempotency-Key": f"create-failed-provision-with-lease-{lease_status}"},
             json=public_body("failed-provision-with-lease"),
         )
         assert created.status_code == 202, created.text
@@ -1185,13 +1186,13 @@ def test_reconcile_allows_exact_failed_provision_with_held_vmid_lease(
             )
             db.execute(
                 """INSERT INTO vmid_leases(vmid, operation_id, status, created_at)
-                VALUES (40000, ?, 'held', '2026-11-24T00:00:00Z')""",
-                (source_id,),
+                VALUES (40000, ?, ?, '2026-11-24T00:00:00Z')""",
+                (source_id, lease_status),
             )
 
         response = client.post(
             f"/v1/instances/{instance_id}/reconcile?source_operation_id={source_id}",
-            headers={"Idempotency-Key": "reconcile-failed-provision-with-lease"},
+            headers={"Idempotency-Key": f"reconcile-failed-provision-with-lease-{lease_status}"},
         )
 
     assert response.status_code == 202, response.text
