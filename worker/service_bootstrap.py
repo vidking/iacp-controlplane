@@ -341,15 +341,33 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
             raise GuestIdentityError("GUEST_IDENTITY_AGENT_UNAVAILABLE")
         time.sleep(2)
 
-    def guest_command(argv):
-        result = client.guest_agent_exec(node, vmid, argv)
+    def guest_command(argv, *, idempotent=False):
+        # Un POST exec incierto solo se reenvía cuando el comando es idempotente
+        # (sondeos de solo lectura y el helper en modo estático, que únicamente
+        # verifica y exige los mismos identificadores). Los errores transitorios
+        # del Guest Agent no deben convertir un arranque sano en incierto.
+        attempts = 4 if idempotent else 1
+        for attempt in range(attempts):
+            heartbeat()
+            try:
+                result = client.guest_agent_exec(node, vmid, argv)
+                break
+            except ProxmoxError:
+                if attempt + 1 >= attempts:
+                    raise
+                time.sleep(5)
         pid = result.get("pid")
         if not isinstance(pid, int) or pid <= 0:
             raise GuestIdentityError("SERVICE_BOOTSTRAP_PID_INVALID")
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             heartbeat()
-            status = client.guest_agent_exec_status(node, vmid, pid)
+            try:
+                status = client.guest_agent_exec_status(node, vmid, pid)
+            except ProxmoxError:
+                # Lectura repetible: el agente puede tardar mientras cloud-init converge.
+                time.sleep(2)
+                continue
             if status.get("exited"):
                 return status
             time.sleep(1)
@@ -365,12 +383,14 @@ def prepare(client, *, node, vmid, name, instance_id, heartbeat, spec=None):
     ]
     if prepared_image:
         helper = "/usr/local/libexec/iacp-guest-bootstrap"
-        probe = guest_command(["/usr/bin/test", "-x", helper])
+        probe = guest_command(["/usr/bin/test", "-x", helper], idempotent=True)
         if probe.get("exitcode") != 0:
             raise GuestIdentityError("IMAGE_BOOTSTRAP_REQUIRED")
-        status = guest_command([helper] + arguments)
+        status = guest_command([helper] + arguments, idempotent=static)
     else:
-        status = guest_command(["/usr/bin/python3", "-c", PROGRAM] + arguments)
+        status = guest_command(
+            ["/usr/bin/python3", "-c", PROGRAM] + arguments, idempotent=static
+        )
     if status.get("exitcode") != 0:
         if "IACP_GATEWAY_UNREACHABLE" in str(status.get("err-data", "")):
             raise GuestIdentityError("STATIC_GATEWAY_UNREACHABLE")

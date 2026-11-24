@@ -415,7 +415,7 @@ def test_dhcp_bootstrap_refuses_tagged_nic(monkeypatch):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='dhcp-test',instance_id='dhcp-test',spec={'network_profile':'lab_dhcp','prepare_identity':True},heartbeat=lambda:None)
 
 
-def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
+def test_agent_wait_retries_reads_and_bounds_replay_of_idempotent_exec(monkeypatch):
     from worker.proxmox import ProxmoxError
     initialize()
     monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
@@ -440,7 +440,56 @@ def test_agent_wait_retries_reads_but_never_replays_uncertain_exec(monkeypatch):
     )
     with pytest.raises(ProxmoxError,match='RESULT_UNKNOWN'):
         bootstrap.prepare(fake,node='mng01',vmid=40012,name='wait-test',instance_id='wait-test',spec={'network_profile':'prod_static','ipv4_cidr':'190.0.231.8/24','ipv4_gateway':'190.0.231.1'},heartbeat=lambda:None)
-    assert calls=={'reads':2,'exec':1}
+    # El guest estático es idempotente: se reintenta de forma acotada (4 envíos).
+    assert calls=={'reads':2,'exec':4}
+
+
+def test_static_bootstrap_recovers_from_transient_guest_agent_errors(monkeypatch):
+    from worker.proxmox import ProxmoxError
+    initialize()
+    monkeypatch.setenv("IACP_PROD_STATIC_BRIDGE", "vmbr3")
+    monkeypatch.setattr(bootstrap, "_wait_for_pool_membership", lambda *a, **k: None)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _: None)
+    calls = {"exec": 0, "status": 0}
+    response = {
+        "instance_id": "retry-id",
+        "mac_address": MAC,
+        "host_key": "ssh-ed25519 AAAAexample",
+        "dns_servers": ["1.1.1.1", "8.8.8.8"],
+    }
+
+    def execute(*_):
+        calls["exec"] += 1
+        if calls["exec"] == 1:
+            raise ProxmoxError("596 Broken pipe", uncertain=True)
+        return {"pid": 7}
+
+    def status(*_):
+        calls["status"] += 1
+        if calls["status"] == 1:
+            raise ProxmoxError("596 timeout")
+        return {"exited": True, "exitcode": 0, "out-data": json.dumps(response)}
+
+    fake = SimpleNamespace(
+        vm_config=lambda *_: {
+            "name": "retry-test",
+            "net0": f"virtio={MAC},bridge=vmbr3",
+            "ipconfig0": "ip=190.0.231.8/24,gw=190.0.231.1",
+        },
+        guest_agent_exec=execute,
+        guest_agent_exec_status=status,
+        guest_agent_interfaces=lambda *_: [
+            {"hardware-address": MAC, "ip-addresses": [{"ip-address": "190.0.231.8"}]}
+        ],
+    )
+    result = bootstrap.prepare(
+        fake, node="mng01", vmid=40013, name="retry-test", instance_id="retry-id",
+        spec={"network_profile": "prod_static", "ipv4_cidr": "190.0.231.8/24",
+              "ipv4_gateway": "190.0.231.1"},
+        heartbeat=lambda: None,
+    )
+    assert result["address"] == "190.0.231.8"
+    assert calls == {"exec": 2, "status": 2}
 
 
 def test_binding_waits_for_dhcp_address_after_network_apply(monkeypatch):
