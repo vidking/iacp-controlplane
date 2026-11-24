@@ -303,6 +303,7 @@ def test_static_bootstrap_accepts_vmbr3_without_tag(monkeypatch):
     assert result["address"] == "190.0.231.8"
 
 
+@pytest.mark.no_database
 def test_static_guest_readiness_requires_gateway_neighbor():
     # Ejecuta el predicado real del programa remoto con observaciones de iproute2.
     tree = ast.parse(bootstrap.PROGRAM)
@@ -353,9 +354,18 @@ def test_fedora_static_identity_uses_guest_agent_metadata_only(monkeypatch):
         heartbeat=lambda: None,
     )
     assert result["address"] == "190.0.231.13"
+    assert result["dns_servers"] == []
     assert result["source"] == "qemu-guest-agent-network"
-    assert result["mode"] == "fedora-static-read-only"
+    assert result["mode"] == "fedora-static-address-only"
+    assert result["verification_scope"] == ["mac-bound-ipv4"]
     assert commands == []
+
+
+@pytest.mark.no_database
+def test_static_bootstrap_fails_closed_when_tcp_or_dns_probe_fails():
+    assert "IACP_STATIC_TCP_EGRESS_UNAVAILABLE" in bootstrap.PROGRAM
+    assert "IACP_STATIC_DNS_RESOLUTION_UNAVAILABLE" in bootstrap.PROGRAM
+    assert "except OSError:pass" not in bootstrap.PROGRAM
 
 
 def test_fedora_static_identity_fails_closed_without_expected_guest_ip(

@@ -87,7 +87,7 @@ def validate(image, evidence):
     }
     services = {
         "postgres": {
-            "image": "postgres:17.6",
+            "image": go_live.POSTGRES_IMAGE,
             "environment": {
                 "POSTGRES_DB": "iacp_test",
                 "POSTGRES_HOST_AUTH_METHOD": "trust",
@@ -103,7 +103,11 @@ def validate(image, evidence):
     }
     services["api"] = dict(
         common,
-        environment=environment | {"IACP_SERVICE_CA_CERT_FILE": "/run/iacp-services/pilot-ca.crt"},
+        environment=environment | {
+            "IACP_SERVICE_KEY_FILE": "/run/iacp-services/key",
+            "IACP_SERVICE_CA_CERT_FILE": "/run/iacp-services/pilot-ca.crt",
+            "IACP_SERVICE_CA_KEY_FILE": "/run/iacp-services/pilot-ca.key",
+        },
         volumes=common["volumes"] + ["api-config:/run/iacp-services:ro"],
         healthcheck={
             "test": [
@@ -237,7 +241,7 @@ USER iacp
                 test_image,
                 "python",
                 "-c",
-                "from pathlib import Path; import os,shutil; from cryptography.fernet import Fernet; from scripts.prepare_pilot_ca import prepare; s=Path('/service'); a=Path('/api'); i=Path('/infra'); [(os.chmod(p,0o700),os.chown(p,999,999)) for p in (s,a,i)]; prepare(s); key=Fernet.generate_key(); [(p/'key').write_bytes(key) for p in (s,a,i)]; [(os.chmod(p/'key',0o600),os.chown(p/'key',999,999)) for p in (s,a,i)]; shutil.copyfile(s/'pilot-ca.crt',a/'pilot-ca.crt'); os.chmod(a/'pilot-ca.crt',0o644); os.chown(a/'pilot-ca.crt',999,999)",
+                "from pathlib import Path; import os,shutil; from cryptography.fernet import Fernet; from scripts.prepare_pilot_ca import prepare; s=Path('/service'); a=Path('/api'); i=Path('/infra'); [(os.chmod(p,0o700),os.chown(p,999,999)) for p in (s,a,i)]; prepare(s,uid=999,gid=999); key=Fernet.generate_key(); [(p/'key').write_bytes(key) for p in (s,a,i)]; [(os.chmod(p/'key',0o600),os.chown(p/'key',999,999)) for p in (s,a,i)]; shutil.copyfile(s/'pilot-ca.crt',a/'pilot-ca.crt'); shutil.copyfile(s/'pilot-ca.key',a/'pilot-ca.key'); [(os.chmod(a/name,0o600),os.chown(a/name,999,999)) for name in ('key','pilot-ca.key')]; os.chmod(a/'pilot-ca.crt',0o644); os.chown(a/'pilot-ca.crt',999,999); (s/'pilot-ca.crt').unlink(); (s/'pilot-ca.key').unlink()",
             ],
             check=False,
         )

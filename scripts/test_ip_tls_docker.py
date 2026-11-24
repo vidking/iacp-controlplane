@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.prepare_pilot_ca import prepare
-from worker.service_tls import issue
+from api.service_tls import issue
 from worker.service_recipes import render
 from api.service_secrets import installation_credentials
 
@@ -31,8 +31,12 @@ def validate():
     with tempfile.TemporaryDirectory(prefix="iacp-ip-tls-") as folder:
         root = Path(folder)
         prepare(root, os.getuid(), os.getgid())
-        os.environ.update(IACP_SERVICE_IP_TLS_ENABLED="1", IACP_SERVICE_CA_DIR=folder)
-        for name, content in issue("127.0.0.1").items():
+        os.environ.update(
+            IACP_SERVICE_IP_TLS_ENABLED="1",
+            IACP_SERVICE_CA_CERT_FILE=str(root / "pilot-ca.crt"),
+            IACP_SERVICE_CA_KEY_FILE=str(root / "pilot-ca.key"),
+        )
+        for name, content in issue("127.0.0.1", allow_non_global=True).items():
             (root / name).write_text(content)
         context = ssl.create_default_context(cafile=str(root / "pilot-ca.crt"))
         for application in ["nextcloud", "n8n"]:

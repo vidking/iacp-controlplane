@@ -954,7 +954,7 @@
     const password = $("root-password").value;
     const values = ["customer-id", "customer-tag", "order-id", "product-id"].map((id) => $(id).value.trim());
     const body = {
-      name: $("name").value.trim(),
+      name: $("name").value.trim().toLowerCase(),
       plan_id: $("plan").value,
       image_id: $("image").value,
       environment: "lab",

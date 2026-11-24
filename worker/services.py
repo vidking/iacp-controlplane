@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from api.db import database, initialize
+from api.db import database, initialize, runtime_write_gate_open
 from api.service import now
 from api.service_catalog import enabled
 from api.protection import is_protected_vmid
@@ -175,6 +175,9 @@ def claim(worker_id):
         max_concurrent = 6
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
+        if not runtime_write_gate_open(db):
+            db.execute("COMMIT")
+            return None
         active = db.execute(
             "SELECT COUNT(*) AS n FROM service_jobs WHERE status='running'"
         ).fetchone()["n"]

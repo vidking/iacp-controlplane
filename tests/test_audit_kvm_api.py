@@ -86,7 +86,7 @@ def test_orden_de_destruccion_exige_apagado_y_plan_vigente():
             (plan["instance_id"],),
         )
     request = OperationRequest(command=Command.destroy, instance_id=plan["instance_id"])
-    with pytest.raises(HTTPException, match="apague la instancia") as failure:
+    with pytest.raises(HTTPException, match="instancia está apagada") as failure:
         service.create_operation(request)
     assert failure.value.status_code == 409
 

@@ -25,6 +25,33 @@ def test_service_execution_timeout_allows_slow_wan_downloads(monkeypatch):
 
 
 @pytest.mark.no_database
+def test_service_queue_capacity_returns_retry_after_when_full(monkeypatch):
+    from fastapi import HTTPException
+    from api.applications import _assert_service_queue_capacity
+
+    class Result:
+        def fetchone(self):
+            return {"count": 1}
+
+    class Database:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement):
+            self.statements.append(statement)
+            return Result()
+
+    monkeypatch.setenv("IACP_MAX_QUEUE_DEPTH", "1")
+    db = Database()
+    with pytest.raises(HTTPException) as error:
+        _assert_service_queue_capacity(db)
+
+    assert error.value.status_code == 429
+    assert error.value.headers["Retry-After"] == "5"
+    assert any("pg_advisory_xact_lock" in statement for statement in db.statements)
+
+
+@pytest.mark.no_database
 def test_ubuntu_apt_sources_are_upgraded_to_https_before_install():
     import re
 
@@ -958,6 +985,27 @@ def test_service_detail_bounds_returned_job_history(client):
     assert body["jobs"][-1]["job_id"] == "history-104"
 
 
+def test_service_job_detail_bounds_returned_event_history(client):
+    order = create(client, name="bounded-events")
+    with database() as db:
+        for index in range(105):
+            db.execute(
+                """INSERT INTO service_events(job_id,phase,status,occurred_at)
+                VALUES (?, ?, 'succeeded', ?)""",
+                (order["job_id"], f"phase-{index}", f"2027-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00"),
+            )
+
+    response = client.get(f"/v1/service-jobs/{order['job_id']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["events"]) == 100
+    assert body["events_total"] == 105
+    assert body["events_truncated"] is True
+    assert body["events"][0]["phase"] == "phase-5"
+    assert body["events"][-1]["phase"] == "phase-104"
+
+
 def test_cancel_order_after_definitive_failure_without_resources(client):
     order = create(client)
     with database() as db:
@@ -1226,7 +1274,11 @@ def test_ansible_playbook_syntax_for_all_recipes(monkeypatch, tmp_path):
                     retirement = next(
                         task for task in service_tasks if task.get("name") == "Retirar contenedores de la aplicación"
                     )
-                    assert retirement["ansible.builtin.command"]["argv"][-1] == "down"
+                    assert retirement["ansible.builtin.command"]["argv"][-3:] == [
+                        "down",
+                        "--volumes",
+                        "--remove-orphans",
+                    ]
                     assert retirement["when"] == "existing_compose.stat.exists"
                 else:
                     assert len(task_names) == 2

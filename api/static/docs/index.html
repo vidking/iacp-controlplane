@@ -146,7 +146,7 @@
                 <div class="form-grid three-columns">
                   <label>Plan obligatorio<select id="plan" required><option value="">Consulta el catálogo</option></select><small id="plan-help">Los vCPU, memoria y disco provienen del plan certificado.</small></label>
                   <label>Sistema operativo obligatorio<select id="image" required><option value="">Consulta el catálogo</option></select><small id="image-help">La Golden Image se conserva sin mutaciones.</small></label>
-                  <label>Nombre obligatorio<input id="name" required pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" placeholder="mi-servidor-001"><small>1–63 caracteres: minúsculas, números y guiones; comienza y termina con letra o número.</small></label>
+                  <label>Nombre obligatorio<input id="name" required pattern="[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?" placeholder="mi-servidor-001"><small>1–63 caracteres: letras, números y guiones; la API lo normaliza a minúsculas.</small></label>
                 </div>
                 <div class="form-grid two-columns network-form-grid">
                   <label>Perfil de red<select id="network-profile" required><option value="lab_dhcp">Lab_DHCP · red de laboratorio</option></select><small id="network-profile-help">La VM recibe su configuración por DHCP en el entorno de laboratorio.</small></label>

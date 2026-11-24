@@ -32,7 +32,7 @@ def run(argv, *, check=True, timeout=60):
 def main():
     from scripts.prepare_pilot_ca import prepare
     from worker.service_recipes import render
-    from worker.service_tls import issue
+    from api.service_tls import issue
 
     releases = json.loads((ROOT / "services/releases.json").read_text())
     release = releases["nextcloud"]
@@ -40,8 +40,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="iacp-nextcloud-docker-") as temp:
         folder = Path(temp)
         prepare(folder, os.getuid(), os.getgid())
-        os.environ.update(IACP_SERVICE_IP_TLS_ENABLED="1", IACP_SERVICE_CA_DIR=temp)
-        for name, content in issue("127.0.0.1").items():
+        os.environ.update(
+            IACP_SERVICE_IP_TLS_ENABLED="1",
+            IACP_SERVICE_CA_CERT_FILE=str(folder / "pilot-ca.crt"),
+            IACP_SERVICE_CA_KEY_FILE=str(folder / "pilot-ca.key"),
+        )
+        for name, content in issue("127.0.0.1", allow_non_global=True).items():
             (folder / name).write_text(content)
 
         password = secrets.token_urlsafe(32) + "aA9!"

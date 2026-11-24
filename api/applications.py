@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from hashlib import sha256
 from hmac import compare_digest
 import json
+import os
 from secrets import token_urlsafe
 import uuid
 from fastapi import HTTPException
@@ -28,6 +29,27 @@ from api.secrets import write_secret, delete_secret
 
 ACTIVE = "('queued','running','uncertain')"
 CREDENTIAL_RECOVERY_WINDOW = timedelta(minutes=15)
+SERVICE_JOB_EVENT_LIMIT = 100
+
+
+def _assert_service_queue_capacity(db) -> None:
+    """Aplica backpressure transaccional a la cola compartida de servicios."""
+    db.execute("SELECT pg_advisory_xact_lock(104, 102)")
+    try:
+        limit = int(os.getenv("IACP_MAX_QUEUE_DEPTH", "100"))
+    except ValueError:
+        limit = 100
+    if limit <= 0:
+        limit = 100
+    queued = db.execute(
+        "SELECT COUNT(*) AS count FROM service_jobs WHERE status='queued'"
+    ).fetchone()["count"]
+    if queued >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail="la cola de servicios está llena; reintente después",
+            headers={"Retry-After": "5"},
+        )
 
 
 def require_enabled():
@@ -93,6 +115,7 @@ def create(request: ServiceCreateRequest, key: str | None):
         )
 
     def builder(db):
+        _assert_service_queue_capacity(db)
         service_id, job_id, operation_id = (str(uuid.uuid4()) for _ in range(3))
         release = load_service_release(request.application_id)
         credentials = installation_credentials()
@@ -298,14 +321,24 @@ def get_job(job_id):
         ).fetchone()
         if not row:
             raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
-        return dict(row) | {
-            "events": [
-                dict(e)
-                for e in db.execute(
-                    "SELECT * FROM service_events WHERE job_id=? ORDER BY event_id",
-                    (job_id,),
+        events_total = db.execute(
+            "SELECT COUNT(*) AS total FROM service_events WHERE job_id=?",
+            (job_id,),
+        ).fetchone()["total"]
+        events = [
+            dict(event)
+            for event in reversed(
+                db.execute(
+                    """SELECT * FROM service_events WHERE job_id=?
+                    ORDER BY event_id DESC LIMIT ?""",
+                    (job_id, SERVICE_JOB_EVENT_LIMIT),
                 ).fetchall()
-            ]
+            )
+        ]
+        return dict(row) | {
+            "events": events,
+            "events_total": events_total,
+            "events_truncated": events_total > len(events),
         }
 
 
@@ -368,6 +401,7 @@ def retry(job_id, key, stopped=False):
             if job["action"] == "install" and service["image"] not in supported_image_ids(service["application_id"]):
                 raise HTTPException(409, "SERVICE_IMAGE_RETIRED")
             _require_running_instance(db, service["instance_id"])
+            _assert_service_queue_capacity(db)
             db.execute(
                 "UPDATE service_jobs SET status='queued', error='', worker_id=NULL, finished_at=NULL WHERE job_id=?",
                 (job_id,),
@@ -409,6 +443,7 @@ def delivery(service_id, key, receipt=None):
                 raise HTTPException(409, "SERVICE_CREDENTIAL_RECEIPT_REQUIRED")
         guard_instance(db, row["instance_id"])
         _require_running_instance(db, row["instance_id"])
+        _assert_service_queue_capacity(db)
         job_id = str(uuid.uuid4())
         db.execute(
             "INSERT INTO service_jobs(job_id, service_id, action, status, created_at) VALUES (?, ?, 'handoff', 'queued', ?)",
@@ -604,6 +639,7 @@ def cancel(job_id, key, stopped=False):
                     raise HTTPException(409, "INFRASTRUCTURE_OPERATION_ACTIVE")
                 if service["infrastructure_status"] != "ready" or service["power_state"] != "running":
                     raise HTTPException(409, "SERVICE_CLEANUP_REQUIRES_RUNNING_VM")
+                _assert_service_queue_capacity(db)
             db.execute(
                 "UPDATE service_jobs SET status='cancelled', finished_at=? WHERE job_id=?",
                 (now(), job_id),
@@ -689,6 +725,7 @@ def connections(service_id, request, key):
             or not configuration["telegram_allowed_users"]
         ):
             raise HTTPException(422, "TELEGRAM_REQUIRES_HERMES_AND_ALLOWED_USERS")
+        _assert_service_queue_capacity(db)
         job_id = str(uuid.uuid4())
         db.execute(
             "UPDATE service_instances SET configuration_json=?, secrets_encrypted=?, status='queued', updated_at=? WHERE service_id=?",

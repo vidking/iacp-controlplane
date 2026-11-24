@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 from base64 import b64encode
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import psycopg
+from cryptography import x509
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -24,6 +26,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from api.db import database, initialize, prune_history, schema_ready
 from api import applications
+from api.protection import is_protected_vmid
 from api.service_catalog import catalog as application_catalog
 from api.service_models import ApplicationConnectionRequest, RecoveryRequest, ServiceCreateRequest
 from api.catalog import network_profile_catalog
@@ -53,6 +56,7 @@ from api.service import (
     public_operation_error,
     public_operation_output,
 )
+from api.service_tls import issue as issue_service_tls_certificate
 from worker.proxmox import ProxmoxClient, ProxmoxError
 
 
@@ -184,7 +188,7 @@ class HTTPGuards:
             scheme, token = get_authorization_scheme_param(Headers(scope=scope).get("authorization"))
             credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=token) if scheme.lower() == "bearer" else None
             try:
-                authorize(credentials)
+                authorize(credentials, Request(scope))
             except HTTPException as error:
                 await JSONResponse({"detail": error.detail}, error.status_code)(scope, receive, send_with_headers)
                 return
@@ -229,12 +233,18 @@ DOCS_DIR = Path(__file__).parent / "static" / "docs"
 bearer = HTTPBearer(auto_error=False, scheme_name="Bearer")
 
 
-def _allow_insecure_local_development() -> bool:
+def _insecure_development_mode_enabled() -> bool:
     return (
         os.getenv("IACP_RUNTIME_STAGE", "").strip().lower() == "develop"
         and os.getenv("IACP_ALLOW_INSECURE_LOCAL_DEV", "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
+
+
+def _allow_insecure_local_development(peer_host: str | None) -> bool:
+    # La IP de un proxy confiable puede ocultar un cliente remoto. Sin un
+    # contrato explícito de proxy no se acepta ninguna dirección loopback.
+    return peer_host == "testclient" and _insecure_development_mode_enabled()
 
 
 def _max_concurrent() -> int:
@@ -294,10 +304,12 @@ def _worker_liveness(worker: dict) -> str:
 
 def authorize(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    request: Request,
 ) -> None:
     configured = os.getenv("IACP_API_TOKEN", "").strip()
     if not configured:
-        if _allow_insecure_local_development():
+        peer_host = request.client.host if request.client else None
+        if _allow_insecure_local_development(peer_host):
             return
         raise HTTPException(status_code=503, detail="API token no configurado")
     if configured and (
@@ -312,7 +324,7 @@ def authorize(
 
 
 def startup() -> None:
-    if not os.getenv("IACP_API_TOKEN", "").strip() and not _allow_insecure_local_development():
+    if not os.getenv("IACP_API_TOKEN", "").strip() and not _insecure_development_mode_enabled():
         raise RuntimeError("IACP_API_TOKEN es obligatorio")
     initialize()
     initialize_idempotency()
@@ -781,7 +793,7 @@ def shutdown_instance(
 )
 def reboot_instance(
     instance_id: str,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=255),
 ):
     return create_power(instance_id, PowerAction.reboot, idempotency_key=idempotency_key)
 
@@ -1203,3 +1215,62 @@ def service_tls_ca(service_id: str):
     if not certificate.is_file():
         raise HTTPException(503, "SERVICE_CA_NOT_CONFIGURED")
     return FileResponse(certificate, media_type="application/x-pem-file", filename="iacp-pilot-ca.crt", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/v1/internal/service-jobs/{job_id}/tls-certificate", include_in_schema=False)
+def issue_service_job_tls_certificate(job_id: str, request: Request):
+    """Firma un certificado solo para el servicio y trabajo actualmente asignados."""
+    authorization = request.headers.get("authorization", "")
+    scheme, token = get_authorization_scheme_param(authorization)
+    key_file = os.getenv("IACP_SERVICE_KEY_FILE", "")
+    try:
+        expected = Path(key_file).read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        raise HTTPException(503, "SERVICE_SIGNER_UNAVAILABLE") from None
+    if scheme.lower() != "bearer" or not expected or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, "SERVICE_SIGNER_UNAUTHORIZED")
+    if os.getenv("IACP_SERVICES_ENABLED", "0") != "1" or os.getenv(
+        "IACP_SERVICE_IP_TLS_ENABLED", "0"
+    ) != "1":
+        raise HTTPException(503, "SERVICE_SIGNER_DISABLED")
+    with database() as db:
+        row = db.execute(
+            """SELECT j.job_id, j.action, j.status AS job_status, j.worker_id,
+                s.service_id, s.application_id, s.status AS service_status,
+                s.configuration_json, i.vmid, i.status AS infrastructure_status,
+                b.binding_json
+            FROM service_jobs j
+            JOIN service_instances s ON s.service_id=j.service_id
+            JOIN instances i ON i.instance_id=s.instance_id
+            JOIN service_bindings b ON b.service_id=s.service_id
+            WHERE j.job_id=?""",
+            (job_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "SERVICE_JOB_NOT_FOUND")
+    if (
+        row["job_status"] != "running"
+        or row["action"] not in {"install", "renew_tls"}
+        or not re.fullmatch(r"service-worker-[1-6]", row["worker_id"] or "")
+        or row["application_id"] not in {"nextcloud", "n8n"}
+        or row["service_status"] not in {"installing", "delivering", "awaiting_customer", "delivered"}
+        or row["infrastructure_status"] != "ready"
+        or is_protected_vmid(row["vmid"])
+    ):
+        raise HTTPException(409, "SERVICE_SIGNER_JOB_NOT_ACTIVE")
+    try:
+        configuration = json.loads(row["configuration_json"])
+        binding = json.loads(row["binding_json"])
+        address = str(ip_address(binding["address"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise HTTPException(409, "SERVICE_SIGNER_BINDING_UNVERIFIED") from None
+    if (
+        configuration.get("access_mode") != "ip"
+        or binding.get("source") != "qemu-guest-agent"
+        or binding.get("vmid") != row["vmid"]
+    ):
+        raise HTTPException(409, "SERVICE_SIGNER_BINDING_UNVERIFIED")
+    try:
+        return issue_service_tls_certificate(address)
+    except (OSError, ValueError, KeyError, x509.ExtensionNotFound):
+        raise HTTPException(503, "SERVICE_SIGNER_CERTIFICATE_FAILED") from None

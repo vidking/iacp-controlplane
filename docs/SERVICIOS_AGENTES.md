@@ -69,11 +69,12 @@ Las instalaciones están deshabilitadas por defecto:
 - Perfil Compose `services`: los dos primeros workers se incluyen al activarlo.
 - Perfil Compose `service-workers-3-6`: agrega los workers 3 a 6 cuando el manifiesto declara cuatro o seis.
 - `IACP_SERVICE_CONFIG_DIR`: directorio absoluto del operador. La API recibe
-  únicamente `key` y `pilot-ca.crt` en montajes individuales de solo lectura;
-  nunca monta `pilot-ca.key`. Los workers de servicios montan el directorio
-  completo en `/run/iacp-services`, solo lectura, porque firman certificados
-  para las instancias. Cada worker de infraestructura recibe únicamente `key`
-  en `/run/iacp-services/key`, también solo lectura. No montar el socket Docker.
+  `key`, `pilot-ca.crt` y `pilot-ca.key` mediante montajes individuales de solo
+  lectura. La clave privada de la CA queda solo en la API. Cada worker de
+  servicios recibe únicamente `key` en `/run/iacp-services/key`; solicita al
+  firmador interno certificados ligados a un job activo y al IP de su binding
+  verificado. Cada worker de infraestructura también recibe únicamente `key`
+  en solo lectura. No montar el socket Docker.
 
 Contenido requerido del directorio (no incorporar secretos a Git):
 
@@ -83,8 +84,8 @@ Contenido requerido del directorio (no incorporar secretos a Git):
    continuar instalaciones y recuperar sus credenciales. La rotación requiere recifrar
    los sobres antes de sustituirla; no existe aún una utilidad automática de rotación.
 2. `pilot-ca.key` y `pilot-ca.crt`: clave privada de firma con permisos 600 y
-   certificado público. La API recibe únicamente el certificado público; los
-   workers de servicios usan ambos para emitir certificados de acceso por IP.
+   certificado público. Solo la API puede leer la clave privada y emite hojas
+   únicamente para jobs activos de Nextcloud/n8n con binding verificado.
 3. Los bindings se preparan automáticamente por QEMU Guest Agent y se guardan en
    PostgreSQL, después de verificar identidad y pertenencia al pool de la VM.
    `bindings/<instance_id>.json` se conserva únicamente como alternativa operativa

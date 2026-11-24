@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 import tempfile
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from cryptography import x509
@@ -25,6 +27,26 @@ from worker.service_locks import current_service_job_lock_fd
 NEXTCLOUD_READY_MAX_SECONDS = 20 * 60
 NEXTCLOUD_READY_POLL_SECONDS = 5
 NEXTCLOUD_READY_ATTEMPTS = NEXTCLOUD_READY_MAX_SECONDS // NEXTCLOUD_READY_POLL_SECONDS
+
+
+def request_service_tls_certificate(job_id: str, address: str) -> dict[str, str]:
+    """Solicita al API el certificado vinculado al job y al IP del binding."""
+    key_path = Path(os.getenv("IACP_SERVICE_KEY_FILE", "/run/iacp-services/key"))
+    token = key_path.read_text(encoding="ascii").strip()
+    request = Request(
+        f"{os.getenv('IACP_SERVICE_SIGNER_URL', 'http://api:8080').rstrip('/')}/v1/internal/service-jobs/{job_id}/tls-certificate",
+        data=json.dumps({"address": address}).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            material = json.load(response)
+    except (OSError, HTTPError, URLError, ValueError) as error:
+        raise ValueError("SERVICE_IP_TLS_SIGNER_UNAVAILABLE") from error
+    if not isinstance(material, dict) or set(material) != {"pilot.crt", "pilot.key", "pilot-ca.crt"}:
+        raise ValueError("SERVICE_IP_TLS_SIGNER_RESPONSE_INVALID")
+    return material
 
 
 def remote_service_lock_scripts() -> tuple[str, str]:
@@ -630,10 +652,8 @@ def execute(service, job, heartbeat):
             # Caddy solo responde 503 hasta que la aplicación quede verificada.
             files["Caddyfile"] = bootstrap_caddyfile
         if configuration.get("access_mode") == "ip":
-            from worker.service_tls import issue
-
             try:
-                files.update(issue(address))
+                files.update(request_service_tls_certificate(job["job_id"], address))
             except (OSError, ValueError):
                 raise ServiceBlocked("SERVICE_IP_TLS_NOT_CONFIGURED") from None
         pin_release(service["service_id"], release)
@@ -644,10 +664,8 @@ def execute(service, job, heartbeat):
         ):
             raise ServiceBlocked("SERVICE_TLS_RENEWAL_UNSUPPORTED")
         configuration["domain"] = address
-        from worker.service_tls import issue
-
         try:
-            files.update(issue(address))
+            files.update(request_service_tls_certificate(job["job_id"], address))
             certificate = x509.load_pem_x509_certificate(files["pilot.crt"].encode())
             private_key = serialization.load_pem_private_key(
                 files["pilot.key"].encode(), password=None
@@ -693,7 +711,7 @@ def execute(service, job, heartbeat):
                 },
                 {
                     "name": "Retirar contenedores de la aplicación",
-                    **command(base + ["down"]),
+                    **command(base + ["down", "--volumes", "--remove-orphans"]),
                     "when": "existing_compose.stat.exists",
                 },
                 {

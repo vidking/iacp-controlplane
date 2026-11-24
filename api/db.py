@@ -99,6 +99,15 @@ class DatabaseConnection:
         self._connection.close()
 
 
+def runtime_write_gate_open(db) -> bool:
+    """Try the shared API/worker gate used while an operator drains the stack."""
+
+    row = db.execute(
+        "SELECT pg_try_advisory_xact_lock(104, 103) AS acquired"
+    ).fetchone()
+    return bool(row and row["acquired"])
+
+
 def connect() -> DatabaseConnection:
     """Conexión dedicada fuera del pool (diagnóstico y herramientas)."""
 

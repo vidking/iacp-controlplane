@@ -6,10 +6,24 @@ from fastapi.testclient import TestClient
 
 from api.db import database, initialize
 from api.main import app
+from api.models import InstanceCreateRequest
 from worker.proxmox import ProxmoxError
 
 
 PUBLIC_KEY = "ssh-ed25519 AAAAexample"
+
+
+@pytest.mark.no_database
+def test_create_model_normalizes_mixed_case_name_before_pattern_validation():
+    request = InstanceCreateRequest.model_validate(
+        {
+            "name": "  Prueba-Hermes-01  ",
+            "plan_id": "kvm-2",
+            "image_id": "ubuntu-2404",
+            "environment": "lab",
+        }
+    )
+    assert request.name == "prueba-hermes-01"
 
 
 def public_body(name: str = "console-local", *, password_only: bool = False) -> dict:
@@ -113,6 +127,24 @@ def test_health_response_reports_the_running_build_revision(tmp_path, monkeypatc
         response = client.get("/health/ready")
     assert response.status_code == 200
     assert response.headers["X-IACP-Build-Revision"] == revision
+
+
+def test_create_normalizes_mixed_case_vm_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    request = public_body("Prueba-Hermes-01")
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-mixed-case-name"},
+            json=request,
+        )
+    assert response.status_code == 202, response.text
+    with database() as db:
+        instance = db.execute(
+            "SELECT name FROM instances WHERE instance_id=?",
+            (response.json()["instance_id"],),
+        ).fetchone()
+    assert instance["name"] == "prueba-hermes-01"
 
 
 @pytest.mark.parametrize(
@@ -862,6 +894,126 @@ def test_reconcile_route_is_idempotent_and_targets_uncertain_operation(tmp_path,
         assert "/v1/instances/{instance_id}/reconcile" in client.get("/openapi.json").json()["paths"]
 
 
+def test_destroy_rejects_unknown_power_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-destroy-unknown-power"},
+            json=public_body("destroy-unknown-power"),
+        )
+        instance_id = created.json()["instance_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='succeeded' WHERE operation_id=?",
+                (created.json()["operation_id"],),
+            )
+            db.execute(
+                """UPDATE instances SET status='ready', vmid=40000, power_state='unknown'
+                WHERE instance_id=?""",
+                (instance_id,),
+            )
+
+        response = client.delete(
+            f"/v1/instances/{instance_id}",
+            headers={"Idempotency-Key": "delete-unknown-power"},
+        )
+
+    assert response.status_code == 409
+    assert "apagada" in response.text
+    with database() as db:
+        queued = db.execute(
+            "SELECT COUNT(*) AS count FROM operations WHERE instance_id=? AND command='destroy'",
+            (instance_id,),
+        ).fetchone()["count"]
+    assert queued == 0
+
+
+def test_planned_instance_can_be_cancelled_without_power_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        planned = client.post(
+            "/v1/operations",
+            headers={"Idempotency-Key": "create-plan-for-cancellation"},
+            json={
+                "command": "plan",
+                "action": "provision",
+                "environment": "lab",
+                "plan_id": "kvm-2",
+                "spec": {"name": "cancel-planned-instance", "image": "ubuntu-2404"},
+            },
+        )
+        # /v1/operations conserva su respuesta 200; /v1/instances usa 202.
+        assert planned.status_code == 200, planned.text
+        plan_id = planned.json()["operation_id"]
+        instance_id = planned.json()["instance_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='succeeded', vmid=40000, target_node='mng01' WHERE operation_id=?",
+                (plan_id,),
+            )
+            db.execute(
+                "UPDATE instances SET status='planned', vmid=40000, node='mng01', power_state=NULL WHERE instance_id=?",
+                (instance_id,),
+            )
+            source = db.execute(
+                "SELECT operation_id, instance_id, command, status, vmid FROM operations WHERE operation_id=?",
+                (plan_id,),
+            ).fetchone()
+            instance = db.execute(
+                "SELECT operation_id, status, vmid, power_state FROM instances WHERE instance_id=?",
+                (instance_id,),
+            ).fetchone()
+        assert source["command"] == "plan" and source["status"] == "succeeded" and source["vmid"] == 40000
+        assert instance["operation_id"] == plan_id and instance["status"] == "planned"
+        assert instance["vmid"] == 40000 and instance["power_state"] is None
+
+        response = client.delete(
+            f"/v1/instances/{instance_id}",
+            headers={"Idempotency-Key": "delete-planned-instance"},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["command"] == "destroy"
+    with database() as db:
+        operation = db.execute(
+            "SELECT command, plan_operation_id FROM operations WHERE operation_id=?",
+            (response.json()["operation_id"],),
+        ).fetchone()
+    assert dict(operation) == {"command": "destroy", "plan_operation_id": plan_id}
+
+
+def test_reboot_requires_idempotency_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-reboot-key-required"},
+            json=public_body("reboot-key-required"),
+        )
+        instance_id = created.json()["instance_id"]
+        with database() as db:
+            db.execute(
+                "UPDATE operations SET status='succeeded' WHERE operation_id=?",
+                (created.json()["operation_id"],),
+            )
+            db.execute(
+                """UPDATE instances SET status='ready', vmid=40000, power_state='running'
+                WHERE instance_id=?""",
+                (instance_id,),
+            )
+
+        response = client.post(f"/v1/instances/{instance_id}/power/reboot")
+
+    assert response.status_code == 422
+    with database() as db:
+        queued = db.execute(
+            "SELECT COUNT(*) AS count FROM operations WHERE instance_id=? AND command='power'",
+            (instance_id,),
+        ).fetchone()["count"]
+    assert queued == 0
+
+
 @pytest.mark.parametrize(
     ("previous_reconcile_status", "expected_status"),
     [("uncertain", 202), ("pending", 409), ("running", 409)],
@@ -981,6 +1133,55 @@ def test_reconcile_can_close_physical_uncertainty_after_instance_was_deleted(tmp
         assert response.status_code == 202, response.text
         assert response.json()["source_operation_id"] == source_id
         assert response.json()["command"] == "reconcile"
+
+
+def test_destroy_uses_logical_cleanup_after_confirmed_physical_absence(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/instances",
+            headers={"Idempotency-Key": "create-absent-cleanup"},
+            json=public_body("absent-cleanup"),
+        )
+        assert created.status_code == 202, created.text
+        instance_id = created.json()["instance_id"]
+        source_id = created.json()["operation_id"]
+        with database() as db:
+            db.execute(
+                """UPDATE operations SET status='failed', vmid=40000,
+                error='RECONCILIATION_PHYSICAL_RESOURCE_ABSENT' WHERE operation_id=?""",
+                (source_id,),
+            )
+            db.execute(
+                """UPDATE instances SET status='failed', vmid=NULL, power_state='unknown'
+                WHERE instance_id=?""",
+                (instance_id,),
+            )
+
+        response = client.delete(
+            f"/v1/instances/{instance_id}",
+            headers={"Idempotency-Key": "delete-absent-cleanup"},
+        )
+
+    assert response.status_code == 202, response.text
+    result = response.json()
+    assert result["status"] == "completed"
+    with database() as db:
+        deletes = db.execute(
+            "SELECT operation_id, status FROM operations WHERE instance_id=? AND command='destroy'",
+            (instance_id,),
+        ).fetchall()
+        instance = db.execute(
+            "SELECT status, vmid FROM instances WHERE instance_id=?", (instance_id,)
+        ).fetchone()
+        event = db.execute(
+            "SELECT 1 FROM events WHERE operation_id=? AND kind='logical.delete.completed'",
+            (result["operation_id"],),
+        ).fetchone()
+    assert len(deletes) == 1
+    assert deletes[0]["status"] == "succeeded"
+    assert (instance["status"], instance["vmid"]) == ("deleted", None)
+    assert event is not None
 
 
 def test_deleted_power_reconciliation_requires_a_later_successful_destroy(tmp_path, monkeypatch):
@@ -1276,6 +1477,7 @@ def test_ambiguous_idempotency_commit_preserves_referenced_secret(monkeypatch):
         yield Database()
 
     monkeypatch.setattr(service, "database", fake_database)
+    monkeypatch.setattr(service, "runtime_write_gate_open", lambda _db: True)
     monkeypatch.setattr(service, "initialize_idempotency", lambda: b"k" * 32)
     monkeypatch.setattr(service, "_existing_idempotency", lambda *_args: None)
 

@@ -86,6 +86,7 @@ def _configuration(*, stage="production", bucket="iacp-cyberfuel", prefix="iacp/
     }
     services["api"]["environment"] = api_environment
     services["postgres"] = {
+        "image": go_live.POSTGRES_IMAGE,
         "environment": {
             "POSTGRES_DB": database_name,
             "POSTGRES_USER": "iacp_test",
@@ -491,21 +492,26 @@ def test_verify_checks_runtime_contract_and_served_revision(monkeypatch):
         for name in ("postgres", "api", *(f"worker-{number}" for number in range(1, 7)))
     ]
     monkeypatch.setattr(go_live, "_inventory", lambda *args: {"containers": services})
+    payload = {
+        "health": "ready",
+        "api_version": "1.0.0",
+        "provision_path": True,
+        "build_revision": IMAGE_TAG,
+        "schema_version": 2,
+        "ip_allocations_table": True,
+        "worker_ids": [f"worker-{number}" for number in range(1, 7)],
+        "infrastructure_workers_fresh": True,
+    }
     monkeypatch.setattr(
         go_live,
         "_run",
-        lambda *args, **kwargs: json.dumps({
-            "health": "ready",
-            "api_version": "1.0.0",
-            "provision_path": True,
-            "build_revision": IMAGE_TAG,
-            "schema_version": 2,
-            "ip_allocations_table": True,
-            "worker_ids": [f"worker-{number}" for number in range(1, 7)],
-        }),
+        lambda *args, **kwargs: json.dumps(payload),
     )
     result = go_live._verify({"project": "iacp-controlplane-prod-v1", "image_tag": IMAGE_TAG}, Path("compose.yml"), Path("runtime.env"))
     assert result["api"]["build_revision"] == IMAGE_TAG
+    payload["infrastructure_workers_fresh"] = False
+    with pytest.raises(go_live.GateError, match="pools de workers"):
+        go_live._verify({"project": "iacp-controlplane-prod-v1", "image_tag": IMAGE_TAG}, Path("compose.yml"), Path("runtime.env"))
 
 
 def test_upstream_swap_is_atomic_and_preserves_the_previous_route(tmp_path):
@@ -522,6 +528,51 @@ def test_upstream_swap_is_atomic_and_preserves_the_previous_route(tmp_path):
     assert "url: http://iacp-controlplane-api-prod:8080" in (evidence / "traefik-before.yml").read_text(encoding="utf-8")
     assert stat.S_IMODE(route.stat().st_mode) == 0o640
     assert stat.S_IMODE((evidence / "traefik-before.yml").stat().st_mode) == 0o600
+
+
+def test_failed_activation_rolls_back_candidate_even_after_interrupted_attempt(tmp_path, monkeypatch):
+    route = tmp_path / "iacp.yml"
+    route.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://iacp-controlplane-api-prod:8080\n",
+        encoding="utf-8",
+    )
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+    monkeypatch.setattr(go_live, "_require_legacy_api_healthy", lambda: None)
+
+    result = go_live._rollback_failed_activation(
+        {
+            "dynamic_config": str(route),
+            "service_alias": "iacp-controlplane-api-prod",
+        },
+        evidence,
+    )
+
+    assert result == {
+        "restored": True,
+        "already_legacy": False,
+        "target": "http://api:8000",
+    }
+    assert "url: http://api:8000" in route.read_text(encoding="utf-8")
+
+
+def test_failed_activation_does_not_overwrite_an_unknown_upstream(tmp_path, monkeypatch):
+    route = tmp_path / "iacp.yml"
+    route.write_text(
+        "http:\n  services:\n    iacp-api:\n      loadBalancer:\n        servers:\n          - url: http://unexpected:8080\n",
+        encoding="utf-8",
+    )
+    evidence = go_live._new_evidence_dir(tmp_path / "evidence")
+    monkeypatch.setattr(go_live, "_require_legacy_api_healthy", lambda: None)
+
+    with pytest.raises(go_live.GateError, match="destino no reconocido"):
+        go_live._rollback_failed_activation(
+            {
+                "dynamic_config": str(route),
+                "service_alias": "iacp-controlplane-api-prod",
+            },
+            evidence,
+        )
+    assert "http://unexpected:8080" in route.read_text(encoding="utf-8")
 
 
 def test_upstream_swap_preserves_json_route_format(tmp_path):
@@ -700,7 +751,7 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
                 f"worker-{number}": {"image": f"{IMAGE_REPOSITORY}:{IMAGE_TAG}@{IMAGE_DIGEST}"}
                 for number in range(1, 7)
             },
-            "postgres": {"image": "postgres:17.6"},
+            "postgres": {"image": go_live.POSTGRES_IMAGE},
         }
     }
     calls = []
@@ -710,7 +761,12 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
         if command[4] == "{{.Id}}":
             return "sha256:" + "b" * 64 + "\n"
         if command[4] == "{{json .RepoDigests}}":
-            return json.dumps([f"{IMAGE_REPOSITORY}@{IMAGE_DIGEST}"])
+            image = command[-1]
+            return json.dumps(
+                ["postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"]
+                if image == go_live.POSTGRES_IMAGE
+                else [f"{IMAGE_REPOSITORY}@{IMAGE_DIGEST}"]
+            )
         if "org.opencontainers.image.revision" in command[4]:
             return IMAGE_TAG
         raise AssertionError(command)
@@ -721,7 +777,7 @@ def test_preloaded_images_verifies_each_service_and_digest(monkeypatch):
     assert [item["service"] for item in verified] == [
         "api", "postgres", *(f"worker-{number}" for number in range(1, 7))
     ]
-    assert len(calls) == 22
+    assert len(calls) == 23
     assert all(call[0][:3] == ["docker", "image", "inspect"] for call in calls)
     assert {item.get("registry_digest") for item in verified if item["service"] != "postgres"} == {IMAGE_DIGEST}
 
@@ -743,6 +799,7 @@ def _service_configuration(tmp_path, worker_count=2):
     config['services']['api']['environment']['IACP_SERVICE_MAX_CONCURRENT'] = str(worker_count)
     config['services']['api']['environment']['IACP_SERVICE_KEY_FILE'] = '/run/iacp-service-key'
     config['services']['api']['environment']['IACP_SERVICE_CA_CERT_FILE'] = '/run/iacp-pilot-ca.crt'
+    config['services']['api']['environment']['IACP_SERVICE_CA_KEY_FILE'] = '/run/iacp-pilot-ca.key'
     service_config = tmp_path / "services"
     service_config.mkdir(mode=0o700)
     key_file = service_config / "key"
@@ -768,6 +825,12 @@ def _service_configuration(tmp_path, worker_count=2):
             "target": "/run/iacp-pilot-ca.crt",
             "read_only": True,
         },
+        {
+            "type": "bind",
+            "source": str(ca_key_file),
+            "target": "/run/iacp-pilot-ca.key",
+            "read_only": True,
+        },
     ]
     for number in range(1, 7):
         worker = config["services"][f"worker-{number}"]
@@ -788,8 +851,8 @@ def _service_configuration(tmp_path, worker_count=2):
                 'IACP_SERVICE_KEY_FILE':'/run/iacp-services/key'}}
         config['services'][f'service-worker-{number}']['volumes'] = [{
             "type": "bind",
-            "source": str(service_config),
-            "target": "/run/iacp-services",
+            "source": str(key_file),
+            "target": "/run/iacp-services/key",
             "read_only": True,
         }]
     dev=_private_env(tmp_path)
@@ -901,7 +964,7 @@ def test_services_enabled_policy_requires_private_key_on_each_infra_worker(tmp_p
 @pytest.mark.parametrize(
     "defect", ["full_directory", "private_ca_key", "ancestor_directory"]
 )
-def test_services_enabled_policy_keeps_private_ca_key_out_of_api(tmp_path, defect):
+def test_services_enabled_policy_rejects_extra_ca_mounts_on_api(tmp_path, defect):
     config, env, manifest = _service_configuration(tmp_path)
     service_config = Path(go_live._private_environment(env)["IACP_SERVICE_CONFIG_DIR"])
     if defect == "full_directory":
@@ -921,4 +984,17 @@ def test_services_enabled_policy_keeps_private_ca_key_out_of_api(tmp_path, defec
     })
 
     with pytest.raises(go_live.GateError, match="API no debe montar"):
+        go_live._check_policy(manifest, config, env)
+
+
+def test_service_workers_never_receive_the_ca_private_key(tmp_path):
+    config, env, manifest = _service_configuration(tmp_path)
+    service_config = Path(go_live._private_environment(env)["IACP_SERVICE_CONFIG_DIR"])
+    config["services"]["service-worker-1"]["volumes"].append({
+        "type": "bind",
+        "source": str(service_config / "pilot-ca.key"),
+        "target": "/run/iacp-services/pilot-ca.key",
+        "read_only": True,
+    })
+    with pytest.raises(go_live.GateError, match="workers de servicios no deben recibir"):
         go_live._check_policy(manifest, config, env)

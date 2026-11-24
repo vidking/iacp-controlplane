@@ -13,10 +13,12 @@ import os
 from pathlib import Path
 import re
 import shutil
+import selectors
 import socket
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -273,10 +275,14 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
             raise GateError("La clave privada de la CA debe existir como archivo privado")
         if not service_ca_cert.is_file() or service_ca_cert.is_symlink():
             raise GateError("El certificado público de la CA no existe")
+        if (service_ca_cert.stat().st_mode & 0o022):
+            raise GateError("El certificado público de la CA no debe ser modificable por grupo u otros")
         if api_env.get("IACP_SERVICE_KEY_FILE") != "/run/iacp-service-key":
             raise GateError("La API debe recibir la clave Fernet por un montaje de archivo dedicado")
         if api_env.get("IACP_SERVICE_CA_CERT_FILE") != "/run/iacp-pilot-ca.crt":
-            raise GateError("La API debe recibir solo el certificado público de la CA")
+            raise GateError("La API debe recibir el certificado público de la CA")
+        if api_env.get("IACP_SERVICE_CA_KEY_FILE") != "/run/iacp-pilot-ca.key":
+            raise GateError("La API debe recibir la clave privada de firma por un montaje dedicado")
         api_service = config["services"]["api"]
         if not _has_readonly_bind_mount(
             api_service,
@@ -286,19 +292,25 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
             api_service,
             source=str(service_ca_cert),
             target="/run/iacp-pilot-ca.crt",
+        ) or not _has_readonly_bind_mount(
+            api_service,
+            source=str(service_ca_key),
+            target="/run/iacp-pilot-ca.key",
         ):
-            raise GateError("La API requiere montajes individuales y de solo lectura de la clave de servicios y CA pública")
+            raise GateError("La API requiere montajes individuales y de solo lectura de las claves de servicio y CA")
+        allowed_api_mounts = {
+            (service_key.resolve(strict=False), "/run/iacp-service-key"),
+            (service_ca_cert.resolve(strict=False), "/run/iacp-pilot-ca.crt"),
+            (service_ca_key.resolve(strict=False), "/run/iacp-pilot-ca.key"),
+        }
         for mount in api_service.get("volumes", []):
             if not isinstance(mount, dict) or mount.get("type") != "bind":
                 continue
             mount_source = str(mount.get("source", ""))
-            if _bind_mount_overlaps(mount_source, service_directory) and Path(
-                mount_source
-            ).resolve(strict=False) not in {
-                service_key.resolve(strict=False),
-                service_ca_cert.resolve(strict=False),
-            }:
-                raise GateError("La API no debe montar el directorio de servicios ni la clave privada de la CA")
+            if _bind_mount_overlaps(mount_source, service_directory) and (
+                Path(mount_source).resolve(strict=False), mount.get("target")
+            ) not in allowed_api_mounts:
+                raise GateError("La API no debe montar el directorio completo de servicios")
         for name in worker_names:
             env = _service_env(config, name)
             service = config["services"][name]
@@ -335,10 +347,20 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
                 raise GateError("Los workers de servicios no deben recibir credenciales Proxmox")
             if not _has_readonly_bind_mount(
                 service_worker,
-                source=service_config_dir,
-                target="/run/iacp-services",
+                source=str(service_key),
+                target="/run/iacp-services/key",
             ):
-                raise GateError("Los workers de servicios requieren su directorio privado de solo lectura")
+                raise GateError("Los workers de servicios solo deben montar la clave Fernet de solo lectura")
+            for mount in service_worker.get("volumes", []):
+                if not isinstance(mount, dict) or mount.get("type") != "bind":
+                    continue
+                mount_source = str(mount.get("source", ""))
+                if (
+                    _bind_mount_overlaps(mount_source, service_directory)
+                    and Path(mount_source).resolve(strict=False)
+                    != service_key.resolve(strict=False)
+                ):
+                    raise GateError("Los workers de servicios no deben recibir la clave privada de la CA")
         if str(api_env.get("IACP_SERVICE_MAX_CONCURRENT", "2")) != str(len(service_worker_names)):
             raise GateError("La API debe anunciar la misma concurrencia del pool de servicios")
     if stage == "develop":
@@ -346,6 +368,8 @@ def _check_policy(data: dict, config: dict, env_file: Path) -> dict:
 
     worker_envs = [_service_env(config, name) for name in worker_names]
     postgres_env = _service_env(config, "postgres")
+    if config["services"]["postgres"].get("image") != POSTGRES_IMAGE:
+        raise GateError("PostgreSQL no está fijado al digest aprobado")
     api_service = config["services"]["api"]
     api_networks = api_service.get("networks", {})
     proxy_aliases = api_networks.get("proxy", {}).get("aliases", []) if isinstance(api_networks, dict) else []
@@ -963,6 +987,26 @@ while time.monotonic() < deadline:
     if set(worker_ids) >= set(expected_workers):
         break
     time.sleep(1)
+def worker_is_fresh(row):
+    if row['status'] not in {'idle', 'running'} or not row['last_heartbeat']:
+        return False
+    try:
+        heartbeat_at = datetime.fromisoformat(row['last_heartbeat'])
+        if heartbeat_at.tzinfo is None:
+            heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - heartbeat_at).total_seconds()
+        return 0 <= age < 60
+    except (TypeError, ValueError):
+        return False
+worker_deadline = time.monotonic() + 60
+fresh_worker_ids = []
+while time.monotonic() < worker_deadline:
+    with database() as db:
+        rows = db.execute('SELECT worker_id, status, last_heartbeat FROM workers ORDER BY worker_id').fetchall()
+        fresh_worker_ids = [row['worker_id'] for row in rows if worker_is_fresh(row)]
+    if fresh_worker_ids == expected_workers:
+        break
+    time.sleep(1)
 print(json.dumps({
     'health': health.get('status'),
     'api_version': spec.get('info', {}).get('version'),
@@ -971,6 +1015,7 @@ print(json.dumps({
     'schema_version': schema_version,
     'ip_allocations_table': 'ip_allocations' in core_tables,
     'worker_ids': worker_ids,
+    'infrastructure_workers_fresh': fresh_worker_ids == expected_workers,
 }))
 """
     expected_service_workers = list(_service_worker_names(data))
@@ -992,15 +1037,14 @@ cipher()
 payload['service_key_ready'] = True
 from pathlib import Path
 from cryptography import x509
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 ca_cert_path = Path(os.environ.get('IACP_SERVICE_CA_CERT_FILE', ''))
-x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+ca_key_path = Path(os.environ.get('IACP_SERVICE_CA_KEY_FILE', ''))
+ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+ca_key = load_pem_private_key(ca_key_path.read_bytes(),password=None)
+assert ca_cert.public_key().public_numbers()==ca_key.public_key().public_numbers()
 payload['service_ca_cert_ready'] = True
 payload['service_api'] = all(path in spec.get('paths', {}) for path in ['/v1/applications','/v1/service-instances','/v1/service-workers'])
-with database() as db:
-    rows = db.execute('SELECT worker_id, status, last_heartbeat FROM workers ORDER BY worker_id').fetchall()
-    fresh_ids = [row['worker_id'] for row in rows if row['status'] in {'idle','running'} and
-        0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(row['last_heartbeat'])).total_seconds() < 60]
-payload['infrastructure_workers_fresh'] = fresh_ids == expected_workers
 payload['service_worker_ids'] = service_worker_ids
 payload['service_tables'] = all(name in core_tables for name in ['service_instances','service_jobs','service_events','service_workers','service_releases','service_bindings'])
 service_response = urllib.request.urlopen(urllib.request.Request(
@@ -1028,6 +1072,7 @@ print(json.dumps(payload))
         "schema_version": data.get("schema_version", 2),
         "ip_allocations_table": True,
         "worker_ids": [f"worker-{number}" for number in range(1, 7)],
+        "infrastructure_workers_fresh": True,
     }
     if data.get("services_enabled", False):
         expected_payload.update(service_worker_ids=expected_service_workers, service_max_concurrent=len(expected_service_workers), service_tables=True, service_key_ready=True, service_ca_cert_ready=True, service_api=True, infrastructure_workers_fresh=True)
@@ -1045,36 +1090,24 @@ print(json.dumps(payload))
             )
             if output.strip().splitlines()[-1:] != ["IACP_SERVICE_KEY_READY"]:
                 raise GateError(f"{worker_name} no puede leer la clave de servicios")
-        signer_check = (
-            "from pathlib import Path; import os; from cryptography import x509; "
-            "from cryptography.hazmat.primitives.serialization import load_pem_private_key; "
-            "p=Path(os.getenv('IACP_SERVICE_CA_DIR','/run/iacp-services')); "
-            "c=x509.load_pem_x509_certificate((p/'pilot-ca.crt').read_bytes()); "
-            "k=load_pem_private_key((p/'pilot-ca.key').read_bytes(),password=None); "
-            "assert c.public_key().public_numbers()==k.public_key().public_numbers(); "
-            "print('IACP_SERVICE_CA_SIGNER_READY')"
-        )
-        for service_worker_name in expected_service_workers:
-            output = _run(
-                prefix + ["exec", "-T", service_worker_name, "python", "-c", signer_check],
-                label=f"Verificación de firmador CA en {service_worker_name}",
-            )
-            if output.strip().splitlines()[-1:] != ["IACP_SERVICE_CA_SIGNER_READY"]:
-                raise GateError(f"{service_worker_name} no puede usar la CA de servicios")
     return {"services": statuses, "api": payload}
 
 
 BACKUP_FORMAT = 1
 BACKUP_FILES = ("postgres.dump", "workdata.tar.gz")
 WORKDATA_PATH = "/var/lib/iacp-controlplane"
-RESTORE_IMAGE = "postgres:17.6"
+POSTGRES_IMAGE = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
+RESTORE_IMAGE = POSTGRES_IMAGE
 _COUNT_SQL = (
     "SELECT json_build_object("
     "'schema_version', (SELECT MAX(version) FROM schema_migrations),"
     "'instances', (SELECT COUNT(*) FROM instances),"
     "'operations', (SELECT COUNT(*) FROM operations),"
     "'active_operations', (SELECT COUNT(*) FROM operations WHERE status IN "
-    "('pending','running','planning','applying','destroying','powering')),"
+    "('running','planning','applying','destroying','powering','uncertain')) ,"
+    "'active_service_jobs', (SELECT COUNT(*) FROM service_jobs WHERE status IN ('running','uncertain')) ,"
+    "'busy_infrastructure_workers', (SELECT COUNT(*) FROM workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
+    "'busy_service_workers', (SELECT COUNT(*) FROM service_workers WHERE status <> 'idle' OR job_id IS NOT NULL) ,"
     "'vmid_leases_held', (SELECT COUNT(*) FROM vmid_leases WHERE status='held'))"
 )
 
@@ -1113,6 +1146,94 @@ def _database_counts(prefix: list[str]) -> dict:
     return json.loads(raw.strip().splitlines()[-1])
 
 
+@contextmanager
+def _runtime_write_gate(prefix: list[str]):
+    """Block new API mutations and worker claims for a coordinated operation."""
+
+    command = prefix + [
+        "exec", "-T", "postgres", "sh", "-c",
+        'exec psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    output = bytearray()
+    deadline = time.monotonic() + 30
+    acquired = False
+    try:
+        process.stdin.write(
+            b"SELECT pg_advisory_lock(104, 103);\n"
+            b"SELECT 'IACP_RUNTIME_WRITE_GATE_HELD';\n"
+        )
+        process.stdin.flush()
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                break
+            events = selector.select(timeout=min(1.0, max(0.0, deadline - time.monotonic())))
+            if not events:
+                continue
+            chunk = os.read(process.stdout.fileno(), 4096)
+            if not chunk:
+                break
+            output.extend(chunk)
+            if b"IACP_RUNTIME_WRITE_GATE_HELD" in output:
+                acquired = True
+                break
+        if not acquired:
+            detail = bytes(output).decode("utf-8", errors="replace")[-500:]
+            raise GateError(
+                "No se pudo activar la barrera transaccional de escritura"
+                + (f": {detail.strip()}" if detail.strip() else "")
+            )
+        yield
+    finally:
+        selector.close()
+        if process.poll() is None:
+            try:
+                process.stdin.write(
+                    b"SELECT pg_advisory_unlock(104, 103);\n\\q\n"
+                )
+                process.stdin.flush()
+                process.stdin.close()
+                process.wait(timeout=10)
+            except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+        elif process.stdin:
+            process.stdin.close()
+        if process.stdout:
+            process.stdout.close()
+
+
+def _wait_for_stack_quiescence(prefix: list[str], *, timeout: float = 2100) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        counts = _database_counts(prefix)
+        if not any(
+            int(counts.get(key) or 0)
+            for key in (
+                "active_operations",
+                "active_service_jobs",
+                "busy_infrastructure_workers",
+                "busy_service_workers",
+            )
+        ):
+            return counts
+        if time.monotonic() >= deadline:
+            raise GateError("El stack no terminó de drenar operaciones y workers activos")
+        time.sleep(5)
+
+
 def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dict:
     """Respaldo para recuperación ante desastres de un stack V1.
 
@@ -1130,20 +1251,21 @@ def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dic
     os.chmod(resolved, 0o700)
     prefix = _compose_args(data, compose, env_file)
     started = time.monotonic()
-    counts = _database_counts(prefix)
-    _stream_to_file(
-        prefix + [
-            "exec", "-T", "postgres", "sh", "-c",
-            'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges',
-        ],
-        resolved / "postgres.dump",
-        label="pg_dump",
-    )
-    _stream_to_file(
-        prefix + ["exec", "-T", "api", "tar", "-C", WORKDATA_PATH, "-czf", "-", "."],
-        resolved / "workdata.tar.gz",
-        label="Archivo de workdata",
-    )
+    with _runtime_write_gate(prefix):
+        counts = _wait_for_stack_quiescence(prefix)
+        _stream_to_file(
+            prefix + [
+                "exec", "-T", "postgres", "sh", "-c",
+                'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges',
+            ],
+            resolved / "postgres.dump",
+            label="pg_dump",
+        )
+        _stream_to_file(
+            prefix + ["exec", "-T", "api", "tar", "-C", WORKDATA_PATH, "-czf", "-", "."],
+            resolved / "workdata.tar.gz",
+            label="Archivo de workdata",
+        )
     manifest = {
         "format": BACKUP_FORMAT,
         "project": data["project"],
@@ -1152,7 +1274,7 @@ def _backup(data: dict, compose: Path, env_file: Path, destination: Path) -> dic
         "image_tag": data.get("image_tag"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database": counts,
-        "workdata_crash_consistent": True,
+        "workdata_coordinated_with_database": True,
         "files": {
             name: {"sha256": _sha256_file(resolved / name), "bytes": (resolved / name).stat().st_size}
             for name in BACKUP_FILES
@@ -1248,24 +1370,28 @@ def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
         if not image_id.startswith("sha256:"):
             raise GateError(f"La imagen precargada de {service_name} no devolvió un digest local válido")
         item = {"service": service_name, "image": image, "image_id": image_id}
+        match = re.fullmatch(
+            r"(?P<repository>[^@]+):(?P<tag>[^@]+)@(?P<digest>sha256:[0-9a-f]{64})",
+            image,
+        )
+        if match is None:
+            raise GateError(f"La imagen de {service_name} no está fijada por tag y digest")
+        if service_name == "postgres" and image != POSTGRES_IMAGE:
+            raise GateError("PostgreSQL no coincide con el digest aprobado por el operador")
+        if service_name != "postgres" and not re.fullmatch(r"[0-9a-f]{40}", match["tag"]):
+            raise GateError(f"La imagen de {service_name} no está fijada por commit y digest")
+        repo_digests = _run(
+            ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+            label=f"Digest de registro de {service_name}",
+        ).strip()
+        try:
+            recorded_digests = json.loads(repo_digests)
+        except json.JSONDecodeError as error:
+            raise GateError(f"Docker no devolvió RepoDigests válidos para {service_name}") from error
+        expected_repo_digest = f"{match['repository']}@{match['digest']}"
+        if not isinstance(recorded_digests, list) or expected_repo_digest not in recorded_digests:
+            raise GateError(f"El contenido local de {service_name} no coincide con el digest aprobado")
         if service_name != "postgres":
-            match = re.fullmatch(
-                r"(?P<repository>[^@]+):(?P<tag>[0-9a-f]{40})@(?P<digest>sha256:[0-9a-f]{64})",
-                image,
-            )
-            if match is None:
-                raise GateError(f"La imagen de {service_name} no está fijada por commit y digest")
-            repo_digests = _run(
-                ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
-                label=f"Digest de registro de {service_name}",
-            ).strip()
-            try:
-                recorded_digests = json.loads(repo_digests)
-            except json.JSONDecodeError as error:
-                raise GateError(f"Docker no devolvió RepoDigests válidos para {service_name}") from error
-            expected_repo_digest = f"{match['repository']}@{match['digest']}"
-            if not isinstance(recorded_digests, list) or expected_repo_digest not in recorded_digests:
-                raise GateError(f"El contenido local de {service_name} no coincide con el digest aprobado")
             revision = _run(
                 [
                     "docker", "image", "inspect", "--format",
@@ -1279,6 +1405,8 @@ def _verify_preloaded_images(config: dict) -> list[dict[str, str]]:
                 expected_application_image_id = image_id
             elif image_id != expected_application_image_id:
                 raise GateError("API y workers no usan los mismos bytes de imagen")
+            item["registry_digest"] = match["digest"]
+        else:
             item["registry_digest"] = match["digest"]
         verified.append(item)
     if not verified:
@@ -1370,6 +1498,27 @@ def _restore_legacy(data: dict, evidence: Path) -> dict:
         "target": "http://api:8000",
         "legacy_api_healthy": True,
         "automatic_rollback": False,
+    }
+
+
+def _rollback_failed_activation(data: dict, evidence: Path) -> dict:
+    """Restore the legacy upstream if an earlier attempt left the candidate active."""
+
+    route = Path(data["dynamic_config"]).resolve()
+    candidate = f"http://{data['service_alias']}:8080"
+    legacy = "http://api:8000"
+    active = _active_upstream(route)
+    if active == legacy:
+        _require_legacy_api_healthy()
+        return {"restored": False, "already_legacy": True, "target": legacy}
+    if active != candidate:
+        raise GateError("El upstream activo cambió a un destino no reconocido; rollback automático retenido")
+    _require_legacy_api_healthy()
+    update = _swap_upstream(route, evidence, candidate, legacy)
+    return {
+        "restored": bool(update.get("changed")),
+        "already_legacy": bool(update.get("already_active")),
+        "target": legacy,
     }
 
 
@@ -1545,11 +1694,14 @@ def main(argv: list[str] | None = None) -> int:
                     result["state_backend"] = state_backend
                 _assert_production_candidate_inactive(data)
                 prefix = _compose_args(data, compose, env_file)
-                if args.preloaded_images:
-                    result["preloaded_images"] = _verify_preloaded_images(config)
-                else:
-                    _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
-                _run(prefix + ["up", "-d", "--no-build", "--pull", "never"], label="Inicio del stack", timeout=900)
+                with _runtime_write_gate(prefix):
+                    result["drain"] = _wait_for_stack_quiescence(prefix)
+                    if args.preloaded_images:
+                        result["preloaded_images"] = _verify_preloaded_images(config)
+                    else:
+                        _run(prefix + ["pull"], label="Descarga de imágenes", timeout=900)
+                    _run(prefix + ["up", "-d", "--no-build", "--pull", "never"], label="Inicio del stack", timeout=900)
+                    result["verification"] = _verify(data, compose, env_file)
                 result["passed"] = True
                 result["project"] = data["project"]
             elif args.action == "verify":
@@ -1569,22 +1721,23 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     result["external_health"] = _check_external(data["domain"], data["image_tag"])
                 except GateError as activation_error:
-                    if result["activation"].get("activated"):
-                        route = Path(data["dynamic_config"]).resolve()
-                        candidate = f"http://{data['service_alias']}:8080"
-                        rollback = _swap_upstream(
-                            route, evidence, candidate, "http://api:8000"
+                    try:
+                        rollback = _rollback_failed_activation(data, evidence)
+                        result["rollback"] = rollback
+                        result["automatic_rollback"] = rollback["restored"]
+                    except GateError as rollback_error:
+                        raise GateError(
+                            f"{activation_error}; no se confirmó el rollback seguro ({rollback_error})"
+                        ) from rollback_error
+                    try:
+                        result["rollback_external_health"] = _check_external(
+                            data["domain"], None,
+                            forbidden_revision=str(data.get("image_tag", "")),
                         )
-                        result["automatic_rollback"] = rollback["changed"]
-                        try:
-                            result["rollback_external_health"] = _check_external(
-                                data["domain"], None,
-                                forbidden_revision=str(data.get("image_tag", "")),
-                            )
-                        except GateError as rollback_error:
-                            raise GateError(
-                                f"{activation_error}; se restauró la ruta legacy pero no se confirmó su readiness ({rollback_error})"
-                            ) from rollback_error
+                    except GateError as rollback_error:
+                        raise GateError(
+                            f"{activation_error}; se restauró o confirmó la ruta legacy pero no su readiness ({rollback_error})"
+                        ) from rollback_error
                     raise
                 result["passed"] = True
             elif args.action == "activate-develop":

@@ -13,9 +13,10 @@ import uuid
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from urllib.parse import quote
 
 from api.catalog import cluster_nodes, load_catalog
-from api.db import database, initialize
+from api.db import database, initialize, runtime_write_gate_open
 from api.protection import is_protected_vmid
 from api.secrets import delete_secret, read_secret
 from worker.allocation import allocate, release
@@ -108,25 +109,39 @@ def _try_operation_recovery_lock(operation_id: str) -> int | None:
 
 
 def _recovery_operation_exists(db, source_operation_id: str) -> bool:
-    # Comparación exacta del campo JSON: un LIKE '%id%' recorría el texto de
-    # cada payload y podía coincidir con el identificador en otro campo.
+    # Solo una recuperación activa bloquea el siguiente intento. Mantener las
+    # recuperaciones terminadas en la consulta impedía reintentar una entrega
+    # que se perdió junto con el worker.
     return db.execute(
         """
         SELECT 1 FROM operations
         WHERE command='reconcile'
           AND payload_json::jsonb ->> 'source_operation_id' = ?
+          AND status IN ('pending', 'running', 'planning', 'applying', 'destroying', 'powering')
         LIMIT 1
         """,
         (source_operation_id,),
     ).fetchone() is not None
 
 
-def recover_stale_operations() -> int:
-    """Turn abandoned worker claims into auditable reconciliation work.
+def _recovery_attempt_count(db, source_operation_id: str) -> int:
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count FROM operations
+        WHERE command='reconcile'
+          AND payload_json::jsonb ->> 'source_operation_id' = ?
+        """,
+        (source_operation_id,),
+    ).fetchone()
+    return int(row["count"] if row else 0)
 
-    A worker crash cannot safely replay a mutation. The source operation is
-    closed as uncertain and a single reconcile operation is queued so the
-    next healthy worker verifies the physical state before settling it.
+
+def recover_stale_operations() -> int:
+    """Convierte claims abandonados en trabajo de reconciliación auditable.
+
+    Un worker caído no permite repetir una mutación a ciegas. La operación de
+    origen queda uncertain y se encolan hasta tres intentos de reconcile que
+    verifican el estado físico antes de cerrar la intención.
     """
 
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_operation_seconds())).isoformat()
@@ -209,12 +224,46 @@ def recover_stale_operations() -> int:
                     (timestamp, int(operation["vmid"]), operation_id),
                 )
 
-            if (
-                terminal_status != "uncertain"
-                or command == "reconcile"
-                or not instance_id
-                or _recovery_operation_exists(db, operation_id)
-            ):
+            if terminal_status != "uncertain" or not instance_id:
+                recovered += 1
+                continue
+
+            recovery_source_id = operation_id
+            recovery_attempt = 1
+            if command == "reconcile":
+                try:
+                    reconcile_payload = json.loads(operation.get("payload_json") or "{}")
+                except (TypeError, ValueError):
+                    reconcile_payload = {}
+                recovery_source_id = reconcile_payload.get("source_operation_id")
+                if not recovery_source_id:
+                    recovered += 1
+                    continue
+                original = db.execute(
+                    "SELECT status FROM operations WHERE operation_id=?",
+                    (recovery_source_id,),
+                ).fetchone()
+                if original is None or original["status"] != "uncertain":
+                    recovered += 1
+                    continue
+                previous_attempts = _recovery_attempt_count(db, recovery_source_id)
+                if previous_attempts >= 3:
+                    db.execute(
+                        """
+                        INSERT INTO events(operation_id, kind, status, occurred_at, detail)
+                        VALUES (?, 'recovery.retry_exhausted', 'uncertain', ?, ?)
+                        """,
+                        (
+                            operation_id,
+                            timestamp,
+                            "Se alcanzó el límite de tres intentos automáticos; requiere revisión controlada.",
+                        ),
+                    )
+                    recovered += 1
+                    continue
+                recovery_attempt = previous_attempts + 1
+
+            if _recovery_operation_exists(db, recovery_source_id):
                 recovered += 1
                 continue
 
@@ -223,7 +272,8 @@ def recover_stale_operations() -> int:
                     "command": "reconcile",
                     "action": "reconcile",
                     "instance_id": instance_id,
-                    "source_operation_id": operation_id,
+                    "source_operation_id": recovery_source_id,
+                    "recovery_attempt": recovery_attempt,
                     "stack": operation.get("stack") or "mng01",
                 },
                 sort_keys=True,
@@ -384,6 +434,9 @@ def claim(worker_id: str):
         if pending is None:
             return None
         db.execute("BEGIN IMMEDIATE")
+        if not runtime_write_gate_open(db):
+            db.execute("COMMIT")
+            return None
         active = db.execute(
             """
             SELECT COUNT(*) AS count FROM operations
@@ -866,7 +919,20 @@ def _release_static_allocation(instance_id: str | None, operation_id: str) -> bo
     try:
         instance = instance_identity(instance_id)
         if instance.get("vmid") is not None:
-            if not physical_presence(ProxmoxClient(), int(instance["vmid"]), False):
+            fence = _FENCE.get()
+            heartbeat_callback = (
+                lambda: heartbeat(fence[0], "running", fence[1], phase="ipam_verify")
+                if fence is not None
+                else None
+            )
+            if not reconcile_physical(
+                ProxmoxClient(),
+                int(instance["vmid"]),
+                False,
+                name=instance.get("name"),
+                node=instance.get("node") or "mng01",
+                heartbeat_callback=heartbeat_callback,
+            ):
                 raise NetBoxError("IPAM_VM_STILL_PRESENT", uncertain=True)
         client = NetBoxClient()
         fence = _FENCE.get()
@@ -1312,10 +1378,100 @@ def assert_physical_identity(client: ProxmoxClient, vmid: int, node: str, name: 
             raise ProxmoxError("VM_PHYSICAL_OWNER_MISMATCH", uncertain=True)
 
 
-def require_free_provision_target(client: ProxmoxClient, vmid: int, owner: str) -> None:
+def require_free_provision_target(
+    client: ProxmoxClient,
+    vmid: int,
+    owner: str,
+    node: str,
+    heartbeat_callback=None,
+) -> None:
     assert_lease_owner(vmid, owner)
-    if physical_record(client, vmid) is not None:
-        raise ProxmoxError("VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT", uncertain=True)
+    deadline = time.monotonic() + max(10.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20")))
+    for observation in range(2):
+        if not physical_presence(
+            client,
+            vmid,
+            False,
+            node=node,
+            heartbeat_callback=heartbeat_callback,
+            deadline=deadline,
+        ):
+            raise ProxmoxError("VMID_PHYSICAL_RESOURCE_ALREADY_PRESENT", uncertain=True)
+        if observation == 0:
+            if heartbeat_callback is not None:
+                heartbeat_callback()
+            time.sleep(min(1.0, max(0.1, deadline - time.monotonic())))
+
+
+def _physical_absence_observation(
+    client: ProxmoxClient,
+    vmid: int,
+    *,
+    node: str | None,
+    heartbeat_callback=None,
+    deadline: float | None = None,
+) -> bool:
+    """Exige inventario ausente y un 404 puntual en cada nodo del clúster."""
+    record = physical_record(
+        client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
+    )
+    if record is not None or not node:
+        return False
+    if heartbeat_callback is not None:
+        heartbeat_callback()
+    timeout = None
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        timeout = min(remaining, max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))))
+    getter = getattr(client, "get", None)
+    if not callable(getter):
+        return False
+    try:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        if remaining is not None and remaining <= 0:
+            return False
+        nodes = getter(
+            "/nodes",
+            uncertain=True,
+            timeout=remaining,
+            attempts=1 if remaining is not None else None,
+        )
+    except ProxmoxError:
+        return False
+    if not isinstance(nodes, list) or not nodes:
+        return False
+    node_names = {
+        str(row.get("node", "")).strip()
+        for row in nodes
+        if isinstance(row, dict) and str(row.get("node", "")).strip()
+    }
+    if len(node_names) != len(nodes) or node not in node_names:
+        return False
+    for observed_node in sorted(node_names):
+        if heartbeat_callback is not None:
+            heartbeat_callback()
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return False
+        timeout = None if remaining is None else min(
+            remaining,
+            max(1.0, float(os.getenv("IACP_PROXMOX_REQUEST_TIMEOUT", "20"))),
+        )
+        try:
+            getter(
+                f"/nodes/{quote(observed_node, safe='')}/qemu/{vmid}/config?current=1",
+                uncertain=True,
+                timeout=timeout,
+                attempts=1 if deadline is not None else None,
+            )
+        except ProxmoxError as error:
+            if error.status == 404:
+                continue
+            return False
+        return False
+    return True
 
 
 def physical_presence(
@@ -1328,11 +1484,17 @@ def physical_presence(
     heartbeat_callback=None,
     deadline: float | None = None,
 ) -> bool:
+    if not expected:
+        return _physical_absence_observation(
+            client,
+            vmid,
+            node=node,
+            heartbeat_callback=heartbeat_callback,
+            deadline=deadline,
+        )
     record = physical_record(
         client, vmid, heartbeat_callback=heartbeat_callback, deadline=deadline
     )
-    if not expected:
-        return record is None
     if record is None:
         return False
     observed_name = record.get("name")
@@ -1363,11 +1525,12 @@ def reconcile_physical(
     deadline = time.monotonic() + max(
         5.0, float(os.getenv("IACP_RECONCILE_TIMEOUT", "180"))
     )
+    consecutive_absences = 0
     while time.monotonic() < deadline:
         if heartbeat_callback is not None:
             heartbeat_callback()
         try:
-            if physical_presence(
+            observed = physical_presence(
                 client,
                 vmid,
                 expected,
@@ -1375,8 +1538,16 @@ def reconcile_physical(
                 node=node,
                 heartbeat_callback=heartbeat_callback,
                 deadline=deadline,
-            ):
-                return True
+            )
+            if expected:
+                if observed:
+                    return True
+            elif observed:
+                consecutive_absences += 1
+                if consecutive_absences >= 2:
+                    return True
+            else:
+                consecutive_absences = 0
         except ProxmoxError as error:
             transient = error.status is None or error.status in {408, 429} or error.status >= 500
             if not transient:
@@ -1701,7 +1872,14 @@ def remove_orphan_vm(
                 return False
             break
         time.sleep(2)
-    removed = reconcile_physical(client, int(vmid), False, heartbeat_callback=heartbeat_callback)
+    removed = reconcile_physical(
+        client,
+        int(vmid),
+        False,
+        name=identity["name"],
+        node=node,
+        heartbeat_callback=heartbeat_callback,
+    )
     emit(
         operation_id,
         "destroy.orphan.completed" if removed else "destroy.orphan.failed",
@@ -1820,6 +1998,50 @@ def operation_preboot_expectation(
     ):
         raise ProxmoxError("PREBOOT_EXPECTATION_MISMATCH")
     return expected
+
+
+def lifecycle_preboot_expectation(
+    instance_id: str,
+    spec: dict,
+    *,
+    vmid: int,
+    node: str,
+    client: ProxmoxClient,
+    stack: str,
+    password_present: bool | None,
+) -> dict:
+    """Reuse the provision-time image contract for later start and reboot."""
+
+    source_id = instance_plan_operation(instance_id)
+    source = find_operation(source_id) if source_id else None
+    if source is not None and source.get("workspace_path"):
+        source_stack = source.get("stack") or stack
+        workspace_root = source["workspace_path"]
+        candidates = (
+            workspace_root,
+            os.path.join(workspace_root, source_stack_directory(source_stack)),
+        )
+        for workspace in candidates:
+            if os.path.isfile(os.path.join(workspace, "preboot.expectation.json")):
+                return operation_preboot_expectation(
+                    workspace,
+                    spec,
+                    vmid=vmid,
+                    node=node,
+                    client=client,
+                    stack=source_stack,
+                    password_present=password_present,
+                )
+    # Pre-contract instances can lack the persisted expectation. Retain the
+    # existing fallback for those rows; new provisions always save the digest.
+    return expected_preboot_for_spec(
+        spec,
+        vmid=vmid,
+        node=node,
+        client=client,
+        stack=stack,
+        password_present=password_present,
+    )
 
 
 def workspace_password_by_worker(workspace: str) -> bool:
@@ -2271,12 +2493,25 @@ def close_source_after_reconciliation(
             if source_secret_deleted:
                 source_updates["secret_path"] = None
             update_operation(source_id, connection=db, **source_updates)
-            db.execute(
-                """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
-                node=COALESCE(?,node), updated_at=? WHERE instance_id=?
-                AND (status!='deleted' OR ?='uncertain')""",
-                (terminal_status, vmid, node, now(), instance_id, terminal_status),
-            )
+            if released and source_operation["command"] in {"plan", "apply", "provision"}:
+                # La ausencia física ya fue confirmada y se liberó la reserva.
+                # El VMID histórico permanece en operations, pero no debe
+                # seguir siendo la identidad activa de esta instancia.
+                db.execute(
+                    """UPDATE instances
+                    SET status='failed', vmid=NULL, power_state='unknown',
+                        node=COALESCE(?,node), updated_at=?
+                    WHERE instance_id=? AND status IN ('uncertain','failed')
+                      AND (vmid=? OR vmid IS NULL)""",
+                    (node, now(), instance_id, vmid),
+                )
+            else:
+                db.execute(
+                    """UPDATE instances SET status=?, vmid=COALESCE(?,vmid),
+                    node=COALESCE(?,node), updated_at=? WHERE instance_id=?
+                    AND (status!='deleted' OR ?='uncertain')""",
+                    (terminal_status, vmid, node, now(), instance_id, terminal_status),
+                )
             if released and source_operation["command"] in {"apply", "provision", "plan"}:
                 release_operation_lease(vmid, source_operation, connection=db)
             emit(source_id, "operation.reconciled", terminal_status, terminal_error, connection=db)
@@ -2427,7 +2662,14 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
     heartbeat(worker_id, "running", operation_id, phase="reconcile")
 
     if vmid is None or source_command == "plan":
-        if vmid is not None and not physical_presence(client, int(vmid), False):
+        if vmid is not None and not reconcile_physical(
+            client,
+            int(vmid),
+            False,
+            name=name,
+            node=node,
+            heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="reconcile"),
+        ):
             raise ProxmoxError("RECONCILIATION_PHYSICAL_RESOURCE_PRESENT", uncertain=True)
         if not close_source_after_reconciliation(
             source, instance_id, vmid, node, source_payload,
@@ -2534,7 +2776,8 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
             ).fetchone()
         if successor is not None:
             spec = instance_spec(instance_id)
-            expected = expected_preboot_for_spec(
+            expected = lifecycle_preboot_expectation(
+                instance_id,
                 spec,
                 vmid=int(vmid),
                 node=node,
@@ -2612,7 +2855,8 @@ def execute_reconcile(worker_id: str, operation: dict, client: ProxmoxClient) ->
         observed = client.power_state(node, int(vmid), name)
         if action in {"start", "reboot"}:
             spec = instance_spec(instance_id)
-            expected = expected_preboot_for_spec(
+            expected = lifecycle_preboot_expectation(
+                instance_id,
                 spec,
                 vmid=int(vmid),
                 node=node,
@@ -2885,8 +3129,10 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
         spec = {}
     if _FENCE.get() is not None:
         assert_physical_identity(client, vmid, node, row["name"], row["operation_id"])
+    already_running = False
     if action in {"start", "reboot"}:
-        expected = expected_preboot_for_spec(
+        expected = lifecycle_preboot_expectation(
+            instance_id,
             spec,
             vmid=vmid,
             node=node,
@@ -2896,21 +3142,27 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
         )
         dns_servers = expected.get("instance", {}).get("dns_servers") or []
         if dns_servers:
-            client.ensure_cloudinit_dns(node, vmid, row["name"], dns_servers)
-        verify_preboot_configuration(
+            running_before_dns_update = (
+                action == "start"
+                and client.power_state(node, vmid, row["name"]).get("power_state") == "running"
+            )
+            if not running_before_dns_update:
+                client.ensure_cloudinit_dns(node, vmid, row["name"], dns_servers)
+        observed_preboot = verify_preboot_configuration(
             operation_id,
             client,
             node=node,
             vmid=vmid,
             name=row["name"],
             expected=expected,
-            require_stopped=(action == "start"),
+            require_stopped=False,
         )
+        already_running = action == "start" and observed_preboot.get("power_state") == "running"
     update_operation(operation_id, vmid=vmid)
     update_instance(instance_id, "powering", vmid=vmid, power_state="unknown")
     emit(operation_id, f"power.{action}.started", "running")
     heartbeat(worker_id, "running", operation_id, phase=f"power_{action}")
-    if action in {"start", "reboot"}:
+    if action in {"start", "reboot"} and not already_running:
         verify_power_preconditions(
             operation_id,
             client,
@@ -2920,7 +3172,11 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
             action=action,
             expected=expected,
         )
-    result = client.power(node, vmid, row["name"], action)
+    result = (
+        {"action": action, "already": True, "power_state": "running"}
+        if already_running
+        else client.power(node, vmid, row["name"], action)
+    )
     power_state = result.get("power_state")
     expected_power_state = "stopped" if action == "shutdown" else "running"
     if power_state != expected_power_state:
@@ -3131,6 +3387,32 @@ def execute(worker_id: str, operation: dict) -> None:
                 identity = instance_identity(instance_id)
                 if identity.get("status") == "deleted":
                     raise RuntimeError("OPERATION_INSTANCE_ALREADY_DELETED")
+                if source_operation.get("command") == "plan":
+                    if source_operation.get("status") != "succeeded":
+                        raise ProxmoxError("PLAN_SOURCE_NOT_SUCCESSFUL", uncertain=True)
+                    if reconcile_physical(
+                        client,
+                        int(vmid),
+                        False,
+                        name=identity.get("name"),
+                        node=target_node or identity.get("node"),
+                        heartbeat_callback=lambda: heartbeat(
+                            worker_id, "running", operation_id, phase="plan_cancel_absence"
+                        ),
+                    ):
+                        settle_physical_operation(
+                            operation_id,
+                            command,
+                            instance_id,
+                            int(vmid),
+                            target_node or identity.get("node"),
+                            source_payload,
+                            source_operation,
+                            output="El plan se canceló tras confirmar que no existe VM física.",
+                            recovered=True,
+                        )
+                        return
+                    raise ProxmoxError("PLAN_VM_PHYSICAL_ABSENCE_UNCONFIRMED", uncertain=True)
                 record = physical_record(client, int(vmid)) if vmid is not None else None
                 if record is None:
                     settle_physical_operation(
@@ -3199,7 +3481,15 @@ def execute(worker_id: str, operation: dict) -> None:
                 if stack == "mng01":
                     assert_stopped_plan(workspace, plan_path, (int(vmid), spec["name"], target_node))
                     if _FENCE.get() is not None:
-                        require_free_provision_target(client, int(vmid), operation_id)
+                        require_free_provision_target(
+                            client,
+                            int(vmid),
+                            operation_id,
+                            target_node or "mng01",
+                            heartbeat_callback=lambda: heartbeat(
+                                worker_id, "running", operation_id, phase="vmid_presence"
+                            ),
+                        )
                     if spec.get("network_profile") == "prod_static":
                         _verify_static_allocation_for_apply(
                             worker_id=worker_id,
@@ -3229,7 +3519,15 @@ def execute(worker_id: str, operation: dict) -> None:
                     workspace, plan_path, (int(vmid), identity["name"], target_node or identity.get("node")),
                 )
                 if _FENCE.get() is not None:
-                    require_free_provision_target(client, int(vmid), source_operation_id)
+                    require_free_provision_target(
+                        client,
+                        int(vmid),
+                        source_operation_id,
+                        target_node or identity.get("node") or "mng01",
+                        heartbeat_callback=lambda: heartbeat(
+                            worker_id, "running", operation_id, phase="vmid_presence"
+                        ),
+                    )
                 apply_spec = source_payload.get("spec") or {}
                 apply_profile = apply_spec.get("network_profile") or (
                     "prod_static" if apply_spec.get("network_mode") == "static" else "lab_dhcp"
@@ -3254,7 +3552,9 @@ def execute(worker_id: str, operation: dict) -> None:
             physical = stack == "mng01" and phase in {"apply", "destroy"}
             failure_text = f"{output}\n{error}"
             recovered = False
-            if physical and client is not None and vmid is not None and not deterministic_error(failure_text):
+            physical_absence_confirmed = False
+            physical_presence_confirmed = False
+            if physical and client is not None and vmid is not None:
                 emit(operation_id, "recovery.started", "running", "physical operation")
                 identity = instance_identity(instance_id)
                 recovered = reconcile_physical(
@@ -3325,8 +3625,35 @@ def execute(worker_id: str, operation: dict) -> None:
                         recovered=True,
                     )
                     return
+                if command in {"apply", "provision"}:
+                    physical_absence_confirmed = reconcile_physical(
+                        client,
+                        int(vmid),
+                        False,
+                        name=identity.get("name"),
+                        node=target_node or identity.get("node"),
+                        heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="recovery_absence"),
+                    )
+                else:
+                    physical_presence_confirmed = reconcile_physical(
+                        client,
+                        int(vmid),
+                        True,
+                        name=identity.get("name"),
+                        node=target_node or identity.get("node"),
+                        heartbeat_callback=lambda: heartbeat(worker_id, "running", operation_id, phase="recovery_presence"),
+                    )
 
-            status = "failed" if deterministic_error(failure_text) or not physical else "uncertain"
+            if not physical:
+                status = "failed"
+            elif command in {"apply", "provision"}:
+                status = "failed" if physical_absence_confirmed else "uncertain"
+            else:
+                status = (
+                    "failed"
+                    if physical_presence_confirmed and deterministic_error(failure_text)
+                    else "uncertain"
+                )
             ipam_release_ok = True
             if command in {"plan", "provision"} and (phase == "plan" or status == "failed"):
                 ipam_release_ok = _release_static_allocation(instance_id, operation_id)

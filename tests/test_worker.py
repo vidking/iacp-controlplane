@@ -740,6 +740,101 @@ def test_physical_presence_checks_identity_without_hiding_wrong_vm(monkeypatch):
     assert physical_presence(client, 40000, True, name="other", node="mng01") is False
 
 
+def test_physical_absence_requires_point_404_on_every_cluster_node():
+    class EmptyCluster:
+        def __init__(self, *, missing_on="all"):
+            self.paths = []
+            self.missing_on = missing_on
+
+        def inventory(self, *, uncertain=False):
+            return []
+
+        def get(self, path, **_kwargs):
+            if path == "/nodes":
+                return [{"node": "mng01"}, {"node": "mng02"}]
+            self.paths.append(path)
+            if self.missing_on == "all" or path.startswith(f"/nodes/{self.missing_on}/"):
+                raise ProxmoxError("VM_NOT_FOUND", 404)
+            raise ProxmoxError("PROXMOX_NODE_UNAVAILABLE", 503)
+
+    client = EmptyCluster()
+    assert physical_presence(client, 40000, False, node="mng01") is True
+    assert client.paths == [
+        "/nodes/mng01/qemu/40000/config?current=1",
+        "/nodes/mng02/qemu/40000/config?current=1",
+    ]
+
+    client = EmptyCluster(missing_on="mng01")
+    assert physical_presence(client, 40000, False, node="mng01") is False
+
+
+def test_physical_absence_fails_closed_when_node_inventory_is_incomplete():
+    class IncompleteCluster:
+        def inventory(self, *, uncertain=False):
+            return []
+
+        def get(self, path, **_kwargs):
+            if path == "/nodes":
+                return []
+            raise ProxmoxError("VM_NOT_FOUND", 404)
+
+    assert physical_presence(IncompleteCluster(), 40000, False, node="mng01") is False
+
+
+def test_power_permission_zero_is_denied():
+    from worker.proxmox import ProxmoxClient
+
+    client = object.__new__(ProxmoxClient)
+    client.get = lambda *_args, **_kwargs: {
+        "/vms/40000": {"VM.Audit": 1, "VM.PowerMgmt": 0}
+    }
+    with pytest.raises(ProxmoxError, match="POWER_PERMISSION_DENIED"):
+        client.permissions("mng01", 40000, mutate=True)
+
+
+@pytest.mark.no_database
+def test_lifecycle_uses_saved_provision_time_image_expectation(tmp_path, monkeypatch):
+    import worker.main as worker_main
+    from worker.preboot import save_expectation
+
+    workspace = tmp_path / "plans" / "operation" / "environments" / "mng01"
+    workspace.mkdir(parents=True)
+    expected = {
+        "instance": {"vm_name": "saved-contract"},
+        "image_id": "ubuntu-2404",
+        "node": "mng01",
+        "vmid": 40000,
+    }
+    save_expectation(str(workspace), expected)
+    monkeypatch.setattr(worker_main, "instance_plan_operation", lambda _instance_id: "operation")
+    monkeypatch.setattr(
+        worker_main,
+        "find_operation",
+        lambda _operation_id: {
+            "command": "provision",
+            "stack": "mng01",
+            "workspace_path": str(workspace.parents[1]),
+        },
+    )
+    monkeypatch.setattr(
+        worker_main,
+        "expected_preboot_for_spec",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("consultó Golden Image vigente")),
+    )
+
+    result = worker_main.lifecycle_preboot_expectation(
+        "instance",
+        {"image": "ubuntu-2404", "name": "saved-contract"},
+        vmid=40000,
+        node="mng01",
+        client=object(),
+        stack="mng01",
+        password_present=True,
+    )
+
+    assert result == expected
+
+
 def test_power_start_fails_closed_without_a_saved_request_spec(tmp_path, monkeypatch):
     monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
     initialize()
@@ -862,8 +957,90 @@ def test_power_start_runs_ubuntu_dhcp_identity_before_succeeding(tmp_path, monke
     assert calls[0][1]["instance_id"] == instance_id
     assert calls[0][1]["vmid"] == 40000
     assert calls[0][1]["spec"] == spec
-    assert preboot_checks == [True, True]
+    assert preboot_checks == [False, True]
     assert client.power_calls == [("mng01", 40000, "identity-test", "start")]
+
+
+def test_power_start_is_idempotent_when_vm_is_already_running(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    initialize()
+    operation_id = "power-already-running-operation"
+    instance_id = "power-already-running-instance"
+    spec = {"image": "ubuntu-2404", "network_profile": "lab_dhcp", "started": False}
+    with database() as db:
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+            VALUES ('already-running-source', 'provision', 'succeeded', '{}', ?, 'now')
+            """,
+            (instance_id,),
+        )
+        db.execute(
+            """
+            INSERT INTO operations(operation_id, command, status, payload_json, instance_id, stack, created_at)
+            VALUES (?, 'power', 'running', ?, ?, 'mng01', 'now')
+            """,
+            (
+                operation_id,
+                json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id}),
+                instance_id,
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status,
+                                  power_state, spec_json, created_at, updated_at)
+            VALUES (?, 'already-running-source', 'already-running-vm', 'ubuntu-2404',
+                    40000, 'mng01', 'ready', 'running', ?, 'now', 'now')
+            """,
+            (instance_id, json.dumps(spec)),
+        )
+
+    class AlreadyRunning:
+        def power_state(self, *_args):
+            return {"power_state": "running"}
+
+        def ensure_cloudinit_dns(self, *_args):
+            pytest.fail("start idempotente no debe modificar cloud-init de una VM activa")
+
+        def power(self, *_args):
+            pytest.fail("start no debe enviar otra mutación si la VM ya está running")
+
+    checks = []
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": ["192.0.2.53"]}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **kwargs: (
+            checks.append(kwargs["require_stopped"]) or client.power_state()
+        ),
+    )
+    monkeypatch.setattr("worker.main.guest_identity_previously_verified", lambda _instance_id: True)
+
+    execute_power(
+        "worker-1",
+        {
+            "operation_id": operation_id,
+            "payload_json": json.dumps(
+                {"command": "power", "power_action": "start", "instance_id": instance_id}
+            ),
+        },
+        AlreadyRunning(),
+    )
+
+    with database() as db:
+        operation = db.execute(
+            "SELECT status, output FROM operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, power_state FROM instances WHERE instance_id=?", (instance_id,)
+        ).fetchone()
+    assert checks == [False]
+    assert operation["status"] == "succeeded"
+    assert json.loads(operation["output"])["already"] is True
+    assert (instance["status"], instance["power_state"]) == ("ready", "running")
 
 
 def test_power_start_does_not_mutate_if_last_preboot_read_fails(tmp_path, monkeypatch):
@@ -1707,10 +1884,121 @@ def test_stale_worker_claim_is_closed_and_reconciled_once(tmp_path, monkeypatch)
     assert recovery["command"] == "reconcile"
     assert recovery["status"] == "pending"
     assert recovery["phase"] == "recovery"
-    assert json.loads(recovery["payload_json"])["source_operation_id"] == "stale-operation"
+    recovery_payload = json.loads(recovery["payload_json"])
+    assert recovery_payload["source_operation_id"] == "stale-operation"
+    assert recovery_payload["recovery_attempt"] == 1
     assert instance["status"] == "uncertain"
     assert instance["power_state"] == "unknown"
     assert recover_stale_operations() == 0
+
+
+def test_stale_reconcile_queues_bounded_retry_for_original_operation(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_OPERATION_STALE_SECONDS", "30")
+    initialize()
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    instance_id = "stale-reconcile-instance"
+    with database() as db:
+        db.execute(
+            """INSERT INTO operations(
+              operation_id, command, status, payload_json, instance_id, vmid,
+              stack, created_at, last_heartbeat
+            ) VALUES ('stale-reconcile-source', 'provision', 'uncertain', '{}', ?,
+                      40000, 'mng01', ?, ?)""",
+            (instance_id, old, old),
+        )
+        db.execute(
+            """INSERT INTO operations(
+              operation_id, command, action, status, payload_json, instance_id,
+              vmid, stack, created_at, started_at, last_heartbeat, phase
+            ) VALUES ('stale-reconcile-attempt-1', 'reconcile', 'reconcile', 'running',
+                     ?, ?, 40000, 'mng01', ?, ?, ?, 'reconcile')""",
+            (
+                json.dumps({"command": "reconcile", "source_operation_id": "stale-reconcile-source"}),
+                instance_id,
+                old,
+                old,
+                old,
+            ),
+        )
+        db.execute(
+            """INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (?, 'stale-reconcile-source', 'stale-reconcile-vm', 'ubuntu-2404',
+                      40000, 'mng01', 'uncertain', 'unknown', '{}', ?, ?)""",
+            (instance_id, old, old),
+        )
+
+    assert recover_stale_operations() == 1
+
+    with database() as db:
+        attempts = db.execute(
+            "SELECT operation_id, status, payload_json FROM operations WHERE command='reconcile' ORDER BY created_at, operation_id"
+        ).fetchall()
+    assert len(attempts) == 2
+    payload = json.loads(attempts[1]["payload_json"])
+    assert attempts[0]["status"] == "uncertain"
+    assert attempts[1]["status"] == "pending"
+    assert payload["source_operation_id"] == "stale-reconcile-source"
+    assert payload["recovery_attempt"] == 2
+
+
+def test_stale_reconcile_stops_after_three_automatic_attempts(tmp_path, monkeypatch):
+    monkeypatch.setenv("IACP_DB_PATH", str(tmp_path / "iacp.sqlite"))
+    monkeypatch.setenv("IACP_OPERATION_STALE_SECONDS", "30")
+    initialize()
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    instance_id = "stale-reconcile-limit-instance"
+    with database() as db:
+        db.execute(
+            """INSERT INTO operations(
+              operation_id, command, status, payload_json, instance_id, vmid,
+              stack, created_at, last_heartbeat
+            ) VALUES ('stale-reconcile-limit-source', 'provision', 'uncertain', '{}', ?,
+                      40000, 'mng01', ?, ?)""",
+            (instance_id, old, old),
+        )
+        for attempt in range(1, 4):
+            status = "running" if attempt == 3 else "failed"
+            heartbeat_at = old if attempt == 3 else "now"
+            db.execute(
+                """INSERT INTO operations(
+                  operation_id, command, action, status, payload_json, instance_id,
+                  vmid, stack, created_at, started_at, last_heartbeat, phase
+                ) VALUES (?, 'reconcile', 'reconcile', ?, ?, ?, 40000,
+                          'mng01', ?, ?, ?, 'reconcile')""",
+                (
+                    f"stale-reconcile-limit-attempt-{attempt}",
+                    status,
+                    json.dumps({"command": "reconcile", "source_operation_id": "stale-reconcile-limit-source"}),
+                    instance_id,
+                    old,
+                    old,
+                    heartbeat_at,
+                ),
+            )
+        db.execute(
+            """INSERT INTO instances(
+              instance_id, operation_id, name, image, vmid, node, status,
+              power_state, spec_json, created_at, updated_at
+            ) VALUES (?, 'stale-reconcile-limit-source', 'stale-reconcile-limit-vm',
+                      'ubuntu-2404', 40000, 'mng01', 'uncertain', 'unknown', '{}', ?, ?)""",
+            (instance_id, old, old),
+        )
+
+    assert recover_stale_operations() == 1
+
+    with database() as db:
+        attempts = db.execute(
+            "SELECT COUNT(*) AS count FROM operations WHERE command='reconcile'"
+        ).fetchone()["count"]
+        exhausted = db.execute(
+            """SELECT 1 FROM events WHERE operation_id='stale-reconcile-limit-attempt-3'
+            AND kind='recovery.retry_exhausted' AND status='uncertain'"""
+        ).fetchone()
+    assert attempts == 3
+    assert exhausted is not None
 
 
 def test_stale_worker_with_live_execution_lock_is_not_reconciled(tmp_path, monkeypatch):
@@ -1779,7 +2067,7 @@ def test_release_static_keeps_ip_when_vm_still_exists(monkeypatch):
     monkeypatch.setattr(main, "_ip_allocation", lambda _: allocation)
     monkeypatch.setattr(main, "instance_identity", lambda _: {"vmid": 40003})
     monkeypatch.setattr(main, "ProxmoxClient", lambda: object())
-    monkeypatch.setattr(main, "physical_presence", lambda *_: False)
+    monkeypatch.setattr(main, "reconcile_physical", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(main, "NetBoxClient", lambda: pytest.fail("No debe liberar una IP con VM presente"))
     monkeypatch.setattr(main, "_mark_ip_allocation", lambda *args, **kwargs: updates.append((args, kwargs)))
     monkeypatch.setattr(main, "emit", lambda *args: events.append(args))
@@ -2039,10 +2327,18 @@ def test_reconcile_missing_provision_deletes_root_password_secret(tmp_path, monk
     assert not secret.exists()
     with database() as db:
         row = db.execute(
-            "SELECT status, secret_path FROM operations WHERE operation_id='missing-provision'"
+            "SELECT status, secret_path, vmid, error FROM operations WHERE operation_id='missing-provision'"
+        ).fetchone()
+        instance = db.execute(
+            "SELECT status, vmid, power_state FROM instances WHERE instance_id='missing-provision-instance'"
         ).fetchone()
     assert row["status"] == "failed"
     assert row["secret_path"] is None
+    assert row["vmid"] == 40001
+    assert row["error"] == "RECONCILIATION_PHYSICAL_RESOURCE_ABSENT"
+    assert (instance["status"], instance["vmid"], instance["power_state"]) == (
+        "failed", None, "unknown"
+    )
 
 
 def test_reconcile_closes_deleted_power_intent_only_after_confirming_absence(tmp_path, monkeypatch):

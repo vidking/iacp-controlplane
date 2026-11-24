@@ -332,7 +332,7 @@ class ProxmoxClient:
         data = self.get("/access/permissions?" + urlencode({"path": path}))
         privileges = data.get(path) if isinstance(data, dict) else None
         required = ["VM.Audit", "VM.PowerMgmt"] if mutate else ["VM.Audit"]
-        if not isinstance(privileges, dict) or any(privileges.get(name) not in {0, 1} for name in required):
+        if not isinstance(privileges, dict) or any(privileges.get(name) not in {True, 1} for name in required):
             raise ProxmoxError("POWER_PERMISSION_DENIED", 403)
 
     def power_state(self, node: str, vmid: int, name: str) -> dict:

@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
-NAME_PATTERN = r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+NAME_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
 TAG_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,62}$"
 TagValue = Annotated[
     str,
@@ -96,7 +96,10 @@ class CommercialContext(BaseModel):
 class InstanceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(pattern=NAME_PATTERN)
+    name: str = Field(
+        pattern=NAME_PATTERN,
+        description="Nombre DNS técnico; se recorta y normaliza a minúsculas.",
+    )
     image: str = Field(
         default="ubuntu-2404",
         pattern=r"^(ubuntu-2404|ubuntu-2604|almalinux-9|almalinux-10|fedora-45|debian-13)$",
@@ -112,6 +115,13 @@ class InstanceSpec(BaseModel):
     ssh_public_keys: list[str] = Field(default_factory=list)
     started: bool = True
     tags: list[TagValue] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @field_validator("ssh_public_keys")
     @classmethod
@@ -174,7 +184,7 @@ class InstanceCreateRequest(BaseModel):
         min_length=1,
         max_length=63,
         pattern=NAME_PATTERN,
-        description="Nombre DNS de la VM: minúsculas, números y guiones; de 1 a 63 caracteres.",
+        description="Nombre DNS de la VM; se recorta y normaliza a minúsculas. Admite letras, números y guiones; de 1 a 63 caracteres.",
         examples=["kvm-cl-0000"],
     )
     plan_id: str = Field(
@@ -219,6 +229,13 @@ class InstanceCreateRequest(BaseModel):
         default=True,
         description="Iniciar la VM al terminar el aprovisionamiento.",
     )
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @field_validator("tags")
     @classmethod

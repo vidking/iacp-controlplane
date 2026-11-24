@@ -210,8 +210,11 @@ else:
  routes=json.loads(run([ip,'-j','route','show','default']))
  assert any(route.get('gateway')==expected_gateway and route.get('dev')==device for route in routes)
  try:
-  with socket.create_connection(('1.1.1.1',443),timeout=5):pass
- except OSError:pass
+  with socket.create_connection(('1.1.1.1',443),timeout=10):pass
+ except OSError as error:raise AssertionError('IACP_STATIC_TCP_EGRESS_UNAVAILABLE') from error
+ try:
+  socket.getaddrinfo('archive.ubuntu.com',443,type=socket.SOCK_STREAM)
+ except OSError as error:raise AssertionError('IACP_STATIC_DNS_RESOLUTION_UNAVAILABLE') from error
  def gateway_ready(records,gateway,device):
   return any(record.get('dst')==gateway and record.get('dev')==device and record.get('lladdr') and set(record.get('state',[])).intersection({'REACHABLE','STALE','DELAY','PROBE','PERMANENT'}) for record in records)
  neighbors=json.loads(run([ip,'-j','neigh','show','to',expected_gateway]))
@@ -464,7 +467,8 @@ def _prepare_fedora_static_network(
     Fedora confines QEMU Guest Agent under SELinux. Its network inventory is
     available, but running cloud-init/ip or reading SSH host keys from that
     context is denied. Avoid those commands and bind the expected address to
-    the configured NIC MAC instead.
+    the configured NIC MAC instead. This is address evidence only; it does not
+    claim to have verified DNS, gateway reachability, SSH, or application access.
     """
 
     from ipaddress import ip_address
@@ -514,9 +518,10 @@ def _prepare_fedora_static_network(
                     "address": str(expected_address),
                     "host_key": None,
                     "domain": None,
-                    "dns_servers": ["1.1.1.1", "8.8.8.8"],
+                    "dns_servers": [],
                     "source": "qemu-guest-agent-network",
-                    "mode": "fedora-static-read-only",
+                    "mode": "fedora-static-address-only",
+                    "verification_scope": ["mac-bound-ipv4"],
                 }
             if addresses and expected_address not in addresses:
                 raise GuestIdentityError("SERVICE_BOOTSTRAP_STATIC_ADDRESS_MISMATCH")

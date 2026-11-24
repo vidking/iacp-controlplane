@@ -64,7 +64,7 @@ x-worker-healthcheck: &worker-healthcheck
 
 services:
   postgres:
-    image: postgres:17.6
+    image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 60s
@@ -104,8 +104,10 @@ services:
       IACP_RETENTION_DAYS: ${IACP_RETENTION_DAYS:-0}
       IACP_SERVICES_ENABLED: ${IACP_SERVICES_ENABLED:-0}
       IACP_SERVICE_MAX_CONCURRENT: ${IACP_SERVICE_MAX_CONCURRENT:-6}
+      IACP_SERVICE_IP_TLS_ENABLED: ${IACP_SERVICE_IP_TLS_ENABLED:-0}
       IACP_SERVICE_KEY_FILE: /run/iacp-service-key
       IACP_SERVICE_CA_CERT_FILE: /run/iacp-pilot-ca.crt
+      IACP_SERVICE_CA_KEY_FILE: /run/iacp-pilot-ca.key
       IACP_MAX_QUEUE_DEPTH: ${IACP_MAX_QUEUE_DEPTH:-100}
       IACP_WORKER_STALE_SECONDS: ${IACP_OPERATION_STALE_SECONDS:-900}
     extra_hosts:
@@ -122,6 +124,12 @@ services:
       - type: bind
         source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/pilot-ca.crt
         target: /run/iacp-pilot-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/pilot-ca.key
+        target: /run/iacp-pilot-ca.key
         read_only: true
         bind:
           create_host_path: false
@@ -351,7 +359,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
@@ -386,7 +399,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
@@ -420,7 +438,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
@@ -454,7 +477,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
@@ -489,7 +517,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:
@@ -524,7 +557,12 @@ services:
       IACP_SERVICE_BINDINGS_DIR: /run/iacp-services/bindings
       IACP_SERVICE_RELEASES_FILE: ${IACP_SERVICE_RELEASES_FILE:-/app/services/releases.json}
     volumes:
-      - ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}:/run/iacp-services:ro
+      - type: bind
+        source: ${IACP_SERVICE_CONFIG_DIR:-./secrets/services}/key
+        target: /run/iacp-services/key
+        read_only: true
+        bind:
+          create_host_path: false
       - workdata:/var/lib/iacp-controlplane
     depends_on:
       api:

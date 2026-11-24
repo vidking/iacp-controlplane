@@ -22,7 +22,7 @@ from api.catalog import (
     plan_by_id,
     plan_catalog,
 )
-from api.db import database
+from api.db import database, runtime_write_gate_open
 from api.environments import EnvironmentConfigurationError, resolve_environment
 from api.models import Action, Command, CommercialContext, InstanceCreateRequest, InstanceSpec, OperationRequest, PowerAction
 from api.protection import is_protected_vmid
@@ -575,6 +575,12 @@ def _idempotent_mutation(
         with database() as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
+                if not runtime_write_gate_open(db):
+                    raise HTTPException(
+                        status_code=503,
+                        detail="IACP_RUNTIME_MAINTENANCE",
+                        headers={"Retry-After": "30"},
+                    )
                 existing = _existing_idempotency(db, scope, key, request_hash, legacy_hash)
                 if existing is not None:
                     commit_attempted = True
@@ -716,11 +722,11 @@ def _operation_target(db, instance_id: str):
     return row
 
 
-def _check_destroyable(instance) -> None:
+def _check_destroyable(instance, *, allow_confirmed_absence: bool = False) -> None:
     if instance["status"] == "deleted":
         raise HTTPException(409, "la instancia ya fue eliminada")
-    if instance["power_state"] == "running":
-        raise HTTPException(409, "apague la instancia antes de destruirla")
+    if instance["power_state"] != "stopped" and not allow_confirmed_absence:
+        raise HTTPException(409, "confirme que la instancia está apagada antes de destruirla")
 
 
 def _plan_source(db, plan_operation_id: str):
@@ -822,7 +828,18 @@ def _insert_operation(
                 if profile is None or not profile["enabled"]:
                     raise HTTPException(503, "NETWORK_PROFILE_NOT_CONFIGURED")
             else:
-                _check_destroyable(target)
+                planned_cleanup_candidate = (
+                    command == Command.destroy
+                    and target["status"] == "planned"
+                    and target["vmid"] is not None
+                    and source["command"] == "plan"
+                    and source["status"] == "succeeded"
+                    and source["vmid"] == target["vmid"]
+                )
+                _check_destroyable(
+                    target,
+                    allow_confirmed_absence=planned_cleanup_candidate,
+                )
                 if source["command"] not in {"plan", "provision"} or source["status"] not in {"succeeded", "failed", "uncertain"}:
                     raise HTTPException(409, "el plan todavía no está listo")
             if plan_id is not None and plan_id != source["plan_id"]:
@@ -1034,24 +1051,60 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
 
     def builder(db):
         instance = _operation_target(db, instance_id)
-        _check_destroyable(instance)
+        plan = _plan_source(db, instance["operation_id"])
+        logical_cleanup_candidate = (
+            instance["vmid"] is None and instance["status"] in {"failed", "uncertain"}
+        )
+        planned_cleanup_candidate = (
+            instance["status"] == "planned"
+            and instance["vmid"] is not None
+            and plan["command"] == "plan"
+            and plan["status"] == "succeeded"
+            and plan["vmid"] == instance["vmid"]
+        )
+        _check_destroyable(
+            instance,
+            allow_confirmed_absence=(
+                logical_cleanup_candidate or planned_cleanup_candidate
+            ),
+        )
         active = _active_instance_operation(db, instance_id)
         if active is not None:
             raise HTTPException(409, f"la instancia ya tiene una operacion activa: {active['operation_id']}")
-        plan = _plan_source(db, instance["operation_id"])
         # El cierre lógico solo es seguro si nunca se reservó una identidad
         # física y no queda intención de asignación pendiente de reconciliar.
         if instance["vmid"] is None and instance["status"] in {"failed", "uncertain"}:
             held = db.execute(
                 """
-                SELECT 1 FROM vmid_leases WHERE operation_id=? AND status='held'
+                SELECT 1 FROM vmid_leases AS lease
+                JOIN operations AS operation USING (operation_id)
+                WHERE operation.instance_id=? AND lease.status='held'
                 UNION ALL
                 SELECT 1 FROM ip_allocations WHERE instance_id=? AND status <> 'released'
                 LIMIT 1
                 """,
-                (instance["operation_id"], instance_id),
+                (instance_id, instance_id),
             ).fetchone()
-            if held is not None or plan["vmid"] is not None:
+            unconfirmed_vmid = db.execute(
+                """
+                SELECT 1
+                FROM operations AS recorded
+                WHERE recorded.instance_id=?
+                  AND recorded.command IN ('plan','apply','provision')
+                  AND recorded.vmid IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM operations AS absence
+                    WHERE absence.instance_id=recorded.instance_id
+                      AND absence.vmid=recorded.vmid
+                      AND absence.command IN ('plan','apply','provision')
+                      AND absence.status='failed'
+                      AND absence.error='RECONCILIATION_PHYSICAL_RESOURCE_ABSENT'
+                  )
+                LIMIT 1
+                """,
+                (instance_id,),
+            ).fetchone()
+            if held is not None or unconfirmed_vmid is not None:
                 raise HTTPException(409, "la instancia requiere reconciliación")
             operation_id = str(uuid.uuid4())
             created = now()
@@ -1084,7 +1137,8 @@ def create_destroy(instance_id: str, idempotency_key: str | None = None) -> dict
                 ),
             )
             db.execute(
-                "UPDATE instances SET status='deleted', power_state='unknown', updated_at=? WHERE instance_id=?",
+                """UPDATE instances SET status='deleted', power_state='unknown', updated_at=?
+                WHERE instance_id=? AND vmid IS NULL AND status IN ('failed','uncertain')""",
                 (created, instance_id),
             )
             emit(db, operation_id, "operation.created", "succeeded", "logical cleanup")

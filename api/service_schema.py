@@ -24,6 +24,7 @@ SCHEMA = (
         event_id BIGSERIAL PRIMARY KEY, job_id TEXT NOT NULL REFERENCES service_jobs(job_id),
         phase TEXT NOT NULL, status TEXT NOT NULL, occurred_at TEXT NOT NULL
     )""",
+    "CREATE INDEX IF NOT EXISTS idx_service_events_job_id_event_id ON service_events(job_id, event_id)",
     """CREATE TABLE IF NOT EXISTS service_workers (
         worker_id TEXT PRIMARY KEY, status TEXT NOT NULL, job_id TEXT, last_heartbeat TEXT NOT NULL
     )""",
