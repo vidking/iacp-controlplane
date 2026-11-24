@@ -151,6 +151,7 @@ class ProxmoxClient:
                     raise ValueError("respuesta Proxmox sin data")
                 return body["data"]
             except HTTPError as error:
+                error.close()  # libera el socket; el código ya está en ``error.code``
                 # A GET can be retried safely. A POST may already have
                 # reached Proxmox even when it returns 5xx; retrying it here
                 # could submit a second power/task mutation. The worker will
