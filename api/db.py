@@ -363,6 +363,8 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS idx_operations_heartbeat ON operations(status, last_heartbeat)",
     "CREATE INDEX IF NOT EXISTS idx_operations_instance_status ON operations(instance_id, status, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_operations_plan_id ON operations(plan_id)",
+    # /v1/observability toma las 100 operaciones terminadas más recientes.
+    "CREATE INDEX IF NOT EXISTS idx_operations_status_finished ON operations(status, finished_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(last_heartbeat)",
     "CREATE INDEX IF NOT EXISTS idx_instances_vmid ON instances(vmid)",
     "CREATE INDEX IF NOT EXISTS idx_instances_status_power ON instances(status, power_state, updated_at)",
