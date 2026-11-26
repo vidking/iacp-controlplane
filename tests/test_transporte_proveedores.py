@@ -108,3 +108,57 @@ def test_observacion_fallida_tras_orden_de_energia_queda_incierta(monkeypatch):
             ProxmoxError("respuesta perdida", uncertain=True),
         )
     assert failure.value.uncertain is True
+
+
+def test_power_start_reintenta_una_vez_tras_tarea_fallida_y_vm_detenida(monkeypatch):
+    client = object.__new__(ProxmoxClient)
+    error = ProxmoxError("POWER_TASK_FAILED: unable to open file", uncertain=False)
+    error.task = "UPID:mng01:00000001:00000002:00000003:qmstart:40000:"
+    starts = []
+
+    monkeypatch.setattr(
+        client,
+        "power_state",
+        lambda *_args: {"power_state": "stopped", "name": "demo"},
+    )
+    monkeypatch.setattr(
+        client,
+        "_submit_power_action",
+        lambda _node, _vmid, action: (
+            starts.append(action)
+            or {"action": action, "power_state": "running", "exitstatus": "OK"}
+        ),
+    )
+
+    result = client._reconcile_power_action("mng01", 40000, "demo", "start", error)
+
+    assert starts == ["start"]
+    assert result["retry_after_failed_task"] is True
+    assert result["recovered"] is True
+    assert result["power_state"] == "running"
+
+
+def test_power_start_no_repite_una_tarea_con_respuesta_incierta(monkeypatch):
+    client = object.__new__(ProxmoxClient)
+    error = ProxmoxError("POWER_PROXMOX_UNAVAILABLE", uncertain=True)
+    error.task = "UPID:mng01:00000001:00000002:00000003:qmstart:40000:"
+    monkeypatch.setattr(
+        client,
+        "power_state",
+        lambda *_args: {"power_state": "stopped", "name": "demo"},
+    )
+
+    def wait_task(*_args):
+        raise ProxmoxError("POWER_TASK_UNCERTAIN", uncertain=True)
+
+    monkeypatch.setattr(client, "wait_task", wait_task)
+    monkeypatch.setattr(
+        client,
+        "_submit_power_action",
+        lambda *_args: pytest.fail("no se debe duplicar una orden de resultado incierto"),
+    )
+
+    with pytest.raises(ProxmoxError, match="POWER_OPERATION_UNCERTAIN") as failure:
+        client._reconcile_power_action("mng01", 40000, "demo", "start", error)
+
+    assert failure.value.uncertain is True

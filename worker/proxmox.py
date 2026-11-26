@@ -532,6 +532,26 @@ class ProxmoxClient:
 
             if attempt == 0 and str(initial_error).startswith("POWER_TASK_FAILED"):
                 try:
+                    # Un qmstart terminalmente fallido deja el VM apagado y
+                    # su UPID confirma que la orden anterior ya terminó. En
+                    # ese caso es seguro volver a intentar start una sola vez.
+                    # Una respuesta perdida conserva ``uncertain=True`` y no
+                    # entra aquí: nunca repetimos una mutación sin resultado.
+                    task = getattr(initial_error, "task", None)
+                    if (
+                        action == "start"
+                        and current == "stopped"
+                        and isinstance(task, str)
+                        and bool(task)
+                        and not initial_error.uncertain
+                    ):
+                        result = self._submit_power_action(node, vmid, "start")
+                        return {
+                            **result,
+                            "action": action,
+                            "retry_after_failed_task": True,
+                            "recovered": True,
+                        }
                     if action == "shutdown" and current == "running":
                         result = self._submit_power_action(node, vmid, "stop")
                         return {
