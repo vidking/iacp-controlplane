@@ -175,7 +175,10 @@ def test_cerrojo_netbox_ocupado_no_implica_mutacion(monkeypatch):
     from api import db as db_module
 
     class CerrojoOcupado:
+        statements = []
+
         def execute(self, statement, *_args):
+            self.statements.append(statement)
             if "pg_advisory_xact_lock" in statement:
                 raise LockNotAvailable("ocupado")
 
@@ -191,6 +194,20 @@ def test_cerrojo_netbox_ocupado_no_implica_mutacion(monkeypatch):
         client.allocate()
     assert failure.value.code == "IPAM_ALLOCATION_BUSY"
     assert not failure.value.uncertain
+    assert "SET LOCAL lock_timeout = '120s'" in CerrojoOcupado.statements
+
+    monkeypatch.setattr(
+        client,
+        "_release_locked",
+        lambda *_args, **_kwargs: pytest.fail(
+            "NetBox aún no debe recibir solicitudes"
+        ),
+    )
+    with pytest.raises(NetBoxError) as failure:
+        client.release({}, marker="instancia-de-prueba")
+    assert failure.value.code == "IPAM_ALLOCATION_BUSY"
+    assert not failure.value.uncertain
+    assert CerrojoOcupado.statements.count("SET LOCAL lock_timeout = '120s'") == 2
 
 
 def test_cierre_fuente_revierte_instancia_y_reserva_si_falla_evento(monkeypatch):

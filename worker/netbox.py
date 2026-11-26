@@ -31,6 +31,11 @@ from worker.proxmox import RejectRedirects
 
 JsonObject: TypeAlias = dict[str, object]
 
+# NetBox reserva IPs de forma serializada por prefijo. Seis workers pueden
+# llegar juntos y cada transacción mantiene el advisory lock mientras confirma
+# la mutación remota; 12 s no cubrían una cola legítima de seis reservas.
+NETBOX_PREFIX_LOCK_TIMEOUT_SECONDS = 120
+
 
 def _is_json_object(value: object) -> TypeGuard[JsonObject]:
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
@@ -543,7 +548,9 @@ class NetBoxClient:
         self._heartbeat()
         with database() as db:
             db.execute("BEGIN")
-            db.execute("SET LOCAL lock_timeout = '12s'")
+            db.execute(
+                f"SET LOCAL lock_timeout = '{NETBOX_PREFIX_LOCK_TIMEOUT_SECONDS}s'"
+            )
             try:
                 db.execute(
                     "SELECT pg_advisory_xact_lock(105, hashtext(?))",
@@ -658,7 +665,9 @@ class NetBoxClient:
         self._heartbeat()
         with database() as db:
             db.execute("BEGIN")
-            db.execute("SET LOCAL lock_timeout = '12s'")
+            db.execute(
+                f"SET LOCAL lock_timeout = '{NETBOX_PREFIX_LOCK_TIMEOUT_SECONDS}s'"
+            )
             try:
                 db.execute(
                     "SELECT pg_advisory_xact_lock(105, hashtext(?))",
