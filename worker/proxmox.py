@@ -493,6 +493,50 @@ class ProxmoxClient:
             raise
         return {"action": action, "task": task, **result}
 
+    def power_task_finished_in_history(
+        self, node: str, vmid: int, action: str, task: str
+    ) -> bool:
+        """Confirmar que una tarea ya terminó cuando su endpoint status falta.
+
+        Algunos estados anómalos de Proxmox desaparecen del endpoint directo
+        ``/tasks/{upid}/status`` aunque sigan apareciendo en el historial. Solo
+        se usa como prueba de finalización si el UPID coincide con nodo, VMID y
+        acción, y el registro tiene tiempos de inicio y fin consistentes.
+        """
+        task_type = {
+            "start": "qmstart",
+            "shutdown": "qmshutdown",
+            "reboot": "qmreboot",
+            "stop": "qmstop",
+        }.get(action)
+        if not task_type:
+            return False
+        try:
+            self._validate_task(node, vmid, action, task)
+            query = urlencode({"vmid": vmid, "limit": 1000})
+            rows = self.get(
+                f"/nodes/{quote(node, safe='')}/tasks?{query}", attempts=2
+            )
+        except ProxmoxError:
+            return False
+        if not isinstance(rows, list):
+            return False
+        matches = [row for row in rows if isinstance(row, dict) and row.get("upid") == task]
+        if len(matches) != 1:
+            return False
+        row = matches[0]
+        try:
+            started = int(row["starttime"])
+            ended = int(row["endtime"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            row.get("type") == task_type
+            and started > 0
+            and ended >= started
+            and row.get("status") not in {"running", "active"}
+        )
+
     def _reconcile_power_action(
         self,
         node: str,
@@ -530,26 +574,32 @@ class ProxmoxClient:
                     **observed,
                 }
 
-            if attempt == 0 and str(initial_error).startswith("POWER_TASK_FAILED"):
+            if attempt == 0:
                 try:
-                    # Un qmstart terminalmente fallido deja el VM apagado y
-                    # su UPID confirma que la orden anterior ya terminó. En
-                    # ese caso es seguro volver a intentar start una sola vez.
-                    # Una respuesta perdida conserva ``uncertain=True`` y no
-                    # entra aquí: nunca repetimos una mutación sin resultado.
                     task = getattr(initial_error, "task", None)
+                    task_failed = str(initial_error).startswith("POWER_TASK_FAILED")
+                    task_missing_but_finished = (
+                        str(initial_error).startswith("POWER_PROXMOX_UNAVAILABLE")
+                        and initial_error.status == 400
+                        and isinstance(task, str)
+                        and bool(task)
+                        and self.power_task_finished_in_history(
+                            node, vmid, action, task
+                        )
+                    )
                     if (
                         action == "start"
                         and current == "stopped"
                         and isinstance(task, str)
                         and bool(task)
                         and not initial_error.uncertain
+                        and (task_failed or task_missing_but_finished)
                     ):
                         result = self._submit_power_action(node, vmid, "start")
                         return {
                             **result,
                             "action": action,
-                            "retry_after_failed_task": True,
+                            "retry_after_finished_task": True,
                             "recovered": True,
                         }
                     if action == "shutdown" and current == "running":
