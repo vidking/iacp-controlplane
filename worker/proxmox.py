@@ -493,15 +493,15 @@ class ProxmoxClient:
             raise
         return {"action": action, "task": task, **result}
 
-    def power_task_finished_in_history(
+    def _power_task_history_record(
         self, node: str, vmid: int, action: str, task: str
-    ) -> bool:
-        """Confirmar que una tarea ya terminó cuando su endpoint status falta.
+    ) -> dict | None:
+        """Devolver el registro terminal del UPID exacto, si se puede probar.
 
         Algunos estados anómalos de Proxmox desaparecen del endpoint directo
         ``/tasks/{upid}/status`` aunque sigan apareciendo en el historial. Solo
-        se usa como prueba de finalización si el UPID coincide con nodo, VMID y
-        acción, y el registro tiene tiempos de inicio y fin consistentes.
+        se acepta el registro si el UPID coincide con nodo, VMID y acción, y
+        tiene tiempos de inicio y fin consistentes.
         """
         task_type = {
             "start": "qmstart",
@@ -510,7 +510,7 @@ class ProxmoxClient:
             "stop": "qmstop",
         }.get(action)
         if not task_type:
-            return False
+            return None
         try:
             self._validate_task(node, vmid, action, task)
             query = urlencode({"vmid": vmid, "limit": 1000})
@@ -518,23 +518,41 @@ class ProxmoxClient:
                 f"/nodes/{quote(node, safe='')}/tasks?{query}", attempts=2
             )
         except ProxmoxError:
-            return False
+            return None
         if not isinstance(rows, list):
-            return False
+            return None
         matches = [row for row in rows if isinstance(row, dict) and row.get("upid") == task]
         if len(matches) != 1:
-            return False
+            return None
         row = matches[0]
         try:
             started = int(row["starttime"])
             ended = int(row["endtime"])
         except (KeyError, TypeError, ValueError):
-            return False
-        return (
+            return None
+        valid = (
             row.get("type") == task_type
             and started > 0
             and ended >= started
             and row.get("status") not in {"running", "active"}
+        )
+        return row if valid else None
+
+    def power_task_finished_in_history(
+        self, node: str, vmid: int, action: str, task: str
+    ) -> bool:
+        """Confirmar que una tarea ya terminó cuando su endpoint status falta."""
+        return self._power_task_history_record(node, vmid, action, task) is not None
+
+    def power_task_failed_in_history(
+        self, node: str, vmid: int, action: str, task: str
+    ) -> bool:
+        """Probar que el UPID exacto terminó con error, no solo que terminó."""
+        row = self._power_task_history_record(node, vmid, action, task)
+        return bool(
+            row
+            and isinstance(row.get("status"), str)
+            and row["status"] not in {"OK", "running", "active"}
         )
 
     def _reconcile_power_action(
@@ -578,12 +596,12 @@ class ProxmoxClient:
                 try:
                     task = getattr(initial_error, "task", None)
                     task_failed = str(initial_error).startswith("POWER_TASK_FAILED")
-                    task_missing_but_finished = (
-                        str(initial_error).startswith("POWER_PROXMOX_UNAVAILABLE")
-                        and initial_error.status == 400
+                    task_failure_proven = (
+                        action == "start"
+                        and current == "stopped"
                         and isinstance(task, str)
                         and bool(task)
-                        and self.power_task_finished_in_history(
+                        and self.power_task_failed_in_history(
                             node, vmid, action, task
                         )
                     )
@@ -592,8 +610,10 @@ class ProxmoxClient:
                         and current == "stopped"
                         and isinstance(task, str)
                         and bool(task)
-                        and not initial_error.uncertain
-                        and (task_failed or task_missing_but_finished)
+                        and (
+                            (task_failed and not initial_error.uncertain)
+                            or task_failure_proven
+                        )
                     ):
                         result = self._submit_power_action(node, vmid, "start")
                         return {

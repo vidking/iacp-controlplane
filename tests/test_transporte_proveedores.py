@@ -138,7 +138,7 @@ def test_power_start_reintenta_una_vez_tras_tarea_fallida_y_vm_detenida(monkeypa
     assert result["power_state"] == "running"
 
 
-def test_power_start_reintenta_si_pve_historial_confirma_tarea_finalizada(monkeypatch):
+def test_power_start_reintenta_si_pve_historial_confirma_tarea_fallida(monkeypatch):
     client = object.__new__(ProxmoxClient)
     error = ProxmoxError("POWER_PROXMOX_UNAVAILABLE", 400, uncertain=False)
     error.task = "UPID:mng01:00000001:00000002:00000003:qmstart:40000:"
@@ -151,7 +151,7 @@ def test_power_start_reintenta_si_pve_historial_confirma_tarea_finalizada(monkey
     )
     monkeypatch.setattr(
         client,
-        "power_task_finished_in_history",
+        "power_task_failed_in_history",
         lambda node, vmid, action, task: (
             node == "mng01"
             and vmid == 40000
@@ -196,8 +196,30 @@ def test_historial_pve_confirma_solo_tarea_unica_finalizada(monkeypatch):
     monkeypatch.setattr(client, "get", get)
 
     assert client.power_task_finished_in_history("mng01", 40000, "start", task)
+    assert client.power_task_failed_in_history("mng01", 40000, "start", task)
     assert calls[0][0] == "/nodes/mng01/tasks?vmid=40000&limit=1000"
     assert calls[0][1] == {"attempts": 2}
+
+
+def test_historial_pve_no_clasifica_tarea_exitosa_como_fallida(monkeypatch):
+    client = object.__new__(ProxmoxClient)
+    task = "UPID:mng01:00000001:00000002:00000003:qmstart:40000:worker@pve!runtime:"
+    monkeypatch.setattr(
+        client,
+        "get",
+        lambda *_args, **_kwargs: [
+            {
+                "upid": task,
+                "type": "qmstart",
+                "status": "OK",
+                "starttime": 100,
+                "endtime": 101,
+            }
+        ],
+    )
+
+    assert client.power_task_finished_in_history("mng01", 40000, "start", task)
+    assert not client.power_task_failed_in_history("mng01", 40000, "start", task)
 
 
 def test_historial_pve_no_confirma_tarea_activa(monkeypatch):
@@ -233,7 +255,7 @@ def test_power_start_no_reintenta_si_el_historial_no_confirma_finalizacion(monke
         "power_state",
         lambda *_args: {"power_state": "stopped", "name": "demo"},
     )
-    monkeypatch.setattr(client, "power_task_finished_in_history", lambda *_args: False)
+    monkeypatch.setattr(client, "power_task_failed_in_history", lambda *_args: False)
     monkeypatch.setattr(
         client,
         "_submit_power_action",
@@ -256,6 +278,7 @@ def test_power_start_no_repite_una_tarea_con_respuesta_incierta(monkeypatch):
         "power_state",
         lambda *_args: {"power_state": "stopped", "name": "demo"},
     )
+    monkeypatch.setattr(client, "power_task_failed_in_history", lambda *_args: False)
 
     def wait_task(*_args):
         raise ProxmoxError("POWER_TASK_UNCERTAIN", uncertain=True)
@@ -271,3 +294,41 @@ def test_power_start_no_repite_una_tarea_con_respuesta_incierta(monkeypatch):
         client._reconcile_power_action("mng01", 40000, "demo", "start", error)
 
     assert failure.value.uncertain is True
+
+
+def test_power_start_reintenta_respuesta_incierta_solo_con_fallo_terminal_probado(monkeypatch):
+    client = object.__new__(ProxmoxClient)
+    error = ProxmoxError("POWER_PROXMOX_UNAVAILABLE", uncertain=True)
+    error.task = "UPID:mng01:00000001:00000002:00000003:qmstart:40000:"
+    starts = []
+
+    monkeypatch.setattr(
+        client,
+        "power_state",
+        lambda *_args: {"power_state": "stopped", "name": "demo"},
+    )
+    monkeypatch.setattr(
+        client,
+        "power_task_failed_in_history",
+        lambda node, vmid, action, task: (
+            node == "mng01"
+            and vmid == 40000
+            and action == "start"
+            and task == error.task
+        ),
+    )
+    monkeypatch.setattr(
+        client,
+        "_submit_power_action",
+        lambda _node, _vmid, action: (
+            starts.append(action)
+            or {"action": action, "power_state": "running", "exitstatus": "OK"}
+        ),
+    )
+
+    result = client._reconcile_power_action("mng01", 40000, "demo", "start", error)
+
+    assert starts == ["start"]
+    assert result["retry_after_finished_task"] is True
+    assert result["recovered"] is True
+    assert result["power_state"] == "running"
