@@ -5,6 +5,7 @@ import re
 import socket
 import ssl
 import time
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -167,7 +168,9 @@ class ProxmoxClient:
                     error.code >= 500 or error.code == 408
                 )
                 raise ProxmoxError(code, error.code, uncertain=request_uncertain) from error
-            except (URLError, TimeoutError, ValueError) as error:
+            except (OSError, HTTPException, ValueError) as error:
+                # ``urllib`` solo envuelve en URLError los fallos de envío: una
+                # conexión cortada al leer la respuesta llega sin envolver.
                 reason = getattr(error, "reason", None)
                 message = str(error).lower()
                 dns_failure = (
@@ -511,6 +514,8 @@ class ProxmoxClient:
                 observed = self.power_state(node, vmid, name)
             except ProxmoxError as error:
                 if not self._recoverable_power_error(error):
+                    # La orden ya se envió: no observar no demuestra su resultado.
+                    error.uncertain = True
                     raise
                 last_error = error
                 observed = None

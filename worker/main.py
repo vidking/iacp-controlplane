@@ -3371,29 +3371,35 @@ def execute_power(worker_id: str, operation: dict, client: ProxmoxClient) -> Non
     expected_power_state = "stopped" if action == "shutdown" else "running"
     if power_state != expected_power_state:
         raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
-    if _FENCE.get() is not None:
-        observation_deadline = time.monotonic() + 30
-        while client.power_state(node, vmid, row["name"])["power_state"] != expected_power_state:
-            if time.monotonic() >= observation_deadline:
-                raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
-            heartbeat(worker_id, "running", operation_id, phase=f"power_{action}_observing")
-            time.sleep(1)
-    if (
-        action in {"start", "reboot"}
-        and power_state == "running"
-        and not guest_identity_previously_verified(instance_id)
-    ):
-        ensure_guest_identity_for_operation(
-            worker_id,
-            operation_id,
-            client,
-            stack=operation.get("stack") or "mng01",
-            node=node,
-            vmid=vmid,
-            name=row["name"],
-            instance_id=instance_id,
-            spec=spec if isinstance(spec, dict) else {},
-        )
+    try:
+        if _FENCE.get() is not None:
+            observation_deadline = time.monotonic() + 30
+            while client.power_state(node, vmid, row["name"])["power_state"] != expected_power_state:
+                if time.monotonic() >= observation_deadline:
+                    raise ProxmoxError("POWER_RESULT_UNCONFIRMED", uncertain=True)
+                heartbeat(worker_id, "running", operation_id, phase=f"power_{action}_observing")
+                time.sleep(1)
+        if (
+            action in {"start", "reboot"}
+            and power_state == "running"
+            and not guest_identity_previously_verified(instance_id)
+        ):
+            ensure_guest_identity_for_operation(
+                worker_id,
+                operation_id,
+                client,
+                stack=operation.get("stack") or "mng01",
+                node=node,
+                vmid=vmid,
+                name=row["name"],
+                instance_id=instance_id,
+                spec=spec if isinstance(spec, dict) else {},
+            )
+    except ProxmoxError as error:
+        # La orden de energía ya pudo aplicarse: una verificación posterior que
+        # no se puede leer deja la operación incierta, nunca fallida.
+        error.uncertain = True
+        raise
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         update_operation(

@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import socket
 import ssl
 import time
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from typing import Callable, TypeAlias, TypeGuard
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler
 
@@ -243,7 +243,7 @@ class NetBoxClient:
                     # intención local para reconciliarla en el siguiente intento.
                     uncertain=method != "GET" and (status == 408 or status >= 500),
                 ) from None
-            except (URLError, TimeoutError, socket.timeout, ValueError):
+            except (OSError, HTTPException, ValueError):
                 if retry_get and attempt + 1 < self.config.attempts:
                     time.sleep(min(4.0, 0.5 * (2**attempt)))
                     continue

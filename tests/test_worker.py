@@ -2790,3 +2790,53 @@ def test_reconcile_supersedes_old_power_and_recovery_after_later_verified_lifecy
     assert recovery["status"] == "succeeded" and recovery["error"] == ""
     assert (instance["status"], instance["power_state"]) == ("ready", "running")
     assert event["status"] == "failed"
+
+
+def test_power_identidad_ilegible_tras_la_orden_queda_incierta(tmp_path, monkeypatch):
+    initialize()
+    instance_id = "energia-incierta"
+    payload = json.dumps({"command": "power", "power_action": "start", "instance_id": instance_id})
+    with database() as db:
+        db.execute(
+            """INSERT INTO operations(operation_id, command, status, payload_json, instance_id, created_at)
+            VALUES ('energia-origen', 'provision', 'succeeded', '{}', ?, 'now')""",
+            (instance_id,),
+        )
+        db.execute(
+            """INSERT INTO operations(operation_id, command, action, status, payload_json, instance_id, stack, created_at)
+            VALUES ('energia-op', 'power', 'power', 'running', ?, ?, 'mng01', 'now')""",
+            (payload, instance_id),
+        )
+        db.execute(
+            """INSERT INTO instances(instance_id, operation_id, name, image, vmid, node, status, power_state, spec_json, created_at, updated_at)
+            VALUES (?, 'energia-origen', 'energia', 'ubuntu-2404', 40000, 'mng01', 'ready', 'stopped', '{}', 'now', 'now')""",
+            (instance_id,),
+        )
+
+    class StartsThenUnreadable:
+        def power_state(self, *_args):
+            return {"power_state": "stopped"}
+
+        def power(self, *_args):
+            return {"action": "start", "power_state": "running"}
+
+    def unreadable(*_args, **_kwargs):
+        raise ProxmoxError("Proxmox GET /status falló: conexión cerrada")
+
+    monkeypatch.setattr(
+        "worker.main.expected_preboot_for_spec",
+        lambda *_args, **_kwargs: {"instance": {"dns_servers": []}},
+    )
+    monkeypatch.setattr(
+        "worker.main.verify_preboot_configuration",
+        lambda _operation_id, client, **_kwargs: client.power_state(),
+    )
+    monkeypatch.setattr("worker.main.ensure_guest_identity_for_operation", unreadable)
+
+    with pytest.raises(ProxmoxError) as failure:
+        execute_power(
+            "worker-1",
+            {"operation_id": "energia-op", "payload_json": payload},
+            StartsThenUnreadable(),
+        )
+    assert failure.value.uncertain is True
