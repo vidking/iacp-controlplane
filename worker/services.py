@@ -4,6 +4,7 @@ import argparse
 from contextlib import ExitStack
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -247,8 +248,15 @@ def _process_locked(worker_id, job):
         status, error = "failed", exc.code
     except ServiceExecutionUncertain as exc:
         status, error = "uncertain", exc.code
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - se contiene como incierto
         status, error = "uncertain", "SERVICE_EXECUTION_UNCERTAIN"
+        # Solo el tipo: el mensaje podría arrastrar datos del servicio.
+        print(
+            f"[{worker_id}] error no clasificado en el trabajo {job['job_id']}: "
+            f"{type(exc).__name__}",
+            file=sys.stderr,
+            flush=True,
+        )
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         changed = db.execute(
